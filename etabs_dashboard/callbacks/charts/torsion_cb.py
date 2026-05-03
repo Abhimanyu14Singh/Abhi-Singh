@@ -178,7 +178,9 @@ def _stiffness_chart(sf_recs, dr_df, elevs, case, theme):
 
     # Proxy: Kx = Vx / drift_x
     sf_max = sf_df.groupby("story")[["Vx","Vy"]].max().reset_index()
-    dr_max = dr_df.groupby("story")["max_drift"].max().reset_index()
+    drift_col = "max_drift" if "max_drift" in dr_df.columns else "drift"
+    dr_max = dr_df.groupby("story")[drift_col].max().reset_index()
+    dr_max.columns = ["story", "max_drift"]
     merged = pd.merge(sf_max, dr_max, on="story", how="inner")
     merged["Kx_proxy"] = merged["Vx"].abs() / merged["max_drift"].clip(lower=1e-9)
     merged["elev"]     = merged["story"].map(elevs).fillna(0)
