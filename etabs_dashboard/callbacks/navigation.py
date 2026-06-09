@@ -1,12 +1,11 @@
-"""URL-based page routing and sidebar data summary."""
-from dash import Input, Output, html, no_update
+from dash import Input, Output, html
 import dash
-import dash_bootstrap_components as dbc
 
 from layouts.pages import (
     overview, plan_view, story_drifts, story_forces,
     base_reactions, frame_forces, modal, displacements,
     load_patterns, torsion,
+    statistics, heatmaps, code_checks, outliers, correlation, scorecard,
 )
 
 
@@ -22,6 +21,13 @@ PAGE_MAP = {
     "/displacements":  displacements.layout,
     "/load-patterns":  load_patterns.layout,
     "/torsion":        torsion.layout,
+    # Analytics
+    "/statistics":     statistics.layout,
+    "/heatmaps":       heatmaps.layout,
+    "/code-checks":    code_checks.layout,
+    "/outliers":       outliers.layout,
+    "/correlation":    correlation.layout,
+    "/scorecard":      scorecard.layout,
 }
 
 
@@ -30,8 +36,7 @@ PAGE_MAP = {
     Input("url", "pathname"),
 )
 def render_page(pathname):
-    layout_fn = PAGE_MAP.get(pathname, overview.layout)
-    return layout_fn()
+    return PAGE_MAP.get(pathname, overview.layout)()
 
 
 @dash.get_app().callback(
