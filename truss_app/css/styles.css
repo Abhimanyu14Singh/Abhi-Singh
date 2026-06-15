@@ -224,6 +224,9 @@ select:focus, input:focus { border-color: var(--accent); }
 /* modal */
 .modal { position: fixed; inset: 0; background: rgba(6,9,15,.7); display: grid;
   place-items: center; z-index: 50; backdrop-filter: blur(3px); }
+/* The `hidden` attribute must beat the .modal display rule (equal specificity
+ * would otherwise keep the modal visible and un-closeable). */
+.modal[hidden] { display: none; }
 .modal-card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
   max-width: 620px; width: 90%; padding: 26px 30px; position: relative; box-shadow: var(--shadow);
   max-height: 86vh; overflow-y: auto; }
