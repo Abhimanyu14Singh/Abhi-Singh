@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Truss Lab — Virtual Work Explorer</title>
+<link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">△</span>
+    <div>
+      <h1>Truss Lab</h1>
+      <p class="tagline">Draw a truss · add supports &amp; loads · learn what controls deflection</p>
+    </div>
+  </div>
+  <div class="topbar-controls">
+    <label class="field">
+      <span>Example</span>
+      <select id="exampleSelect">
+        <option value="">— load a preset —</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>Units</span>
+      <select id="unitSelect">
+        <option value="SI">Metric (kN, m)</option>
+        <option value="US">Imperial (kip, ft)</option>
+      </select>
+    </label>
+    <div class="btn-group">
+      <button id="undoBtn" class="btn" title="Undo (Ctrl+Z)">↶</button>
+      <button id="redoBtn" class="btn" title="Redo (Ctrl+Y)">↷</button>
+      <button id="clearBtn" class="btn" title="Clear all">Clear</button>
+      <button id="saveBtn" class="btn" title="Download model JSON">Save</button>
+      <button id="loadBtn" class="btn" title="Load model JSON">Load</button>
+      <input id="fileInput" type="file" accept="application/json" hidden />
+      <button id="helpBtn" class="btn btn-primary" title="How to use">?</button>
+    </div>
+  </div>
+</header>
+
+<main class="workspace">
+  <!-- Tool rail -->
+  <nav class="toolrail" id="toolrail">
+    <button class="tool active" data-tool="select" title="Select / move joints">
+      <span class="ico">⬚</span><span>Select</span>
+    </button>
+    <button class="tool" data-tool="node" title="Add joints">
+      <span class="ico">●</span><span>Joint</span>
+    </button>
+    <button class="tool" data-tool="member" title="Draw members between joints">
+      <span class="ico">╱</span><span>Member</span>
+    </button>
+    <button class="tool" data-tool="support" title="Click a joint to cycle support">
+      <span class="ico">▲</span><span>Support</span>
+    </button>
+    <button class="tool" data-tool="load" title="Click a joint to add a load">
+      <span class="ico">↓</span><span>Load</span>
+    </button>
+    <button class="tool" data-tool="delete" title="Delete joints / members">
+      <span class="ico">✕</span><span>Delete</span>
+    </button>
+    <div class="rail-spacer"></div>
+    <div class="hint" id="toolHint">Tip: pick <b>Joint</b> and click the grid.</div>
+  </nav>
+
+  <!-- Drawing canvas -->
+  <section class="canvas-wrap">
+    <svg id="canvas" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" class="arrowhead-load" />
+        </marker>
+        <marker id="arrow-react" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" class="arrowhead-react" />
+        </marker>
+      </defs>
+    </svg>
+    <div class="canvas-overlay">
+      <div class="legend" id="legend">
+        <span class="lg lg-tension">■ Tension (+)</span>
+        <span class="lg lg-compression">■ Compression (−)</span>
+        <span class="lg lg-zero">■ Zero force</span>
+      </div>
+      <div class="display-toggles">
+        <label><input type="checkbox" id="tgForces" checked /> Forces</label>
+        <label><input type="checkbox" id="tgDefl" /> Deflected shape</label>
+        <label><input type="checkbox" id="tgLabels" checked /> Labels</label>
+        <label><input type="checkbox" id="tgGrid" checked /> Grid</label>
+        <label class="scale-field">Defl ×
+          <input type="range" id="deflScale" min="0.2" max="4" step="0.2" value="1" />
+        </label>
+      </div>
+    </div>
+    <div id="statusBar" class="status-bar"></div>
+  </section>
+
+  <!-- Side panel -->
+  <aside class="sidepanel">
+    <div class="tabs">
+      <button class="tab active" data-tab="insights">Insights</button>
+      <button class="tab" data-tab="properties">Properties</button>
+      <button class="tab" data-tab="results">Results</button>
+    </div>
+
+    <div class="tab-body">
+      <!-- INSIGHTS -->
+      <div class="tab-pane active" data-pane="insights">
+        <div id="summaryStrip" class="summary-strip"></div>
+        <div id="rankingBox" class="ranking-box"></div>
+        <div id="insightCards" class="insight-cards"></div>
+      </div>
+
+      <!-- PROPERTIES -->
+      <div class="tab-pane" data-pane="properties">
+        <div id="propEmpty" class="prop-empty">
+          Select a joint or member to edit it. With nothing selected you can
+          still change the display options on the canvas.
+        </div>
+        <div id="nodeProps" class="prop-card" hidden>
+          <h3>Joint <span id="npId"></span></h3>
+          <div class="prop-row"><label>X</label><input type="number" id="npX" step="0.1" /></div>
+          <div class="prop-row"><label>Y</label><input type="number" id="npY" step="0.1" /></div>
+          <div class="prop-row">
+            <label>Support</label>
+            <select id="npSupport">
+              <option value="none">None (free)</option>
+              <option value="pin">Pin (fix X &amp; Y)</option>
+              <option value="roller-x">Roller (fix Y, rolls X)</option>
+              <option value="roller-y">Roller (fix X, rolls Y)</option>
+            </select>
+          </div>
+          <div class="prop-row"><label>Load <span id="npForceUnit"></span> →</label><input type="number" id="npFx" step="1" /></div>
+          <div class="prop-row"><label>Load <span id="npForceUnit2"></span> ↑</label><input type="number" id="npFy" step="1" /></div>
+          <button class="btn btn-danger sm" id="npDelete">Delete joint</button>
+        </div>
+        <div id="memberProps" class="prop-card" hidden>
+          <h3>Member <span id="mpId"></span></h3>
+          <div class="prop-readout" id="mpReadout"></div>
+          <div class="prop-row">
+            <label>AISC shape</label>
+            <select id="mpSection"><option value="">— custom —</option></select>
+          </div>
+          <div class="prop-row"><label>Area <span id="mpAreaUnit"></span></label><input type="number" id="mpArea" step="0.1" /></div>
+          <div class="prop-row"><label>E <span id="mpEUnit"></span></label><input type="number" id="mpE" step="100" /></div>
+          <button class="btn btn-danger sm" id="mpDelete">Delete member</button>
+        </div>
+      </div>
+
+      <!-- RESULTS -->
+      <div class="tab-pane" data-pane="results">
+        <div id="resultsTables"></div>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<!-- Help modal -->
+<div class="modal" id="helpModal" hidden>
+  <div class="modal-card">
+    <button class="modal-close" id="helpClose">✕</button>
+    <h2>How to use Truss Lab</h2>
+    <ol class="help-list">
+      <li><b>Draw joints</b> — pick the <i>Joint</i> tool and click the grid (clicks snap to the grid).</li>
+      <li><b>Connect members</b> — pick <i>Member</i>, click a joint, then click another.</li>
+      <li><b>Add supports</b> — pick <i>Support</i> and click a joint to cycle pin → roller → none. You need at least 3 reaction components for stability.</li>
+      <li><b>Apply loads</b> — pick <i>Load</i>, click a joint, then type the load components in the Properties tab.</li>
+      <li><b>Read the story</b> — the <i>Insights</i> tab explains which member attracts the most force, which one controls the deflection, and how to fix it efficiently (Baker's virtual-work view).</li>
+      <li><b>Experiment</b> — select a member, give it an AISC shape or change its area, and re-solve. In a <i>determinate</i> truss forces stay put but deflections change; in an <i>indeterminate</i> one the forces redistribute too.</li>
+    </ol>
+    <h3>The method under the hood</h3>
+    <p>Member forces and joint displacements come from the <b>direct stiffness
+    method</b>. The deflection of the most-displaced joint is then decomposed
+    with the <b>unit-load (virtual work)</b> method,
+    <span class="formula">&delta; = &Sigma; N&middot;n&middot;L/(EA)</span>,
+    so every member's individual contribution is visible. The two methods agree —
+    that agreement is the whole point.</p>
+  </div>
+</div>
+
+<!-- scripts: order matters (no modules, plain globals) -->
+<script src="js/solver.js"></script>
+<script src="js/units.js"></script>
+<script src="js/sections.js"></script>
+<script src="js/model.js"></script>
+<script src="js/examples.js"></script>
+<script src="js/view.js"></script>
+<script src="js/explain.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
