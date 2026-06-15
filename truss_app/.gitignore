@@ -1,0 +1,3 @@
+# Dev-only test dependency (jsdom) — not needed at runtime
+node_modules/
+package-lock.json
