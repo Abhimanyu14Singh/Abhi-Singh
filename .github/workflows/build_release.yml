@@ -1,0 +1,66 @@
+name: Build and Release ETABS Dashboard
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        working-directory: etabs_dashboard
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install "pyinstaller>=6.0"
+
+      - name: Build EXE
+        working-directory: etabs_dashboard
+        run: pyinstaller etabs_dashboard.spec --clean -y
+
+      - name: Create GitHub Release and upload EXE
+        uses: softprops/action-gh-release@v2
+        with:
+          files: etabs_dashboard/dist/ETABS_Dashboard.exe
+          name: ETABS Dashboard ${{ github.ref_name }}
+          body: |
+            ## ETABS Dashboard ${{ github.ref_name }}
+
+            ### Quick Start
+            1. Download **ETABS_Dashboard.exe** below
+            2. Place it anywhere on your Windows PC (no installation needed)
+            3. Double-click to launch — a console window opens, then a browser tab at `http://localhost:8050`
+            4. Open ETABS v23 and load your model
+            5. Run the analysis in ETABS (`Analyze → Run All`)
+            6. Click **ATTACH** in the dashboard
+
+            ### Requirements
+            - Windows 10 / 11
+            - ETABS v23 installed and running with a model loaded
+            - No Python installation required
+
+            ### Notes
+            - The console window must stay open while you use the dashboard
+            - Close the console window to stop the dashboard
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ETABS_Dashboard_${{ github.ref_name }}
+          path: etabs_dashboard/dist/ETABS_Dashboard.exe
+          retention-days: 30

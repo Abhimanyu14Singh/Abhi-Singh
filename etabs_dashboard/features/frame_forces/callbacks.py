@@ -3,7 +3,7 @@ import plotly.graph_objects as go
 from dash import Input, Output, State, dcc, html, no_update
 import dash, io
 from data_store import get_all_cases_and_combos
-from callbacks.charts._helpers import empty_fig, base_layout, make_table, ENGINEERING_COLORS
+from shared.helpers import empty_fig, base_layout, make_table, ENGINEERING_COLORS
 import dash_bootstrap_components as dbc
 
 app = dash.get_app()

@@ -3,7 +3,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from dash import Input, Output
 import dash
-from callbacks.charts._helpers import empty_fig, base_layout, make_table, ENGINEERING_COLORS
+from shared.helpers import empty_fig, base_layout, make_table, ENGINEERING_COLORS
 
 app = dash.get_app()
 

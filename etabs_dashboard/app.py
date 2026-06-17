@@ -1,3 +1,12 @@
+import sys
+import os
+from multiprocessing import freeze_support
+
+# PyInstaller: when running as a frozen .exe, move to the bundle root so
+# that Dash can locate the 'assets/' folder via relative path.
+if getattr(sys, 'frozen', False):
+    os.chdir(sys._MEIPASS)
+
 import dash
 import dash_bootstrap_components as dbc
 from dash import Input, Output, clientside_callback
@@ -17,27 +26,29 @@ server = app.server
 from layouts.main_layout import build_layout   # noqa: E402
 app.layout = build_layout()
 
-# ── Structural callbacks ──────────────────────────────────────────────────────
-import callbacks.connection              # noqa: E402 F401
-import callbacks.navigation              # noqa: E402 F401
-import callbacks.charts.overview_cb     # noqa: E402 F401
-import callbacks.charts.plan_view_cb    # noqa: E402 F401
-import callbacks.charts.story_drifts_cb # noqa: E402 F401
-import callbacks.charts.story_forces_cb # noqa: E402 F401
-import callbacks.charts.base_reactions_cb   # noqa: E402 F401
-import callbacks.charts.frame_forces_cb     # noqa: E402 F401
-import callbacks.charts.modal_cb            # noqa: E402 F401
-import callbacks.charts.displacements_cb    # noqa: E402 F401
-import callbacks.charts.load_patterns_cb    # noqa: E402 F401
-import callbacks.charts.torsion_cb          # noqa: E402 F401
+# ── Infrastructure callbacks ──────────────────────────────────────────────────
+import callbacks.connection   # noqa: E402 F401
+import callbacks.navigation   # noqa: E402 F401
 
-# ── Data science / analytics callbacks ───────────────────────────────────────
-import callbacks.charts.statistics_cb   # noqa: E402 F401
-import callbacks.charts.heatmaps_cb     # noqa: E402 F401
-import callbacks.charts.code_checks_cb  # noqa: E402 F401
-import callbacks.charts.outliers_cb     # noqa: E402 F401
-import callbacks.charts.correlation_cb  # noqa: E402 F401
-import callbacks.charts.scorecard_cb    # noqa: E402 F401
+# ── Structural feature callbacks ──────────────────────────────────────────────
+import features.overview.callbacks        # noqa: E402 F401
+import features.plan_view.callbacks       # noqa: E402 F401
+import features.story_drifts.callbacks    # noqa: E402 F401
+import features.story_forces.callbacks    # noqa: E402 F401
+import features.base_reactions.callbacks  # noqa: E402 F401
+import features.frame_forces.callbacks    # noqa: E402 F401
+import features.modal.callbacks           # noqa: E402 F401
+import features.displacements.callbacks   # noqa: E402 F401
+import features.load_patterns.callbacks   # noqa: E402 F401
+import features.torsion.callbacks         # noqa: E402 F401
+
+# ── Analytics feature callbacks ───────────────────────────────────────────────
+import features.statistics.callbacks      # noqa: E402 F401
+import features.heatmaps.callbacks        # noqa: E402 F401
+import features.code_checks.callbacks     # noqa: E402 F401
+import features.outliers.callbacks        # noqa: E402 F401
+import features.correlation.callbacks     # noqa: E402 F401
+import features.scorecard.callbacks       # noqa: E402 F401
 
 # ── Client-side dark/light theme switcher ────────────────────────────────────
 clientside_callback(
@@ -66,4 +77,5 @@ clientside_callback(
 )
 
 if __name__ == "__main__":
+    freeze_support()
     app.run(debug=False, port=8050)

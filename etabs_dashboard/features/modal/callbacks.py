@@ -2,7 +2,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from dash import Input, Output, dcc, html, no_update
 import dash, io
-from callbacks.charts._helpers import empty_fig, base_layout, make_table, ENGINEERING_COLORS
+from shared.helpers import empty_fig, base_layout, make_table, ENGINEERING_COLORS
 
 app = dash.get_app()
 

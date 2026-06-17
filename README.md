@@ -149,6 +149,9 @@ because large models can have tens of thousands of frames.
 ```
 Abhi-Singh/
 ├── README.md                          ← you are here
+├── .github/
+│   └── workflows/
+│       └── build_release.yml          ← auto-build .exe on git tag push
 │
 └── etabs_dashboard/                   ← entire application
     ├── app.py                         ← Dash entry point; registers all callbacks
@@ -156,6 +159,8 @@ Abhi-Singh/
     ├── data_store.py                  ← helpers for querying the dcc.Store dict
     ├── requirements.txt
     ├── run.bat                        ← Windows one-click launcher
+    ├── build_exe.bat                  ← local Windows .exe build script
+    ├── etabs_dashboard.spec           ← PyInstaller spec for .exe packaging
     ├── run_tests.py                   ← 80-test suite (no ETABS required)
     │
     ├── assets/
@@ -167,50 +172,67 @@ Abhi-Singh/
     │   ├── PAGES.md
     │   └── ANALYTICS.md
     │
-    ├── layouts/
+    ├── shared/
+    │   └── helpers.py                 ← shared Plotly utilities (empty_fig, make_table, etc.)
+    │
+    ├── features/                      ← one directory per page (16 total)
+    │   ├── overview/
+    │   │   ├── layout.py              ← HTML layout for this page
+    │   │   └── callbacks.py           ← all Dash callbacks for this page
+    │   ├── plan_view/
+    │   ├── story_drifts/
+    │   ├── story_forces/
+    │   ├── base_reactions/
+    │   ├── frame_forces/
+    │   ├── modal/
+    │   ├── displacements/
+    │   ├── load_patterns/
+    │   ├── torsion/
+    │   ├── statistics/
+    │   ├── heatmaps/
+    │   ├── code_checks/
+    │   ├── outliers/
+    │   ├── correlation/
+    │   └── scorecard/
+    │
+    ├── layouts/                       ← app chrome (not page-specific)
     │   ├── main_layout.py             ← root layout (Stores, header, sidebar, body)
     │   ├── header.py                  ← top navbar with ATTACH + theme buttons
-    │   ├── sidebar.py                 ← left nav (Structural / Analytics sections)
-    │   └── pages/                     ← one file per page (16 pages)
-    │       ├── overview.py
-    │       ├── plan_view.py
-    │       ├── story_drifts.py
-    │       ├── story_forces.py
-    │       ├── base_reactions.py
-    │       ├── frame_forces.py
-    │       ├── modal.py
-    │       ├── displacements.py
-    │       ├── load_patterns.py
-    │       ├── torsion.py
-    │       ├── statistics.py
-    │       ├── heatmaps.py
-    │       ├── code_checks.py
-    │       ├── outliers.py
-    │       ├── correlation.py
-    │       └── scorecard.py
+    │   └── sidebar.py                 ← left nav (Structural / Analytics sections)
     │
-    └── callbacks/
+    └── callbacks/                     ← non-page callbacks
         ├── connection.py              ← ATTACH button handler
-        ├── navigation.py             ← URL router + sidebar model summary
-        └── charts/
-            ├── _helpers.py           ← shared Plotly utilities
-            ├── overview_cb.py
-            ├── plan_view_cb.py
-            ├── story_drifts_cb.py
-            ├── story_forces_cb.py
-            ├── base_reactions_cb.py
-            ├── frame_forces_cb.py
-            ├── modal_cb.py
-            ├── displacements_cb.py
-            ├── load_patterns_cb.py
-            ├── torsion_cb.py
-            ├── statistics_cb.py
-            ├── heatmaps_cb.py
-            ├── code_checks_cb.py
-            ├── outliers_cb.py
-            ├── correlation_cb.py
-            └── scorecard_cb.py
+        └── navigation.py             ← URL router + sidebar model summary
 ```
+
+---
+
+## Download the Windows App
+
+Pre-built `.exe` files are available on the [Releases page](../../releases).
+
+1. Go to **Releases** on the right side of the GitHub page.
+2. Download `ETABS_Dashboard.exe` from the latest release.
+3. Place it anywhere on your Windows PC — no Python installation required.
+4. Double-click to launch. A console window opens and the dashboard appears at `http://localhost:8050`.
+
+### Building the .exe yourself
+
+**On Windows (local):**
+```
+etabs_dashboard\build_exe.bat
+```
+Output: `etabs_dashboard\dist\ETABS_Dashboard.exe`
+
+**Automatically via GitHub Actions:**
+
+Push a version tag and GitHub builds and publishes the `.exe` automatically:
+```
+git tag v1.0.0
+git push origin v1.0.0
+```
+The Actions workflow (`build_release.yml`) runs on a Windows runner, builds the
+executable with PyInstaller, and attaches it to a new GitHub Release.
 
 ---
 

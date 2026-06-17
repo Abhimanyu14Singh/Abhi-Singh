@@ -1,12 +1,22 @@
 from dash import Input, Output, html
 import dash
 
-from layouts.pages import (
-    overview, plan_view, story_drifts, story_forces,
-    base_reactions, frame_forces, modal, displacements,
-    load_patterns, torsion,
-    statistics, heatmaps, code_checks, outliers, correlation, scorecard,
-)
+import features.overview        as overview
+import features.plan_view       as plan_view
+import features.story_drifts    as story_drifts
+import features.story_forces    as story_forces
+import features.base_reactions  as base_reactions
+import features.frame_forces    as frame_forces
+import features.modal           as modal
+import features.displacements   as displacements
+import features.load_patterns   as load_patterns
+import features.torsion         as torsion
+import features.statistics      as statistics
+import features.heatmaps        as heatmaps
+import features.code_checks     as code_checks
+import features.outliers        as outliers
+import features.correlation     as correlation
+import features.scorecard       as scorecard
 
 
 PAGE_MAP = {

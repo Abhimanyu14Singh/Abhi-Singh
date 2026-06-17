@@ -8,3 +8,4 @@ openpyxl>=3.1.0
 kaleido>=0.2.1
 comtypes>=1.4.0
 dash-iconify>=0.1.2
+pyinstaller>=6.0

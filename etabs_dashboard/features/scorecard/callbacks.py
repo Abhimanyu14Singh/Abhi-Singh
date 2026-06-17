@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 from dash import Input, Output, html, dcc, no_update
 import dash, io
 import dash_bootstrap_components as dbc
-from callbacks.charts._helpers import empty_fig, base_layout, ENGINEERING_COLORS
+from shared.helpers import empty_fig, base_layout, ENGINEERING_COLORS
 
 app = dash.get_app()
 

@@ -4,7 +4,7 @@ from dash import Input, Output, html, dcc, no_update
 import dash
 import io, base64
 from data_store import get_all_cases_and_combos, get_story_elevations, to_df
-from callbacks.charts._helpers import empty_fig, base_layout, make_table, ENGINEERING_COLORS
+from shared.helpers import empty_fig, base_layout, make_table, ENGINEERING_COLORS
 
 app = dash.get_app()
 

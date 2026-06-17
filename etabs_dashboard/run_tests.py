@@ -93,19 +93,19 @@ def test(name, fn):
 
 # ── Structural pages ──────────────────────────────────────────────────────────
 from callbacks.navigation import render_page, update_sidebar_summary
-from callbacks.charts.overview_cb import (
+from features.overview.callbacks import (
     update_kpis, update_model_table, update_story_table,
     update_lc_tables, update_pattern_table, update_composition_chart)
-from callbacks.charts.plan_view_cb import populate_story_dropdown, update_plan_view
-from callbacks.charts.story_drifts_cb import populate_cases, update_drift_charts
-from callbacks.charts.story_forces_cb import populate_sf_cases, update_sf
-from callbacks.charts.base_reactions_cb import populate_br_cases, update_br
-from callbacks.charts.frame_forces_cb import (
+from features.plan_view.callbacks import populate_story_dropdown, update_plan_view
+from features.story_drifts.callbacks import populate_cases, update_drift_charts
+from features.story_forces.callbacks import populate_sf_cases, update_sf
+from features.base_reactions.callbacks import populate_br_cases, update_br
+from features.frame_forces.callbacks import (
     populate_ff_frames, populate_ff_cases, update_ff_charts)
-from callbacks.charts.modal_cb import update_modal
-from callbacks.charts.displacements_cb import populate_disp_cases, update_disp
-from callbacks.charts.load_patterns_cb import update_load_patterns
-from callbacks.charts.torsion_cb import populate_torsion_cases, update_torsion
+from features.modal.callbacks import update_modal
+from features.displacements.callbacks import populate_disp_cases, update_disp
+from features.load_patterns.callbacks import update_load_patterns
+from features.torsion.callbacks import populate_torsion_cases, update_torsion
 
 print("\n══ Structural Callback Tests ════════════════════════════════")
 ALL_PATHS = ["/","/overview","/plan-view","/story-drifts","/story-forces",
@@ -154,12 +154,12 @@ test("torsion dark",         lambda: update_torsion(MOCK, "EY", "dark"))
 test("torsion no data",      lambda: update_torsion(None, None, "light"))
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
-from callbacks.charts.statistics_cb  import update_stats,         populate_stats_cases
-from callbacks.charts.heatmaps_cb    import update_heatmaps
-from callbacks.charts.code_checks_cb import update_code_checks,   populate_cc_cases
-from callbacks.charts.outliers_cb    import update_outliers,       populate_out_cases
-from callbacks.charts.correlation_cb import update_correlation
-from callbacks.charts.scorecard_cb   import update_scorecard
+from features.statistics.callbacks  import update_stats,         populate_stats_cases
+from features.heatmaps.callbacks    import update_heatmaps
+from features.code_checks.callbacks import update_code_checks,   populate_cc_cases
+from features.outliers.callbacks    import update_outliers,       populate_out_cases
+from features.correlation.callbacks import update_correlation
+from features.scorecard.callbacks   import update_scorecard
 
 print("\n══ Analytics Callback Tests ════════════════════════════════")
 test("stats populate cases",          lambda: populate_stats_cases(MOCK))

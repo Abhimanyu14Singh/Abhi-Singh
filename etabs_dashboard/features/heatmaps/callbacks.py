@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 from dash import Input, Output, html
 import dash
 from data_store import get_story_elevations
-from callbacks.charts._helpers import empty_fig, base_layout, make_table, ENGINEERING_COLORS
+from shared.helpers import empty_fig, base_layout, make_table, ENGINEERING_COLORS
 
 app = dash.get_app()
 

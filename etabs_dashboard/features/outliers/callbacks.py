@@ -5,7 +5,7 @@ from dash import Input, Output, html
 import dash
 import dash_bootstrap_components as dbc
 from data_store import get_all_cases_and_combos, get_story_elevations
-from callbacks.charts._helpers import empty_fig, base_layout, make_table, ENGINEERING_COLORS
+from shared.helpers import empty_fig, base_layout, make_table, ENGINEERING_COLORS
 
 app = dash.get_app()
 

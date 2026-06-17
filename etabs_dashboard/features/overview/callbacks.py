@@ -3,7 +3,7 @@ import dash
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 from data_store import to_df
-from callbacks.charts._helpers import empty_fig, base_layout, make_table
+from shared.helpers import empty_fig, base_layout, make_table
 
 
 app = dash.get_app()

@@ -1,7 +1,7 @@
 from dash import Input, Output, State, no_update, html
 import dash
 import plotly.graph_objects as go
-from callbacks.charts._helpers import empty_fig, base_layout
+from shared.helpers import empty_fig, base_layout
 from data_store import get_story_names, get_story_elevations
 
 
