@@ -205,6 +205,90 @@ function storyChart(rows, opts) {
 }
 
 /**
+ * Small member-station diagram (N / V / M along the member).
+ * xs: station positions (m), vs: values. Filled-area style with zero line
+ * and min/max labels (value @ position).
+ */
+export function stationDiagram(xs, vs, opts = {}) {
+  const W = 268, H = 104;
+  const M = { l: 10, r: 10, t: 8, b: 16 };
+  const pw = W - M.l - M.r, ph = H - M.t - M.b;
+  const L = xs[xs.length - 1] || 1;
+  const color = opts.color || "#1e9ad4";
+
+  let lo = Math.min(0, ...vs), hi = Math.max(0, ...vs);
+  if (hi - lo < 1e-9) { hi += 1; lo -= 1; }
+  const pad = (hi - lo) * 0.12;
+  hi += pad; lo -= pad;
+  const xOf = x => M.l + (x / L) * pw;
+  const yOf = v => M.t + (hi - v) / (hi - lo) * ph;
+
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
+
+  // zero line + member baseline ticks
+  svg.appendChild(el("line", {
+    x1: M.l, x2: M.l + pw, y1: yOf(0), y2: yOf(0),
+    stroke: S.axis, "stroke-width": 1,
+  }));
+  for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+    svg.appendChild(el("line", {
+      x1: xOf(t * L), x2: xOf(t * L), y1: yOf(0) - 2.5, y2: yOf(0) + 2.5,
+      stroke: S.axis, "stroke-width": 1, "stroke-opacity": 0.55,
+    }));
+  }
+  svg.appendChild(txt("text", {
+    x: M.l, y: H - 4, fill: S.axis, "font-size": 9, "text-anchor": "start",
+    style: "font-variant-numeric:tabular-nums",
+  }, "0"));
+  svg.appendChild(txt("text", {
+    x: M.l + pw, y: H - 4, fill: S.axis, "font-size": 9, "text-anchor": "end",
+    style: "font-variant-numeric:tabular-nums",
+  }, `${fmt(L, 1)} m`));
+
+  // filled area + stroke
+  let dArea = `M${xOf(xs[0]).toFixed(1)},${yOf(0).toFixed(1)}`;
+  let dLine = "";
+  xs.forEach((x, i) => {
+    const px = xOf(x).toFixed(1), py = yOf(vs[i]).toFixed(1);
+    dArea += ` L${px},${py}`;
+    dLine += `${i ? " L" : "M"}${px},${py}`;
+  });
+  dArea += ` L${xOf(xs[xs.length - 1]).toFixed(1)},${yOf(0).toFixed(1)} Z`;
+  svg.appendChild(el("path", { d: dArea, fill: color, "fill-opacity": 0.18 }));
+  svg.appendChild(el("path", {
+    d: dLine, fill: "none", stroke: color, "stroke-width": 1.8,
+    "stroke-linejoin": "round", "stroke-linecap": "round",
+  }));
+
+  // min / max annotations (value @ x)
+  let iMax = 0, iMin = 0;
+  vs.forEach((v, i) => { if (v > vs[iMax]) iMax = i; if (v < vs[iMin]) iMin = i; });
+  const dec = opts.dec != null ? opts.dec : 1;
+  const label = (i, above) => {
+    const v = vs[i];
+    if (Math.abs(v) < 1e-9) return;
+    const px = Math.max(M.l + 26, Math.min(xOf(xs[i]), M.l + pw - 26));
+    const py = above ? Math.max(yOf(v) - 5, 9) : Math.min(yOf(v) + 11, H - 6);
+    svg.appendChild(el("circle", { cx: xOf(xs[i]), cy: yOf(v), r: 2.2, fill: color }));
+    svg.appendChild(txt("text", {
+      x: px, y: py, fill: S.text, "font-size": 9, "text-anchor": "middle",
+      style: "font-variant-numeric:tabular-nums",
+    }, `${fmt(v, dec)} @ ${fmt(xs[i], 1)}`));
+  };
+  label(iMax, true);
+  if (iMin !== iMax) label(iMin, false);
+
+  const card = document.createElement("div");
+  card.className = "diagram-card";
+  const title = document.createElement("div");
+  title.className = "diagram-title";
+  title.innerHTML = `<b>${opts.title || ""}</b> <span class="unit">${opts.unit || ""}</span>`;
+  card.appendChild(title);
+  card.appendChild(svg);
+  return card;
+}
+
+/**
  * Render the three story charts into `container`.
  * caseData.story: {story: {ux,uy,drift_x,drift_y,shear_x,shear_y}}
  * driftLimitPct: e.g. 0.5 (%)

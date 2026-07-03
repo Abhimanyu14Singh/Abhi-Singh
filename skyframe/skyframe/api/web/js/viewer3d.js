@@ -10,6 +10,13 @@ const COLORS = {
   gridLabel: "rgba(140, 160, 185, 0.55)",
   slabFill: "rgba(53, 181, 229, 0.045)",
   slabEdge: "rgba(53, 181, 229, 0.10)",
+  wallShell: "rgba(95, 143, 201, 0.22)",       // ShellRegion walls — steel blue tint
+  wallShellEdge: "rgba(125, 168, 216, 0.55)",
+  slabShell: "rgba(154, 167, 180, 0.15)",      // ShellRegion slabs — neutral
+  slabShellEdge: "rgba(154, 167, 180, 0.45)",
+  meshLine: "rgba(200, 215, 230, 0.14)",
+  wallShellDef: "rgba(53, 181, 229, 0.16)",
+  slabShellDef: "rgba(53, 181, 229, 0.10)",
   support: "#8fa3ba",
   deformed: "#35b5e5",
   ghost: 0.16,          // alpha for ghosted base wireframe
@@ -34,6 +41,7 @@ export class Viewer3D {
     this.ctx = canvas.getContext("2d");
     this.tooltipEl = opts.tooltipEl || null;
     this.getMemberTooltip = opts.getMemberTooltip || null;
+    this.onMemberClick = opts.onMemberClick || null;
 
     this.model = null;
     this.results = null;
@@ -69,6 +77,13 @@ export class Viewer3D {
   setResults(results) {
     this.results = results;
     this._nodeXYZ = results ? results.nodes : null;
+    // coordinate → node-tag map (deformed-shell fallback via region corners)
+    this._coordTag = null;
+    if (results && results.nodes) {
+      this._coordTag = new Map();
+      for (const [t, p] of Object.entries(results.nodes))
+        this._coordTag.set(p.map(v => v.toFixed(4)).join(","), t);
+    }
     this._dirty = true;
   }
 
@@ -105,11 +120,19 @@ export class Viewer3D {
       section: mm.section, story: mm.story,
     }));
 
+    // v0.2 shell regions (walls / slabs) as filled quads
+    this.shellPolys = (m.shells || []).map(s => ({
+      corners: s.corners, kind: s.kind, uid: s.uid, behavior: s.behavior,
+    }));
+
     let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
     for (const s of this.segs) for (const p of [s.p1, s.p2]) {
       for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], p[i]); hi[i] = Math.max(hi[i], p[i]); }
     }
-    if (!this.segs.length) { lo = [0, 0, 0]; hi = [10, 10, 10]; }
+    for (const sh of this.shellPolys) for (const p of sh.corners) {
+      for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], p[i]); hi[i] = Math.max(hi[i], p[i]); }
+    }
+    if (!this.segs.length && !this.shellPolys.length) { lo = [0, 0, 0]; hi = [10, 10, 10]; }
     this._bbox = [lo, hi];
 
     // ground grid from model grid
@@ -169,6 +192,7 @@ export class Viewer3D {
       drag = {
         x: e.clientX, y: e.clientY,
         pan: e.button === 2 || e.shiftKey,
+        button: e.button, moved: 0,
       };
       this.vyaw = this.vpitch = 0;
       c.classList.add("dragging");
@@ -179,6 +203,7 @@ export class Viewer3D {
       if (drag) {
         const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
         drag.x = e.clientX; drag.y = e.clientY;
+        drag.moved += Math.abs(dx) + Math.abs(dy);
         if (drag.pan) this._pan(dx, dy);
         else {
           this.yaw -= dx * 0.008;
@@ -194,10 +219,22 @@ export class Viewer3D {
 
     const endDrag = e => {
       if (!drag) return;
+      const wasClick = drag.button === 0 && drag.moved < 5;
       drag = null;
       c.classList.remove("dragging");
       // small inertia
       if (Math.abs(this.vyaw) > 0.002 || Math.abs(this.vpitch) > 0.002) this._dirty = true;
+      // plain left-click (no drag) → member pick
+      if (wasClick && this.onMemberClick && e && e.type === "pointerup") {
+        const rect = c.getBoundingClientRect();
+        const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+        let best = null, bestD = 8;
+        for (const s of this._segsScreen) {
+          const d = distToSeg(mx, my, s.x1, s.y1, s.x2, s.y2);
+          if (d < bestD) { bestD = d; best = s.seg; }
+        }
+        this.onMemberClick(best);
+      }
     };
     c.addEventListener("pointerup", endDrag);
     c.addEventListener("pointercancel", endDrag);
@@ -324,7 +361,7 @@ export class Viewer3D {
       }
     }
 
-    // ---- depth-sorted drawables: slabs + members
+    // ---- depth-sorted drawables: slabs + shell regions + members
     const overlayActive = this.overlay.deformed || this.overlay.modal;
     const items = [];
     for (const poly of this.slabs) {
@@ -336,6 +373,16 @@ export class Viewer3D {
         zsum += pc[2]; pts.push(P.proj(pc));
       }
       if (ok) items.push({ type: "slab", pts, z: zsum / poly.length });
+    }
+    for (const sh of (this.shellPolys || [])) {
+      const pts = [];
+      let zsum = 0, ok = true;
+      for (const p of sh.corners) {
+        const pc = P.toCam(p);
+        if (pc[2] < P.near) { ok = false; break; }
+        zsum += pc[2]; pts.push(P.proj(pc));
+      }
+      if (ok) items.push({ type: "shell", pts, z: zsum / sh.corners.length, kind: sh.kind });
     }
     this._segsScreen = [];
     for (const seg of this.segs) {
@@ -355,6 +402,24 @@ export class Viewer3D {
         ctx.beginPath();
         it.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
         ctx.closePath(); ctx.fill(); ctx.stroke();
+      } else if (it.type === "shell") {
+        // translucent shell region; ghosted outline only under overlays
+        const wall = it.kind === "wall";
+        ctx.beginPath();
+        it.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.closePath();
+        if (overlayActive) {
+          ctx.globalAlpha = COLORS.ghost;
+          ctx.strokeStyle = wall ? COLORS.wallShellEdge : COLORS.slabShellEdge;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+        } else {
+          ctx.fillStyle = wall ? COLORS.wallShell : COLORS.slabShell;
+          ctx.strokeStyle = wall ? COLORS.wallShellEdge : COLORS.slabShellEdge;
+          ctx.lineWidth = 1.2;
+          ctx.fill(); ctx.stroke();
+        }
       } else {
         const { s, seg } = it;
         const hovered = this._hover && this._hover.uid === seg.uid;
@@ -369,6 +434,29 @@ export class Viewer3D {
         ctx.globalAlpha = 1;
         this._segsScreen.push({ x1: s.a.x, y1: s.a.y, x2: s.b.x, y2: s.b.y, seg });
       }
+    }
+
+    // ---- FE shell mesh lines (subtle, once analyzed)
+    if (!overlayActive && this.results && this.results.shell_quads &&
+        this.results.shell_quads.length && this._nodeXYZ) {
+      ctx.strokeStyle = COLORS.meshLine;
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      for (const q of this.results.shell_quads) {
+        const pts = [];
+        let ok = true;
+        for (const t of q.nodes) {
+          const p = this._nodeXYZ[t];
+          if (!p) { ok = false; break; }
+          const pc = P.toCam(p);
+          if (pc[2] < P.near) { ok = false; break; }
+          pts.push(P.proj(pc));
+        }
+        if (!ok) continue;
+        pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.closePath();
+      }
+      ctx.stroke();
     }
 
     // ---- supports
@@ -427,6 +515,8 @@ export class Viewer3D {
     }
     if (!dispMap) return;
 
+    this._renderDeformedShells(P, dispMap, factor);
+
     const ctx = this.ctx;
     const nodes = r.nodes;
     const polys = [];
@@ -455,6 +545,66 @@ export class Viewer3D {
     }
     ctx.stroke();
     ctx.globalAlpha = 1;
+  }
+
+  /** Deformed shell regions: displace FE mesh quads when shell_quads +
+      node_disp are available, else fall back to region corners matched to
+      result nodes by coordinate. Painter-sorted translucent quads. */
+  _renderDeformedShells(P, dispMap, factor) {
+    const r = this.results;
+    if (!r) return;
+    const ctx = this.ctx;
+    const polys = [];
+    const project = world => {
+      const pts = [];
+      let zsum = 0;
+      for (const p of world) {
+        const pc = P.toCam(p);
+        if (pc[2] < P.near) return null;
+        zsum += pc[2]; pts.push(P.proj(pc));
+      }
+      return { pts, z: zsum / world.length };
+    };
+    const move = (p, d) => d ?
+      [p[0] + factor * d[0], p[1] + factor * d[1], p[2] + factor * d[2]] : p;
+
+    if (r.shell_quads && r.shell_quads.length) {
+      const kindOf = {};
+      for (const sh of (this.shellPolys || [])) kindOf[sh.uid] = sh.kind;
+      for (const q of r.shell_quads) {
+        const world = [];
+        let ok = true;
+        for (const t of q.nodes) {
+          const p = r.nodes[t];
+          if (!p) { ok = false; break; }
+          world.push(move(p, dispMap[t]));
+        }
+        if (!ok) continue;
+        const pr = project(world);
+        if (pr) polys.push({ ...pr, kind: kindOf[q.region] || "slab" });
+      }
+    } else if (this.shellPolys && this.shellPolys.length && this._coordTag) {
+      for (const sh of this.shellPolys) {
+        const world = sh.corners.map(p => {
+          const t = this._coordTag.get(p.map(v => v.toFixed(4)).join(","));
+          return move(p, t ? dispMap[t] : null);
+        });
+        const pr = project(world);
+        if (pr) polys.push({ ...pr, kind: sh.kind });
+      }
+    }
+    if (!polys.length) return;
+
+    polys.sort((a, b) => b.z - a.z);
+    ctx.lineWidth = 0.9;
+    for (const qp of polys) {
+      ctx.fillStyle = qp.kind === "wall" ? COLORS.wallShellDef : COLORS.slabShellDef;
+      ctx.strokeStyle = "rgba(53, 181, 229, 0.30)";
+      ctx.beginPath();
+      qp.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    }
   }
 
   /** Cubic-Hermite interpolated deformed member (8 segments). */

@@ -40,7 +40,7 @@ export function mockModel(p = {}) {
   const members = [];
   const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
   const add = (kind, section, pi, pj, story, uid) =>
-    members.push({ uid, kind, section, pi, pj, story, length: dist(pi, pj) });
+    members.push({ uid, kind, section, pi, pj, story, length: dist(pi, pj), releases: "" });
 
   stories.forEach((st, si) => {
     const zt = st.elevation, zb = st.elevation - st.height;
@@ -68,6 +68,57 @@ export function mockModel(p = {}) {
     story_masses[st.name] = w / G;
   });
 
+  // v0.2: shell sections + a couple of walls & slabs (contract shapes)
+  const shell_sections = {
+    SH200: { name: "SH200", material: "CONC", thickness: 0.2 },
+    SLAB150: { name: "SLAB150", material: "CONC", thickness: 0.15 },
+  };
+  const shells = [];
+  const wallLen = Math.min(o.bay_width_x, 8);
+  for (let s = 0; s < Math.min(2, stories.length); s++) {
+    const st = stories[s], zb = st.elevation - st.height, zt = st.elevation;
+    shells.push({
+      uid: `W${s + 1}`, kind: "wall", behavior: "shell", section: "SH200",
+      corners: [[0, 0, zb], [wallLen, 0, zb], [wallLen, 0, zt], [0, 0, zt]],
+      mesh_size: 1.0, story: st.name,
+    });
+  }
+  if (xs.length >= 2 && ys.length >= 2) {
+    const z1 = stories[0].elevation;
+    shells.push({
+      uid: "SL1", kind: "slab", behavior: "shell", section: "SLAB150",
+      corners: [[xs[0], ys[0], z1], [xs[1], ys[0], z1], [xs[1], ys[1], z1], [xs[0], ys[1], z1]],
+      mesh_size: 1.5, story: stories[0].name,
+    });
+    if (stories.length > 1) {
+      const z2 = stories[1].elevation;
+      const xl = xs[xs.length - 2], xr = xs[xs.length - 1];
+      const yl = ys[ys.length - 2], yr = ys[ys.length - 1];
+      shells.push({
+        uid: "SL2", kind: "slab", behavior: "membrane", section: "SLAB150",
+        corners: [[xl, yl, z2], [xr, yl, z2], [xr, yr, z2], [xl, yr, z2]],
+        mesh_size: 1.5, story: stories[1].name,
+      });
+    }
+  }
+
+  // load patterns with per-member UDLs + area loads (contract MemberLoad/AreaLoad)
+  const beamUdls = w => members.filter(m => m.kind === "beam").map(m => ({
+    member_uid: m.uid, kind: "udl", w, w2: 0, a: 0, b: 1, direction: "gravity",
+  }));
+  const patterns = {
+    DEAD: {
+      name: "DEAD", member_loads: beamUdls(o.dead_udl),
+      area_loads: shells.filter(s => s.kind === "slab").map(s => ({ region_uid: s.uid, q: 2.0 })),
+    },
+    LIVE: {
+      name: "LIVE", member_loads: beamUdls(o.live_udl),
+      area_loads: shells.filter(s => s.kind === "slab").map(s => ({ region_uid: s.uid, q: 3.0 })),
+    },
+    EQX: { name: "EQX", member_loads: [], area_loads: [] },
+    EQY: { name: "EQY", member_loads: [], area_loads: [] },
+  };
+
   return {
     name: o.name,
     materials: { CONC: { name: "CONC", E: o.E, nu: 0.2, unit_weight: 24 } },
@@ -75,11 +126,12 @@ export function mockModel(p = {}) {
       COL: { name: "COL", material: "CONC", b: o.column_size, h: o.column_size },
       BEAM: { name: "BEAM", material: "CONC", b: o.beam_b, h: o.beam_h },
     },
+    shell_sections, shells,
     grid, stories, members,
     base_fixity: o.base_fixity,
     supports: [], nodal_masses: [], rigid_diaphragms: true,
     story_masses,
-    patterns: {},
+    patterns,
     cases: {
       DEAD: { name: "DEAD", patterns: { DEAD: 1 } },
       LIVE: { name: "LIVE", patterns: { LIVE: 1 } },
@@ -120,7 +172,71 @@ export function mockResults(model) {
     uid: m.uid, kind: m.kind, section: m.section,
     ni: tagFor(m.pi), nj: tagFor(m.pj), story: m.story,
   }));
+
+  // ---- shell meshes (v0.2): structured quads for shell-behavior regions.
+  // Mesh nodes registered before case generation so node_disp covers them.
+  const shell_quads = [];
+  for (const sh of (model.shells || [])) {
+    if (sh.behavior !== "shell") continue;
+    const [c0, c1, c2, c3] = sh.corners;
+    const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+    const bilin = (u, v) => lerp3(lerp3(c0, c1, u), lerp3(c3, c2, u), v);
+    const du = Math.hypot(...[0, 1, 2].map(i => c1[i] - c0[i]));
+    const dv = Math.hypot(...[0, 1, 2].map(i => c3[i] - c0[i]));
+    const nx = Math.max(1, Math.round(du / (sh.mesh_size || 1)));
+    const ny = Math.max(1, Math.round(dv / (sh.mesh_size || 1)));
+    const tag = [];
+    for (let j = 0; j <= ny; j++) {
+      tag.push([]);
+      for (let i = 0; i <= nx; i++) tag[j].push(tagFor(bilin(i / nx, j / ny)));
+    }
+    for (let j = 0; j < ny; j++)
+      for (let i = 0; i < nx; i++)
+        shell_quads.push({
+          region: sh.uid,
+          nodes: [tag[j][i], tag[j][i + 1], tag[j + 1][i + 1], tag[j + 1][i]],
+        });
+  }
+
   const supports = Object.keys(nodes).filter(t => nodes[t][2] < 1e-9);
+
+  // ---- station helpers (11 stations, statics-plausible curves)
+  const lenOf = {};
+  for (const m of model.members) lenOf[m.uid] = m.length ||
+    Math.hypot(m.pj[0] - m.pi[0], m.pj[1] - m.pi[1], m.pj[2] - m.pi[2]);
+  const udlOf = patName => {
+    const map = {};
+    const p = model.patterns && model.patterns[patName];
+    for (const l of (p && p.member_loads) || [])
+      if ((l.kind || "udl") === "udl") map[l.member_uid] = l.w;
+    return map;
+  };
+  /** Build member_stations for a case from its end forces.
+      N & V2 linear; M3 = end-moment interpolation + parabolic sag (udl). */
+  function buildStations(member_forces, wMap) {
+    const out = {};
+    const NS = 11;
+    for (const mm of members) {
+      const f = member_forces[mm.uid];
+      if (!f) continue;
+      const L = lenOf[mm.uid] || 6;
+      const w = (mm.kind === "beam" && wMap) ? (wMap[mm.uid] || 0) : 0;
+      const x = [], N = [], V2 = [], V3 = [], T = [], M2 = [], M3 = [];
+      const Msag = w * L * L / 8;
+      for (let k = 0; k < NS; k++) {
+        const t = k / (NS - 1);
+        x.push(+(t * L).toFixed(3));
+        N.push(f[0] + (-f[6] - f[0]) * t);
+        V2.push(f[1] + (-f[7] - f[1]) * t);
+        V3.push(f[2] + (-f[8] - f[2]) * t);
+        T.push(f[3] + (-f[9] - f[3]) * t);
+        M2.push(f[4] + (-f[10] - f[4]) * t);
+        M3.push(f[5] + (-f[11] - f[5]) * t + 4 * Msag * t * (1 - t));
+      }
+      out[mm.uid] = { x, N, V2, V3, T, M2, M3 };
+    }
+    return out;
+  }
 
   // ---- masses / seismic
   const masses = model.story_masses || {};
@@ -192,11 +308,15 @@ export function mockResults(model) {
         member_forces[mm.uid] = [0, v, 0, 0, 0, m, 0, -v, 0, 0, 0, -m * jit(0.2)];
       }
     });
-    return { node_disp, reactions, base, member_forces, story };
+    const member_stations = buildStations(member_forces, null);
+    return { node_disp, reactions, base, member_forces, member_stations, story };
   }
 
-  function gravityCase(w /* kN/m on beams */) {
+  function gravityCase(w /* kN/m on beams */, patName) {
     const node_disp = {}, reactions = {}, member_forces = {}, story = {};
+    const wMap = udlOf(patName);
+    for (const mm of model.members)
+      if (mm.kind === "beam" && wMap[mm.uid] == null) wMap[mm.uid] = w;
     for (const [t, p] of Object.entries(nodes)) {
       const shorten = -0.00004 * w / 25 * p[2] * jit(0.05);
       node_disp[t] = [0, 0, shorten, 0, 0, 0];
@@ -219,24 +339,26 @@ export function mockResults(model) {
         const n = -trib * jit(0.2);
         member_forces[mm.uid] = [n, 0, 0, 0, 0, n * 0.02, -n, 0, 0, 0, 0, n * 0.02];
       } else {
-        const L = model.members.find(m => m.uid === mm.uid).length || 6;
-        const m = w * L * L / 11 * jit(0.15), v = w * L / 2 * jit(0.1);
-        member_forces[mm.uid] = [0, v, 0, 0, 0, -m, 0, -v, 0, 0, 0, m * 0.8];
+        const L = lenOf[mm.uid] || 6;
+        const wm = wMap[mm.uid] != null ? wMap[mm.uid] : w;
+        const m = wm * L * L / 11 * jit(0.15), v = wm * L / 2 * jit(0.1);
+        member_forces[mm.uid] = [0, v, 0, 0, 0, -m, 0, v, 0, 0, 0, m * 0.8];
       }
     });
-    return { node_disp, reactions, base, member_forces, story };
+    const member_stations = buildStations(member_forces, wMap);
+    return { node_disp, reactions, base, member_forces, member_stations, story };
   }
 
   const cases = {
-    DEAD: gravityCase((model._mock_params && model._mock_params.dead_udl) || 25),
-    LIVE: gravityCase((model._mock_params && model._mock_params.live_udl) || 10),
+    DEAD: gravityCase((model._mock_params && model._mock_params.dead_udl) || 25, "DEAD"),
+    LIVE: gravityCase((model._mock_params && model._mock_params.live_udl) || 10, "LIVE"),
     EQX: lateralCase(true),
     EQY: lateralCase(false),
   };
 
   // combos = linear superposition of case dicts
   function combine(factors) {
-    const out = { node_disp: {}, reactions: {}, base: { FX: 0, FY: 0, FZ: 0, MX: 0, MY: 0, MZ: 0 }, member_forces: {}, story: {} };
+    const out = { node_disp: {}, reactions: {}, base: { FX: 0, FY: 0, FZ: 0, MX: 0, MY: 0, MZ: 0 }, member_forces: {}, member_stations: {}, story: {} };
     const add6 = (dst, k, arr, f) => {
       if (!dst[k]) dst[k] = new Array(arr.length).fill(0);
       arr.forEach((v, i) => dst[k][i] += f * v);
@@ -246,6 +368,15 @@ export function mockResults(model) {
       for (const [t, d] of Object.entries(c.node_disp)) add6(out.node_disp, t, d, f);
       for (const [t, r] of Object.entries(c.reactions)) add6(out.reactions, t, r, f);
       for (const [u, mf] of Object.entries(c.member_forces)) add6(out.member_forces, u, mf, f);
+      for (const [u, st] of Object.entries(c.member_stations || {})) {
+        if (!out.member_stations[u]) {
+          out.member_stations[u] = { x: st.x.slice() };
+          for (const k of ["N", "V2", "V3", "T", "M2", "M3"])
+            out.member_stations[u][k] = new Array(st.x.length).fill(0);
+        }
+        for (const k of ["N", "V2", "V3", "T", "M2", "M3"])
+          st[k].forEach((v, i) => out.member_stations[u][k][i] += f * v);
+      }
       for (const k of Object.keys(out.base)) out.base[k] += f * c.base[k];
       for (const [s, sr] of Object.entries(c.story)) {
         if (!out.story[s]) out.story[s] = { ux: 0, uy: 0, drift_x: 0, drift_y: 0, shear_x: 0, shear_y: 0 };
@@ -291,6 +422,7 @@ export function mockResults(model) {
     nodes, members, supports,
     story_order: storyOrder,
     story_elev: storyElev,
+    shell_quads,
     cases, combos,
     modal: { periods, frequencies, participation, shapes },
   };

@@ -1,9 +1,11 @@
 /* SkyFrame app shell — state store, API (with mock fallback), tabs,
-   tables, overlay controls. No frameworks. */
+   tables, overlay controls, model/draw mode. No frameworks. */
 
 import { Viewer3D } from "./viewer3d.js";
-import { renderStoryCharts } from "./charts.js";
+import { renderStoryCharts, stationDiagram } from "./charts.js";
 import { mockModel, mockResults } from "./mock.js";
+import { PlanEditor } from "./draw.js";
+import * as ME from "./modeledit.js";
 
 /* ------------------------------------------------ state */
 const store = {
@@ -18,6 +20,16 @@ const store = {
   forcesSort: { key: "M3", dir: -1 },
   forcesFilter: "",
   lastSolveMs: null,
+  // v0.2 — draw mode
+  mode: "analyze",       // "model" | "analyze"
+  story: null,           // current story name in the plan editor
+  applyAll: false,       // drawing applies to all stories
+  tool: "select",
+  selection: [],         // [{type:"member"|"shell", uid}]
+  dirty: false,          // unsaved model edits
+  modelEdited: false,    // 3D viewer needs a setModel refresh
+  loadPattern: "DEAD",   // pattern for load assignment inputs
+  selectedMemberUid: null, // member detail panel (analyze)
 };
 
 const $ = id => document.getElementById(id);
@@ -80,6 +92,14 @@ async function analyze() {
     return mockResults(store.model);
   }
   return api("/api/analyze", null);
+}
+
+async function postModel(payload) {
+  if (store.mock) {
+    await new Promise(r => setTimeout(r, 300));
+    return payload;                                // mock backend accepts locally
+  }
+  return api("/api/model", payload);
 }
 
 /* ------------------------------------------------ viewer */
@@ -154,6 +174,584 @@ function switchTab(tab) {
   if (tab === "view3d" && viewer) viewer._resize();
 }
 
+/* ================================================================
+   v0.2 — MODEL (draw) MODE
+   ================================================================ */
+let planEditor = null;
+
+function setMode(mode) {
+  store.mode = mode;
+  const model = mode === "model";
+  document.querySelectorAll(".mode-btn").forEach(b =>
+    b.classList.toggle("is-active", b.dataset.mode === mode));
+  $("drawMain").classList.toggle("hidden", !model);
+  $("analyzeMain").classList.toggle("hidden", model);
+  $("drawSidebar").classList.toggle("hidden", !model);
+  $("analyzeSidebar").classList.toggle("hidden", model);
+  $("modelActions").classList.toggle("hidden", !model);
+  $("runBtn").classList.toggle("hidden", model);
+  if (model) {
+    rebuildStorySelect();
+    planEditor.refresh();
+  } else {
+    if (store.modelEdited) {
+      viewer.setModel(store.model);
+      store.modelEdited = false;
+      syncShellLegend();
+    }
+    renderSummary();
+    if (store.tab === "view3d") viewer._resize();
+  }
+}
+
+function markDirty() {
+  store.dirty = true;
+  store.modelEdited = true;
+  $("dirtyBadge").classList.remove("hidden");
+  renderSummary();
+}
+function clearDirty() {
+  store.dirty = false;
+  $("dirtyBadge").classList.add("hidden");
+}
+
+function syncShellLegend() {
+  const shells = (store.model && store.model.shells) || [];
+  $("legendWall").classList.toggle("hidden", !shells.some(s => s.kind === "wall"));
+  $("legendSlab").classList.toggle("hidden", !shells.some(s => s.kind === "slab"));
+}
+
+/* ---- story selection */
+function rebuildStorySelect() {
+  const sel = $("storySelect");
+  sel.textContent = "";
+  const m = store.model;
+  if (!m) return;
+  const names = m.stories.map(s => s.name);
+  if (!store.story || !names.includes(store.story)) store.story = names[0] || null;
+  for (const n of [...names].reverse()) {     // top story first, like ETABS
+    const o = document.createElement("option");
+    o.value = n; o.textContent = n;
+    sel.appendChild(o);
+  }
+  sel.value = store.story;
+  syncStoryBadges();
+}
+
+function setStory(name) {
+  if (!name || name === store.story) return;
+  store.story = name;
+  $("storySelect").value = name;
+  syncStoryBadges();
+  planEditor.refresh();
+  renderProps();
+}
+
+function stepStory(dir) {
+  const names = store.model.stories.map(s => s.name);
+  const i = names.indexOf(store.story) + dir;
+  if (i >= 0 && i < names.length) setStory(names[i]);
+}
+
+function syncStoryBadges() {
+  const st = ME.storyByName(store.model, store.story);
+  if (!st) { $("storyElev").textContent = ""; $("planStoryBadge").textContent = ""; return; }
+  const zb = st.elevation - st.height;
+  $("storyElev").textContent = `z ${fmt(zb, 1)} – ${fmt(st.elevation, 1)} m`;
+  $("planStoryBadge").innerHTML =
+    `<b>${esc(st.name)}</b> · plan @ ${fmt(st.elevation, 1)} m` +
+    (store.applyAll ? ` · <span style="color:var(--amber)">all stories</span>` : "");
+}
+
+/* ---- drawing actions (called by the plan editor) */
+function targetStories() {
+  return store.applyAll ? store.model.stories.map(s => s.name) : [store.story];
+}
+
+function handleDraw(tool, payload) {
+  const m = store.model;
+  let made = 0;
+  for (const st of targetStories()) {
+    let el = null;
+    if (tool === "column") el = ME.addColumn(m, payload.x, payload.y, st);
+    else if (tool === "beam") el = ME.addBeam(m, payload.p1, payload.p2, st);
+    else if (tool === "wall") el = ME.addWall(m, payload.p1, payload.p2, st);
+    else if (tool === "slab") el = ME.addSlab(m, payload.x0, payload.y0, payload.x1, payload.y1, st);
+    if (el) made++;
+  }
+  if (made) {
+    markDirty();
+    planEditor.renderStatic();
+  }
+}
+
+function handleErase(ref) {
+  if (ME.eraseElement(store.model, ref)) {
+    store.selection = store.selection.filter(r => !(r.type === ref.type && r.uid === ref.uid));
+    markDirty();
+    planEditor.refresh();
+    renderProps();
+  }
+}
+
+function deleteSelection() {
+  if (!store.selection.length) return;
+  const n = store.selection.length;
+  for (const ref of [...store.selection]) ME.eraseElement(store.model, ref);
+  store.selection = [];
+  markDirty();
+  planEditor.refresh();
+  renderProps();
+  toast("Deleted", `${n} element${n > 1 ? "s" : ""} removed`, "info", 3000);
+}
+
+function handleSelect(refs, additive) {
+  if (additive) {
+    for (const ref of refs) {
+      const i = store.selection.findIndex(r => r.type === ref.type && r.uid === ref.uid);
+      if (i >= 0 && refs.length === 1) store.selection.splice(i, 1);   // shift-click toggles
+      else if (i < 0) store.selection.push(ref);
+    }
+  } else {
+    store.selection = refs;
+  }
+  planEditor.renderStatic();
+  renderProps();
+}
+
+function setTool(tool) {
+  store.tool = tool;
+  document.querySelectorAll(".tool-btn").forEach(b =>
+    b.classList.toggle("is-active", b.dataset.tool === tool));
+  planEditor.setTool(tool);
+}
+
+/* ---- properties / assignment panel */
+function selObjects() {
+  const m = store.model;
+  const members = [], shells = [];
+  for (const ref of store.selection) {
+    if (ref.type === "member") {
+      const mm = m.members.find(x => x.uid === ref.uid);
+      if (mm) members.push(mm);
+    } else {
+      const s = m.shells.find(x => x.uid === ref.uid);
+      if (s) shells.push(s);
+    }
+  }
+  return { members, shells };
+}
+
+const commonVal = (arr, f) => {
+  if (!arr.length) return undefined;
+  const v = f(arr[0]);
+  return arr.every(x => f(x) === v) ? v : undefined;
+};
+
+function optionList(names, selected, mixed) {
+  let html = mixed ? `<option value="" selected disabled>— mixed —</option>` : "";
+  for (const n of names)
+    html += `<option value="${esc(n)}"${n === selected ? " selected" : ""}>${esc(n)}</option>`;
+  return html;
+}
+
+function renderProps() {
+  const box = $("propsContent");
+  const { members, shells } = selObjects();
+  const total = members.length + shells.length;
+  if (!total) {
+    box.innerHTML = `<div class="props-empty">
+      <p>Nothing selected.</p>
+      <p class="muted">Use the Select tool (V): click an element or drag a box, then edit sections, releases and loads here.</p>
+    </div>`;
+    return;
+  }
+
+  const m = store.model;
+  const beams = members.filter(x => x.kind !== "column");
+  const columns = members.filter(x => x.kind === "column");
+  const walls = shells.filter(x => x.kind === "wall");
+  const slabs = shells.filter(x => x.kind === "slab");
+  const kinds = [
+    [columns.length, "column"], [beams.length, "beam"],
+    [walls.length, "wall"], [slabs.length, "slab"],
+  ].filter(([n]) => n).map(([n, k]) => `${n} ${k}${n > 1 ? "s" : ""}`).join(" · ");
+
+  const pats = ME.patternNames(m);
+  const patOpts = sel => optionList(pats, sel, false);
+
+  let html = `
+    <div class="sel-count"><span>${total} selected</span>
+      <button class="link-3d" id="propClear">Clear</button></div>
+    <div class="sel-kinds">${esc(kinds)}</div>`;
+
+  if (members.length) {
+    const sec = commonVal(members, x => x.section);
+    html += `
+      <h3 class="group-title">Frame assignments</h3>
+      <div class="field"><label for="propFrameSection">Section</label>
+        <select id="propFrameSection">${optionList(Object.keys(m.sections), sec, sec === undefined)}</select>
+      </div>`;
+    if (beams.length) {
+      const relOf = (x, tok) => (x.releases || "").split(",").map(s => s.trim()).includes(tok);
+      const mi = commonVal(beams, x => relOf(x, "Mi"));
+      const mj = commonVal(beams, x => relOf(x, "Mj"));
+      const udl = commonVal(beams, x => ME.getMemberUdl(m, store.loadPattern, x.uid) ?? 0);
+      html += `
+      <div class="field"><label>End releases <span class="unit">moment, beams</span></label>
+        <div class="check-row">
+          <label><input type="checkbox" id="propRelMi"${mi ? " checked" : ""}> M<sub>i</sub> (start)</label>
+          <label><input type="checkbox" id="propRelMj"${mj ? " checked" : ""}> M<sub>j</sub> (end)</label>
+        </div>
+      </div>
+      <h3 class="group-title">Line load — beams</h3>
+      <div class="load-row">
+        <div class="field"><label for="propUdlPat">Pattern</label>
+          <select id="propUdlPat">${patOpts(store.loadPattern)}</select></div>
+        <div class="field"><label for="propUdlW">UDL <span class="unit">kN/m ↓</span></label>
+          <input id="propUdlW" type="number" step="1" min="0"
+            value="${udl === undefined ? "" : udl}" placeholder="${udl === undefined ? "mixed" : ""}"></div>
+      </div>`;
+    }
+  }
+
+  if (shells.length) {
+    const sec = commonVal(shells, x => x.section);
+    const beh = commonVal(shells, x => x.behavior);
+    const mesh = commonVal(shells, x => x.mesh_size);
+    html += `
+      <h3 class="group-title">Shell assignments</h3>
+      <div class="field"><label for="propShellSection">Shell section</label>
+        <select id="propShellSection">${optionList(Object.keys(m.shell_sections), sec, sec === undefined)}</select>
+      </div>
+      <div class="field-row">
+        <div class="field"><label for="propBehavior">Behavior</label>
+          <select id="propBehavior">
+            ${beh === undefined ? `<option value="" selected disabled>— mixed —</option>` : ""}
+            <option value="shell"${beh === "shell" ? " selected" : ""} title="Meshed shell finite elements">shell (FE)</option>
+            <option value="membrane"${beh === "membrane" ? " selected" : ""}${walls.length ? " disabled" : ""} title="No FE — two-way tributary load to edge beams (slabs only)">membrane</option>
+          </select></div>
+        <div class="field"><label for="propMesh">Mesh <span class="unit">m</span></label>
+          <input id="propMesh" type="number" step="0.25" min="0.25"
+            value="${mesh === undefined ? "" : mesh}" placeholder="${mesh === undefined ? "mixed" : ""}"></div>
+      </div>`;
+    if (slabs.length) {
+      const q = commonVal(slabs, x => ME.getAreaLoad(m, store.loadPattern, x.uid) ?? 0);
+      html += `
+      <h3 class="group-title">Area load — slabs</h3>
+      <div class="load-row">
+        <div class="field"><label for="propAreaPat">Pattern</label>
+          <select id="propAreaPat">${patOpts(store.loadPattern)}</select></div>
+        <div class="field"><label for="propAreaQ">q <span class="unit">kPa ↓</span></label>
+          <input id="propAreaQ" type="number" step="0.5" min="0"
+            value="${q === undefined ? "" : q}" placeholder="${q === undefined ? "mixed" : ""}"></div>
+      </div>`;
+    }
+  }
+
+  html += `<h3 class="group-title"></h3>
+    <button class="btn btn-danger btn-block" id="propDelete">Delete selection <kbd style="font-family:var(--mono);font-size:10px">Del</kbd></button>`;
+  box.innerHTML = html;
+
+  /* wiring */
+  $("propClear").addEventListener("click", () => handleSelect([], false));
+  $("propDelete").addEventListener("click", deleteSelection);
+
+  const on = (id, ev, fn) => { const n = $(id); if (n) n.addEventListener(ev, fn); };
+
+  on("propFrameSection", "change", e => {
+    for (const mm of members) mm.section = e.target.value;
+    markDirty(); planEditor.renderStatic();
+  });
+  const applyReleases = () => {
+    const mi = $("propRelMi").checked, mj = $("propRelMj").checked;
+    const toks = [...(mi ? ["Mi"] : []), ...(mj ? ["Mj"] : [])];
+    for (const b of beams) b.releases = toks.join(",");
+    markDirty();
+  };
+  on("propRelMi", "change", applyReleases);
+  on("propRelMj", "change", applyReleases);
+  on("propUdlPat", "change", e => { store.loadPattern = e.target.value; renderProps(); });
+  on("propUdlW", "change", e => {
+    const w = parseFloat(e.target.value);
+    if (!isFinite(w) || w < 0) return;
+    for (const b of beams) ME.setMemberUdl(m, $("propUdlPat").value, b.uid, w);
+    markDirty();
+  });
+  on("propShellSection", "change", e => {
+    for (const s of shells) s.section = e.target.value;
+    markDirty();
+  });
+  on("propBehavior", "change", e => {
+    const v = e.target.value;
+    for (const s of shells) s.behavior = (v === "membrane" && s.kind === "wall") ? "shell" : v;
+    markDirty();
+  });
+  on("propMesh", "change", e => {
+    const v = parseFloat(e.target.value);
+    if (!isFinite(v) || v <= 0) return;
+    for (const s of shells) s.mesh_size = v;
+    markDirty();
+  });
+  on("propAreaPat", "change", e => { store.loadPattern = e.target.value; renderProps(); });
+  on("propAreaQ", "change", e => {
+    const q = parseFloat(e.target.value);
+    if (!isFinite(q) || q < 0) return;
+    for (const s of slabs) ME.setAreaLoad(m, $("propAreaPat").value, s.uid, q);
+    markDirty();
+  });
+}
+
+/* ---- section manager modal */
+function openSectionMgr() {
+  renderSectionMgr();
+  $("sectionModal").classList.remove("hidden");
+}
+function closeSectionMgr() {
+  $("sectionModal").classList.add("hidden");
+  planEditor.renderStatic();   // column plan sizes may have changed
+  renderProps();               // dropdown option lists may have changed
+}
+
+function mgrRow(cells, cls = "mgr-row") {
+  const div = document.createElement("div");
+  div.className = cls;
+  for (const c of cells) {
+    if (typeof c === "string") {
+      const s = document.createElement("span");
+      s.textContent = c;
+      div.appendChild(s);
+    } else div.appendChild(c);
+  }
+  return div;
+}
+const mgrInput = (value, attrs = {}) => {
+  const i = document.createElement("input");
+  Object.assign(i, { type: "text", value }, attrs);
+  return i;
+};
+const mgrNum = (value, step, onChange) => {
+  const i = mgrInput(String(value), { type: "number" });
+  i.step = step;
+  i.addEventListener("change", () => {
+    const v = parseFloat(i.value);
+    if (isFinite(v) && v > 0) { onChange(v); markDirty(); }
+    else i.value = String(value);
+  });
+  return i;
+};
+const mgrMatSelect = (model, value, onChange) => {
+  const s = document.createElement("select");
+  for (const n of Object.keys(model.materials)) {
+    const o = document.createElement("option");
+    o.value = n; o.textContent = n; o.selected = n === value;
+    s.appendChild(o);
+  }
+  s.addEventListener("change", () => { onChange(s.value); markDirty(); });
+  return s;
+};
+const mgrDel = (disabled, title, onDel) => {
+  const b = document.createElement("button");
+  b.className = "del"; b.textContent = "✕"; b.title = title; b.disabled = disabled;
+  b.addEventListener("click", onDel);
+  return b;
+};
+
+function renderSectionMgr() {
+  const m = store.model;
+
+  const frameBox = $("frameSectionRows");
+  frameBox.textContent = "";
+  frameBox.appendChild(mgrRow(["Name", "b (m)", "h (m)", "Material", ""], "mgr-row head"));
+  for (const [name, s] of Object.entries(m.sections)) {
+    const nameIn = mgrInput(name);
+    nameIn.addEventListener("change", () => {
+      if (!ME.renameFrameSection(m, name, nameIn.value.trim())) {
+        nameIn.value = name;
+        toast("Rename failed", "Name empty or already in use", "error", 4000);
+      } else { markDirty(); renderSectionMgr(); }
+    });
+    const used = ME.sectionInUse(m, name);
+    frameBox.appendChild(mgrRow([
+      nameIn,
+      mgrNum(s.b, "0.05", v => s.b = v),
+      mgrNum(s.h, "0.05", v => s.h = v),
+      mgrMatSelect(m, s.material, v => s.material = v),
+      mgrDel(used, used ? "In use by members" : "Delete section", () => {
+        delete m.sections[name]; markDirty(); renderSectionMgr();
+      }),
+    ]));
+  }
+
+  const shellBox = $("shellSectionRows");
+  shellBox.textContent = "";
+  shellBox.appendChild(mgrRow(["Name", "Thickness (m)", "", "Material", ""], "mgr-row head"));
+  for (const [name, s] of Object.entries(m.shell_sections)) {
+    const nameIn = mgrInput(name);
+    nameIn.addEventListener("change", () => {
+      if (!ME.renameShellSection(m, name, nameIn.value.trim())) {
+        nameIn.value = name;
+        toast("Rename failed", "Name empty or already in use", "error", 4000);
+      } else { markDirty(); renderSectionMgr(); }
+    });
+    const used = ME.shellSectionInUse(m, name);
+    shellBox.appendChild(mgrRow([
+      nameIn,
+      mgrNum(s.thickness, "0.025", v => s.thickness = v),
+      "",
+      mgrMatSelect(m, s.material, v => s.material = v),
+      mgrDel(used, used ? "In use by shell regions" : "Delete shell section", () => {
+        delete m.shell_sections[name]; markDirty(); renderSectionMgr();
+      }),
+    ]));
+  }
+
+  const matBox = $("materialRows");
+  matBox.textContent = "";
+  matBox.appendChild(mgrRow(["Name", "E (kPa)", "Poisson ν", "", ""], "mgr-row head"));
+  for (const [name, mat] of Object.entries(m.materials)) {
+    const nameIn = mgrInput(name);
+    nameIn.addEventListener("change", () => {
+      if (!ME.renameMaterial(m, name, nameIn.value.trim())) {
+        nameIn.value = name;
+        toast("Rename failed", "Name empty or already in use", "error", 4000);
+      } else { markDirty(); renderSectionMgr(); }
+    });
+    const nuIn = mgrInput(String(mat.nu), { type: "number" });
+    nuIn.step = "0.05";
+    nuIn.addEventListener("change", () => {
+      const v = parseFloat(nuIn.value);
+      if (isFinite(v) && v >= 0 && v < 0.5) { mat.nu = v; markDirty(); }
+      else nuIn.value = String(mat.nu);
+    });
+    const used = ME.materialInUse(m, name);
+    matBox.appendChild(mgrRow([
+      nameIn,
+      mgrNum(mat.E, "1000000", v => mat.E = v),
+      nuIn,
+      "",
+      mgrDel(used, used ? "In use by sections" : "Delete material", () => {
+        delete m.materials[name]; markDirty(); renderSectionMgr();
+      }),
+    ]));
+  }
+}
+
+/* ---- save / discard */
+async function saveModel() {
+  const btn = $("saveBtn");
+  if (btn.disabled) return;
+  btn.disabled = true;
+  $("saveSpinner").classList.remove("hidden");
+  try {
+    const payload = JSON.parse(JSON.stringify(store.model));
+    delete payload._mock_params;
+    const echoed = await postModel(payload);
+    if (echoed && !store.mock) store.model = ME.normalizeModel(echoed);
+    clearDirty();
+    toast("Model saved", store.mock
+      ? "Accepted locally (mock mode)"
+      : "POST /api/model accepted by the backend", "info", 4000);
+    viewer.setModel(store.model);
+    store.modelEdited = false;
+    syncShellLegend();
+    rebuildStorySelect();
+    planEditor.refresh();
+    renderProps();
+    renderSummary();
+  } catch (err) {
+    toast("Save failed", err.message, "error", 8000);
+  } finally {
+    btn.disabled = false;
+    $("saveSpinner").classList.add("hidden");
+  }
+}
+
+async function discardModel() {
+  const btn = $("discardBtn");
+  btn.disabled = true;
+  try {
+    store.model = ME.normalizeModel(await fetchModel());
+    store.selection = [];
+    clearDirty();
+    store.modelEdited = false;
+    viewer.setModel(store.model);
+    syncShellLegend();
+    rebuildStorySelect();
+    planEditor.refresh();
+    renderProps();
+    renderSummary();
+    toast("Model reloaded", "Local edits discarded", "info", 4000);
+  } catch (err) {
+    toast("Reload failed", err.message, "error");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ================================================================
+   v0.2 — MEMBER DETAIL PANEL (Analyze mode)
+   ================================================================ */
+const DIAG = [
+  { key: "N", title: "N — axial", unit: "kN", color: "#34c384" },
+  { key: "V2", title: "V2 — shear", unit: "kN", color: "#1e9ad4" },
+  { key: "M3", title: "M3 — moment", unit: "kN·m", color: "#d55181" },
+];
+const DIAG_MINOR = [
+  { key: "V3", title: "V3 — minor shear", unit: "kN", color: "#77879b" },
+  { key: "M2", title: "M2 — minor moment", unit: "kN·m", color: "#77879b" },
+  { key: "T", title: "T — torsion", unit: "kN·m", color: "#77879b" },
+];
+
+function onMemberClick(seg) {
+  if (store.mode !== "analyze" || !store.results) return;
+  if (!seg) return;
+  store.selectedMemberUid = seg.uid;
+  renderMemberPanel();
+}
+
+function closeMemberPanel() {
+  store.selectedMemberUid = null;
+  $("memberPanel").classList.add("hidden");
+  viewer._resize();
+}
+
+function renderMemberPanel() {
+  const uid = store.selectedMemberUid;
+  const panel = $("memberPanel");
+  const r = store.results;
+  if (!uid || !r) { panel.classList.add("hidden"); return; }
+  const rm = (r.members || []).find(x => x.uid === uid);
+  if (!rm) { panel.classList.add("hidden"); return; }
+  const wasHidden = panel.classList.contains("hidden");
+  panel.classList.remove("hidden");
+  if (wasHidden) viewer._resize();
+
+  $("memberPanelTitle").textContent = uid;
+  const pi = r.nodes[rm.ni], pj = r.nodes[rm.nj];
+  const L = (pi && pj) ? Math.hypot(pj[0] - pi[0], pj[1] - pi[1], pj[2] - pi[2]) : null;
+  $("memberMeta").innerHTML = [
+    ["Kind", rm.kind], ["Section", rm.section],
+    ["Story", rm.story], ["Length", L != null ? `${fmt(L, 2)} m` : "—"],
+  ].map(([k, v]) => `<div><dt>${esc(k)}</dt><dd title="${esc(v)}">${esc(v)}</dd></div>`).join("");
+
+  const cd = caseData();
+  const st = cd && cd.member_stations && cd.member_stations[uid];
+  const main = $("memberDiagrams"), minor = $("memberDiagramsMinor");
+  main.textContent = ""; minor.textContent = "";
+  $("memberEmpty").classList.toggle("hidden", !!st);
+  $("memberMinor").classList.toggle("hidden", !st);
+  $("memberCaseNote").innerHTML = st
+    ? `Station diagrams · case <b>${esc(store.caseName || "")}</b>`
+    : `Case <b>${esc(store.caseName || "")}</b>`;
+  if (!st) return;
+  const vals = k => (st[k] && st[k].length === st.x.length) ? st[k] : st.x.map(() => 0);
+  for (const d of DIAG)
+    main.appendChild(stationDiagram(st.x, vals(d.key), d));
+  for (const d of DIAG_MINOR)
+    minor.appendChild(stationDiagram(st.x, vals(d.key), d));
+}
+
 /* ------------------------------------------------ renders */
 function renderSummary() {
   const m = store.model;
@@ -170,8 +768,11 @@ function renderSummary() {
   const mass = Object.values(m.story_masses || {}).reduce((a, b) => a + b, 0);
   $("sum-mass").textContent = `${fmt(mass, 1)} t`;
   $("sum-base").textContent = m.base_fixity;
+  const nShells = (m.shells || []).length;
   $("footerInfo").textContent =
-    `${m.members.length} members · ${m.stories.length} stories` +
+    `${m.members.length} members` +
+    (nShells ? ` · ${nShells} shell${nShells > 1 ? "s" : ""}` : "") +
+    ` · ${m.stories.length} stories` +
     (store.lastSolveMs != null ? ` · solved in ${fmt(store.lastSolveMs / 1000, 1)} s` : "");
 }
 
@@ -401,12 +1002,21 @@ async function doGenerate(e) {
   const btn = $("generateBtn");
   btn.disabled = true;
   try {
-    store.model = await generateModel(params);
+    store.model = ME.normalizeModel(await generateModel(params));
     store.results = null;
     store.overlay = { deformed: false, modal: false, modeIndex: 0, scaleMult: 1 };
     store.lastSolveMs = null;
+    store.selection = [];
+    store.selectedMemberUid = null;
+    store.modelEdited = false;
+    clearDirty();
+    closeMemberPanel();
     viewer.setResults(null);
     viewer.setModel(store.model);
+    syncShellLegend();
+    rebuildStorySelect();
+    planEditor.refresh();
+    renderProps();
     syncOverlayUI();
     rebuildCaseSelect();
     setResultsAvailable(false);
@@ -438,6 +1048,7 @@ async function doRun() {
     viewer.setResults(results);
     setResultsAvailable(true);
     renderResultsTabs();
+    renderMemberPanel();
     syncOverlayUI();
     renderSummary();
     setStatus("solved", "Solved ✓");
@@ -466,8 +1077,49 @@ function wire() {
   $("caseSelect").addEventListener("change", e => {
     store.caseName = e.target.value;
     renderResultsTabs();
+    renderMemberPanel();
     syncOverlayUI();
   });
+
+  /* ---- v0.2: mode switch, draw tools, save/discard, member panel */
+  document.querySelectorAll(".mode-btn").forEach(b =>
+    b.addEventListener("click", () => setMode(b.dataset.mode)));
+
+  document.querySelectorAll(".tool-btn").forEach(b =>
+    b.addEventListener("click", () => setTool(b.dataset.tool)));
+
+  document.querySelectorAll("#applyToggle .seg-btn").forEach(b =>
+    b.addEventListener("click", () => {
+      store.applyAll = b.dataset.apply === "all";
+      document.querySelectorAll("#applyToggle .seg-btn").forEach(x =>
+        x.classList.toggle("is-active", x === b));
+      syncStoryBadges();
+    }));
+
+  $("storySelect").addEventListener("change", e => setStory(e.target.value));
+  $("storyUp").addEventListener("click", () => stepStory(1));
+  $("storyDown").addEventListener("click", () => stepStory(-1));
+
+  $("saveBtn").addEventListener("click", saveModel);
+  $("discardBtn").addEventListener("click", discardModel);
+
+  $("sectionMgrBtn").addEventListener("click", openSectionMgr);
+  $("sectionModalClose").addEventListener("click", closeSectionMgr);
+  $("sectionModalDone").addEventListener("click", closeSectionMgr);
+  $("sectionModal").addEventListener("click", e => {
+    if (e.target === $("sectionModal")) closeSectionMgr();
+  });
+  $("addFrameSection").addEventListener("click", () => {
+    ME.addFrameSection(store.model); markDirty(); renderSectionMgr();
+  });
+  $("addShellSection").addEventListener("click", () => {
+    ME.addShellSection(store.model); markDirty(); renderSectionMgr();
+  });
+  $("addMaterial").addEventListener("click", () => {
+    ME.addMaterial(store.model); markDirty(); renderSectionMgr();
+  });
+
+  $("memberPanelClose").addEventListener("click", closeMemberPanel);
 
   // sidebar collapse
   const applySidebar = collapsed => {
@@ -519,12 +1171,34 @@ function wire() {
 
   // keyboard
   const TABS = ["view3d", "story", "modal", "reactions", "forces"];
+  const TOOL_KEYS = { v: "select", c: "column", b: "beam", w: "wall", s: "slab", e: "erase" };
   document.addEventListener("keydown", e => {
     const tag = (e.target.tagName || "").toLowerCase();
     if (["input", "select", "textarea"].includes(tag)) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    if (e.key === "Escape") {
+      if (!$("sectionModal").classList.contains("hidden")) closeSectionMgr();
+      else if (store.mode === "model") {
+        if (planEditor.pending || planEditor.box) planEditor.cancel();
+        else if (store.selection.length) handleSelect([], false);
+      } else if (store.selectedMemberUid) closeMemberPanel();
+      return;
+    }
+    if (e.key === "\\") { $("sidebarToggle").click(); return; }
+
+    if (store.mode === "model") {
+      const t = TOOL_KEYS[e.key.toLowerCase()];
+      if (t) setTool(t);
+      else if (e.key === "ArrowUp") { e.preventDefault(); stepStory(1); }
+      else if (e.key === "ArrowDown") { e.preventDefault(); stepStory(-1); }
+      else if (e.key === "Delete" || e.key === "Backspace") deleteSelection();
+      else if (e.key === "f" || e.key === "F") planEditor.fit();
+      return;
+    }
+
     if (e.key >= "1" && e.key <= "5") switchTab(TABS[+e.key - 1]);
     else if (e.key === "r" || e.key === "R") doRun();
-    else if (e.key === "\\") $("sidebarToggle").click();
     else if (e.key === "f" || e.key === "F") viewer.fit();
   });
 }
@@ -534,11 +1208,24 @@ async function boot() {
   viewer = new Viewer3D($("viewer3d"), {
     tooltipEl: $("viewerTooltip"),
     getMemberTooltip: memberTooltip,
+    onMemberClick,
+  });
+  planEditor = new PlanEditor($("planSvg"), {
+    getModel: () => store.model,
+    getStory: () => store.story,
+    getSelection: () => new Set(store.selection.map(r => `${r.type}:${r.uid}`)),
+    onDraw: handleDraw,
+    onErase: handleErase,
+    onSelect: handleSelect,
+    onReadout: t => { $("planReadout").textContent = t; },
   });
   wire();
   try {
-    store.model = await fetchModel();
+    store.model = ME.normalizeModel(await fetchModel());
     viewer.setModel(store.model);
+    syncShellLegend();
+    rebuildStorySelect();
+    planEditor.refresh();
     renderSummary();
     setResultsAvailable(false);
     setStatus("ready", "Ready");
@@ -546,6 +1233,13 @@ async function boot() {
     setStatus("error", "Error");
     toast("Failed to load model", err.message, "error");
   }
+
+  // dev/test hook — lets automated checks drive the store directly
+  window.__sky = {
+    store, planEditor, viewer,
+    setMode, setTool, setStory, handleDraw, handleErase, handleSelect,
+    saveModel, discardModel, renderProps, ME,
+  };
 }
 
 boot();
