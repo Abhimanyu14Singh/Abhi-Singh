@@ -37,6 +37,14 @@ skyframe/
 * **Scriptable by design** — the whole model is plain Python dataclasses;
   every result is plain JSON. Automate parametric studies in a for-loop.
 
+## Screenshots (live OpenSees solves)
+
+| 3D model | Story results (EQX) |
+|---|---|
+| ![3D view](docs/screenshots/live-01-3d.png) | ![Story results](docs/screenshots/live-02-story.png) |
+| **Deformed shape overlay** | **Modal results** |
+| ![Deformed](docs/screenshots/live-05-deformed.png) | ![Modal](docs/screenshots/live-03-modal.png) |
+
 ## Quickstart
 
 ```bash
