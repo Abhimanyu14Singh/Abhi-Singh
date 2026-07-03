@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SkyFrame — Building Analysis Studio</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='2' y='6' width='3' height='8' fill='%2335b5e5'/%3E%3Crect x='6.5' y='3' width='3' height='11' fill='%2335b5e5'/%3E%3Crect x='11' y='1' width='3' height='13' fill='%231e9ad4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<div id="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 16 16" aria-hidden="true">
+        <rect x="1.5" y="7" width="3.4" height="7.5" rx="0.5"/>
+        <rect x="6.3" y="3.5" width="3.4" height="11" rx="0.5"/>
+        <rect x="11.1" y="0.5" width="3.4" height="14" rx="0.5"/>
+      </svg>
+      <span class="brand-name">SkyFrame</span>
+      <span class="brand-tag">Building Analysis Studio — OpenSees inside</span>
+    </div>
+    <div class="topbar-center">
+      <span class="model-name" id="modelName" title="Current model">—</span>
+      <span class="mock-badge hidden" id="mockBadge" title="Backend unreachable — showing built-in mock data">MOCK DATA</span>
+    </div>
+    <div class="topbar-right">
+      <span class="status-pill is-ready" id="statusPill"><span class="dot"></span><span id="statusText">Ready</span></span>
+      <button class="btn btn-run" id="runBtn" title="Run all static cases, combos and modal analysis (R)">
+        <span class="spinner hidden" id="runSpinner"></span>
+        <span id="runBtnLabel">Run Analysis</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="workspace">
+
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-inner">
+        <h2 class="panel-title">Model</h2>
+        <form id="quickForm" autocomplete="off" novalidate>
+          <div class="field">
+            <label for="f-name">Name</label>
+            <input id="f-name" name="name" type="text" value="Quick Building">
+          </div>
+
+          <h3 class="group-title">Grid</h3>
+          <div class="field-row">
+            <div class="field"><label for="f-bays_x">Bays X</label>
+              <input id="f-bays_x" name="bays_x" type="number" min="1" max="20" step="1" value="3"></div>
+            <div class="field"><label for="f-bay_width_x">Width X <span class="unit">m</span></label>
+              <input id="f-bay_width_x" name="bay_width_x" type="number" min="1" step="0.5" value="6"></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label for="f-bays_y">Bays Y</label>
+              <input id="f-bays_y" name="bays_y" type="number" min="1" max="20" step="1" value="2"></div>
+            <div class="field"><label for="f-bay_width_y">Width Y <span class="unit">m</span></label>
+              <input id="f-bay_width_y" name="bay_width_y" type="number" min="1" step="0.5" value="6"></div>
+          </div>
+
+          <h3 class="group-title">Stories</h3>
+          <div class="field-row">
+            <div class="field"><label for="f-stories">Count</label>
+              <input id="f-stories" name="stories" type="number" min="1" max="40" step="1" value="4"></div>
+            <div class="field"><label for="f-story_height">Height <span class="unit">m</span></label>
+              <input id="f-story_height" name="story_height" type="number" min="2" step="0.1" value="3.2"></div>
+          </div>
+
+          <h3 class="group-title">Sections &amp; material</h3>
+          <div class="field">
+            <label for="f-E">E <span class="unit">kPa</span></label>
+            <input id="f-E" name="E" type="number" min="1" step="1000000" value="25000000">
+          </div>
+          <div class="field-row">
+            <div class="field"><label for="f-column_size">Column <span class="unit">m sq.</span></label>
+              <input id="f-column_size" name="column_size" type="number" min="0.1" step="0.05" value="0.5"></div>
+            <div class="field"><label for="f-beam_b">Beam b <span class="unit">m</span></label>
+              <input id="f-beam_b" name="beam_b" type="number" min="0.1" step="0.05" value="0.3"></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label for="f-beam_h">Beam h <span class="unit">m</span></label>
+              <input id="f-beam_h" name="beam_h" type="number" min="0.1" step="0.05" value="0.6"></div>
+            <div class="field"><label for="f-base_fixity">Base fixity</label>
+              <select id="f-base_fixity" name="base_fixity">
+                <option value="fixed" selected>Fixed</option>
+                <option value="pinned">Pinned</option>
+              </select></div>
+          </div>
+
+          <h3 class="group-title">Loads</h3>
+          <div class="field-row">
+            <div class="field"><label for="f-dead_udl">Dead <span class="unit">kN/m</span></label>
+              <input id="f-dead_udl" name="dead_udl" type="number" min="0" step="1" value="25"></div>
+            <div class="field"><label for="f-live_udl">Live <span class="unit">kN/m</span></label>
+              <input id="f-live_udl" name="live_udl" type="number" min="0" step="1" value="10"></div>
+          </div>
+          <div class="field">
+            <label for="f-quake_coeff">Seismic coefficient <span class="unit">V/W</span></label>
+            <input id="f-quake_coeff" name="quake_coeff" type="number" min="0" max="1" step="0.01" value="0.08">
+          </div>
+
+          <button type="submit" class="btn btn-secondary btn-block" id="generateBtn">Generate Model</button>
+        </form>
+
+        <div class="model-summary" id="modelSummary" hidden>
+          <h3 class="group-title">Summary</h3>
+          <dl class="summary-grid">
+            <div><dt>Stories</dt><dd id="sum-stories">—</dd></div>
+            <div><dt>Members</dt><dd id="sum-members">—</dd></div>
+            <div><dt>Footprint</dt><dd id="sum-footprint">—</dd></div>
+            <div><dt>Height</dt><dd id="sum-height">—</dd></div>
+            <div><dt>Total mass</dt><dd id="sum-mass">—</dd></div>
+            <div><dt>Base</dt><dd id="sum-base">—</dd></div>
+          </dl>
+        </div>
+      </div>
+    </aside>
+    <button class="sidebar-toggle" id="sidebarToggle" title="Collapse panel (\\)" aria-label="Toggle model panel">
+      <svg viewBox="0 0 8 12" width="8" height="12"><path d="M6.2 1 1.6 6l4.6 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+    </button>
+
+    <main class="main">
+      <nav class="tabbar" role="tablist">
+        <button class="tab is-active" data-tab="view3d" role="tab">3D View</button>
+        <button class="tab" data-tab="story" role="tab">Story Results</button>
+        <button class="tab" data-tab="modal" role="tab">Modal</button>
+        <button class="tab" data-tab="reactions" role="tab">Reactions</button>
+        <button class="tab" data-tab="forces" role="tab">Member Forces</button>
+        <div class="tabbar-spacer"></div>
+        <label class="case-select-wrap" id="caseSelectWrap" hidden>
+          <span>Case</span>
+          <select id="caseSelect" class="case-select"></select>
+        </label>
+      </nav>
+
+      <!-- ============ 3D VIEW ============ -->
+      <section class="tabpane is-active" id="pane-view3d" role="tabpanel">
+        <div class="viewer-toolbar" id="viewerToolbar">
+          <button class="chip" id="chipDeformed" disabled title="Overlay the deformed shape for the selected case">Deformed shape</button>
+          <button class="chip" id="chipMode" disabled title="Animate a mode shape">Mode shape</button>
+          <button class="chip is-on" id="chipLabels" title="Show member info on hover">Labels</button>
+
+          <div class="toolbar-group" id="deformedGroup" hidden>
+            <label class="mini-label">scale</label>
+            <input type="range" id="defScale" min="-1" max="1" step="0.01" value="0" title="Deformation scale">
+            <span class="mini-value" id="defScaleVal">×1</span>
+          </div>
+          <div class="toolbar-group" id="modeGroup" hidden>
+            <select id="modeSelect" class="mini-select"></select>
+            <span class="badge-period" id="modePeriodBadge"></span>
+          </div>
+          <div class="toolbar-spacer"></div>
+          <span class="hint">drag orbit · shift-drag pan · wheel zoom · dbl-click fit</span>
+        </div>
+        <div class="viewer-wrap" id="viewerWrap">
+          <canvas id="viewer3d"></canvas>
+          <div class="viewer-tooltip hidden" id="viewerTooltip"></div>
+          <div class="viewer-legend" id="viewerLegend">
+            <span><i style="background:var(--c-column)"></i>column</span>
+            <span><i style="background:var(--c-beam)"></i>beam</span>
+            <span><i style="background:var(--c-brace)"></i>brace</span>
+            <span class="hidden" id="legendDeformed"><i style="background:var(--accent)"></i>deformed</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ STORY RESULTS ============ -->
+      <section class="tabpane" id="pane-story" role="tabpanel">
+        <div class="empty-state" id="empty-story">
+          <div class="empty-art">▦</div>
+          <p>Run analysis to see story results</p>
+        </div>
+        <div class="pane-content hidden" id="content-story">
+          <div class="charts-controls">
+            <div class="legend-row">
+              <span class="key"><i class="swatch" style="background:var(--series-x)"></i>X direction</span>
+              <span class="key"><i class="swatch" style="background:var(--series-y)"></i>Y direction</span>
+            </div>
+            <label class="drift-limit-wrap">Drift limit
+              <input type="number" id="driftLimitInput" min="0.05" step="0.05" value="0.5"> %
+            </label>
+          </div>
+          <div class="charts-row" id="chartsRow"></div>
+          <div class="table-scroll">
+            <table class="data-table" id="storyTable"></table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ MODAL ============ -->
+      <section class="tabpane" id="pane-modal" role="tabpanel">
+        <div class="empty-state" id="empty-modal">
+          <div class="empty-art">∿</div>
+          <p>Run analysis to see modal results</p>
+        </div>
+        <div class="pane-content hidden" id="content-modal">
+          <div class="table-scroll">
+            <table class="data-table" id="modalTable"></table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ REACTIONS ============ -->
+      <section class="tabpane" id="pane-reactions" role="tabpanel">
+        <div class="empty-state" id="empty-reactions">
+          <div class="empty-art">▲</div>
+          <p>Run analysis to see support reactions</p>
+        </div>
+        <div class="pane-content hidden" id="content-reactions">
+          <div class="table-scroll">
+            <table class="data-table" id="reactionsTable"></table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ MEMBER FORCES ============ -->
+      <section class="tabpane" id="pane-forces" role="tabpanel">
+        <div class="empty-state" id="empty-forces">
+          <div class="empty-art">⌁</div>
+          <p>Run analysis to see member forces</p>
+        </div>
+        <div class="pane-content hidden" id="content-forces">
+          <div class="forces-controls">
+            <input type="search" id="forcesFilter" class="filter-input" placeholder="Filter by uid / kind / story…">
+            <span class="muted" id="forcesCount"></span>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table" id="forcesTable"></table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <span>Solver: OpenSees 3.7 · Units: kN, m, s</span>
+    <span class="footer-right" id="footerInfo"></span>
+  </footer>
+
+  <div class="toasts" id="toasts"></div>
+</div>
+
+<script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,249 @@
+/* SkyFrame story-results charts — hand-rolled SVG (no deps).
+   Three linked charts: story displacement, drift ratio (with limit line),
+   story shear. Vertical axis = story elevation; series X / Y direction. */
+
+const S = {
+  x: "var(--series-x)", y: "var(--series-y)",
+  xRaw: "#1e9ad4", yRaw: "#d55181",
+  grid: "#202836", axis: "#66727f", text: "#9aa7b4",
+  amber: "#e5a50a", surface: "#151b23",
+};
+
+const NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs = {}, children = []) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  for (const c of children) e.appendChild(c);
+  return e;
+}
+function txt(tag, attrs, text) { const e = el(tag, attrs); e.textContent = text; return e; }
+
+/** Nice tick values covering [0, max] (data starts at 0 in all 3 charts). */
+function niceTicks(max, n = 4) {
+  if (max <= 0) max = 1;
+  const raw = max / n;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / mag;
+  const step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10) * mag;
+  const ticks = [];
+  for (let v = 0; v <= max * 1.0001 + step * 0.5; v += step) {
+    ticks.push(v);
+    if (ticks.length > 12) break;
+  }
+  return ticks;
+}
+
+let tooltipDiv = null;
+function tooltip() {
+  if (!tooltipDiv) {
+    tooltipDiv = document.createElement("div");
+    tooltipDiv.className = "chart-tooltip hidden";
+    document.body.appendChild(tooltipDiv);
+  }
+  return tooltipDiv;
+}
+function showTip(html, cx, cy) {
+  const t = tooltip();
+  t.innerHTML = html;
+  t.classList.remove("hidden");
+  const r = t.getBoundingClientRect();
+  let x = cx + 14, y = cy - r.height / 2;
+  if (x + r.width > window.innerWidth - 8) x = cx - r.width - 14;
+  y = Math.max(8, Math.min(y, window.innerHeight - r.height - 8));
+  t.style.left = x + "px"; t.style.top = y + "px";
+}
+function hideTip() { tooltip().classList.add("hidden"); }
+
+const fmt = (v, d = 1) => (v == null || !isFinite(v)) ? "—" :
+  v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+
+/**
+ * rows: bottom→top [{story, elev, h, vx, vy}] — vx/vy already in display units.
+ * opts: {title, unit, kind:"line"|"step", limit (display units), zero:"include"}
+ */
+function storyChart(rows, opts) {
+  const W = 320, H = 300;
+  const M = { l: 58, r: 14, t: 10, b: 34 };
+  const pw = W - M.l - M.r, ph = H - M.t - M.b;
+
+  const elevs = [0, ...rows.map(r => r.elev)];
+  const maxE = elevs[elevs.length - 1] || 1;
+  const yOf = e => M.t + ph - (e / maxE) * ph;
+
+  let maxV = 0;
+  for (const r of rows) maxV = Math.max(maxV, Math.abs(r.vx), Math.abs(r.vy));
+  if (opts.limit != null) maxV = Math.max(maxV, opts.limit);
+  if (maxV <= 0) maxV = 1;
+  const ticks = niceTicks(maxV * 1.06);
+  const maxT = ticks[ticks.length - 1];
+  const xOf = v => M.l + (Math.abs(v) / maxT) * pw;
+
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
+
+  // gridlines (vertical, at value ticks) + x labels
+  for (const t of ticks) {
+    svg.appendChild(el("line", {
+      x1: xOf(t), x2: xOf(t), y1: M.t, y2: M.t + ph,
+      stroke: S.grid, "stroke-width": 1,
+    }));
+    svg.appendChild(txt("text", {
+      x: xOf(t), y: M.t + ph + 16, fill: S.text, "font-size": 10,
+      "text-anchor": "middle", style: "font-variant-numeric:tabular-nums",
+    }, fmt(t, maxT < 10 ? 1 : 0)));
+  }
+  // horizontal story lines + labels
+  svg.appendChild(txt("text", {
+    x: M.l - 8, y: yOf(0) + 3, fill: S.axis, "font-size": 10, "text-anchor": "end",
+  }, "Base"));
+  for (const r of rows) {
+    svg.appendChild(el("line", {
+      x1: M.l, x2: M.l + pw, y1: yOf(r.elev), y2: yOf(r.elev),
+      stroke: S.grid, "stroke-width": 1, "stroke-opacity": 0.6,
+    }));
+    svg.appendChild(txt("text", {
+      x: M.l - 8, y: yOf(r.elev) + 3, fill: S.text, "font-size": 10, "text-anchor": "end",
+    }, r.story.replace(/^Story/, "S")));
+  }
+  // axes
+  svg.appendChild(el("line", { x1: M.l, x2: M.l, y1: M.t, y2: M.t + ph, stroke: S.axis, "stroke-width": 1 }));
+  svg.appendChild(el("line", { x1: M.l, x2: M.l + pw, y1: M.t + ph, y2: M.t + ph, stroke: S.axis, "stroke-width": 1 }));
+  // x axis unit
+  svg.appendChild(txt("text", {
+    x: M.l + pw, y: M.t + ph + 28, fill: S.axis, "font-size": 10, "text-anchor": "end",
+  }, opts.unit));
+
+  // limit line (drift chart)
+  if (opts.limit != null && opts.limit <= maxT) {
+    const lx = xOf(opts.limit);
+    svg.appendChild(el("line", {
+      x1: lx, x2: lx, y1: M.t, y2: M.t + ph,
+      stroke: S.amber, "stroke-width": 1.5, "stroke-dasharray": "5 4",
+    }));
+    svg.appendChild(txt("text", {
+      x: lx, y: M.t + 2, fill: S.amber, "font-size": 9, "text-anchor": "middle", dy: "-0", transform: `translate(0,-2)`,
+    }, "limit"));
+  }
+
+  // series
+  const series = [
+    { key: "vx", color: S.xRaw, label: "X" },
+    { key: "vy", color: S.yRaw, label: "Y" },
+  ];
+  for (const ser of series) {
+    const pts = [];
+    if (opts.kind === "step") {
+      // shear constant over story height: stairs from base up
+      let prevX = null;
+      for (let i = rows.length - 1; i >= 0; i--) {} // noop, keep order bottom->top
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const zBot = i === 0 ? 0 : rows[i - 1].elev;
+        const x = xOf(r[ser.key]);
+        pts.push([x, yOf(zBot)]);
+        pts.push([x, yOf(r.elev)]);
+        prevX = x;
+      }
+    } else {
+      pts.push([xOf(0), yOf(0)]);
+      for (const r of rows) pts.push([xOf(r[ser.key]), yOf(r.elev)]);
+    }
+    const d = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+    svg.appendChild(el("path", {
+      d, fill: "none", stroke: ser.color, "stroke-width": 2,
+      "stroke-linejoin": "round", "stroke-linecap": "round",
+    }));
+    // markers at story levels (with surface ring)
+    if (opts.kind !== "step") {
+      for (const r of rows) {
+        const exceeded = opts.limit != null && Math.abs(r[ser.key]) > opts.limit;
+        svg.appendChild(el("circle", {
+          cx: xOf(r[ser.key]), cy: yOf(r.elev), r: exceeded ? 4.5 : 3.5,
+          fill: exceeded ? S.amber : ser.color, stroke: S.surface, "stroke-width": 2,
+        }));
+      }
+    }
+  }
+
+  // hover: nearest story row
+  const hot = el("rect", {
+    x: M.l, y: M.t, width: pw, height: ph, fill: "transparent",
+  });
+  const cross = el("line", {
+    x1: M.l, x2: M.l + pw, y1: 0, y2: 0, stroke: S.axis,
+    "stroke-width": 1, "stroke-dasharray": "3 3", visibility: "hidden",
+  });
+  svg.appendChild(cross);
+  hot.addEventListener("mousemove", e => {
+    const rect = svg.getBoundingClientRect();
+    const sy = (e.clientY - rect.top) * (H / rect.height);
+    let best = null, bd = 1e9;
+    for (const r of rows) {
+      const d = Math.abs(yOf(r.elev) - sy);
+      if (d < bd) { bd = d; best = r; }
+    }
+    if (!best) return;
+    cross.setAttribute("y1", yOf(best.elev));
+    cross.setAttribute("y2", yOf(best.elev));
+    cross.setAttribute("visibility", "visible");
+    showTip(
+      `<b>${best.story}</b> · ${fmt(best.elev, 1)} m<br>` +
+      `<span style="color:${S.xRaw}">●</span> X ${fmt(best.vx, opts.dec ?? 2)} ${opts.unit}<br>` +
+      `<span style="color:${S.yRaw}">●</span> Y ${fmt(best.vy, opts.dec ?? 2)} ${opts.unit}`,
+      e.clientX, e.clientY);
+  });
+  hot.addEventListener("mouseleave", () => { cross.setAttribute("visibility", "hidden"); hideTip(); });
+  svg.appendChild(hot);
+
+  const card = document.createElement("div");
+  card.className = "chart-card";
+  const title = document.createElement("div");
+  title.className = "chart-title";
+  title.innerHTML = `${opts.title} <span class="unit">${opts.unit}</span>`;
+  card.appendChild(title);
+  card.appendChild(svg);
+  return card;
+}
+
+/**
+ * Render the three story charts into `container`.
+ * caseData.story: {story: {ux,uy,drift_x,drift_y,shear_x,shear_y}}
+ * driftLimitPct: e.g. 0.5 (%)
+ */
+export function renderStoryCharts(container, results, caseData, driftLimitPct) {
+  container.textContent = "";
+  const rows = results.story_order.map(s => {
+    const st = caseData.story[s] || {};
+    return { story: s, elev: results.story_elev[s] };
+  });
+  const dispRows = results.story_order.map((s, i) => {
+    const st = caseData.story[s] || {};
+    return {
+      story: s, elev: results.story_elev[s],
+      vx: (st.ux || 0) * 1000, vy: (st.uy || 0) * 1000,   // m → mm
+    };
+  });
+  const driftRows = results.story_order.map(s => {
+    const st = caseData.story[s] || {};
+    return {
+      story: s, elev: results.story_elev[s],
+      vx: Math.abs(st.drift_x || 0) * 100, vy: Math.abs(st.drift_y || 0) * 100,  // ratio → %
+    };
+  });
+  const shearRows = results.story_order.map(s => {
+    const st = caseData.story[s] || {};
+    return {
+      story: s, elev: results.story_elev[s],
+      vx: Math.abs(st.shear_x || 0), vy: Math.abs(st.shear_y || 0),
+    };
+  });
+
+  container.appendChild(storyChart(dispRows, {
+    title: "Story displacement", unit: "mm", kind: "line", dec: 1,
+  }));
+  container.appendChild(storyChart(driftRows, {
+    title: "Story drift ratio", unit: "%", kind: "line", limit: driftLimitPct, dec: 3,
+  }));
+  container.appendChild(storyChart(shearRows, {
+    title: "Story shear", unit: "kN", kind: "step", dec: 1,
+  }));
+}
