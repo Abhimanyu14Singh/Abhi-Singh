@@ -33,16 +33,19 @@ jobs:
           - os: windows-latest
             os_name: windows
             artifact: SkyFrame-windows
+            # openseespywin's binary module is built against Python 3.12
+            python: "3.12"
           - os: ubuntu-latest
             os_name: linux
             artifact: SkyFrame-linux
+            python: "3.11"
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     defaults: { run: { working-directory: skyframe } }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
+        with: { python-version: "${{ matrix.python }}" }
 
       - name: System deps (Linux)
         if: matrix.os_name == 'linux'
@@ -53,6 +56,9 @@ jobs:
 
       - name: Install app + packaging tools
         run: pip install .[desktop,dev]
+
+      - name: Sanity-check OpenSees import (unfrozen)
+        run: python -c "import openseespy.opensees as ops; print('opensees import OK')"
 
       - name: Build with PyInstaller
         run: pyinstaller --noconfirm --distpath packaging/dist --workpath packaging/build packaging/skyframe.spec
