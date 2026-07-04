@@ -765,3 +765,104 @@ LRFD combos for a model with DEAD/LIVE/EQX/EQY: `1.4D`; `1.2D+1.6L`;
 | POST   | `/api/pattern/elf`       | `{name?, SDS, SD1, R, Ie?, direction?}` → updated model dict; 400 on bad input |
 
 All four mutate the single current in-memory model and return `model.to_dict()`.
+
+---
+
+# v0.8 additions — foundation springs, accidental torsion, thermal loads, CM/CR
+
+## Point spring supports (`skyframe/core/model.py`, engine)
+
+```python
+@dataclass SpringSupport:
+    point: Tuple[float, float, float]
+    stiffness: List[float]   # [kx, ky, kz, krx, kry, krz], kN/m & kN*m/rad,
+                             # GLOBAL axes; finite, >= 0, at least one > 0
+# BuildingModel gains: spring_supports: List[SpringSupport]
+#   (+ add_spring_support(point, stiffness)); to_dict/from_dict round-trip
+#   ("spring_supports"; absent key = none, pre-v0.8 files unchanged).
+```
+
+Engine: for each spring the real (structural) node at ``point`` is located
+(proximity 1e-6, created if absent), a **co-located fully-fixed ground node**
+is added, and a ``zeroLength`` element (ground → real) carries one elastic
+uniaxial material per NON-ZERO stiffness entry (``-dir`` over those DOFs,
+global orientation).  The real node is left FREE in the sprung DOFs — any
+base fixity (explicit or automatic) on a sprung DOF is CLEARED so the spring
+is the sole restraint there; a newly created isolated spring node has its
+non-sprung DOFs fixed to stay regular.  The spring reaction ``-k*disp`` is
+added to the real node's case ``reactions`` (the sprung DOFs read 0 from
+OpenSees, so no double count), the real node counts as a support, and it
+enters the base totals — so `spring reactions + other reactions balance the
+applied load`.  Springs also work in P-Delta cases (incremental reaction) and
+RS cases (per-mode).
+
+## Accidental torsion (ASCE 7-16 §12.8.4.2)
+
+```python
+# LoadPattern gains (whole-pattern flags):
+#   accidental_torsion: bool = False
+#   ecc: float = 0.05     # finite, >= 0
+```
+
+When a pattern has ``accidental_torsion`` and a story force is applied to a
+rigid-diaphragm **master**, the engine ALSO applies a story torque at the
+master's rz DOF: ``Mz = fx*ecc*Ly + fy*ecc*Lx`` (``Ly``/``Lx`` = the plan
+extents perpendicular to each force component, from ``plan_extents()``).
+v0.8 applies **+ecc only** (positive torsion); the ± enveloping is a
+combos-level concern.  Story forces on master-less stories carry no torsion
+(documented).  Both fields round-trip (absent keys = defaults).
+
+## Temperature (thermal) loads
+
+```python
+@dataclass ThermalLoad:            # in LoadPattern.thermal_loads
+    member_uid: str
+    dT: float = 0.0                # temperature change, deg C (positive rise)
+# LoadPattern gains: thermal_loads: List[ThermalLoad]
+# BuildingModel gains: thermal_alpha: float = 1.2e-5  (/degC)
+#   (+ add_thermal_load(pattern, member_uid, dT)); all round-trip.
+```
+
+Engine: an axial thermal fixed-end force ``N = E*A_eff*alpha*dT`` (compression
+positive when restrained; ``A_eff`` includes the ``mod_A`` modifier) is
+applied through the exact member-load path — each segment's local vector
+``f0 = [+N, 0.., -N, 0..]`` is applied REVERSED as nodal loads (the free
+thermal expansion) and recorded as the segment end-force correction.  Hence a
+fully-fixed member reads ``N = -E*A*alpha*dT`` (compression) exactly, a
+one-end-free member reads ``N = 0`` with free elongation ``alpha*dT*L``, and
+member station ``N`` reflects the axial force.  ``dT`` is multiplied by the
+case's pattern scale.
+
+## Center of mass / center of rigidity per story (ETABS diagnostic)
+
+Top-level results gain ``story_props`` (present ONLY when the model has rigid
+diaphragms; keys omitted otherwise), per diaphragm story:
+
+```jsonc
+"story_props": {"<story>": {"cm_x":0,"cm_y":0,"cr_x":0,"cr_y":0}}
+```
+
+* **CM** is the centroid of the story's gravity load (the same contributions
+  ``compute_story_masses`` uses — member/area/nodal/self-weight loads weighted
+  by their positions); explicit ``story_masses`` (no spatial info) or a
+  load-free story fall back to the plan center.
+* **CR** by the unit-load method on the SAME assembled elastic model: a unit
+  ``Fx``, a unit ``Fy``, and a unit torque ``Mz`` are applied in turn at each
+  story master and the master rotation ``rz`` is read (``theta_x``,
+  ``theta_y``, ``phi``).  With ``phi`` = rz per unit torque, the CR
+  eccentricities from the master are ``e_y = theta_x/phi`` and
+  ``e_x = -theta_y/phi``; ``cr_x = master_x + e_x``, ``cr_y = master_y + e_y``
+  — the point about which a story shear produces no diaphragm rotation.  For a
+  symmetric building CR coincides with CM and the plan center; a stiff shear
+  wall on one side shifts CR toward the wall.
+
+## API additions
+
+| Method | Path                  | Body / Response |
+|--------|-----------------------|-----------------|
+| POST   | `/api/support/spring` | `{point:[x,y,z], stiffness:[6]}` → adds a spring, returns model dict; 400 on bad input |
+| POST   | `/api/pattern/thermal`| `{pattern, loads:[{member_uid, dT}]}` → adds thermal loads, returns model dict; 400 on bad input |
+
+`POST /api/model` round-trips ``spring_supports``, ``thermal_alpha``, and the
+pattern ``accidental_torsion``/``ecc``/``thermal_loads`` fields; the
+``/api/analyze`` results carry ``story_props`` automatically.

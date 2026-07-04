@@ -363,6 +363,44 @@ class PointSupport:
 
 
 @dataclass
+class SpringSupport:
+    """Grounded point spring (foundation spring) at a point (v0.8).
+
+    ``stiffness`` = [kx, ky, kz, krx, kry, krz] (kN/m for translations,
+    kN*m/rad for rotations), acting on the GLOBAL axes.  The engine adds a
+    co-located fully-fixed ground node and a zeroLength element between it
+    and the real (structural) node, with one elastic uniaxial material per
+    NON-ZERO stiffness entry.  The real node must be left FREE in the sprung
+    DOFs (the spring provides the restraint); any base fixity on those DOFs
+    is cleared.  The spring force ``-k*disp`` is reported in the case
+    reactions under the real node tag, and the real node counts as a
+    support.
+    """
+
+    point: Tuple[float, float, float]
+    stiffness: List[float]                      # 6 entries, >= 0
+
+    def to_dict(self) -> dict:
+        return {"point": list(self.point),
+                "stiffness": [float(k) for k in self.stiffness]}
+
+
+@dataclass
+class ThermalLoad:
+    """Uniform temperature change on a frame member (v0.8).
+
+    ``dT`` is the temperature change in degrees Celsius (positive = rise).
+    The engine turns it into a self-equilibrated axial fixed-end force
+    ``N = E*A*alpha*dT`` (compression positive when restrained) applied
+    through the exact member-load path; ``alpha`` is the model-wide thermal
+    expansion coefficient :attr:`BuildingModel.thermal_alpha`.
+    """
+
+    member_uid: str
+    dT: float = 0.0
+
+
+@dataclass
 class NodalMass:
     """Explicit lumped mass at a point (tonnes on ux/uy/uz)."""
     point: Tuple[float, float, float]
@@ -385,6 +423,15 @@ class LoadPattern:
     story_forces: List[StoryForce] = field(default_factory=list)
     member_loads: List[MemberLoad] = field(default_factory=list)
     area_loads: List[AreaLoad] = field(default_factory=list)
+    # v0.8 temperature loads: uniform member temperature changes (deg C).
+    thermal_loads: List["ThermalLoad"] = field(default_factory=list)
+    # v0.8 accidental torsion (ASCE 7-16 §12.8.4.2): when True, story forces
+    # applied to a rigid-diaphragm master ALSO apply a story torque
+    # Mz = F * ecc * B_perp (fx -> ecc*Ly, fy -> ecc*Lx) at the master's rz
+    # dof.  v0.8 applies +ecc only (positive torsion); the +/- enveloping is
+    # a combos-level concern.
+    accidental_torsion: bool = False
+    ecc: float = 0.05
     # v0.7 self-weight: ETABS-style — the pattern applies each material's real
     # self-weight (unit_weight, kN/m^3) scaled by this factor.  0.0 (default)
     # means the pattern carries no self-weight (pre-v0.7 behavior).  The
@@ -407,6 +454,9 @@ class LoadPattern:
             "story_forces": [asdict(s) for s in self.story_forces],
             "member_loads": [asdict(m) for m in self.member_loads],
             "area_loads": [asdict(a) for a in self.area_loads],
+            "thermal_loads": [asdict(t) for t in self.thermal_loads],
+            "accidental_torsion": self.accidental_torsion,
+            "ecc": self.ecc,
             "self_weight_factor": self.self_weight_factor,
         }
 
@@ -660,6 +710,8 @@ class BuildingModel:
     shells: List[ShellRegion] = field(default_factory=list)
     base_fixity: str = "fixed"                                 # "fixed" | "pinned"
     supports: List[PointSupport] = field(default_factory=list)
+    spring_supports: List[SpringSupport] = field(default_factory=list)  # v0.8
+    thermal_alpha: float = 1.2e-5           # v0.8: /degC thermal expansion
     nodal_masses: List[NodalMass] = field(default_factory=list)
     rigid_diaphragms: bool = True
     # v0.5 diaphragm option: global default + per-story overrides.
@@ -1055,6 +1107,38 @@ class BuildingModel:
         self.links.append(lk)
         return lk
 
+    def add_spring_support(self, point: Tuple[float, float, float],
+                           stiffness: List[float]) -> SpringSupport:
+        sp = SpringSupport(tuple(float(v) for v in point),
+                           [float(k) for k in stiffness])
+        self._validate_spring(sp)
+        self.spring_supports.append(sp)
+        return sp
+
+    @staticmethod
+    def _validate_spring(sp: SpringSupport) -> None:
+        if len(sp.stiffness) != 6:
+            raise ValueError("spring stiffness needs 6 entries "
+                             "[kx, ky, kz, krx, kry, krz]")
+        for k in sp.stiffness:
+            if not (isinstance(k, (int, float)) and math.isfinite(k)
+                    and k >= 0.0):
+                raise ValueError(f"spring stiffness entries must be finite "
+                                 f"and >= 0 (got {k!r})")
+        if not any(k > 0.0 for k in sp.stiffness):
+            raise ValueError("spring: at least one stiffness entry must be > 0")
+
+    def add_thermal_load(self, pattern: str, member_uid: str,
+                         dT: float) -> ThermalLoad:
+        if pattern not in self.patterns:
+            raise ValueError(f"Unknown load pattern {pattern!r}")
+        if member_uid not in {m.uid for m in self.members}:
+            raise ValueError(f"Thermal load references unknown member "
+                             f"{member_uid!r}")
+        tl = ThermalLoad(member_uid, float(dT))
+        self.patterns[pattern].thermal_loads.append(tl)
+        return tl
+
     @staticmethod
     def _validate_link(lk: LinkMember) -> None:
         if len(lk.stiffness) != 6:
@@ -1268,6 +1352,15 @@ class BuildingModel:
                     raise ValueError(f"Pattern {pat.name}: area load "
                                      f"references unknown shell region "
                                      f"{al.region_uid!r}")
+            for tl in pat.thermal_loads:
+                if tl.member_uid not in uids:
+                    raise ValueError(f"Pattern {pat.name}: thermal load "
+                                     f"references unknown member "
+                                     f"{tl.member_uid!r}")
+            if not (isinstance(pat.ecc, (int, float))
+                    and math.isfinite(pat.ecc) and pat.ecc >= 0.0):
+                raise ValueError(f"Pattern {pat.name}: ecc must be a finite "
+                                 f"value >= 0 (got {pat.ecc!r})")
         for case in self.cases.values():
             for p in case.patterns:
                 if p not in self.patterns:
@@ -1292,6 +1385,12 @@ class BuildingModel:
                 raise ValueError(f"Duplicate link uid {lk.uid!r}")
             link_uids.add(lk.uid)
             self._validate_link(lk)
+        for sp in self.spring_supports:
+            self._validate_spring(sp)
+        if not (isinstance(self.thermal_alpha, (int, float))
+                and math.isfinite(self.thermal_alpha)):
+            raise ValueError(f"thermal_alpha must be finite (got "
+                             f"{self.thermal_alpha!r})")
         self._validate_diaphragm()
 
     # ---------------- (de)serialisation ----------------
@@ -1308,6 +1407,8 @@ class BuildingModel:
             "shells": [r.to_dict() for r in self.shells],
             "base_fixity": self.base_fixity,
             "supports": [s.to_dict() for s in self.supports],
+            "spring_supports": [s.to_dict() for s in self.spring_supports],
+            "thermal_alpha": self.thermal_alpha,
             "nodal_masses": [m.to_dict() for m in self.nodal_masses],
             "rigid_diaphragms": self.rigid_diaphragms,
             "diaphragm": self.diaphragm,
@@ -1395,6 +1496,11 @@ class BuildingModel:
                 raise ValueError("support restraints must have 6 entries")
             mdl.supports.append(PointSupport(
                 tuple(float(v) for v in sd["point"]), tuple(r)))
+        for sd in d.get("spring_supports") or []:
+            mdl.spring_supports.append(SpringSupport(
+                tuple(float(v) for v in sd["point"]),
+                [float(k) for k in sd["stiffness"]]))
+        mdl.thermal_alpha = float(d.get("thermal_alpha", 1.2e-5))
         for md in d.get("nodal_masses") or []:
             mdl.nodal_masses.append(NodalMass(
                 tuple(float(v) for v in md["point"]),
@@ -1423,6 +1529,12 @@ class BuildingModel:
             pat = LoadPattern(pd.get("name", name), pd.get("kind", "other"))
             # v0.7 self-weight factor; absent (pre-v0.7 files) => 0.0
             pat.self_weight_factor = float(pd.get("self_weight_factor", 0.0))
+            # v0.8 accidental torsion + thermal loads (absent = defaults)
+            pat.accidental_torsion = bool(pd.get("accidental_torsion", False))
+            pat.ecc = float(pd.get("ecc", 0.05))
+            for t in pd.get("thermal_loads") or []:
+                pat.thermal_loads.append(ThermalLoad(
+                    t["member_uid"], float(t.get("dT", 0.0))))
             for u in pd.get("member_udls") or []:
                 pat.member_udls.append(MemberUDL(u["member_uid"],
                                                  float(u["w"])))

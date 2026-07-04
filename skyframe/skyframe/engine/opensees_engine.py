@@ -395,6 +395,9 @@ class _Assembly:
     #   v0.6: (uid, end) -> (My/k22, My/k33) yield rotations of the hinge
     #   springs about the local y and z bending axes
     link_ele: Dict[str, int] = field(default_factory=dict)   # v0.5 links
+    spring_nodes: Dict[int, List[float]] = field(default_factory=dict)
+    #   v0.8: real node tag -> 6 grounded-spring stiffnesses (0 where none);
+    #   the spring reaction (-k*disp) is added to that node's case reactions
 
     def free_massed_dofs(self) -> int:
         """Number of massed (node, dof) pairs that are NOT restrained.
@@ -595,6 +598,8 @@ class AnalysisResults:
     th_cases: Dict[str, THResults] = field(default_factory=dict)
     pushover: Dict[str, PushoverResults] = field(default_factory=dict)
     staged: Dict[str, StagedResults] = field(default_factory=dict)  # v0.6
+    story_props: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    #   v0.8: per-story center of mass / center of rigidity (diaphragms only)
     warning: str = ""                    # e.g. TH cases skipped (step cap)
 
     def to_dict(self) -> dict:
@@ -614,6 +619,9 @@ class AnalysisResults:
             "staged": {n: s.to_dict() for n, s in self.staged.items()},
             "modal": self.modal.to_dict(),
         }
+        if self.story_props:
+            d["story_props"] = {s: dict(v)
+                                for s, v in self.story_props.items()}
         if self.warning:
             d["warning"] = self.warning
         return d
@@ -686,6 +694,7 @@ class OpenSeesEngine:
                             for name in model.pushover_cases}
         staged = {name: self.run_staged(name)
                   for name in model.staged_cases}
+        story_props = self._compute_story_props()
         asm = self._asm if self._asm is not None else self._build()
         members = [{"uid": m.uid, "kind": m.kind, "section": m.section,
                     "ni": asm.ele_nodes[m.uid][0], "nj": asm.ele_nodes[m.uid][1],
@@ -706,6 +715,7 @@ class OpenSeesEngine:
             th_cases=th_cases,
             pushover=pushover,
             staged=staged,
+            story_props=story_props,
             warning=warning,
         )
 
@@ -737,6 +747,7 @@ class OpenSeesEngine:
         node_disp = {t: list(ops.nodeDisp(t)) for t in asm.node_coords}
         ops.reactions()
         reactions = {t: list(ops.nodeReaction(t)) for t in asm.support_tags}
+        self._add_spring_reactions(asm, node_disp, reactions)
         base = self._base_totals(asm, reactions)
         member_forces, member_stations = self._member_outputs(asm)
         story = self._story_results(asm, case, node_disp)
@@ -829,28 +840,68 @@ class OpenSeesEngine:
             asm.node_coords[tag] = p
         asm.struct_coords = dict(asm.node_coords)
 
+        # --- spring supports (v0.8): resolve real nodes now so the fixity
+        #     below can leave the sprung DOFs free (the spring restrains
+        #     them).  New (isolated) nodes are created if none coincides.
+        spring_specs: List[Tuple[int, List[float]]] = []  # (real tag, stiff)
+        spring_cover: Dict[int, set] = {}                  # real tag -> dofs
+        created_springs: set = set()
+        for sp in model.spring_supports:
+            try:
+                rt = self._find_node(asm, sp.point)
+            except ValueError:
+                tag += 1
+                p = tuple(float(v) for v in sp.point)
+                ops.node(tag, *p)
+                asm.node_coords[tag] = p
+                asm.struct_coords[tag] = p
+                rt = tag
+                created_springs.add(rt)
+            spring_specs.append((rt, [float(k) for k in sp.stiffness]))
+            cover = spring_cover.setdefault(rt, set())
+            cover |= {d for d in range(6) if sp.stiffness[d] != 0.0}
+
         # --- supports ----------------------------------------------------
         def record_fix(ntag: int, restr: Sequence[int]) -> None:
             prev = asm.node_restraints.get(ntag, (0,) * 6)
             asm.node_restraints[ntag] = tuple(
                 int(bool(a) or bool(b)) for a, b in zip(prev, restr))
 
+        def _clear_sprung(ntag: int, restr: List[int]) -> List[int]:
+            # A sprung DOF must NOT be fixed (the spring provides restraint).
+            for d in spring_cover.get(ntag, ()):
+                restr[d] = 0
+            return restr
+
         if model.supports:
             for sup in model.supports:
                 ntag = self._find_node(asm, sup.point)
-                restr = [int(bool(r)) for r in sup.restraints]
+                restr = _clear_sprung(ntag, [int(bool(r)) for r in
+                                             sup.restraints])
                 ops.fix(ntag, *restr)
                 asm.support_tags.append(ntag)
                 record_fix(ntag, restr)
         elif asm.struct_coords:
             z_min = min(c[2] for c in asm.struct_coords.values())
-            restr = ([1, 1, 1, 1, 1, 1] if model.base_fixity == "fixed"
-                     else [1, 1, 1, 0, 0, 0])
+            base_restr = ([1, 1, 1, 1, 1, 1] if model.base_fixity == "fixed"
+                          else [1, 1, 1, 0, 0, 0])
             for ntag, c in asm.struct_coords.items():
                 if abs(c[2] - z_min) < _TOL:
+                    restr = _clear_sprung(ntag, list(base_restr))
                     ops.fix(ntag, *restr)
                     asm.support_tags.append(ntag)
                     record_fix(ntag, restr)
+
+        # A newly created (isolated) spring node has no other stiffness: fix
+        # its non-sprung DOFs so the system stays regular.
+        for rt in created_springs:
+            newfix = [0 if d in spring_cover.get(rt, ()) else 1
+                      for d in range(6)]
+            if any(newfix):
+                ops.fix(rt, *newfix)
+                record_fix(rt, newfix)
+            if rt not in asm.support_tags:
+                asm.support_tags.append(rt)
 
         # --- frame elements (one per mesh segment) -------------------------
         # rot_presence accumulates each node's 3x3 rotational-stiffness
@@ -996,6 +1047,33 @@ class OpenSeesEngine:
                 acc = link_node_k.setdefault(t, [0.0] * 6)
                 for d in range(6):
                     acc[d] += float(lk.stiffness[d])
+
+        # --- grounded point springs (v0.8) ---------------------------------
+        # Per spring: a co-located fully-fixed ground node and a zeroLength
+        # element (ground -> real) with one elastic material per non-zero
+        # DOF; the sprung DOFs of the real node were left free above.  The
+        # spring reaction (-k*disp) is added to the case reactions.
+        for rt, kvec in spring_specs:
+            dirs = [d + 1 for d in range(6) if kvec[d] != 0.0]
+            if not dirs:
+                continue
+            tag += 1
+            gnd = tag
+            ops.node(gnd, *asm.node_coords[rt])
+            ops.fix(gnd, 1, 1, 1, 1, 1, 1)
+            mats: List[int] = []
+            for d in dirs:
+                mtag += 1
+                ops.uniaxialMaterial("Elastic", mtag, abs(float(kvec[d - 1])))
+                mats.append(mtag)
+            etag += 1
+            ops.element("zeroLength", etag, gnd, rt, "-mat", *mats,
+                        "-dir", *dirs)
+            acc = asm.spring_nodes.setdefault(rt, [0.0] * 6)
+            for d in range(6):
+                acc[d] += float(kvec[d])
+            if rt not in asm.support_tags:
+                asm.support_tags.append(rt)
 
         # --- prospective rigid-diaphragm slaves (v0.5: per-story option) ---
         prospective_slaves: set = set()
@@ -1194,15 +1272,29 @@ class OpenSeesEngine:
         for al in pat.area_loads:
             self._apply_area_load(asm, al.region_uid, al.q * scale)
 
+        # v0.8 temperature loads: axial thermal fixed-end force per member.
+        for tl in getattr(pat, "thermal_loads", ()):
+            member = self._members_by_uid.get(tl.member_uid)
+            if member is None:
+                raise ValueError(f"Thermal load references unknown member "
+                                 f"{tl.member_uid!r}")
+            self._apply_thermal(asm, member, tl.dT * scale)
+
         for nl in pat.nodal_loads:
             t = self._find_node(asm, nl.point)
             ops.load(t, nl.fx * scale, nl.fy * scale, nl.fz * scale,
                      0.0, 0.0, 0.0)
 
+        acc_tors = getattr(pat, "accidental_torsion", False)
+        ecc = getattr(pat, "ecc", 0.05)
+        lx, ly = model.plan_extents()
         for sf in pat.story_forces:
             fx, fy = sf.fx * scale, sf.fy * scale
             if sf.story in asm.masters:
-                ops.load(asm.masters[sf.story], fx, fy, 0.0, 0.0, 0.0, 0.0)
+                # v0.8 accidental torsion (§12.8.4.2): fx -> Mz = fx*ecc*Ly,
+                # fy -> Mz = fy*ecc*Lx, applied at the master's rz dof.
+                mz = (fx * ecc * ly + fy * ecc * lx) if acc_tors else 0.0
+                ops.load(asm.masters[sf.story], fx, fy, 0.0, 0.0, 0.0, mz)
                 continue
             nodes = asm.story_nodes.get(sf.story)
             if not nodes:
@@ -1378,6 +1470,45 @@ class OpenSeesEngine:
         for rec in records:
             self._record(member.uid, seg.index, rec)
 
+    def _apply_thermal(self, asm: _Assembly, member: FrameMember,
+                       dT: float) -> None:
+        """Apply a uniform temperature change dT (deg C) to a frame member.
+
+        The fully-restrained axial fixed-end force is ``N = E*A*alpha*dT``
+        (compression when the member cannot expand).  Following the exact
+        member-load path, each segment's local fixed-end vector
+        ``f0 = [+N, 0..., -N, 0...]`` is applied REVERSED as nodal loads
+        (pushing the ends apart by the free thermal expansion) and recorded
+        as the segment's end-force correction, so a fully-fixed member reads
+        ``N`` (compression), a free member reads 0, and the free elongation
+        is exactly ``alpha*dT*L``.  Internal member nodes cancel; only the
+        member's two extreme ends carry a net axial nodal force.
+        """
+        if dT == 0.0:
+            return
+        model = self.model
+        sec = model.sections[member.section]
+        mat = model.materials[sec.material]
+        A_eff = sec.A * sec.mod_A
+        alpha = getattr(model, "thermal_alpha", 1.2e-5)
+        N = mat.E * A_eff * alpha * dT           # E*A*alpha*dT (kN)
+        xax, yax, zax, _, _ = _local_axes(member)
+
+        def to_global(lx: float, ly: float, lz: float) -> Vec3:
+            return (lx * xax[0] + ly * yax[0] + lz * zax[0],
+                    lx * xax[1] + ly * yax[1] + lz * zax[1],
+                    lx * xax[2] + ly * yax[2] + lz * zax[2])
+
+        for seg in asm.mesh.segments[member.uid]:
+            f0 = np.zeros(12)
+            f0[0] = N
+            f0[6] = -N
+            for node, ofs in ((seg.ni, 0), (seg.nj, 6)):
+                fg = to_global(-f0[ofs], -f0[ofs + 1], -f0[ofs + 2])
+                ops.load(node + 1, *fg, 0.0, 0.0, 0.0)
+            key = (member.uid, seg.index)
+            self._seg_fef[key] = self._seg_fef.get(key, np.zeros(12)) + f0
+
     def _record(self, uid: str, seg_index: int, rec: SpanLoad) -> None:
         self._seg_span_loads.setdefault((uid, seg_index), []).append(rec)
 
@@ -1500,6 +1631,23 @@ class OpenSeesEngine:
         ops.analysis("Static")
 
     @staticmethod
+    def _add_spring_reactions(asm: _Assembly,
+                             node_disp: Dict[int, List[float]],
+                             reactions: Dict[int, List[float]]) -> None:
+        """Add each grounded spring's reaction (-k*disp) to its real node.
+
+        The sprung DOFs are free in OpenSees (the spring is an element, not a
+        constraint), so ``nodeReaction`` reports 0 there — adding ``-k*disp``
+        is exact and never double-counts the fixed (non-sprung) DOFs.
+        """
+        for t, kvec in asm.spring_nodes.items():
+            disp = node_disp.get(t, [0.0] * 6)
+            r = reactions.setdefault(t, [0.0] * 6)
+            for d in range(6):
+                if kvec[d] != 0.0:
+                    r[d] += -kvec[d] * disp[d]
+
+    @staticmethod
     def _base_totals(asm: _Assembly,
                      reactions: Dict[int, List[float]]) -> Dict[str, float]:
         """Total base reaction; moments taken about the global origin."""
@@ -1564,6 +1712,143 @@ class OpenSeesEngine:
             }
             prev_ux, prev_uy = ux, uy
         return story
+
+    # ------------------------------------------------ v0.8 story diagnostics
+    def _compute_story_props(self) -> Dict[str, Dict[str, float]]:
+        """Per-story center of mass / center of rigidity (rigid diaphragms).
+
+        CM is the load-distribution centroid of the story mass.  CR is found
+        by the standard unit-load method: on the SAME assembled elastic
+        model, a unit Fx, a unit Fy, and a unit torque Mz are applied in turn
+        at each story's diaphragm master and the master rotation rz is read.
+        With ``phi`` = rz per unit torque, the CR eccentricities from the
+        master are ``e_y = theta_x/phi`` (rz under unit Fx) and
+        ``e_x = -theta_y/phi`` (rz under unit Fy): the point about which a
+        story shear produces no diaphragm rotation.  Only stories with a
+        master (rigid diaphragm) get an entry; the keys are omitted
+        otherwise.
+        """
+        model = self.model
+        asm = self._build()
+        if not asm.masters:
+            return {}
+        master_xy = {s: (asm.node_coords[t][0], asm.node_coords[t][1])
+                     for s, t in asm.masters.items()}
+        cm = self._story_cm()
+        props: Dict[str, Dict[str, float]] = {}
+        for s in model.stories:
+            if s.name not in master_xy:
+                continue
+            mx, my = master_xy[s.name]
+            theta_x = self._master_rz(s.name, (1.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+            theta_y = self._master_rz(s.name, (0.0, 1.0, 0.0, 0.0, 0.0, 0.0))
+            phi = self._master_rz(s.name, (0.0, 0.0, 0.0, 0.0, 0.0, 1.0))
+            cmx, cmy = cm.get(s.name, (mx, my))
+            entry = {"cm_x": float(cmx), "cm_y": float(cmy)}
+            if abs(phi) > 1e-30:
+                entry["cr_x"] = float(mx - theta_y / phi)
+                entry["cr_y"] = float(my + theta_x / phi)
+            else:                                       # pragma: no cover
+                entry["cr_x"], entry["cr_y"] = float(mx), float(my)
+            props[s.name] = entry
+        # restore the elastic assembly for the caller (identical geometry)
+        self._build()
+        return props
+
+    def _master_rz(self, story: str, load_vec: Tuple[float, ...]) -> float:
+        """Diaphragm-master rz under a single unit load at that master."""
+        asm = self._build()
+        mtag = asm.masters[story]
+        self._seg_span_loads = {}
+        self._seg_fef = {}
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(mtag, *load_vec)
+        self._setup_analysis(asm)
+        if ops.analyze(1) != 0:                          # pragma: no cover
+            raise RuntimeError(f"CR unit-load solve failed for story "
+                               f"{story!r}")
+        return float(ops.nodeDisp(mtag)[5])
+
+    def _story_cm(self) -> Dict[str, Tuple[float, float]]:
+        """Story center of mass: the centroid of the story's gravity load."""
+        model = self.model
+        source = model.effective_mass_source()
+        out: Dict[str, Tuple[float, float]] = {}
+        for s in model.stories:
+            if s.name in model.story_masses:
+                out[s.name] = model.plan_center()   # explicit: no spatial info
+                continue
+            wsum = wx = wy = 0.0
+
+            def add(w: float, x: float, y: float) -> None:
+                nonlocal wsum, wx, wy
+                wsum += w
+                wx += w * x
+                wy += w * y
+
+            def mid(m: FrameMember) -> Tuple[float, float]:
+                return (0.5 * (m.pi[0] + m.pj[0]), 0.5 * (m.pi[1] + m.pj[1]))
+
+            for pname, fac in source.items():
+                pat = model.patterns.get(pname)
+                if pat is None:
+                    continue
+                for udl in pat.member_udls:
+                    m = model._member(udl.member_uid)
+                    if m is not None and m.story == s.name and \
+                            m.kind != "column":
+                        add(fac * udl.w * m.length, *mid(m))
+                for ml in pat.member_loads:
+                    if ml.direction != "gravity":
+                        continue
+                    m = model._member(ml.member_uid)
+                    if m is None or m.story != s.name or m.kind == "column":
+                        continue
+                    if ml.kind == "point":
+                        w = fac * ml.w
+                    elif ml.kind == "udl":
+                        w = fac * ml.w * (ml.b - ml.a) * m.length
+                    else:
+                        w = fac * 0.5 * (ml.w + ml.w2) * (ml.b - ml.a) \
+                            * m.length
+                    add(w, *mid(m))
+                for al in pat.area_loads:
+                    region = model._shell(al.region_uid)
+                    if region is None or \
+                            not model._region_on_story(region, s):
+                        continue
+                    c = region.map_uv(0.5, 0.5)
+                    add(fac * al.q * region.net_area, c[0], c[1])
+                for nl in pat.nodal_loads:
+                    if abs(nl.point[2] - s.elevation) < 1e-6:
+                        add(fac * (-nl.fz), nl.point[0], nl.point[1])
+                swf = getattr(pat, "self_weight_factor", 0.0)
+                if swf:
+                    for m in model.members:
+                        if m.story != s.name or m.kind == "column":
+                            continue
+                        sec = model.sections.get(m.section)
+                        mat = (model.materials.get(sec.material)
+                               if sec else None)
+                        if sec is not None and mat is not None:
+                            add(fac * swf * sec.A * mat.unit_weight
+                                * m.length, *mid(m))
+                    for region in model.shells:
+                        if not model._region_on_story(region, s):
+                            continue
+                        ssec = model.shell_sections.get(region.section)
+                        mat = (model.materials.get(ssec.material)
+                               if ssec else None)
+                        if ssec is not None and mat is not None:
+                            c = region.map_uv(0.5, 0.5)
+                            add(fac * swf * ssec.thickness * mat.unit_weight
+                                * region.net_area, c[0], c[1])
+            if wsum > 1e-12:
+                out[s.name] = (wx / wsum, wy / wsum)
+            else:
+                out[s.name] = model.plan_center()
+        return out
 
     # --------------------------------------------------------------- combos
     def _combine(self, name: str, combo: LoadCombo) -> CaseResults:
@@ -1757,6 +2042,9 @@ class OpenSeesEngine:
         reactions = {t: [r - s for r, s in
                          zip(ops.nodeReaction(t), snap_reac.get(t, (0.0,) * 6))]
                      for t in asm.support_tags}
+        # node_disp here is already the case increment; -k*disp gives the
+        # incremental spring reaction, consistent with the other quantities.
+        self._add_spring_reactions(asm, node_disp, reactions)
         base = self._base_totals(asm, reactions)
         member_forces, member_stations = self._member_outputs(
             asm, baseline=snap_ele)
@@ -1985,6 +2273,9 @@ class OpenSeesEngine:
         sub.base_fixity = model.base_fixity
         sub.supports = [s for s in model.supports
                         if s.point[2] <= elev_k + _TOL]
+        sub.spring_supports = [s for s in model.spring_supports
+                               if s.point[2] <= elev_k + _TOL]
+        sub.thermal_alpha = model.thermal_alpha
         sub.rigid_diaphragms = model.rigid_diaphragms
         sub.diaphragm = model.diaphragm
         sub.story_diaphragm = {s2: v for s2, v in
@@ -2421,6 +2712,7 @@ class OpenSeesEngine:
         node_disp = {t: list(ops.nodeDisp(t)) for t in asm.node_coords}
         ops.reactions()
         reactions = {t: list(ops.nodeReaction(t)) for t in asm.support_tags}
+        self._add_spring_reactions(asm, node_disp, reactions)
         base = self._base_totals(asm, reactions)
         member_forces, member_stations = self._member_outputs(asm)
 

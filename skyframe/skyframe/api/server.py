@@ -288,6 +288,59 @@ def create_app() -> Flask:
             return jsonify({"error": str(exc)}), 400
         return jsonify(_state["model"].to_dict())
 
+    # ------------------------------------------- v0.8: springs + thermal
+    @app.post("/api/support/spring")
+    def support_spring():
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        point = body.get("point")
+        stiffness = body.get("stiffness")
+        if (not isinstance(point, list) or len(point) != 3
+                or not all(isinstance(v, (int, float))
+                           and not isinstance(v, bool) for v in point)):
+            return jsonify({"error": "'point' must be [x, y, z] numbers"}), 400
+        if (not isinstance(stiffness, list) or len(stiffness) != 6
+                or not all(isinstance(v, (int, float))
+                           and not isinstance(v, bool) for v in stiffness)):
+            return jsonify({"error": "'stiffness' must be 6 numbers "
+                                     "[kx, ky, kz, krx, kry, krz]"}), 400
+        try:
+            _state["model"].add_spring_support(
+                [float(v) for v in point], [float(v) for v in stiffness])
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(_state["model"].to_dict())
+
+    @app.post("/api/pattern/thermal")
+    def pattern_thermal():
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        pattern = body.get("pattern")
+        if not isinstance(pattern, str) or not pattern.strip():
+            return jsonify({"error": "'pattern' is required"}), 400
+        loads = body.get("loads")
+        if not isinstance(loads, list) or not loads:
+            return jsonify({"error": "'loads' must be a non-empty list of "
+                                     "{member_uid, dT}"}), 400
+        try:
+            for ld in loads:
+                if not isinstance(ld, dict):
+                    raise ValueError("each thermal load must be an object "
+                                     "{member_uid, dT}")
+                uid = ld.get("member_uid")
+                dT = ld.get("dT")
+                if not isinstance(uid, str) or not uid:
+                    raise ValueError("thermal load needs a 'member_uid'")
+                if isinstance(dT, bool) or not isinstance(dT, (int, float)):
+                    raise ValueError("thermal load 'dT' must be a number")
+                _state["model"].add_thermal_load(pattern.strip(), uid,
+                                                 float(dT))
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(_state["model"].to_dict())
+
     # -------------------------------------------- v0.7: self-weight + codes
     def _num(body: Dict[str, Any], key: str, default=None, required=False):
         """Fetch a numeric field (rejects bools), with optional default."""
