@@ -57,6 +57,8 @@ const store = {
   concreteResult: null,  // last concrete design response
   designSort: { key: "ratio", dir: -1 },
   designFilter: "",
+  designAllCombos: false, // v0.9 — check the design envelope over all combos
+  diagCase: null,         // v0.9 — selected lateral case for story diagnostics
   steelFy: 345000,       // kPa
   concreteFc: 30000,     // kPa
   rebar: {},             // per-uid rebar overrides (uid -> layout)
@@ -882,6 +884,29 @@ function renderProps() {
           value="${ang === undefined ? "" : ang}" placeholder="${ang === undefined ? "mixed" : ""}">
       </div>`;
     }
+    // v0.9 — rigid end offsets (rigid zones) on any frame member
+    const ri = commonVal(members, x => x.rigid_i ?? 0);
+    const rj = commonVal(members, x => x.rigid_j ?? 0);
+    const rf = commonVal(members, x => x.rigid_factor ?? 1);
+    html += `
+      <h3 class="group-title">Rigid end offsets <span class="unit">rigid zones at member ends</span></h3>
+      <div class="field-row">
+        <div class="field"><label for="propRigidI">i-end <span class="unit">m</span></label>
+          <input id="propRigidI" class="rigid-in" type="number" step="0.05" min="0"
+            value="${ri === undefined ? "" : ri}" placeholder="${ri === undefined ? "mixed" : ""}"></div>
+        <div class="field"><label for="propRigidJ">j-end <span class="unit">m</span></label>
+          <input id="propRigidJ" class="rigid-in" type="number" step="0.05" min="0"
+            value="${rj === undefined ? "" : rj}" placeholder="${rj === undefined ? "mixed" : ""}"></div>
+      </div>
+      <div class="field"><label for="propRigidFactor">Rigid factor <span class="unit">0 = none · 1 = fully rigid</span></label>
+        <div class="rigid-factor-row">
+          <input id="propRigidFactorRange" class="rigid-range" type="range" min="0" max="1" step="0.05"
+            value="${rf === undefined ? 1 : rf}">
+          <input id="propRigidFactor" class="rigid-factor-num" type="number" min="0" max="1" step="0.05"
+            value="${rf === undefined ? "" : rf}" placeholder="${rf === undefined ? "mixed" : ""}">
+        </div>
+      </div>
+      <p class="muted" style="font-size:11px">Stiff end zones over rigid_i / rigid_j at each end; factor scales the added rigidity (ETABS end-length offset).</p>`;
     if (beams.length) {
       const relOf = (x, tok) => (x.releases || "").split(",").map(s => s.trim()).includes(tok);
       const mi = commonVal(beams, x => relOf(x, "Mi"));
@@ -1024,6 +1049,28 @@ function renderProps() {
     if (!isFinite(v)) return;
     for (const mm of [...columns, ...braces]) mm.angle = v;
     markDirty();
+  });
+  // v0.9 — rigid end offsets + rigid factor
+  const setRigid = (key, raw, hi) => {
+    const v = parseFloat(raw);
+    if (!isFinite(v) || v < 0 || (hi != null && v > hi)) return;
+    for (const mm of members) mm[key] = v;
+    markDirty();
+    store.modelEdited = true;
+    refreshDrawViews();          // rigid-zone glyphs live in the element layer
+  };
+  on("propRigidI", "change", e => setRigid("rigid_i", e.target.value));
+  on("propRigidJ", "change", e => setRigid("rigid_j", e.target.value));
+  on("propRigidFactor", "change", e => {
+    setRigid("rigid_factor", e.target.value, 1);
+    const rng = $("propRigidFactorRange");
+    const v = parseFloat(e.target.value);
+    if (rng && isFinite(v)) rng.value = String(Math.min(Math.max(v, 0), 1));
+  });
+  on("propRigidFactorRange", "input", e => {
+    const num = $("propRigidFactor");
+    if (num) num.value = e.target.value;
+    setRigid("rigid_factor", e.target.value, 1);
   });
   const applyReleases = () => {
     const mi = $("propRelMi").checked, mj = $("propRelMj").checked;
@@ -2198,7 +2245,68 @@ function renderStoryTab() {
   }).join("");
   $("storyTable").innerHTML = head + `<tbody>${rows}</tbody>`;
 
+  renderDiagBlock();
   renderCmCrBlock();
+}
+
+/* ---- v0.9: story stiffness + irregularity diagnostics (ASCE 7 §12.3) */
+/** Lateral case names that carry both story_stiffness and irregularity. */
+function diagCaseNames() {
+  const r = store.results;
+  if (!r || !r.story_stiffness || !r.irregularity) return [];
+  return Object.keys(r.story_stiffness).filter(cn => r.irregularity[cn]);
+}
+function hasDiagnostics() { return diagCaseNames().length > 0; }
+
+const TORS_CHIP = { none: ["ok", "none"], torsional: ["warn", "torsional"], extreme: ["bad", "extreme"] };
+const SOFT_CHIP = { none: ["ok", "none"], soft: ["warn", "soft"], extreme_soft: ["bad", "extreme soft"] };
+function diagChip(map, flag) {
+  const [cls, label] = map[flag] || map.none;
+  return `<span class="diag-chip dc-${cls}">${esc(label)}</span>`;
+}
+
+function renderDiagBlock() {
+  const block = $("storyDiagBlock");
+  if (!block) return;
+  const r = store.results;
+  const names = diagCaseNames();
+  block.classList.toggle("hidden", !names.length);
+  if (!names.length) return;
+
+  if (!store.diagCase || !names.includes(store.diagCase)) store.diagCase = names[0];
+  const sel = $("diagCaseSelect");
+  sel.innerHTML = names.map(n =>
+    `<option value="${esc(n)}"${n === store.diagCase ? " selected" : ""}>${esc(n)}</option>`).join("");
+
+  const stiff = r.story_stiffness[store.diagCase] || {};
+  const irr = r.irregularity[store.diagCase] || {};
+  const flagged = r.story_order.filter(s =>
+    (irr[s] && (irr[s].flag !== "none" || (irr[s].soft_flag && irr[s].soft_flag !== "none")))).length;
+  $("diagNote").innerHTML = `<b>${esc(store.diagCase)}</b> · ` +
+    (flagged ? `<b class="diag-flagged">${flagged}</b> irregular stor${flagged > 1 ? "ies" : "y"} flagged`
+      : `no irregularities flagged`);
+
+  const head = `<thead><tr>
+    <th class="txt">Story</th><th>Elev m</th>
+    <th>kx kN/m</th><th>ky kN/m</th>
+    <th>τ ratio x</th><th>τ ratio y</th><th class="txt">Torsion</th>
+    <th>stiff ratio</th><th class="txt">Soft story</th></tr></thead>`;
+  const rows = [...r.story_order].reverse().map(s => {
+    const k = stiff[s] || {}, ir = irr[s] || {};
+    const trx = ir.tors_ratio_x, tryy = ir.tors_ratio_y;
+    const overX = isFinite(trx) && trx >= 1.2, overY = isFinite(tryy) && tryy >= 1.2;
+    return `<tr>
+      <td class="txt">${esc(s)}</td>
+      <td class="dim">${fmt(r.story_elev[s], 1)}</td>
+      <td>${fmt(k.kx, 0)}</td><td>${fmt(k.ky, 0)}</td>
+      <td class="${overX ? "exceed" : ""}">${fmt(trx, 2)}</td>
+      <td class="${overY ? "exceed" : ""}">${fmt(tryy, 2)}</td>
+      <td class="txt">${diagChip(TORS_CHIP, ir.flag || "none")}</td>
+      <td>${ir.stiff_ratio == null ? `<span class="dim">—</span>` : fmt(ir.stiff_ratio, 2)}</td>
+      <td class="txt">${ir.stiff_ratio == null ? `<span class="dim">—</span>` : diagChip(SOFT_CHIP, ir.soft_flag || "none")}</td>
+    </tr>`;
+  }).join("");
+  $("storyDiagTable").innerHTML = head + `<tbody>${rows}</tbody>`;
 }
 
 /** v0.8 — Center of mass / rigidity plan diagram for a selected story. */
@@ -2631,9 +2739,15 @@ function renderDesignForm() {
   if (!store.results) { form.innerHTML = ""; return; }
   const opts = designCaseOptions();
   if (!store.designCase || !opts.includes(store.designCase)) store.designCase = opts[0] || null;
+  const nCombos = Object.keys((store.results && store.results.combos) || {}).length;
+  const allOn = store.designAllCombos && nCombos > 0;
   const caseSel = `<label class="rs-field"><span>case / combo</span>
-    <select id="designCaseSelect">${opts.map(n =>
-      `<option value="${esc(n)}"${n === store.designCase ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label>`;
+    <select id="designCaseSelect"${allOn ? " disabled" : ""}>${opts.map(n =>
+      `<option value="${esc(n)}"${n === store.designCase ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label>` +
+    `<label class="rs-field design-envelope" title="Check every load combination and report the governing one per member">
+      <span>envelope</span>
+      <label class="allcombos-check"><input type="checkbox" id="designAllCombos"${allOn ? " checked" : ""}${nCombos ? "" : " disabled"}>
+        All combinations${nCombos ? ` <span class="unit">${nCombos}</span>` : ""}</label></label>`;
 
   if (store.designKind === "steel") {
     form.innerHTML = `<div class="design-form-row">
@@ -2688,6 +2802,11 @@ function renderDesignForm() {
     });
   }
   $("designCaseSelect").addEventListener("change", e => { store.designCase = e.target.value; });
+  const cb = $("designAllCombos");
+  if (cb) cb.addEventListener("change", e => {
+    store.designAllCombos = e.target.checked;
+    renderDesignForm();           // enable/disable the case selector
+  });
   $("designCheckBtn").addEventListener("click", runDesignCheck);
 }
 
@@ -2696,10 +2815,13 @@ async function runDesignCheck() {
   if (btn.disabled) return;
   btn.disabled = true;
   $("designSpinner").classList.remove("hidden");
+  // v0.9 — envelope over all combinations vs. a single case
+  const nCombos = Object.keys((store.results && store.results.combos) || {}).length;
+  const useCombos = store.designAllCombos && nCombos > 0;
+  const target = useCombos ? { combos: true } : { case: store.designCase };
   try {
     if (store.designKind === "steel") {
-      store.steelResult = await designCheck("steel",
-        { case: store.designCase, Fy: store.steelFy });
+      store.steelResult = await designCheck("steel", { ...target, Fy: store.steelFy });
     } else {
       // apply the default rebar to every beam & column
       const rebar = {};
@@ -2709,7 +2831,7 @@ async function runDesignCheck() {
       }
       store.rebar = rebar;
       store.concreteResult = await designCheck("concrete",
-        { case: store.designCase, fc: store.concreteFc, rebar });
+        { ...target, fc: store.concreteFc, rebar });
     }
     renderDesignTable();
     const res = designResult();
@@ -2767,6 +2889,7 @@ function renderDesignTable() {
     return;
   }
   const s = res.summary;
+  const envelope = !!res.envelope;
   summary.classList.remove("hidden");
   summary.innerHTML =
     `<span class="ds-item"><b>${s.n}</b> checked</span>` +
@@ -2775,16 +2898,27 @@ function renderDesignTable() {
     `<span class="ds-item ds-na"><b>${s.na}</b> N/A</span>` +
     `<span class="ds-item">max ratio <b class="${s.max_ratio > 1 ? "ds-over" : ""}">${fmt(s.max_ratio, 3)}</b></span>` +
     `<span class="ds-item">governing <b>${esc(s.governing || "—")}</b></span>` +
+    (envelope
+      ? `<span class="ds-item ds-envelope">envelope over <b>${(res.combos || []).length}</b> combos</span>`
+      : "") +
     `<span class="ds-item ds-prelim">PRELIMINARY · ${esc(res.case)}</span>`;
 
   ctrls.classList.remove("hidden");
   const rows = designRows();
+  // v0.9 — insert a governing-combo column in envelope mode (after "equation")
+  const cols = envelope
+    ? DESIGN_COLS.flatMap(c => c.key === "equation"
+        ? [c, { key: "governing_combo", label: "Gov. combo", txt: true }] : [c])
+    : DESIGN_COLS;
   const { key: sk, dir } = store.designSort;
-  const head = `<thead><tr>` + DESIGN_COLS.map(c =>
+  const head = `<thead><tr>` + cols.map(c =>
     `<th class="sortable ${c.txt ? "txt" : ""}" data-key="${c.key}">${c.label}` +
     (c.key === sk ? `<span class="sort-arrow">${dir > 0 ? "▲" : "▼"}</span>` : "") +
     `</th>`).join("") + `</tr></thead>`;
   const chip = st => `<span class="status-chip st-${st === "N/A" ? "na" : st.toLowerCase()}">${esc(st)}</span>`;
+  const govCell = x => x.governing_combo && x.status !== "N/A"
+    ? `<td class="txt gov-combo" data-combo="${esc(x.governing_combo)}" title="Switch the case selector to this combo">${esc(x.governing_combo)}</td>`
+    : `<td class="txt dim">—</td>`;
   const body = rows.map(x => `<tr data-uid="${esc(x.uid)}" class="design-row${x.ratio > 1 ? " over" : ""}" title="${esc(x.notes || "")}">
     <td class="txt">${esc(x.uid)}</td>
     <td class="txt dim">${esc(x.kind)}</td>
@@ -2795,7 +2929,7 @@ function renderDesignTable() {
     <td class="dim">${fmt(x.phiPn, 1)}</td>
     <td class="dim">${fmt(x.phiMn33, 1)}</td>
     <td class="${x.ratio > 1 ? "exceed" : ""}"><b>${fmt(x.ratio, 3)}</b></td>
-    <td class="txt dim">${esc(x.equation)}</td>
+    <td class="txt dim">${esc(x.equation)}</td>${envelope ? govCell(x) : ""}
     <td class="txt">${chip(x.status)}</td></tr>`).join("");
   table.innerHTML = head + `<tbody>${body || `<tr><td class="txt dim">No members match the filter</td></tr>`}</tbody>`;
   $("designCount").textContent =
@@ -2805,8 +2939,17 @@ function renderDesignTable() {
     th.addEventListener("click", () => {
       const k = th.dataset.key;
       if (store.designSort.key === k) store.designSort.dir *= -1;
-      else store.designSort = { key: k, dir: (k === "uid" || k === "kind" || k === "section" || k === "status" || k === "equation") ? 1 : -1 };
+      else store.designSort = { key: k, dir: (k === "uid" || k === "kind" || k === "section" || k === "status" || k === "equation" || k === "governing_combo") ? 1 : -1 };
       renderDesignTable();
+    }));
+  // v0.9 — governing-combo cell → switch the case selector to that combo
+  table.querySelectorAll("td.gov-combo").forEach(td =>
+    td.addEventListener("click", ev => {
+      ev.stopPropagation();
+      store.designAllCombos = false;
+      store.designCase = td.dataset.combo;
+      renderDesignForm();
+      toast("Case selector set", `Switched to combo “${td.dataset.combo}”`, "info", 3500);
     }));
   // row click → select the member in 3D
   table.querySelectorAll("tr.design-row").forEach(tr =>
@@ -2898,9 +3041,16 @@ function csvRows(kind) {
   if (kind === "story") {
     if (!cd) return null;
     const cmcr = hasCmCr();
+    // v0.9 — diagnostics for the selected lateral case (if any)
+    const diag = hasDiagnostics();
+    const dcase = diag ? store.diagCase : null;
+    const stiff = diag ? (r.story_stiffness[dcase] || {}) : {};
+    const irr = diag ? (r.irregularity[dcase] || {}) : {};
     return [
       ["story", "elev_m", "ux_m", "uy_m", "drift_x", "drift_y", "shear_x_kN", "shear_y_kN",
-        ...(cmcr ? ["cm_x_m", "cm_y_m", "cr_x_m", "cr_y_m", "ecc_m"] : [])],
+        ...(cmcr ? ["cm_x_m", "cm_y_m", "cr_x_m", "cr_y_m", "ecc_m"] : []),
+        ...(diag ? [`kx_kN_m(${dcase})`, "ky_kN_m", "tors_ratio_x", "tors_ratio_y",
+          "tors_flag", "stiff_ratio", "soft_flag"] : [])],
       ...[...r.story_order].reverse().map(s => {
         const st = (cd.story && cd.story[s]) || {};
         const base = [s, r.story_elev[s], st.ux || 0, st.uy || 0,
@@ -2910,6 +3060,11 @@ function csvRows(kind) {
           const ecc = cc ? Math.hypot((cc.cm_x ?? 0) - (cc.cr_x ?? 0), (cc.cm_y ?? 0) - (cc.cr_y ?? 0)) : "";
           base.push(cc ? cc.cm_x ?? "" : "", cc ? cc.cm_y ?? "" : "",
             cc ? cc.cr_x ?? "" : "", cc ? cc.cr_y ?? "" : "", cc ? ecc : "");
+        }
+        if (diag) {
+          const k = stiff[s] || {}, ir = irr[s] || {};
+          base.push(k.kx ?? "", k.ky ?? "", ir.tors_ratio_x ?? "", ir.tors_ratio_y ?? "",
+            ir.flag ?? "", ir.stiff_ratio ?? "", ir.soft_flag ?? "");
         }
         return base;
       }),
@@ -2967,11 +3122,14 @@ function csvRows(kind) {
   if (kind === "design") {
     const res = designResult();
     if (!res) return null;
+    const env = !!res.envelope;
     return [
       ["member", "kind", "section", "Pu_kN", "Mu33_kNm", "Mu22_kNm",
-        "phiPn_kN", "phiMn33_kNm", "phiMn22_kNm", "ratio", "equation", "status", "notes"],
+        "phiPn_kN", "phiMn33_kNm", "phiMn22_kNm", "ratio", "equation",
+        ...(env ? ["governing_combo"] : []), "status", "notes"],
       ...designRows().map(x => [x.uid, x.kind, x.section, x.Pu, x.Mu33, x.Mu22,
-        x.phiPn, x.phiMn33, x.phiMn22, x.ratio, x.equation, x.status, x.notes]),
+        x.phiPn, x.phiMn33, x.phiMn22, x.ratio, x.equation,
+        ...(env ? [x.governing_combo || ""] : []), x.status, x.notes]),
     ];
   }
   if (kind === "th") {
@@ -3395,6 +3553,12 @@ function wire() {
     renderCmCrBlock();
   });
 
+  // v0.9 — story-diagnostics lateral-case selector
+  $("diagCaseSelect").addEventListener("change", e => {
+    store.diagCase = e.target.value;
+    renderDiagBlock();
+  });
+
   // forces filter
   $("forcesFilter").addEventListener("input", e => {
     store.forcesFilter = e.target.value;
@@ -3536,6 +3700,8 @@ async function boot() {
     selectMemberFrom3D, renderThTab,
     // v0.8
     renderStoryTab, renderCmCrBlock, storyCmCr, hasCmCr, renderStoryCharts,
+    // v0.9
+    renderDiagBlock, diagCaseNames, hasDiagnostics,
   };
 }
 

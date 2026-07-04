@@ -1402,3 +1402,45 @@ details.mgr-mods[open] summary { color: var(--text-2); }
 .cmcr-legend i.cross::after { top: 6px; left: 0; height: 2px; width: 14px; }
 .cmcr-legend i.vec { height: 0; border-top: 2px dashed var(--amber); align-self: center; }
 tr.cm-active td { background: var(--accent-ghost) !important; }
+
+/* ============ v0.9 — rigid end offsets, diagnostics, design envelope ============ */
+/* rigid-factor slider + numeric input pair (member properties panel) */
+.rigid-factor-row { display: flex; align-items: center; gap: 10px; }
+.rigid-factor-row .rigid-range { flex: 1 1 auto; accent-color: var(--accent); min-width: 60px; }
+.rigid-factor-row .rigid-factor-num { width: 64px; flex: none; }
+
+/* story diagnostics block (Story Results tab) */
+.diag-block {
+  margin-top: 16px; padding: 14px 16px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+}
+.diag-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.diag-head h3 { font-size: 13px; font-weight: 650; margin-bottom: 3px; }
+.diag-head .muted { font-size: 11.5px; font-weight: 400; }
+.diag-head #diagNote { font-variant-numeric: tabular-nums; }
+.diag-flagged { color: var(--amber); }
+.diag-case { font-size: 11px; color: var(--text-3); display: flex; align-items: center; gap: 6px; }
+.diag-case select { padding: 4px 8px; }
+.diag-block .table-scroll { margin-top: 12px; }
+.diag-legend { margin-top: 10px; font-size: 11px; line-height: 1.6; color: var(--text-3); }
+.diag-legend b { color: var(--text-2); font-weight: 650; }
+.diag-chip {
+  display: inline-block; font-size: 10.5px; font-weight: 650; line-height: 1;
+  padding: 3px 8px; border-radius: 99px; text-transform: capitalize;
+}
+.diag-chip.dc-ok  { color: var(--green); background: rgba(52,195,132,.14); border: 1px solid rgba(52,195,132,.35); }
+.diag-chip.dc-warn { color: var(--amber); background: var(--amber-ghost); border: 1px solid rgba(229,165,10,.4); }
+.diag-chip.dc-bad { color: var(--red); background: rgba(230,103,103,.14); border: 1px solid rgba(230,103,103,.42); }
+
+/* design tab — "All combinations" envelope toggle + governing-combo column */
+.design-envelope { justify-content: flex-end; }
+.allcombos-check {
+  display: flex; align-items: center; gap: 6px; text-transform: none;
+  font-size: 12px; color: var(--text-2); letter-spacing: 0; white-space: nowrap; cursor: pointer;
+}
+.allcombos-check input { width: auto; accent-color: var(--accent); }
+.allcombos-check .unit { color: var(--text-3); font-size: 11px; }
+.ds-envelope { color: var(--accent); font-weight: 600; }
+.ds-envelope b { color: var(--accent); }
+.gov-combo { color: var(--accent); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
+.gov-combo:hover { color: var(--text-1); background: var(--accent-ghost); }

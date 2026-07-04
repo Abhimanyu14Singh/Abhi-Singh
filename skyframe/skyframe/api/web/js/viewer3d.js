@@ -38,6 +38,7 @@ const COLORS = {
   link: "#34c384",                             // v0.5 two-node links (springs)
   spring: "#2fbf74",                           // v0.8 grounded spring supports
   thermal: "#e5a50a",                          // v0.8 ΔT thermal badge
+  rigid: "rgba(140, 185, 230, 0.75)",          // v0.9 rigid end zones
   grid: "rgba(120, 140, 165, 0.16)",
   gridLabel: "rgba(140, 160, 185, 0.55)",
   slabFill: "rgba(53, 181, 229, 0.045)",
@@ -188,7 +189,12 @@ export class Viewer3D {
     this.segs = m.members.map(mm => ({
       p1: mm.pi, p2: mm.pj, kind: mm.kind, uid: mm.uid,
       section: mm.section, story: mm.story,
+      rigid_i: mm.rigid_i || 0, rigid_j: mm.rigid_j || 0,   // v0.9 rigid zones
     }));
+    // v0.9: members carrying a rigid end offset (for the rigid-zone glyph)
+    this.rigidUids = new Set();
+    for (const mm of m.members)
+      if ((mm.rigid_i || 0) > 0 || (mm.rigid_j || 0) > 0) this.rigidUids.add(mm.uid);
 
     // v0.2 shell regions (walls / slabs) as filled quads.
     // v0.5: opening cutouts pre-computed as 3D quads (bilinear on corners).
@@ -646,6 +652,33 @@ export class Viewer3D {
       ctx.globalAlpha = overlayActive ? 0.4 : 1;
       drawSpringGlyph(ctx, sp.x, sp.y, r, COLORS.spring);
       ctx.globalAlpha = 1;
+    }
+
+    // ---- v0.9 rigid end zones: thicker pale-blue stubs at member ends
+    if (this.rigidUids && this.rigidUids.size && !overlayActive) {
+      ctx.strokeStyle = COLORS.rigid;
+      ctx.lineWidth = 4.5;
+      ctx.lineCap = "butt";
+      for (const s of this._segsScreen) {
+        if (!this.rigidUids.has(s.seg.uid)) continue;
+        const p1 = s.seg.p1, p2 = s.seg.p2;
+        const L = Math.hypot(p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]) || 1;
+        const dx = s.x2 - s.x1, dy = s.y2 - s.y1;
+        const fi = Math.min((s.seg.rigid_i || 0) / L, 0.49);
+        const fj = Math.min((s.seg.rigid_j || 0) / L, 0.49);
+        if (fi > 0) {
+          ctx.beginPath();
+          ctx.moveTo(s.x1, s.y1);
+          ctx.lineTo(s.x1 + dx * fi, s.y1 + dy * fi);
+          ctx.stroke();
+        }
+        if (fj > 0) {
+          ctx.beginPath();
+          ctx.moveTo(s.x2, s.y2);
+          ctx.lineTo(s.x2 - dx * fj, s.y2 - dy * fj);
+          ctx.stroke();
+        }
+      }
     }
 
     // ---- v0.8 ΔT badges on members carrying thermal loads

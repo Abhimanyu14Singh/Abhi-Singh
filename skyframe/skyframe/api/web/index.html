@@ -428,6 +428,28 @@
           <div class="table-scroll">
             <table class="data-table" id="storyTable"></table>
           </div>
+          <!-- v0.9: story stiffness + irregularity diagnostics (ASCE 7 §12.3) -->
+          <div class="diag-block hidden" id="storyDiagBlock">
+            <div class="diag-head">
+              <div>
+                <h3>Diagnostics <span class="muted">lateral stiffness &amp; irregularity</span></h3>
+                <p class="muted" id="diagNote"></p>
+              </div>
+              <label class="diag-case">Lateral case
+                <select id="diagCaseSelect"></select>
+              </label>
+            </div>
+            <div class="table-scroll">
+              <table class="data-table" id="storyDiagTable"></table>
+            </div>
+            <p class="muted diag-legend">
+              ASCE 7-16 §12.3.2 · <b>Torsional</b>: ratio of max to average story drift —
+              ≥ 1.2 torsional (Type 1a), ≥ 1.4 extreme (Type 1b).
+              <b>Soft story</b>: lateral stiffness of a story vs. the story above —
+              &lt; 70 % soft (Type 1a), &lt; 60 % extreme soft (Type 1b).
+            </p>
+          </div>
+
           <!-- v0.8: center of mass / center of rigidity plan -->
           <div class="cmcr-block hidden" id="cmcrBlock">
             <div class="cmcr-head">

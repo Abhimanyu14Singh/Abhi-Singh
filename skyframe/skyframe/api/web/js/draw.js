@@ -27,6 +27,7 @@ const C = {
   linkRubber: "rgba(52, 195, 132, 0.9)",
   spring: "#2fbf74",                      // green — grounded spring support (v0.8)
   thermal: "#e5a50a",                     // amber — ΔT thermal badge (v0.8)
+  rigid: "rgba(120, 170, 220, 0.55)",     // pale blue — rigid end zone (v0.9)
   sel: "#35b5e5",
   snap: "#35b5e5",
   rubber: "rgba(53, 181, 229, 0.9)",
@@ -237,6 +238,29 @@ export class PlanEditor {
         "data-ref": `member:${mm.uid}`,
       }));
     }
+    // v0.9: rigid end zones — thicker hatched stubs at member ends where
+    // rigid_i / rigid_j > 0 (subtle, drawn over beams/braces; non-interactive)
+    for (const mm of m.members) {
+      if (mm.story !== story || mm.kind === "column") continue;
+      const ri = mm.rigid_i || 0, rj = mm.rigid_j || 0;
+      if (ri <= 0 && rj <= 0) continue;
+      const dx = mm.pj[0] - mm.pi[0], dy = mm.pj[1] - mm.pi[1];
+      const L = Math.hypot(dx, dy);
+      if (L < 1e-6) continue;
+      const ux = dx / L, uy = dy / L;
+      const stub = (x, y, len, sign) => {
+        const l = Math.min(len, L * 0.49);
+        this.gElems.appendChild(el("line", {
+          x1: x, y1: y, x2: x + sign * ux * l, y2: y + sign * uy * l,
+          stroke: C.rigid, "stroke-width": 6, "stroke-linecap": "butt",
+          "stroke-dasharray": "1.5 2.5", "vector-effect": "non-scaling-stroke",
+          "pointer-events": "none", "data-ref": `rigid:${mm.uid}`,
+        }));
+      };
+      if (ri > 0) stub(mm.pi[0], mm.pi[1], ri, +1);
+      if (rj > 0) stub(mm.pj[0], mm.pj[1], rj, -1);
+    }
+
     // v0.5: links whose endpoints lie within the current story's z-span —
     // green zigzag spring glyphs on top of everything
     for (const lk of this._storyLinks()) {

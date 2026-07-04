@@ -40,7 +40,8 @@ export function mockModel(p = {}) {
   const members = [];
   const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
   const add = (kind, section, pi, pj, story, uid) =>
-    members.push({ uid, kind, section, pi, pj, story, length: dist(pi, pj), releases: "", angle: 0 });
+    members.push({ uid, kind, section, pi, pj, story, length: dist(pi, pj),
+      releases: "", angle: 0, rigid_i: 0, rigid_j: 0, rigid_factor: 1 });
 
   stories.forEach((st, si) => {
     const zt = st.elevation, zb = st.elevation - st.height;
@@ -58,6 +59,13 @@ export function mockModel(p = {}) {
           `BY${si + 1}-${XL(xi)}${yi + 1}`);
     });
   });
+
+  // v0.9: demo rigid-end offsets on a couple of Story1 members — a beam
+  // (rigid zones at both ends where it frames into columns) and a column.
+  const demoBeam = members.find(mm => mm.kind === "beam" && mm.story === "Story1");
+  if (demoBeam) { demoBeam.rigid_i = 0.25; demoBeam.rigid_j = 0.25; demoBeam.rigid_factor = 1.0; }
+  const demoCol = members.find(mm => mm.kind === "column" && mm.story === "Story1");
+  if (demoCol) { demoCol.rigid_j = 0.30; demoCol.rigid_factor = 0.5; }
 
   // story mass from dead UDL on beams (as builder.py does)
   const story_masses = {};
@@ -828,6 +836,55 @@ export function mockResults(model) {
     };
   });
 
+  /* ---- v0.9: per-story lateral stiffness + ASCE 7 §12.3 irregularity checks.
+     Present only when the model has diaphragms, and only for LATERAL cases
+     (quake load cases + response-spectrum cases). The mock seeds one
+     torsionally-EXTREME story, one torsional story, one soft story and one
+     extreme-soft story so the Story-tab diagnostics chips show every state. */
+  const story_stiffness = {}, irregularity = {};
+  const hasDia = (model.diaphragm || "rigid") !== "none" && model.rigid_diaphragms !== false;
+  if (hasDia) {
+    const nS = storyOrder.length;
+    const quakeCases = Object.keys(model.cases || {}).filter(cn => {
+      const c = model.cases[cn] || {};
+      return Object.keys(c.patterns || {}).some(pn => {
+        const p = (model.patterns || {})[pn];
+        return p && (p.story_forces || []).some(f => (f.fx || 0) || (f.fy || 0));
+      });
+    });
+    const lateralNames = [...quakeCases, ...Object.keys(model.rs_cases || {})];
+    const kbaseX = 4.2e5, kbaseY = 3.9e5;                 // kN/m at the base
+    for (const cn of lateralNames) {
+      story_stiffness[cn] = {}; irregularity[cn] = {};
+      storyOrder.forEach((s, i) => {
+        const t = nS > 1 ? i / (nS - 1) : 0;
+        story_stiffness[cn][s] = {
+          kx: +(kbaseX * (1 - 0.5 * t) * jit(0.04)).toFixed(1),
+          ky: +(kbaseY * (1 - 0.5 * t) * jit(0.04)).toFixed(1),
+        };
+        // torsional irregularity ratio = max/avg story drift across the plan
+        let trx = 1.03 + 0.05 * (jit(0.4) - 1) + 0.03, tryy = 1.04 + 0.05 * (jit(0.4) - 1);
+        if (i === 0) trx = 1.45;              // extreme torsional (red)
+        else if (i === 1) trx = 1.26;         // torsional (amber)
+        const maxTr = Math.max(trx, tryy);
+        const flag = maxTr >= 1.4 ? "extreme" : maxTr >= 1.2 ? "torsional" : "none";
+        // soft-story stiffness ratio (this story / the story above)
+        let stiff_ratio = null, soft_flag = "none";
+        if (i < nS - 1) {
+          stiff_ratio = 1.05 + 0.12 * (jit(0.3) - 1) / 0.3;
+          if (i === 1) stiff_ratio = 0.66;          // soft (amber)
+          else if (i === 2) stiff_ratio = 0.55;     // extreme soft (red)
+          soft_flag = stiff_ratio <= 0.6 ? "extreme_soft" : stiff_ratio <= 0.7 ? "soft" : "none";
+          stiff_ratio = +stiff_ratio.toFixed(3);
+        }
+        irregularity[cn][s] = {
+          tors_ratio_x: +trx.toFixed(3), tors_ratio_y: +tryy.toFixed(3),
+          flag, stiff_ratio, soft_flag,
+        };
+      });
+    }
+  }
+
   const out = {
     model_name: model.name,
     nodes, members, supports,
@@ -841,6 +898,8 @@ export function mockResults(model) {
   };
   if (Object.keys(pushover).length) out.pushover = pushover;
   if (Object.keys(story_props).length) out.story_props = story_props;
+  if (Object.keys(story_stiffness).length) out.story_stiffness = story_stiffness;
+  if (Object.keys(irregularity).length) out.irregularity = irregularity;
   return out;
 }
 
@@ -1174,6 +1233,41 @@ function _caseForcesFor(model, caseName) {
   return { forces: (cd && cd.member_forces) || {}, resolved: caseName };
 }
 
+/** v0.9 — resolve the design request into a response. When `body.combos` is
+    set (true = all combos, or an explicit name list) the checks are ENVELOPED
+    over the combos: each member keeps its worst (max-ratio) combo and gains a
+    `governing_combo` field. Otherwise a single case/combo is checked. */
+function _designEnvelope(model, body, buildForCase) {
+  const combosReq = body.combos;
+  if (combosReq) {
+    const all = Object.keys(model.combos || {});
+    const names = (Array.isArray(combosReq) ? combosReq.filter(n => all.includes(n)) : all);
+    if (!names.length) {                          // no combos → fall back to a case
+      const caseName = body.case || Object.keys(model.cases || {})[0];
+      const checks = buildForCase(caseName);
+      return { preliminary: true, case: caseName, checks, summary: _summary(checks) };
+    }
+    const byUid = new Map();
+    for (const cn of names) {
+      for (const c of buildForCase(cn)) {
+        const prev = byUid.get(c.uid);
+        const better = !prev ||
+          (c.status !== "N/A" && (prev.status === "N/A" || c.ratio > prev.ratio));
+        if (better) byUid.set(c.uid, { ...c, governing_combo: cn });
+      }
+    }
+    const checks = [...byUid.values()];
+    return {
+      preliminary: true, envelope: true, combos: names,
+      case: `envelope · ${names.length} combo${names.length > 1 ? "s" : ""}`,
+      checks, summary: _summary(checks),
+    };
+  }
+  const caseName = body.case || Object.keys(model.cases || {})[0];
+  const checks = buildForCase(caseName);
+  return { preliminary: true, case: caseName, checks, summary: _summary(checks) };
+}
+
 function _summary(checks, governKey = "ratio") {
   const ok = checks.filter(c => c.status === "OK").length;
   const ng = checks.filter(c => c.status === "NG").length;
@@ -1186,10 +1280,14 @@ function _summary(checks, governKey = "ratio") {
   return { n: checks.length, ok, ng, na, max_ratio: +max_ratio.toFixed(3), governing };
 }
 
-/** POST /api/design/steel — AISC-H1-style interaction screening (mock). */
+/** POST /api/design/steel — AISC-H1-style interaction screening (mock).
+    Accepts {case} or {combos:true|[names]} (v0.9 envelope over combos). */
 export function mockDesignSteel(model, body = {}) {
-  const caseName = body.case || Object.keys(model.cases || {})[0];
   const Fy = isFinite(body.Fy) && body.Fy > 0 ? body.Fy : 345000;   // kPa (≈345 MPa)
+  return _designEnvelope(model, body, caseName => _steelChecks(model, caseName, Fy));
+}
+
+function _steelChecks(model, caseName, Fy) {
   const { forces } = _caseForcesFor(model, caseName);
   const checks = [];
   for (const mm of model.members) {
@@ -1232,14 +1330,18 @@ export function mockDesignSteel(model, body = {}) {
       notes: ratio > 1.0 ? "interaction > 1.0" : "", preliminary: true,
     });
   }
-  return { preliminary: true, case: caseName, checks, summary: _summary(checks) };
+  return checks;
 }
 
-/** POST /api/design/concrete — flexure/axial screening from a rebar layout. */
+/** POST /api/design/concrete — flexure/axial screening from a rebar layout.
+    Accepts {case} or {combos:true|[names]} (v0.9 envelope over combos). */
 export function mockDesignConcrete(model, body = {}) {
-  const caseName = body.case || Object.keys(model.cases || {})[0];
   const fc = isFinite(body.fc) && body.fc > 0 ? body.fc : 30000;   // kPa (≈30 MPa)
   const rebar = body.rebar || {};
+  return _designEnvelope(model, body, caseName => _concreteChecks(model, caseName, fc, rebar));
+}
+
+function _concreteChecks(model, caseName, fc, rebar) {
   const { forces } = _caseForcesFor(model, caseName);
   const checks = [];
   for (const mm of model.members) {
@@ -1294,7 +1396,7 @@ export function mockDesignConcrete(model, body = {}) {
       preliminary: true,
     });
   }
-  return { preliminary: true, case: caseName, checks, summary: _summary(checks) };
+  return checks;
 }
 
 /* ---- mock model importers: parse a tiny built-in fixture → small model. */

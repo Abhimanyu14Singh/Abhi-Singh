@@ -46,6 +46,13 @@ export function normalizeModel(m) {
   // v0.4 — member orientation angle, stiffness modifiers, mass source,
   // time-history cases
   for (const mm of m.members) if (!isFinite(mm.angle)) mm.angle = 0;
+  // v0.9 — rigid-end offsets (rigid zones at member ends) + rigid factor
+  for (const mm of m.members) {
+    if (!(isFinite(mm.rigid_i) && mm.rigid_i >= 0)) mm.rigid_i = 0;
+    if (!(isFinite(mm.rigid_j) && mm.rigid_j >= 0)) mm.rigid_j = 0;
+    if (!(isFinite(mm.rigid_factor) && mm.rigid_factor >= 0 && mm.rigid_factor <= 1))
+      mm.rigid_factor = 1.0;
+  }
   for (const s of Object.values(m.sections)) {
     for (const k of ["mod_A", "mod_I33", "mod_I22", "mod_J"])
       if (!isFinite(s[k])) s[k] = 1.0;
@@ -396,6 +403,12 @@ export function memberThermalPatterns(model, uid) {
 export function anyThermalMember(model, uid) {
   return Object.values(model.patterns || {}).some(p =>
     (p.thermal_loads || []).some(t => t.member_uid === uid));
+}
+
+/** v0.9 — the member has a rigid end zone (offset at either end > 0). */
+export function hasRigidZone(mm) {
+  return !!mm && ((isFinite(mm.rigid_i) && mm.rigid_i > 0) ||
+                  (isFinite(mm.rigid_j) && mm.rigid_j > 0));
 }
 
 /* ---- shell openings (region-parametric fractions 0..1) */

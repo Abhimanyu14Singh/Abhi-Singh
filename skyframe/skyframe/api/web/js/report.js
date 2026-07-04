@@ -285,6 +285,37 @@ export function buildReportHtml(model, results, opts = {}) {
     return `<div class="case-block"><h3>${esc(name)} <span class="tag">${esc(kind)}</span>${cd.min ? ` <span class="tag">max above</span>` : ""}</h3>${inner}</div>`;
   }).join("");
 
+  /* ---- v0.9: story stiffness + irregularity diagnostics (ASCE 7 §12.3) */
+  let diagBlocks = "";
+  const ssAll = r.story_stiffness || {}, irAll = r.irregularity || {};
+  const diagCases = Object.keys(ssAll).filter(cn => irAll[cn]);
+  if (diagCases.length) {
+    const CH = {
+      none: "#1a7f4b", torsional: "#b26a00", extreme: "#c0392b",
+      soft: "#b26a00", extreme_soft: "#c0392b",
+    };
+    const LBL = { extreme_soft: "extreme soft" };
+    const chip = flag => `<span style="font-weight:650;color:${CH[flag] || "#5c6672"}">${esc(LBL[flag] || flag || "none")}</span>`;
+    diagBlocks = `<p class="minihead">Story stiffness &amp; irregularity (ASCE 7 §12.3)</p>` +
+      diagCases.map(cn => {
+        const ss = ssAll[cn] || {}, ir = irAll[cn] || {};
+        const rows = [...r.story_order].reverse().map(s => {
+          const k = ss[s] || {}, x = ir[s] || {};
+          return [T(s), fmt(k.kx, 0), fmt(k.ky, 0),
+            fmt(x.tors_ratio_x, 2), fmt(x.tors_ratio_y, 2),
+            { html: chip(x.flag || "none"), txt: true },
+            x.stiff_ratio == null ? D("—") : fmt(x.stiff_ratio, 2),
+            { html: x.stiff_ratio == null ? "—" : chip(x.soft_flag || "none"), txt: true }];
+        });
+        const t = table([{ label: "Story", txt: true }, "kx (kN/m)", "ky (kN/m)",
+          "τ ratio x", "τ ratio y", { label: "Torsion", txt: true },
+          "stiff ratio", { label: "Soft story", txt: true }], rows);
+        return `<div class="case-block"><h3>${esc(cn)} <span class="tag">diagnostics</span></h3>${t}</div>`;
+      }).join("") +
+      `<p class="note">Torsional irregularity: max/avg story drift — ≥ 1.2 torsional (Type 1a), ≥ 1.4 extreme (Type 1b).
+        Soft story: story stiffness vs the story above — &lt; 70 % soft (Type 1a), &lt; 60 % extreme soft (Type 1b).</p>`;
+  }
+
   const baseTable = table(
     [{ label: "Case", txt: true }, "FX (kN)", "FY (kN)", "FZ (kN)",
      "MX (kN·m)", "MY (kN·m)", "MZ (kN·m)"],
@@ -403,7 +434,7 @@ ${section("2 · Loads", patTable +
   "Member/area totals are unfactored sums of the raw pattern loads.")}
 ${section("3 · Modal analysis", modalHtml,
   "Mass-participation ratios per mode; Γ = modal participation factor (L/M*).")}
-${section("4 · Story results by case", storyBlocks)}
+${section("4 · Story results by case", storyBlocks + diagBlocks)}
 ${section("5 · Base reactions", baseTable)}
 ${section("6 · Member force envelope", envTable,
   `Top ${envRows.length} members by |M3| — absolute envelope across all static cases and combinations.`)}
