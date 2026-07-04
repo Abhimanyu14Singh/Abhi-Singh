@@ -81,6 +81,13 @@ scrutinized benchmark tests.
 - [x] REST endpoints + Loads-editor "Code tools (ASCE 7)" section
 - [x] Local standalone build (packaging/build.sh) — no cloud CI needed
 
+## Wave 9 — foundations & seismic diagnostics  ✅ done
+- [x] Point spring supports (6-DOF foundation springs) + draw tool/glyph
+- [x] Accidental torsion (ASCE 7 §12.8.4 story torque at ±ecc)
+- [x] Temperature (thermal axial) loads on members
+- [x] Center of mass / center of rigidity per story + plan display
+- [x] REST endpoints; all fields round-trip through /api/model
+
 ## Phase 4 — Parity increment 2  ✅ done
 - [x] 1. Model save/open (.skyframe JSON files) with File menu + gallery
 - [x] 2. Load pattern / case / combo editor UI (with per-case P-Delta toggle)
