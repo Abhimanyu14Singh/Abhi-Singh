@@ -4,7 +4,8 @@
 import { Viewer3D, SHELL_COMPONENTS } from "./viewer3d.js";
 import { renderStoryCharts, stationDiagram, timeSeriesChart, pushoverChart } from "./charts.js";
 import { mockModel, mockResults, mockSectionLibrary, mockModelFiles, mockWindPattern,
-  mockDesignSteel, mockDesignConcrete, mockImport } from "./mock.js";
+  mockDesignSteel, mockDesignConcrete, mockImport,
+  mockSelfWeightPattern, mockAsce7Combos, mockCodeRsCase, mockElfPattern } from "./mock.js";
 import { PlanEditor } from "./draw.js";
 import { ElevEditor } from "./elev.js";
 import { LoadsEditor } from "./loads.js";
@@ -194,6 +195,93 @@ async function generateWindPattern(params) {
   toast("Wind pattern generated",
     `“${params.name}” computed locally (${store.mock ? "mock mode" : "backend lacks /api/pattern/wind"})`,
     "info", 5000);
+  return store.model;
+}
+
+/* ---- v0.7: ASCE 7-16 code tools. Each mirrors generateWindPattern:
+   the live path syncs the working model, POSTs the code endpoint and adopts
+   the returned model dict; on failure / ?mock=1 it mutates the client model
+   locally with a "computed locally" toast. All return store.model. */
+async function codeToolLive(path, params) {
+  const payload = JSON.parse(JSON.stringify(store.model));
+  delete payload._mock_params;
+  await postModel(payload);
+  const echoed = await api(path, params);
+  store.model = ME.normalizeModel(echoed);
+  store.modelEdited = true;
+  clearDirty();                                  // client == server state
+  syncLoadsNav();
+  renderSummary();
+  return store.model;
+}
+
+async function addSelfWeightPattern(params) {
+  if (!store.mock) {
+    try {
+      await codeToolLive("/api/pattern/selfweight", params);
+      toast("Self-weight pattern added",
+        `“${params.name}” · factor ${fmt(params.factor, 2)} via POST /api/pattern/selfweight`, "info", 5000);
+      return store.model;
+    } catch (e) { console.warn("Self-weight endpoint unavailable, computing locally:", e.message); }
+  }
+  mockSelfWeightPattern(store.model, params);
+  ME.normalizeModel(store.model);
+  markDirty();
+  toast("Self-weight pattern added",
+    `“${params.name}” computed locally (${store.mock ? "mock mode" : "backend lacks endpoint"})`, "info", 5000);
+  return store.model;
+}
+
+async function generateAsce7Combos(params) {
+  const before = Object.keys(store.model.combos || {}).length;
+  if (!store.mock) {
+    try {
+      await codeToolLive("/api/combos/asce7", params);
+      const added = Object.keys(store.model.combos || {}).length - before;
+      toast("ASCE 7 combinations generated",
+        `${added} combo${added === 1 ? "" : "s"} (${params.standard}) via POST /api/combos/asce7`, "info", 5000);
+      return store.model;
+    } catch (e) { console.warn("ASCE7 combos endpoint unavailable, computing locally:", e.message); }
+  }
+  const { added } = mockAsce7Combos(store.model, params.standard);
+  ME.normalizeModel(store.model);
+  markDirty();
+  toast("ASCE 7 combinations generated",
+    `${added.length} combo${added.length === 1 ? "" : "s"} (${params.standard}) computed locally`, "info", 5000);
+  return store.model;
+}
+
+async function createCodeRsCase(params) {
+  if (!store.mock) {
+    try {
+      await codeToolLive("/api/case/rs-code", params);
+      toast("Code RS case created",
+        `“${params.name}” · ${params.direction} · ASCE 7-16 spectrum via POST /api/case/rs-code`, "info", 5000);
+      return store.model;
+    } catch (e) { console.warn("RS-code endpoint unavailable, computing locally:", e.message); }
+  }
+  mockCodeRsCase(store.model, params);
+  ME.normalizeModel(store.model);
+  markDirty();
+  toast("Code RS case created",
+    `“${params.name}” computed locally (${store.mock ? "mock mode" : "backend lacks endpoint"})`, "info", 5000);
+  return store.model;
+}
+
+async function createElfPattern(params) {
+  if (!store.mock) {
+    try {
+      await codeToolLive("/api/pattern/elf", params);
+      toast("ELF seismic pattern created",
+        `“${params.name}” · ${params.direction} · V=Cs·W via POST /api/pattern/elf`, "info", 5000);
+      return store.model;
+    } catch (e) { console.warn("ELF endpoint unavailable, computing locally:", e.message); }
+  }
+  mockElfPattern(store.model, params);
+  ME.normalizeModel(store.model);
+  markDirty();
+  toast("ELF seismic pattern created",
+    `“${params.name}” computed locally (${store.mock ? "mock mode" : "backend lacks endpoint"})`, "info", 5000);
   return store.model;
 }
 
@@ -3218,6 +3306,11 @@ async function boot() {
     onChange: markDirty,
     toast,
     onWind: generateWindPattern,                   // v0.4
+    // v0.7 — ASCE 7-16 code tools
+    onSelfWeight: addSelfWeightPattern,
+    onAutoCombos: generateAsce7Combos,
+    onCodeRs: createCodeRsCase,
+    onElf: createElfPattern,
   });
   wire();
   try {
@@ -3252,6 +3345,8 @@ async function boot() {
     syncContoursUI, syncEnvToggle, renderThTab, rebuildThSelects,
     csvRows, csvFileName, downloadCsv, doReport, buildReportHtml,
     generateWindPattern, renderSectionMgr, contourAvailability,
+    // v0.7 — code tools
+    addSelfWeightPattern, generateAsce7Combos, createCodeRsCase, createElfPattern,
     // v0.5
     elevEditor, setView, setElevLine, elevPlane, rebuildElevSelect,
     handleElevDraw, renderPoTab, rebuildPoSelect, poData,

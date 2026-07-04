@@ -7,6 +7,7 @@
 
 import * as ME from "./modeledit.js";
 import { spectrumChart, thSparkline } from "./charts.js";
+import { asce7SpectrumPreview, spectrumParameters, elfCs } from "./mock.js";
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fmt = (v, d = 2) => (v == null || !isFinite(v)) ? "—" :
@@ -17,9 +18,13 @@ const KIND_LABEL = { dead: "dead", live: "live", quake: "quake", other: "other" 
 export class LoadsEditor {
   /**
    * root: container element (the scrollable loads pane body)
-   * opts: { getModel, onChange, toast, onWind }
+   * opts: { getModel, onChange, toast, onWind,
+   *         onSelfWeight, onAutoCombos, onCodeRs, onElf }
    *   onChange() — called after EVERY model mutation (host marks dirty).
    *   onWind(params) — async; generates a wind pattern (backend or mock).
+   *   onSelfWeight/onAutoCombos/onCodeRs/onElf(params) — async v0.7 ASCE 7
+   *     code tools; each mutates the model server-side (or mock) and the host
+   *     re-adopts the returned model. This editor re-renders after each.
    */
   constructor(root, opts) {
     this.root = root;
@@ -27,7 +32,16 @@ export class LoadsEditor {
     this.onChange = opts.onChange;
     this.toast = opts.toast;
     this.onWind = opts.onWind || null;
+    this.onSelfWeight = opts.onSelfWeight || null;
+    this.onAutoCombos = opts.onAutoCombos || null;
+    this.onCodeRs = opts.onCodeRs || null;
+    this.onElf = opts.onElf || null;
     this._wind = { name: "WX", direction: "X", V: 40, exposure: "C", Cp: 0.8 };
+    // v0.7 code-tool card state (persisted across re-renders)
+    this._sw = { name: "SW", factor: 1.0 };
+    this._combos = { standard: "LRFD" };
+    this._codeRs = { name: "RS-Code", Ss: 1.0, S1: 0.6, site_class: "D", R: 8, Ie: 1.0, direction: "X" };
+    this._elf = { name: "EQ-ELF", SDS: 1.0, SD1: 0.6, R: 8, Ie: 1.0, direction: "X" };
   }
 
   /** mutation helpers — structural edits re-render, value edits don't */
@@ -42,6 +56,7 @@ export class LoadsEditor {
     const scroll = this.root.scrollTop;
     this.root.textContent = "";
     this.root.appendChild(this._patternsSection(m));
+    this.root.appendChild(this._codeToolsSection(m));
     this.root.appendChild(this._casesSection(m));
     this.root.appendChild(this._rsSection(m));
     this.root.appendChild(this._thSection(m));
@@ -209,6 +224,290 @@ export class LoadsEditor {
         btn.disabled = false;
       }
     });
+    return card;
+  }
+
+  /* ==================================================== code tools (v0.7)
+     Four ASCE 7-16 helpers grouped under one subheading — self-weight,
+     auto load combos, code response-spectrum (with live preview) and ELF.
+     Each mirrors the wind card: fill inputs → callback → host re-adopts. */
+  _codeToolsSection(m) {
+    const sec = this._section("ls-codetools", "Code tools (ASCE 7)",
+      "One-click ASCE 7-16 helpers — self-weight, load combinations, code " +
+      "response spectrum and equivalent lateral force. Each mutates the model " +
+      "(live backend or local mock) and refreshes the editors below.",
+      null, null);
+    const grid = document.createElement("div");
+    grid.className = "code-tools";
+    grid.append(
+      this._selfWeightCard(m),
+      this._autoCombosCard(m),
+      this._codeRsCard(m),
+      this._elfCard(m),
+    );
+    sec.appendChild(grid);
+    return sec;
+  }
+
+  /** Run an async code-tool callback with button disabling + error toast. */
+  async _runTool(btn, cb, params, failTitle) {
+    if (!cb) return;
+    btn.disabled = true;
+    try {
+      await cb(params);
+      this.render();
+    } catch (err) {
+      this.toast(failTitle, err.message, "error", 7000);
+      btn.disabled = false;
+    }
+  }
+
+  /* ---- self-weight pattern (POST /api/pattern/selfweight) */
+  _selfWeightCard(m) {
+    const card = document.createElement("div");
+    card.className = "wind-card code-card";
+    card.id = "selfWeightCard";
+    const s = this._sw;
+    card.innerHTML = `
+      <div class="wind-head">
+        <b>Self-weight pattern</b>
+        <span class="muted">real member &amp; shell self-weight</span>
+      </div>
+      <div class="wind-fields">
+        <label class="rs-field"><span>name</span>
+          <input id="swName" type="text" value="${esc(s.name)}" spellcheck="false"></label>
+        <label class="rs-field"><span>factor</span>
+          <input id="swFactor" type="number" step="0.1" value="${s.factor}"></label>
+        <button class="btn btn-small" id="swAdd">Add self-weight pattern</button>
+      </div>
+      <p class="code-note muted">Adds real member &amp; shell self-weight from material density
+        as a dead pattern's <code>self_weight_factor</code>. A pattern with the same name is
+        <b>replaced</b>.</p>`;
+    const $ = id => card.querySelector("#" + id);
+    $("swName").addEventListener("change", e => { s.name = e.target.value.trim() || "SW"; e.target.value = s.name; });
+    $("swFactor").addEventListener("change", e => {
+      const v = parseFloat(e.target.value);
+      if (isFinite(v)) s.factor = v; else e.target.value = String(s.factor);
+    });
+    $("swAdd").addEventListener("click", () =>
+      this._runTool($("swAdd"), this.onSelfWeight, { ...s }, "Self-weight failed"));
+    if (!this.onSelfWeight) $("swAdd").disabled = true;
+    return card;
+  }
+
+  /* ---- auto ASCE 7 load combinations (POST /api/combos/asce7) */
+  _autoCombosCard(m) {
+    const card = document.createElement("div");
+    card.className = "wind-card code-card";
+    card.id = "autoCombosCard";
+    const c = this._combos;
+    card.innerHTML = `
+      <div class="wind-head">
+        <b>Auto load combinations</b>
+        <span class="muted">ASCE 7-16 §2.3 / §2.4</span>
+      </div>
+      <div class="wind-fields">
+        <label class="rs-field"><span>standard</span>
+          <select id="acStd">
+            <option value="LRFD"${c.standard === "LRFD" ? " selected" : ""}>LRFD (§2.3)</option>
+            <option value="ASD"${c.standard === "ASD" ? " selected" : ""}>ASD (§2.4)</option>
+          </select></label>
+        <button class="btn btn-small" id="acGen">Generate ASCE 7 combinations</button>
+      </div>
+      <p class="code-note muted">Builds factored combinations from your
+        <b>Dead / Live / Quake / Wind</b> cases (±E, ±W sign variants). Terms with no
+        matching case are dropped. <span class="warn-inline">Appends to existing combinations.</span></p>`;
+    const $ = id => card.querySelector("#" + id);
+    $("acStd").addEventListener("change", e => { c.standard = e.target.value; });
+    $("acGen").addEventListener("click", () =>
+      this._runTool($("acGen"), this.onAutoCombos, { ...c }, "Combo generation failed"));
+    if (!this.onAutoCombos) $("acGen").disabled = true;
+    return card;
+  }
+
+  /* ---- code response-spectrum case + live preview (POST /api/case/rs-code) */
+  _codeRsCard(m) {
+    const card = document.createElement("div");
+    card.className = "wind-card code-card code-rs-card";
+    card.id = "codeRsCard";
+    const s = this._codeRs;
+
+    const head = document.createElement("div");
+    head.className = "wind-head";
+    head.innerHTML = `<b>Code response spectrum</b>
+      <span class="muted">ASCE 7-16 design spectrum → RS case</span>`;
+    card.appendChild(head);
+
+    const body = document.createElement("div");
+    body.className = "code-rs-body";
+
+    const form = document.createElement("div");
+    form.className = "wind-fields code-rs-fields";
+    const mkField = (label, node) => {
+      const w = document.createElement("label");
+      w.className = "rs-field";
+      const sp = document.createElement("span");
+      sp.textContent = label;
+      w.append(sp, node);
+      return w;
+    };
+    const mkNum = (val, step, min, set) => {
+      const i = document.createElement("input");
+      i.type = "number"; i.step = step; i.min = String(min); i.value = String(val);
+      i.addEventListener("change", () => {
+        const v = parseFloat(i.value);
+        if (isFinite(v) && v >= min && set(v) !== false) redraw();
+        else i.value = String(val);
+      });
+      return i;
+    };
+    const nameIn = document.createElement("input");
+    nameIn.type = "text"; nameIn.value = s.name; nameIn.spellcheck = false;
+    nameIn.addEventListener("change", () => { s.name = nameIn.value.trim() || "RS-Code"; nameIn.value = s.name; });
+    form.appendChild(mkField("case name", nameIn));
+    form.appendChild(mkField("Ss (g)", mkNum(s.Ss, "0.05", 0, v => { s.Ss = v; })));
+    form.appendChild(mkField("S1 (g)", mkNum(s.S1, "0.05", 0, v => { s.S1 = v; })));
+
+    const siteSel = document.createElement("select");
+    siteSel.innerHTML = ["A", "B", "C", "D", "E", "F"].map(c =>
+      `<option${c === s.site_class ? " selected" : ""}>${c}</option>`).join("");
+    siteSel.addEventListener("change", () => { s.site_class = siteSel.value; redraw(); });
+    form.appendChild(mkField("site class", siteSel));
+    form.appendChild(mkField("R", mkNum(s.R, "0.5", 0.1, v => { if (v <= 0) return false; s.R = v; })));
+    form.appendChild(mkField("Ie", mkNum(s.Ie, "0.05", 0.1, v => { if (v <= 0) return false; s.Ie = v; })));
+    const dirSel = document.createElement("select");
+    dirSel.innerHTML = `<option value="X">X</option><option value="Y">Y</option>`;
+    dirSel.value = s.direction;
+    dirSel.addEventListener("change", () => { s.direction = dirSel.value; });
+    form.appendChild(mkField("direction", dirSel));
+
+    const chartWrap = document.createElement("div");
+    chartWrap.className = "rs-chart code-rs-chart";
+
+    const warn = document.createElement("p");
+    warn.className = "code-note warn-inline";
+    warn.id = "codeRsWarn";
+
+    const redraw = () => {
+      chartWrap.textContent = "";
+      const title = document.createElement("div");
+      title.className = "chart-title";
+      const isF = s.site_class === "F";
+      const site = isF ? "D" : s.site_class;
+      const prm = spectrumParameters(s.Ss, s.S1, site);
+      const pts = asce7SpectrumPreview(s.Ss, s.S1, site);
+      title.innerHTML = `Design spectrum preview ` +
+        `<span class="unit">SDS ${fmt(prm.SDS, 3)} · SD1 ${fmt(prm.SD1, 3)} · Ts ${fmt(prm.Ts, 3)} s</span>`;
+      chartWrap.appendChild(title);
+      chartWrap.appendChild(spectrumChart(pts));
+      const ann = document.createElement("div");
+      ann.className = "code-rs-annot";
+      ann.innerHTML =
+        `<span><b>SDS</b> ${fmt(prm.SDS, 3)} g</span>` +
+        `<span><b>SD1</b> ${fmt(prm.SD1, 3)} g</span>` +
+        `<span><b>T0</b> ${fmt(prm.T0, 3)} s</span>` +
+        `<span><b>Ts</b> ${fmt(prm.Ts, 3)} s</span>` +
+        `<span><b>Ie/R</b> ${fmt(s.Ie / s.R, 4)}</span>` +
+        `<span><b>pts</b> ${pts.length}</span>`;
+      chartWrap.appendChild(ann);
+      warn.textContent = isF
+        ? "Site class F needs a site-specific study (ASCE 7-16 §11.4.8) — preview uses class D."
+        : "";
+      warn.style.display = isF ? "" : "none";
+    };
+
+    const btnRow = document.createElement("div");
+    btnRow.className = "code-rs-btnrow";
+    const btn = document.createElement("button");
+    btn.className = "btn btn-small"; btn.id = "codeRsCreate"; btn.textContent = "Create RS case";
+    btn.addEventListener("click", () =>
+      this._runTool(btn, this.onCodeRs, {
+        name: s.name, direction: s.direction, Ss: s.Ss, S1: s.S1,
+        site_class: s.site_class, R: s.R, Ie: s.Ie,
+      }, "RS case creation failed"));
+    if (!this.onCodeRs) btn.disabled = true;
+    btnRow.appendChild(btn);
+
+    const left = document.createElement("div");
+    left.className = "code-rs-left";
+    left.append(form, warn, btnRow);
+    body.append(left, chartWrap);
+    card.appendChild(body);
+    redraw();
+    return card;
+  }
+
+  /* ---- ELF seismic pattern (POST /api/pattern/elf) */
+  _elfCard(m) {
+    const card = document.createElement("div");
+    card.className = "wind-card code-card";
+    card.id = "elfCard";
+    const s = this._elf;
+    const stories = m.stories || [];
+    const hn = stories.length ? stories[stories.length - 1].elevation : 1;
+
+    const head = document.createElement("div");
+    head.className = "wind-head";
+    head.innerHTML = `<b>ELF seismic pattern</b>
+      <span class="muted">ASCE 7-16 §12.8 equivalent lateral force</span>`;
+    card.appendChild(head);
+
+    const form = document.createElement("div");
+    form.className = "wind-fields";
+    const mkField = (label, node) => {
+      const w = document.createElement("label");
+      w.className = "rs-field";
+      const sp = document.createElement("span");
+      sp.textContent = label;
+      w.append(sp, node);
+      return w;
+    };
+    const mkNum = (val, step, min, set) => {
+      const i = document.createElement("input");
+      i.type = "number"; i.step = step; i.min = String(min); i.value = String(val);
+      i.addEventListener("change", () => {
+        const v = parseFloat(i.value);
+        if (isFinite(v) && v >= min && set(v) !== false) syncReadout();
+        else i.value = String(val);
+      });
+      return i;
+    };
+    const nameIn = document.createElement("input");
+    nameIn.type = "text"; nameIn.value = s.name; nameIn.spellcheck = false;
+    nameIn.addEventListener("change", () => { s.name = nameIn.value.trim() || "EQ-ELF"; nameIn.value = s.name; });
+    form.appendChild(mkField("name", nameIn));
+    form.appendChild(mkField("SDS (g)", mkNum(s.SDS, "0.05", 0, v => { s.SDS = v; })));
+    form.appendChild(mkField("SD1 (g)", mkNum(s.SD1, "0.05", 0, v => { s.SD1 = v; })));
+    form.appendChild(mkField("R", mkNum(s.R, "0.5", 0.1, v => { if (v <= 0) return false; s.R = v; })));
+    form.appendChild(mkField("Ie", mkNum(s.Ie, "0.05", 0.1, v => { if (v <= 0) return false; s.Ie = v; })));
+    const dirSel = document.createElement("select");
+    dirSel.innerHTML = `<option value="X">X</option><option value="Y">Y</option>`;
+    dirSel.value = s.direction;
+    dirSel.addEventListener("change", () => { s.direction = dirSel.value; });
+    form.appendChild(mkField("direction", dirSel));
+    const btn = document.createElement("button");
+    btn.className = "btn btn-small"; btn.id = "elfCreate"; btn.textContent = "Create ELF pattern";
+    btn.addEventListener("click", () =>
+      this._runTool(btn, this.onElf, {
+        name: s.name, SDS: s.SDS, SD1: s.SD1, R: s.R, Ie: s.Ie, direction: s.direction,
+      }, "ELF pattern creation failed"));
+    if (!this.onElf) btn.disabled = true;
+    form.appendChild(btn);
+    card.appendChild(form);
+
+    const readout = document.createElement("p");
+    readout.className = "code-note muted";
+    readout.id = "elfReadout";
+    const syncReadout = () => {
+      const r = elfCs(s.SDS, s.SD1, s.R, s.Ie, hn);
+      const cs = r ? fmt(r.Cs, 4) : "—";
+      const ta = r ? fmt(r.Ta, 3) : "—";
+      readout.innerHTML = `Seismic response coefficient <b>Cs = ${cs}</b> ` +
+        `(Ta ≈ ${ta} s, hn ${fmt(hn, 1)} m). Base shear <b>V = Cs·W</b> and the story-force ` +
+        `distribution are computed <b>server-side</b> from the model mass.`;
+    };
+    syncReadout();
+    card.appendChild(readout);
     return card;
   }
 

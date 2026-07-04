@@ -954,6 +954,46 @@ input.rs-name { width: 150px; flex: none; }
 .wind-fields .rs-field input[type="number"] { width: 70px; }
 #windGen { margin-bottom: 1px; }
 
+/* ---- v0.7 code tools (ASCE 7) */
+.nav-badge {
+  font-size: 9.5px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase;
+  color: var(--accent); background: var(--accent-ghost);
+  border: 1px solid rgba(53, 181, 229, .35);
+  border-radius: 99px; padding: 1px 7px;
+}
+.code-tools { display: flex; flex-direction: column; gap: 12px; }
+.code-card { margin-top: 0; border-style: solid; border-color: var(--border-soft); }
+.code-card .wind-head b { letter-spacing: .1px; }
+.code-note {
+  font-size: 11px; line-height: 1.55; margin-top: 9px; max-width: 640px;
+}
+.code-note code {
+  font: 10.5px var(--mono); background: var(--surface-1);
+  border: 1px solid var(--border-soft); border-radius: 4px; padding: 0 4px; color: var(--text-2);
+}
+.warn-inline { color: var(--amber); }
+p.warn-inline { margin-top: 8px; }
+
+/* code response-spectrum card — form + live preview side by side */
+.code-rs-body {
+  display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px;
+  margin-top: 4px; align-items: start;
+}
+@media (max-width: 980px) { .code-rs-body { grid-template-columns: 1fr; } }
+.code-rs-left { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.code-rs-fields { align-items: flex-end; }
+.code-rs-fields .rs-field input[type="text"] { width: 116px; }
+.code-rs-fields .rs-field input[type="number"] { width: 72px; }
+.code-rs-chart { margin-top: 0; }
+.code-rs-chart svg { max-width: 460px; }
+.code-rs-annot {
+  display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px;
+  font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums;
+}
+.code-rs-annot b { color: var(--accent); font-weight: 650; margin-right: 3px; }
+.code-rs-btnrow { margin-top: 2px; }
+#elfReadout b { color: var(--text-2); font-weight: 650; }
+
 /* ---- time-history cards */
 textarea.th-accel {
   font: 11px/1.6 var(--mono); color: var(--text-1);

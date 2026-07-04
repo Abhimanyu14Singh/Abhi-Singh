@@ -852,6 +852,222 @@ export function mockWindPattern(model, p = {}) {
 }
 
 /* ================================================================
+   v0.7 — ASCE 7-16 code helpers (self-weight, auto combos, code RS
+   spectrum, ELF). Mirrors skyframe/core/codes.py so the code-tools UI
+   is exercisable offline (?mock=1) and previews render before the
+   real endpoints run.
+   ================================================================ */
+
+/* ASCE 7-16 Table 11.4-1 (Fa) and 11.4-2 (Fv), classes A–E, with the
+   Ss / S1 breakpoints. Linear interpolation across columns, clamped at the
+   ends. Site class F is not tabulated (site-specific) — callers warn and we
+   fall back to D so a preview still draws. */
+const _ASCE_SS_BP = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5];
+const _ASCE_S1_BP = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6];
+const _ASCE_FA = {
+  A: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8],
+  B: [0.9, 0.9, 0.9, 0.9, 0.9, 0.9],
+  C: [1.3, 1.3, 1.2, 1.2, 1.2, 1.2],
+  D: [1.6, 1.4, 1.2, 1.1, 1.0, 1.0],
+  E: [2.4, 1.7, 1.3, 1.1, 0.9, 0.8],
+};
+const _ASCE_FV = {
+  A: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8],
+  B: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8],
+  C: [1.5, 1.5, 1.5, 1.5, 1.5, 1.4],
+  D: [2.4, 2.2, 2.0, 1.9, 1.8, 1.7],
+  E: [4.2, 3.3, 2.8, 2.4, 2.2, 2.0],
+};
+function _interpTable(bp, row, x) {
+  if (x <= bp[0]) return row[0];
+  if (x >= bp[bp.length - 1]) return row[row.length - 1];
+  for (let i = 1; i < bp.length; i++) {
+    if (x <= bp[i]) {
+      const t = (x - bp[i - 1]) / (bp[i] - bp[i - 1]);
+      return row[i - 1] + t * (row[i] - row[i - 1]);
+    }
+  }
+  return row[row.length - 1];
+}
+
+/** (Fa, Fv) from ASCE 7-16 site tables; class F falls back to D. */
+export function siteCoefficients(Ss, S1, site = "D") {
+  const sc = _ASCE_FA[site] ? site : "D";
+  return [
+    _interpTable(_ASCE_SS_BP, _ASCE_FA[sc], Ss),
+    _interpTable(_ASCE_S1_BP, _ASCE_FV[sc], S1),
+  ];
+}
+
+/** {SDS, SD1, SMS, SM1, T0, Ts} per ASCE 7-16 §11.4. */
+export function spectrumParameters(Ss, S1, site = "D") {
+  const [Fa, Fv] = siteCoefficients(Ss, S1, site);
+  const SMS = Fa * Ss, SM1 = Fv * S1;
+  const SDS = (2 / 3) * SMS, SD1 = (2 / 3) * SM1;
+  const T0 = SDS > 0 ? 0.2 * SD1 / SDS : 0;
+  const Ts = SDS > 0 ? SD1 / SDS : 0;
+  return { SDS, SD1, SMS, SM1, T0, Ts };
+}
+
+/** ASCE 7-16 design spectrum [[T, Sa_g], …] — ramp 0.4·SDS→SDS on [0,T0],
+    flat SDS on [T0,Ts], SD1/T on [Ts,TL], SD1·TL/T² beyond. Corner points
+    sampled exactly; a few points fill the 1/T branch for a smooth preview. */
+export function asce7SpectrumPreview(Ss, S1, site = "D", TL = 8.0) {
+  const { SDS, SD1, T0, Ts } = spectrumParameters(Ss, S1, site);
+  const r = v => +v.toFixed(4);
+  if (!(SDS > 0)) return [[0, 0], [1, 0]];
+  const pts = [[0, r(0.4 * SDS)], [r(T0), r(SDS)], [r(Ts), r(SDS)]];
+  // 1/T descending branch up to TL
+  for (const T of [1.0, 1.5, 2.0, 3.0, 4.0, 6.0, TL]) {
+    if (T > Ts && T <= TL) pts.push([r(T), r(SD1 / T)]);
+  }
+  // long-period 1/T² branch beyond TL
+  for (const T of [TL * 1.5, TL * 2]) pts.push([r(T), r(SD1 * TL / (T * T))]);
+  // dedupe by T (corner collisions) and sort
+  const seen = new Set();
+  return pts.filter(p => { const k = p[0]; if (seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a, b) => a[0] - b[0]);
+}
+
+/** POST /api/pattern/selfweight — add/replace a self-weight dead pattern.
+    Mirrors builder.add_self_weight: kind "dead", self_weight_factor=factor. */
+export function mockSelfWeightPattern(model, p = {}) {
+  const name = (p.name || "SW").trim() || "SW";
+  const factor = isFinite(p.factor) ? p.factor : 1.0;
+  model.patterns = model.patterns || {};
+  model.patterns[name] = {
+    name, kind: "dead", member_loads: [], area_loads: [], story_forces: [],
+    self_weight_factor: factor,
+  };
+  // matching single-pattern case (builder creates one)
+  model.cases = model.cases || {};
+  if (!model.cases[name])
+    model.cases[name] = { name, patterns: { [name]: 1 }, pdelta: false };
+  return model;
+}
+
+/** POST /api/combos/asce7 — append ASCE 7-16 §2.3/§2.4 combos matched by
+    the model's pattern kinds. Returns {model, added:[names]}. */
+export function mockAsce7Combos(model, standard = "LRFD") {
+  const std = standard === "ASD" ? "ASD" : "LRFD";
+  // classify existing cases by the kind of their dominant pattern
+  const kindOf = c => {
+    const pk = Object.keys(c.patterns || {});
+    for (const pn of pk) { const p = model.patterns[pn]; if (p) return p.kind; }
+    return "other";
+  };
+  const byKind = { dead: [], live: [], quake: [], wind: [], other: [] };
+  for (const [cn, c] of Object.entries(model.cases || {})) {
+    const k = kindOf(c);
+    (byKind[k] || byKind.other).push(cn);
+  }
+  const D = byKind.dead[0], L = byKind.live[0];
+  const quakes = byKind.quake, winds = byKind.wind.concat(
+    // wind patterns are stored kind "other"/"wind"; also treat cases whose
+    // pattern name looks like wind
+    Object.entries(model.cases || {})
+      .filter(([cn]) => /wind|^w[xy]?$/i.test(cn) && !byKind.wind.includes(cn))
+      .map(([cn]) => cn));
+  const combos = {};
+  const add = (name, cases) => { combos[name] = { name, combo_type: "add", cases }; };
+  if (D) {
+    if (std === "LRFD") {
+      add("1.4D", { [D]: 1.4 });
+      if (L) add("1.2D + 1.6L", { [D]: 1.2, [L]: 1.6 });
+      for (const q of quakes) {
+        for (const s of [1, -1]) {
+          const c = { [D]: 1.2 }; if (L) c[L] = 1.0; c[q] = 1.0 * s;
+          add(`1.2D ${L ? "+ 1.0L " : ""}${s > 0 ? "+" : "−"} 1.0${q}`, c);
+          add(`0.9D ${s > 0 ? "+" : "−"} 1.0${q}`, { [D]: 0.9, [q]: 1.0 * s });
+        }
+      }
+      for (const w of winds) for (const s of [1, -1]) {
+        const c = { [D]: 1.2 }; if (L) c[L] = 1.0; c[w] = 1.0 * s;
+        add(`1.2D ${L ? "+ 1.0L " : ""}${s > 0 ? "+" : "−"} 1.0${w}`, c);
+      }
+    } else { // ASD
+      add("D", { [D]: 1.0 });
+      if (L) add("D + L", { [D]: 1.0, [L]: 1.0 });
+      for (const q of quakes) for (const s of [1, -1]) {
+        add(`D ${s > 0 ? "+" : "−"} 0.7${q}`, { [D]: 1.0, [q]: 0.7 * s });
+        const c = { [D]: 1.0 }; if (L) c[L] = 0.75; c[q] = 0.525 * s;
+        add(`D ${L ? "+ 0.75L " : ""}${s > 0 ? "+" : "−"} 0.525${q}`, c);
+        add(`0.6D ${s > 0 ? "+" : "−"} 0.7${q}`, { [D]: 0.6, [q]: 0.7 * s });
+      }
+      for (const w of winds) for (const s of [1, -1]) {
+        add(`D ${s > 0 ? "+" : "−"} 0.6${w}`, { [D]: 1.0, [w]: 0.6 * s });
+        add(`0.6D ${s > 0 ? "+" : "−"} 0.6${w}`, { [D]: 0.6, [w]: 0.6 * s });
+      }
+    }
+  }
+  model.combos = model.combos || {};
+  const added = [];
+  for (const [n, c] of Object.entries(combos)) { model.combos[n] = c; added.push(n); }
+  return { model, added };
+}
+
+/** POST /api/case/rs-code — add a ResponseSpectrumCase from an ASCE 7-16
+    design spectrum; the Ie/R reduction is carried on scale. */
+export function mockCodeRsCase(model, p = {}) {
+  const name = (p.name || "RS-Code").trim() || "RS-Code";
+  const Ss = isFinite(p.Ss) ? p.Ss : 1.0;
+  const S1 = isFinite(p.S1) ? p.S1 : 0.6;
+  const site = _ASCE_FA[p.site_class] ? p.site_class : "D";
+  const R = isFinite(p.R) && p.R > 0 ? p.R : 8.0;
+  const Ie = isFinite(p.Ie) && p.Ie > 0 ? p.Ie : 1.0;
+  const spectrum = asce7SpectrumPreview(Ss, S1, site);
+  model.rs_cases = model.rs_cases || {};
+  model.rs_cases[name] = {
+    name, direction: p.direction === "Y" ? "Y" : "X",
+    spectrum, combo_method: "CQC", damping: 0.05, scale: +(Ie / R).toFixed(5),
+  };
+  return model;
+}
+
+/** POST /api/pattern/elf — add an equivalent-lateral-force quake pattern
+    (§12.8). Story forces from Cs·W distributed by w·h^k. */
+export function mockElfPattern(model, p = {}) {
+  const name = (p.name || "EQ-ELF").trim() || "EQ-ELF";
+  const SDS = isFinite(p.SDS) ? p.SDS : 1.0;
+  const SD1 = isFinite(p.SD1) ? p.SD1 : 0.6;
+  const R = isFinite(p.R) && p.R > 0 ? p.R : 8.0;
+  const Ie = isFinite(p.Ie) && p.Ie > 0 ? p.Ie : 1.0;
+  const dirX = p.direction !== "Y";
+  const stories = model.stories || [];
+  const sm = model.story_masses || {};
+  const hn = stories.length ? stories[stories.length - 1].elevation : 1;
+  const Ta = 0.0466 * Math.pow(Math.max(hn, 0.1), 0.9);          // §12.8-7 (Ct steel MRF)
+  const Cs = Math.max(
+    Math.min(SDS / (R / Ie), SD1 / (Ta * (R / Ie)) || Infinity),
+    Math.max(0.044 * SDS * Ie, 0.01));
+  const W = Object.values(sm).reduce((a, b) => a + b, 0) * G;    // kN
+  const V = Cs * W;
+  const k = Ta <= 0.5 ? 1 : Ta >= 2.5 ? 2 : 1 + (Ta - 0.5) / 2;
+  const wh = stories.map((s, i) => (sm[s.name] || 0) * G * Math.pow(s.elevation, k));
+  const sumWh = wh.reduce((a, b) => a + b, 0) || 1;
+  const story_forces = stories.map((s, i) => {
+    const F = +(V * wh[i] / sumWh).toFixed(2);
+    return { story: s.name, fx: dirX ? F : 0, fy: dirX ? 0 : F };
+  });
+  model.patterns = model.patterns || {};
+  model.patterns[name] = {
+    name, kind: "quake", member_loads: [], area_loads: [], story_forces,
+    elf: { SDS, SD1, R, Ie, Cs: +Cs.toFixed(4), V: +V.toFixed(2), Ta: +Ta.toFixed(3) },
+  };
+  return model;
+}
+
+/** Client-side Cs readout for the ELF card (matches mockElfPattern math). */
+export function elfCs(SDS, SD1, R, Ie, hn) {
+  if (!(R > 0) || !(Ie > 0)) return null;
+  const Ta = 0.0466 * Math.pow(Math.max(hn || 1, 0.1), 0.9);
+  const Cs = Math.max(
+    Math.min(SDS / (R / Ie), SD1 / (Ta * (R / Ie)) || Infinity),
+    Math.max(0.044 * SDS * Ie, 0.01));
+  return { Cs, Ta };
+}
+
+/* ================================================================
    v0.3 — mock section library + mock model-file store
    ================================================================ */
 

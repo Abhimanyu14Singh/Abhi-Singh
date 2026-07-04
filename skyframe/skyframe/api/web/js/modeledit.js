@@ -21,6 +21,8 @@ export function normalizeModel(m) {
     p.area_loads = p.area_loads || [];
     p.story_forces = p.story_forces || [];
     if (!p.kind) p.kind = guessPatternKind(p.name || "");
+    // v0.7 — ETABS-style self-weight factor (absent = 0.0)
+    if (!isFinite(p.self_weight_factor)) p.self_weight_factor = 0.0;
   }
   // v0.3 — analysis cases, combos, response-spectrum cases
   m.cases = m.cases || {};
