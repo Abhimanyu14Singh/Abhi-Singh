@@ -140,15 +140,45 @@ class MeshedModel:
 # --------------------------------------------------------------------------- #
 # shell-region structured meshing
 # --------------------------------------------------------------------------- #
+def _omitted_cells(region: ShellRegion, nx: int, ny: int) -> set:
+    """Cells (i, j) omitted by openings, snapped to the structured mesh.
+
+    Each opening bound snaps to the NEAREST mesh line (u -> round(u*nx),
+    v -> round(v*ny)).  An opening whose snapped span collapses to zero
+    cells in either direction (smaller than one element) is skipped with a
+    warning.
+    """
+    omitted: set = set()
+    for k, op in enumerate(getattr(region, "openings", []) or []):
+        i0 = min(max(int(round(op.u0 * nx)), 0), nx)
+        i1 = min(max(int(round(op.u1 * nx)), 0), nx)
+        j0 = min(max(int(round(op.v0 * ny)), 0), ny)
+        j1 = min(max(int(round(op.v1 * ny)), 0), ny)
+        if i1 <= i0 or j1 <= j0:
+            warnings.warn(
+                f"Shell {region.uid!r}: opening {k} is smaller than one "
+                "mesh element after snapping to the mesh lines; skipped")
+            continue
+        omitted.update((i, j) for i in range(i0, i1) for j in range(j0, j1))
+    return omitted
+
+
 def _mesh_region(region: ShellRegion, pool: _PointPool,
                  quads: List[ShellQuad]) -> Dict[int, float]:
     """Structured quad mesh of one planar region; returns nodal tributary
-    areas (quarter of each element's exact shoelace area per node)."""
+    areas (quarter of each element's exact shoelace area per node).
+
+    v0.5 openings: cells fully inside a (mesh-line-snapped) opening are
+    omitted, and grid points used by NO kept cell are never added to the
+    point pool (no orphan nodes).  The tributary map therefore sums to the
+    exact meshed NET area, so area loads conserve q x net area.
+    """
     c = [tuple(map(float, p)) for p in region.corners]
     lx = 0.5 * (_norm(_sub(c[1], c[0])) + _norm(_sub(c[2], c[3])))
     ly = 0.5 * (_norm(_sub(c[3], c[0])) + _norm(_sub(c[2], c[1])))
     nx = max(1, round(lx / region.mesh_size))
     ny = max(1, round(ly / region.mesh_size))
+    omitted = _omitted_cells(region, nx, ny)
 
     def bilinear(u: float, v: float) -> Vec3:
         return tuple(
@@ -158,12 +188,25 @@ def _mesh_region(region: ShellRegion, pool: _PointPool,
 
     pts = [[bilinear(i / nx, j / ny) for j in range(ny + 1)]
            for i in range(nx + 1)]
-    idx = [[pool.add(pts[i][j]) for j in range(ny + 1)]
-           for i in range(nx + 1)]
+    used = [[not omitted for j in range(ny + 1)] for i in range(nx + 1)]
+    if omitted:
+        used = [[False] * (ny + 1) for _ in range(nx + 1)]
+        for i in range(nx):
+            for j in range(ny):
+                if (i, j) in omitted:
+                    continue
+                for di in (0, 1):
+                    for dj in (0, 1):
+                        used[i + di][j + dj] = True
+    # same insertion order as the no-openings mesh (numbering stability)
+    idx = [[pool.add(pts[i][j]) if used[i][j] else None
+            for j in range(ny + 1)] for i in range(nx + 1)]
 
     trib: Dict[int, float] = {}
     for i in range(nx):
         for j in range(ny):
+            if (i, j) in omitted:
+                continue
             corners = (pts[i][j], pts[i + 1][j], pts[i + 1][j + 1],
                        pts[i][j + 1])
             nodes = (idx[i][j], idx[i + 1][j], idx[i + 1][j + 1],
@@ -264,6 +307,17 @@ def _membrane_distribution(model: BuildingModel, region: ShellRegion,
     """
     c = [tuple(map(float, p)) for p in region.corners]
     area = region.area                        # kN per unit q
+    if region.openings:
+        # v0.5 documented approximation: the load TOTAL drops by the exact
+        # opening area ratio, applied uniformly — the two-way tributary
+        # SHAPE is unchanged (openings do not re-route membrane loads).
+        ratio = region.opening_area / area
+        warnings.warn(
+            f"Membrane slab {region.uid!r}: openings reduce the "
+            f"distributed load uniformly by the opening area ratio "
+            f"{ratio:.4f}; the two-way tributary shape is unchanged "
+            "(approximation)")
+        area = region.net_area
     edges = [(c[k], c[(k + 1) % 4]) for k in range(4)]
     lens = [_norm(_sub(b, a)) for a, b in edges]
     lx = 0.5 * (lens[0] + lens[2])
@@ -431,6 +485,10 @@ def mesh_model(model: BuildingModel) -> MeshedModel:
     for m in model.members:
         pool.add(m.pi)
         pool.add(m.pj)
+    # v0.5 links: endpoints join the pool (merged with coincident nodes)
+    for lk in getattr(model, "links", []):
+        pool.add(lk.pi)
+        pool.add(lk.pj)
 
     quads: List[ShellQuad] = []
     region_trib: Dict[str, Dict[int, float]] = {}

@@ -196,6 +196,24 @@ class FrameMember:
 
 
 @dataclass
+class Opening:
+    """Rectangular opening in a shell region (v0.5).
+
+    Bounds are FRACTIONS (0..1) of the region's parametric edge directions:
+    ``u`` runs along the corner 0 -> 1 edge, ``v`` along corner 0 -> 3.
+    Must satisfy ``0 <= u0 < u1 <= 1`` and ``0 <= v0 < v1 <= 1``.
+    """
+
+    u0: float
+    v0: float
+    u1: float
+    v1: float
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
 class ShellRegion:
     """Planar 4-corner quad region: a wall or a slab.
 
@@ -203,6 +221,13 @@ class ShellRegion:
     ``behavior == "membrane"`` — slabs only: never meshed; its area loads are
     distributed to the edge beams by two-way (45 degree) tributary areas.
     Corners must be planar and listed counter-clockwise.
+
+    ``openings`` (v0.5): rectangular holes in region-parametric coordinates.
+    Shell behavior: the mesher snaps each opening to the nearest structured
+    mesh lines and omits the elements inside (area loads then act on the net
+    meshed area exactly).  Membrane behavior: the distributed load total is
+    reduced uniformly by the opening area ratio (documented approximation —
+    the two-way tributary SHAPE is unchanged; a warning is emitted).
     """
 
     uid: str
@@ -212,16 +237,47 @@ class ShellRegion:
     corners: List[Tuple[float, float, float]]
     mesh_size: float = 1.0                 # m, target FE size (shell behavior)
     story: str = ""
+    openings: List[Opening] = field(default_factory=list)   # v0.5
 
     @property
     def area(self) -> float:
         return _polygon_area3d([tuple(c) for c in self.corners])
 
+    def map_uv(self, u: float, v: float) -> Tuple[float, float, float]:
+        """Bilinear map from parametric (u, v) in [0,1]^2 to 3D coordinates."""
+        c = [tuple(map(float, p)) for p in self.corners]
+        return tuple(
+            (1 - u) * (1 - v) * c[0][k] + u * (1 - v) * c[1][k]
+            + u * v * c[2][k] + (1 - u) * v * c[3][k] for k in range(3))
+
+    @property
+    def opening_area(self) -> float:
+        """Exact total opening area (m^2).
+
+        The bilinear map sends a parametric rectangle to a planar
+        straight-edged quadrilateral (parametric lines map to straight
+        segments), so each opening's area is the shoelace area of its four
+        mapped corners.  Openings are validated non-overlapping, so the sum
+        is exact.
+        """
+        total = 0.0
+        for op in self.openings:
+            pts = [self.map_uv(op.u0, op.v0), self.map_uv(op.u1, op.v0),
+                   self.map_uv(op.u1, op.v1), self.map_uv(op.u0, op.v1)]
+            total += _polygon_area3d(pts)
+        return total
+
+    @property
+    def net_area(self) -> float:
+        """Gross area minus the exact opening area (m^2)."""
+        return self.area - self.opening_area
+
     def to_dict(self) -> dict:
         return {"uid": self.uid, "kind": self.kind, "behavior": self.behavior,
                 "section": self.section,
                 "corners": [list(c) for c in self.corners],
-                "mesh_size": self.mesh_size, "story": self.story}
+                "mesh_size": self.mesh_size, "story": self.story,
+                "openings": [op.to_dict() for op in self.openings]}
 
 
 # --------------------------------------------------------------------------- #
@@ -430,6 +486,79 @@ class TimeHistoryCase:
                 "dt": self.dt, "damping": self.damping, "scale": self.scale}
 
 
+PUSHOVER_DIRECTIONS = ("X", "Y")
+PUSHOVER_HINGE_MODES = ("column_base", "all_ends")
+
+
+@dataclass
+class PushoverCase:
+    """Nonlinear static pushover case (v0.5).
+
+    Gravity (``gravity``: pattern -> factor) is applied first with Newton
+    and held constant (``loadConst``); the lateral push is then solved
+    displacement-controlled on the roof control DOF (top-story diaphragm
+    master, else the topmost structural node) up to
+    ``target_drift * roof elevation`` in ``steps`` equal increments.
+
+    Hinge model (documented idealization): a zeroLength rotational spring
+    (Steel01 bilinear about BOTH member bending axes, stiff elastic in
+    torsion; translations tied with equalDOF) is inserted between the
+    member end and a duplicated node.  ``My`` maps member uid -> hinge
+    yield moment (kN*m); ``default_My`` applies to every eligible member
+    without an entry; members with neither stay fully elastic (no hinge is
+    inserted).  ``hinges == "column_base"`` puts the hinge at the LOWER end
+    of each eligible column; ``"all_ends"`` at both ends of every eligible
+    member.  Spring elastic stiffness k_theta = n * 6EI/L with n = 10 (the
+    standard stiff-hinge idealization: the elastic series softening is the
+    factor n/(n+1) on the member-end rotational stiffness 6EI/L); the
+    Steel01 hardening ratio is b = hardening / (n + 1 - hardening*n), which
+    makes the member-end SERIES post-yield/elastic stiffness ratio exactly
+    ``hardening``.
+    """
+
+    name: str
+    direction: str                              # "X" | "Y"
+    gravity: Dict[str, float] = field(default_factory=dict)
+    target_drift: float = 0.02                  # roof drift ratio
+    steps: int = 100
+    hinges: str = "column_base"                 # "column_base" | "all_ends"
+    My: Dict[str, float] = field(default_factory=dict)   # uid -> kN*m
+    default_My: Optional[float] = None          # kN*m, eligible members
+    hardening: float = 0.02                     # post-yield stiffness ratio
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "direction": self.direction,
+                "gravity": dict(self.gravity),
+                "target_drift": self.target_drift, "steps": self.steps,
+                "hinges": self.hinges, "My": dict(self.My),
+                "default_My": self.default_My, "hardening": self.hardening}
+
+
+@dataclass
+class LinkMember:
+    """Linear link (spring) element between two points (v0.5).
+
+    ``stiffness`` = [kx, ky, kz, krx, kry, krz] (kN/m, kN*m/rad) acting on
+    the GLOBAL axes (local axes = global for v0.5).  Modeled as an OpenSees
+    zeroLength element with one elastic uniaxial material per non-zero
+    entry — a pure spring: the element length carries no rigid-arm moment
+    transfer.  Endpoints merge with existing FE nodes within 1e-6; a node
+    that connects ONLY to links gets its zero-stiffness DOFs auto-
+    restrained (else the system would be singular).
+    """
+
+    uid: str
+    pi: Tuple[float, float, float]
+    pj: Tuple[float, float, float]
+    stiffness: List[float]                      # 6 entries, >= 0
+
+    def to_dict(self) -> dict:
+        return {"uid": self.uid, "pi": list(self.pi), "pj": list(self.pj),
+                "stiffness": [float(k) for k in self.stiffness]}
+
+
+DIAPHRAGM_OPTIONS = ("rigid", "none")
+
 COMBO_TYPES = ("add", "envelope")
 
 
@@ -469,6 +598,15 @@ class BuildingModel:
     supports: List[PointSupport] = field(default_factory=list)
     nodal_masses: List[NodalMass] = field(default_factory=list)
     rigid_diaphragms: bool = True
+    # v0.5 diaphragm option: global default + per-story overrides.
+    # Effective mode per story = story_diaphragm[story] if set, else
+    # ("none" if not rigid_diaphragms else diaphragm) — the legacy boolean
+    # rigid_diaphragms=False keeps meaning "no diaphragms anywhere".
+    # Semi-rigid IS "none" + a meshed shell slab: the slab's real membrane
+    # stiffness plays the diaphragm role (no fake constraint is offered).
+    diaphragm: str = "rigid"                                   # "rigid" | "none"
+    story_diaphragm: Dict[str, str] = field(default_factory=dict)
+    links: List[LinkMember] = field(default_factory=list)     # v0.5
     story_masses: Dict[str, float] = field(default_factory=dict)   # tonne (explicit)
     mass_from_patterns: Dict[str, float] = field(default_factory=dict)  # pattern -> factor (legacy)
     mass_source: Dict[str, float] = field(default_factory=dict)  # v0.4: pattern -> factor
@@ -477,6 +615,7 @@ class BuildingModel:
     combos: Dict[str, LoadCombo] = field(default_factory=dict)
     rs_cases: Dict[str, ResponseSpectrumCase] = field(default_factory=dict)
     th_cases: Dict[str, TimeHistoryCase] = field(default_factory=dict)  # v0.4
+    pushover_cases: Dict[str, PushoverCase] = field(default_factory=dict)  # v0.5
     num_modes: int = 6
 
     # ---------------- convenience API ----------------
@@ -549,12 +688,14 @@ class BuildingModel:
     def add_shell(self, kind: str, behavior: str, section: str,
                   corners: List[Tuple[float, float, float]],
                   mesh_size: float = 1.0, story: str = "",
-                  uid: str = "") -> ShellRegion:
+                  uid: str = "",
+                  openings: Optional[List[Opening]] = None) -> ShellRegion:
         """Add a wall/slab region (validates shape, planarity, references)."""
         uid = uid or f"{'W' if kind == 'wall' else 'S'}{len(self.shells) + 1}"
         region = ShellRegion(uid, kind, behavior, section,
                              [tuple(float(v) for v in c) for c in corners],
-                             mesh_size=float(mesh_size), story=story)
+                             mesh_size=float(mesh_size), story=story,
+                             openings=list(openings or []))
         self._validate_shell(region)
         self.shells.append(region)
         return region
@@ -589,6 +730,26 @@ class BuildingModel:
         if dist > _PLANAR_TOL:
             raise ValueError(f"Shell {region.uid}: corners are not planar "
                              f"(off-plane {dist:.2e} m)")
+        # v0.5 openings: valid parametric bounds, pairwise non-overlapping
+        for k, op in enumerate(region.openings):
+            for key in ("u0", "v0", "u1", "v1"):
+                v = getattr(op, key)
+                if not (isinstance(v, (int, float)) and math.isfinite(v)):
+                    raise ValueError(f"Shell {region.uid}: opening {k}: "
+                                     f"{key} must be a finite number")
+            if not (0.0 <= op.u0 < op.u1 <= 1.0
+                    and 0.0 <= op.v0 < op.v1 <= 1.0):
+                raise ValueError(
+                    f"Shell {region.uid}: opening {k}: bounds must satisfy "
+                    f"0 <= u0 < u1 <= 1 and 0 <= v0 < v1 <= 1 "
+                    f"(got u=[{op.u0}, {op.u1}], v=[{op.v0}, {op.v1}])")
+        for a in range(len(region.openings)):
+            for b in range(a + 1, len(region.openings)):
+                oa, ob = region.openings[a], region.openings[b]
+                if (oa.u0 < ob.u1 and ob.u0 < oa.u1
+                        and oa.v0 < ob.v1 and ob.v0 < oa.v1):
+                    raise ValueError(f"Shell {region.uid}: openings {a} and "
+                                     f"{b} overlap")
 
     def pattern(self, name: str, kind: str = "other") -> LoadPattern:
         if name not in self.patterns:
@@ -702,6 +863,107 @@ class BuildingModel:
         if not math.isfinite(th.scale):
             raise ValueError(f"TH case {th.name}: scale must be finite")
 
+    def add_pushover_case(self, name: str, direction: str,
+                          gravity: Optional[Dict[str, float]] = None,
+                          target_drift: float = 0.02, steps: int = 100,
+                          hinges: str = "column_base",
+                          My: Optional[Dict[str, float]] = None,
+                          default_My: Optional[float] = None,
+                          hardening: float = 0.02) -> PushoverCase:
+        po = PushoverCase(
+            name, direction, gravity=dict(gravity or {}),
+            target_drift=float(target_drift), steps=int(steps),
+            hinges=hinges,
+            My={k: float(v) for k, v in (My or {}).items()},
+            default_My=(None if default_My is None else float(default_My)),
+            hardening=float(hardening))
+        self._validate_pushover_case(po)
+        self.pushover_cases[name] = po
+        return po
+
+    def _validate_pushover_case(self, po: PushoverCase) -> None:
+        if po.direction not in PUSHOVER_DIRECTIONS:
+            raise ValueError(f"Pushover case {po.name}: direction must be "
+                             f"X|Y, got {po.direction!r}")
+        if po.hinges not in PUSHOVER_HINGE_MODES:
+            raise ValueError(f"Pushover case {po.name}: hinges must be "
+                             f"column_base|all_ends, got {po.hinges!r}")
+        if not (math.isfinite(po.target_drift) and po.target_drift > 0.0):
+            raise ValueError(f"Pushover case {po.name}: target_drift must "
+                             "be > 0")
+        if po.steps < 1:
+            raise ValueError(f"Pushover case {po.name}: steps must be >= 1")
+        if not (math.isfinite(po.hardening) and 0.0 <= po.hardening < 1.0):
+            raise ValueError(f"Pushover case {po.name}: hardening must be "
+                             "in [0, 1)")
+        for p in po.gravity:
+            if p not in self.patterns:
+                raise ValueError(f"Pushover case {po.name}: gravity "
+                                 f"references unknown pattern {p}")
+        uids = {m.uid for m in self.members}
+        for uid, my in po.My.items():
+            if uid not in uids:
+                raise ValueError(f"Pushover case {po.name}: My references "
+                                 f"unknown member {uid!r}")
+            if not (isinstance(my, (int, float)) and math.isfinite(my)
+                    and my > 0.0):
+                raise ValueError(f"Pushover case {po.name}: My[{uid!r}] "
+                                 "must be a finite value > 0")
+        if po.default_My is not None and not (
+                math.isfinite(po.default_My) and po.default_My > 0.0):
+            raise ValueError(f"Pushover case {po.name}: default_My must be "
+                             "a finite value > 0 (or None)")
+
+    def add_link(self, pi: Tuple[float, float, float],
+                 pj: Tuple[float, float, float],
+                 stiffness: List[float], uid: str = "") -> LinkMember:
+        uid = uid or f"L{len(self.links) + 1}"
+        lk = LinkMember(uid, tuple(float(v) for v in pi),
+                        tuple(float(v) for v in pj),
+                        [float(k) for k in stiffness])
+        self._validate_link(lk)
+        if any(o.uid == lk.uid for o in self.links):
+            raise ValueError(f"Duplicate link uid {lk.uid!r}")
+        self.links.append(lk)
+        return lk
+
+    @staticmethod
+    def _validate_link(lk: LinkMember) -> None:
+        if len(lk.stiffness) != 6:
+            raise ValueError(f"Link {lk.uid}: stiffness needs 6 entries "
+                             "[kx, ky, kz, krx, kry, krz]")
+        for k in lk.stiffness:
+            if not (isinstance(k, (int, float)) and math.isfinite(k)
+                    and k >= 0.0):
+                raise ValueError(f"Link {lk.uid}: stiffness entries must be "
+                                 f"finite and >= 0 (got {k!r})")
+        if not any(k > 0.0 for k in lk.stiffness):
+            raise ValueError(f"Link {lk.uid}: at least one stiffness entry "
+                             "must be > 0")
+
+    def effective_diaphragm(self, story_name: str) -> str:
+        """Diaphragm mode ("rigid" | "none") that applies to a story (v0.5).
+
+        Per-story ``story_diaphragm`` overrides win; otherwise the global
+        ``diaphragm`` applies, with the legacy ``rigid_diaphragms=False``
+        forcing the global default to "none"."""
+        if story_name in self.story_diaphragm:
+            return self.story_diaphragm[story_name]
+        return self.diaphragm if self.rigid_diaphragms else "none"
+
+    def _validate_diaphragm(self) -> None:
+        if self.diaphragm not in DIAPHRAGM_OPTIONS:
+            raise ValueError(f"diaphragm must be rigid|none, got "
+                             f"{self.diaphragm!r}")
+        story_names = {s.name for s in self.stories}
+        for name, mode in self.story_diaphragm.items():
+            if name not in story_names:
+                raise ValueError(f"story_diaphragm references unknown story "
+                                 f"{name!r}")
+            if mode not in DIAPHRAGM_OPTIONS:
+                raise ValueError(f"story_diaphragm[{name!r}] must be "
+                                 f"rigid|none, got {mode!r}")
+
     # ---------------- derived data ----------------
     def story_elevations(self) -> Dict[str, float]:
         return {s.name: s.elevation for s in self.stories}
@@ -765,7 +1027,7 @@ class BuildingModel:
                     region = self._shell(al.region_uid)
                     if region is None or not self._region_on_story(region, s):
                         continue
-                    total_w += fac * al.q * region.area
+                    total_w += fac * al.q * region.net_area  # v0.5: openings
                 for nl in pat.nodal_loads:
                     if abs(nl.point[2] - s.elevation) < 1e-6:
                         total_w += fac * (-nl.fz)  # downward = -fz
@@ -869,6 +1131,15 @@ class BuildingModel:
             self._validate_rs_case(rs)
         for th in self.th_cases.values():
             self._validate_th_case(th)
+        for po in self.pushover_cases.values():
+            self._validate_pushover_case(po)
+        link_uids = set()
+        for lk in self.links:
+            if lk.uid in link_uids:
+                raise ValueError(f"Duplicate link uid {lk.uid!r}")
+            link_uids.add(lk.uid)
+            self._validate_link(lk)
+        self._validate_diaphragm()
 
     # ---------------- (de)serialisation ----------------
     def to_dict(self) -> dict:
@@ -886,6 +1157,9 @@ class BuildingModel:
             "supports": [s.to_dict() for s in self.supports],
             "nodal_masses": [m.to_dict() for m in self.nodal_masses],
             "rigid_diaphragms": self.rigid_diaphragms,
+            "diaphragm": self.diaphragm,
+            "story_diaphragm": dict(self.story_diaphragm),
+            "links": [lk.to_dict() for lk in self.links],
             "story_masses": self.compute_story_masses(),
             "mass_from_patterns": dict(self.mass_from_patterns),
             "mass_source": dict(self.mass_source),
@@ -894,6 +1168,8 @@ class BuildingModel:
             "combos": {k: v.to_dict() for k, v in self.combos.items()},
             "rs_cases": {k: v.to_dict() for k, v in self.rs_cases.items()},
             "th_cases": {k: v.to_dict() for k, v in self.th_cases.items()},
+            "pushover_cases": {k: v.to_dict()
+                               for k, v in self.pushover_cases.items()},
             "num_modes": self.num_modes,
         }
 
@@ -950,7 +1226,10 @@ class BuildingModel:
                 section=rd.get("section", ""),
                 corners=[tuple(float(v) for v in c) for c in rd["corners"]],
                 mesh_size=float(rd.get("mesh_size", 1.0)),
-                story=rd.get("story", "")))
+                story=rd.get("story", ""),
+                openings=[Opening(float(o["u0"]), float(o["v0"]),
+                                  float(o["u1"]), float(o["v1"]))
+                          for o in (rd.get("openings") or [])]))
         mdl.base_fixity = d.get("base_fixity", "fixed")
         if mdl.base_fixity not in ("fixed", "pinned"):
             raise ValueError(f"base_fixity must be fixed|pinned, got "
@@ -967,6 +1246,16 @@ class BuildingModel:
                 mx=float(md.get("mx", 0.0)), my=float(md.get("my", 0.0)),
                 mz=float(md.get("mz", 0.0))))
         mdl.rigid_diaphragms = bool(d.get("rigid_diaphragms", True))
+        # v0.5 diaphragm option; pre-v0.5 files keep the legacy boolean only
+        mdl.diaphragm = str(d.get("diaphragm", "rigid"))
+        mdl.story_diaphragm = {str(k): str(v) for k, v in
+                               (d.get("story_diaphragm") or {}).items()}
+        for ld in d.get("links") or []:
+            mdl.links.append(LinkMember(
+                uid=ld["uid"],
+                pi=tuple(float(v) for v in ld["pi"]),
+                pj=tuple(float(v) for v in ld["pj"]),
+                stiffness=[float(k) for k in ld["stiffness"]]))
         mdl.story_masses = {k: float(v)
                             for k, v in (d.get("story_masses") or {}).items()}
         mdl.mass_from_patterns = {
@@ -1027,6 +1316,18 @@ class BuildingModel:
                 accel=[float(a) for a in td["accel"]], dt=float(td["dt"]),
                 damping=float(td.get("damping", 0.05)),
                 scale=float(td.get("scale", 1.0)))
+        for name, pd in (d.get("pushover_cases") or {}).items():
+            dmy = pd.get("default_My")
+            mdl.pushover_cases[name] = PushoverCase(
+                name=pd.get("name", name), direction=pd["direction"],
+                gravity={p: float(f)
+                         for p, f in (pd.get("gravity") or {}).items()},
+                target_drift=float(pd.get("target_drift", 0.02)),
+                steps=int(pd.get("steps", 100)),
+                hinges=pd.get("hinges", "column_base"),
+                My={u: float(v) for u, v in (pd.get("My") or {}).items()},
+                default_My=(None if dmy is None else float(dmy)),
+                hardening=float(pd.get("hardening", 0.02)))
         mdl.num_modes = int(d.get("num_modes", 6))
         mdl.validate()
         return mdl

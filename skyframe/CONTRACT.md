@@ -404,3 +404,141 @@ the gravity state, consistent with every other quantity.
 
 * ``"th_cases": {"<name>": <TH shape above>}`` (always present, may be {})
 * ``"warning": "..."`` — present only when set (e.g. TH step cap).
+
+---
+
+# v0.5 additions — openings, pushover, diaphragm option, link elements
+
+## Wall/slab openings
+
+```python
+@dataclass Opening:              # ShellRegion gains openings: List[Opening]
+    u0: float; v0: float; u1: float; v1: float
+    # rectangle in REGION-PARAMETRIC coordinates: u runs along the
+    # corner 0 -> 1 edge, v along corner 0 -> 3, all fractions 0..1;
+    # must satisfy 0 <= u0 < u1 <= 1 and 0 <= v0 < v1 <= 1.
+```
+
+* Openings are validated (bounds + pairwise NON-overlap) and round-trip
+  through ``to_dict()``/``from_dict()`` (serialised as
+  ``{"u0","v0","u1","v1"}`` dicts under ``"openings"``; absent key = none).
+* **Mesher (shell behavior)**: each opening bound snaps to the NEAREST
+  structured mesh line (``round(u*nx)`` / ``round(v*ny)``); elements whose
+  parametric cell lies inside the snapped rectangle are omitted; grid
+  points used by no kept element are never created (**no orphan nodes**).
+  An opening smaller than one element after snapping warns and is skipped.
+* **Area loads** on meshed regions act through the kept elements'
+  tributary areas only: load conservation is EXACT, base FZ = q x (meshed
+  net area).
+* **Membrane slabs**: the distributed total drops uniformly by the exact
+  opening area ratio (``ShellRegion.opening_area`` — the bilinear map
+  sends a parametric rectangle to a straight-edged planar quad, so its
+  shoelace area is exact).  The two-way tributary SHAPE is unchanged —
+  documented approximation, a ``UserWarning`` is emitted.  Conservation
+  stays exact: total = q x net_area.
+* ``ShellRegion.opening_area`` / ``.net_area`` properties; story-mass
+  bookkeeping for area loads uses ``net_area``.
+
+## Nonlinear static pushover
+
+```python
+@dataclass PushoverCase:        # model.pushover_cases: Dict[str, PushoverCase]
+    name: str
+    direction: str               # "X" | "Y"
+    gravity: Dict[str, float] = {}      # pattern -> factor, applied first
+    target_drift: float = 0.02          # roof drift ratio
+    steps: int = 100
+    hinges: str = "column_base"         # "column_base" | "all_ends"
+    My: Dict[str, float] = {}           # member uid -> yield moment (kN*m)
+    default_My: float | None = None     # applies to eligible members w/o entry
+    hardening: float = 0.02             # post-yield stiffness ratio, [0, 1)
+# BuildingModel.add_pushover_case(...); serialised under "pushover_cases".
+```
+
+**Hinge idealization (documented exactly):** members named by ``My`` (or
+covered by ``default_My``) get a zeroLength rotational spring between the
+member end and a duplicated coincident node; all other members stay fully
+elastic — no hinge is inserted.  ``"column_base"`` hinges the LOWER end of
+each eligible column; ``"all_ends"`` both ends of every eligible member.
+Per hinge: Steel01 (bilinear) about BOTH member bending axes with yield
+moment ``My`` and elastic stiffness ``k_theta = n*6EI/L`` (n = 10, the
+standard stiff-hinge idealization — elastic member-end series softening is
+the factor n/(n+1)); Steel01 hardening ratio ``b = h/(n+1-h*n)`` so the
+member-end SERIES post-yield/elastic stiffness ratio is exactly the case's
+``hardening`` h; stiff elastic torsion ``k = n*max(6EI22, 6EI33, GJ)/L``;
+translations tied exactly with ``equalDOF`` (Transformation handler).
+
+**Solve:** gravity stage (Newton, ``NormDispIncr 1e-6 50``) then
+``loadConst -time 0``; the push is displacement-controlled
+(``DisplacementControl``) on the roof control DOF — the TOP story's
+diaphragm master, else the topmost structural node — with a UNIT reference
+force there, in ``target_drift * roof_elev / steps`` equal increments,
+Newton with a NewtonLineSearch retry per failed step; on repeated failure
+the run stops early and returns the partial curve plus a warning.  Base
+shear = -(sum of support reactions in the push direction, gravity share
+subtracted); support reactions include the hinge-duplicate nodes of
+supported originals (the equalDOF tie routes the element shear there).
+
+```jsonc
+results["pushover"][name] = {      // key always present in results (may {})
+  "roof_disp":  [ ... ],           // m, past the gravity state
+  "base_shear": [ ... ],           // kN
+  "roof_drift": [ ... ],           // roof_disp / roof elevation
+  "hinge_rotations": {"<uid>": peak_abs_rotation},   // rad, both axes
+  "warnings": [ ... ]              // e.g. early stop on non-convergence
+}
+```
+
+``engine.run_pushover(name)`` runs one case (cached, never capped);
+``engine.run()`` includes all pushover cases only when the model has any
+AND their combined steps <= 2000 (else all are skipped and a top-level
+``"warning"`` is set).
+
+## Semi-rigid / no diaphragm option
+
+```python
+# BuildingModel gains:
+#   diaphragm: str = "rigid"                 # "rigid" | "none" (global)
+#   story_diaphragm: Dict[str, str] = {}     # per-story overrides
+```
+
+Effective mode per story: ``story_diaphragm[story]`` if set, else the
+global ``diaphragm`` — with the legacy boolean ``rigid_diaphragms=False``
+still forcing the global default to ``"none"`` (backward compatible; both
+fields serialise; pre-v0.5 files keep their exact behavior).  ``"none"``
+creates NO rigid-diaphragm constraint for that story; story mass lumps
+onto the story nodes (ux/uy split equally) exactly as before for
+master-less stories, and reported story ux/uy fall back to the story-node
+mean.  **Semi-rigid IS "none" + the slab modeled as a meshed shell**: the
+slab's real membrane stiffness plays the diaphragm role (no fake
+constraint is offered — a stiff t=0.4 slab reproduces the rigid-diaphragm
+T1 within a few percent).
+
+## Link elements
+
+```python
+@dataclass LinkMember:           # model.links: List[LinkMember]
+    uid: str
+    pi: (x, y, z); pj: (x, y, z)
+    stiffness: List[float]       # [kx, ky, kz, krx, kry, krz]
+                                 # kN/m, kN*m/rad, GLOBAL axes (v0.5)
+# BuildingModel.add_link(pi, pj, stiffness, uid=""); serialised under
+# "links"; entries must be finite, >= 0, at least one > 0.
+```
+
+Engine: one OpenSees ``zeroLength`` element per link with an elastic
+uniaxial material per non-zero entry (default orientation = global axes).
+It is a PURE spring: the element length carries no rigid-arm moment
+transfer, so two kx springs in series give exactly u = P(1/k1 + 1/k2).
+Endpoints merge with existing FE nodes (1e-6) or create new nodes; a node
+connected ONLY to links gets its zero-stiffness DOFs auto-restrained
+(diaphragm-tied ux/uy/rz of prospective slaves are left to the diaphragm),
+so the system stays regular.  Links carry no mass and report no member
+forces in v0.5.
+
+## API
+
+No new endpoints: ``POST /api/model`` round-trips every v0.5 field
+(``openings``, ``pushover_cases``, ``diaphragm``, ``story_diaphragm``,
+``links``) and ``POST /api/analyze`` returns the ``"pushover"`` results
+block documented above.

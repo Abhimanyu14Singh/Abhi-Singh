@@ -13,7 +13,18 @@ into an OpenSees domain (ndm=3, ndf=6) and runs:
 * linear time-history cases (``run_time_history``, v0.4): Newmark
   constant-average-acceleration direct integration of the elastic model
   under uniform ground excitation, Rayleigh damping fitted at modes 1 and
-  min(3, n).
+  min(3, n),
+* nonlinear static pushover cases (``run_pushover``, v0.5):
+  displacement-controlled push on the roof control DOF after a held
+  gravity stage, with bilinear (Steel01) zeroLength rotational hinge
+  springs at the locations a :class:`PushoverCase` names (see
+  ``CONTRACT.md`` v0.5 for the exact stiff-hinge idealization).
+
+v0.5 also adds: shell-region OPENINGS (meshed around, exact net-area load
+conservation — handled in :mod:`skyframe.core.mesh`), the per-story
+``diaphragm`` "rigid"|"none" option (semi-rigid = "none" + a meshed shell
+slab), and LINK elements (zeroLength springs on global axes; link-only
+nodes get their zero-stiffness DOFs auto-restrained).
 
 v0.4 additions in results: frame stiffness modifiers (``FrameSection.mod_*``)
 and the shell modifier (``ShellSection.mod``, scales E) are applied when the
@@ -77,6 +88,19 @@ from skyframe.core.model import (G_ACCEL, BuildingModel, FrameMember,
 # exceed this many integration steps they are skipped in run() (a warning is
 # carried in the results); run_time_history() itself is never capped.
 TH_STEP_CAP = 20000
+
+# v0.5 pushover: run() skips ALL pushover cases (with a results warning)
+# when their combined step count exceeds this cap; run_pushover() itself is
+# never capped.
+PUSHOVER_STEP_CAP = 2000
+
+# v0.5 stiff-hinge idealization factor n: the zeroLength hinge spring's
+# elastic rotational stiffness is k_theta = n * 6EI/L about each bending
+# axis (elastic series softening of the member-end rotational stiffness
+# 6EI/L is the factor n/(n+1) ~ 0.909 at n = 10); Steel01 hardening ratio
+# b = h / (n + 1 - h*n) makes the member-end SERIES post-yield/elastic
+# stiffness ratio exactly the case's ``hardening`` h.
+HINGE_STIFFNESS_FACTOR = 10.0
 
 _TOL = 1e-6
 _N_STATIONS = 11
@@ -350,6 +374,11 @@ class _Assembly:
     mass_map: Dict[Tuple[int, int], float] = field(default_factory=dict)  # (tag, dof)
     node_restraints: Dict[int, Tuple[int, ...]] = field(default_factory=dict)
     use_transformation: bool = False
+    hinge_ele: Dict[Tuple[str, str], int] = field(default_factory=dict)
+    #   v0.5 pushover: (member uid, "i"|"j") -> zeroLength hinge element tag
+    hinge_dup_of: Dict[int, int] = field(default_factory=dict)
+    #   v0.5 pushover: duplicated hinge node tag -> original node tag
+    link_ele: Dict[str, int] = field(default_factory=dict)   # v0.5 links
 
     def free_massed_dofs(self) -> int:
         """Number of massed (node, dof) pairs that are NOT restrained.
@@ -457,6 +486,37 @@ class THResults:
 
 
 @dataclass
+class PushoverResults:
+    """Results of one nonlinear static pushover case (v0.5).
+
+    Per converged step: roof (control DOF) displacement past the gravity
+    state (m), total base shear = -(sum of support reactions in the push
+    direction, gravity share subtracted) (kN), and the roof drift ratio
+    (roof displacement / roof elevation).  ``hinge_rotations`` holds the
+    peak absolute hinge spring rotation per member uid across both bending
+    axes and all steps (rad).  A non-converged step stops the run early:
+    the partial curve is returned and a warning is appended.
+    """
+
+    name: str
+    roof_disp: List[float]
+    base_shear: List[float]
+    roof_drift: List[float]
+    hinge_rotations: Dict[str, float]
+    warnings: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "roof_disp": list(self.roof_disp),
+            "base_shear": list(self.base_shear),
+            "roof_drift": list(self.roof_drift),
+            "hinge_rotations": {u: float(r)
+                                for u, r in self.hinge_rotations.items()},
+            "warnings": list(self.warnings),
+        }
+
+
+@dataclass
 class AnalysisResults:
     """Full analysis bundle: geometry, all cases, combos, and modal."""
 
@@ -472,6 +532,7 @@ class AnalysisResults:
     shell_quads: List[dict] = field(default_factory=list)
     rs_cases: Dict[str, CaseResults] = field(default_factory=dict)
     th_cases: Dict[str, THResults] = field(default_factory=dict)
+    pushover: Dict[str, PushoverResults] = field(default_factory=dict)
     warning: str = ""                    # e.g. TH cases skipped (step cap)
 
     def to_dict(self) -> dict:
@@ -487,6 +548,7 @@ class AnalysisResults:
             "combos": {n: c.to_dict() for n, c in self.combos.items()},
             "rs_cases": {n: c.to_dict() for n, c in self.rs_cases.items()},
             "th_cases": {n: c.to_dict() for n, c in self.th_cases.items()},
+            "pushover": {n: p.to_dict() for n, p in self.pushover.items()},
             "modal": self.modal.to_dict(),
         }
         if self.warning:
@@ -512,6 +574,7 @@ class OpenSeesEngine:
         self._case_cache: Dict[str, CaseResults] = {}
         self._rs_cache: Dict[str, CaseResults] = {}
         self._th_cache: Dict[str, THResults] = {}
+        self._po_cache: Dict[str, PushoverResults] = {}
         self._modal_cache: Dict[int, ModalResults] = {}
         self._members_by_uid: Dict[str, FrameMember] = {m.uid: m for m in model.members}
         self._asm: Optional[_Assembly] = None
@@ -546,6 +609,17 @@ class OpenSeesEngine:
             else:
                 th_cases = {name: self.run_time_history(name)
                             for name in model.th_cases}
+        pushover: Dict[str, PushoverResults] = {}
+        if model.pushover_cases:
+            total_po = sum(c.steps for c in model.pushover_cases.values())
+            if total_po > PUSHOVER_STEP_CAP:
+                po_warn = (f"pushover cases skipped: {total_po} combined "
+                           f"steps exceed the {PUSHOVER_STEP_CAP}-step cap "
+                           "(run them individually with run_pushover)")
+                warning = f"{warning}; {po_warn}" if warning else po_warn
+            else:
+                pushover = {name: self.run_pushover(name)
+                            for name in model.pushover_cases}
         asm = self._asm if self._asm is not None else self._build()
         members = [{"uid": m.uid, "kind": m.kind, "section": m.section,
                     "ni": asm.ele_nodes[m.uid][0], "nj": asm.ele_nodes[m.uid][1],
@@ -564,6 +638,7 @@ class OpenSeesEngine:
             shell_quads=list(asm.shell_quads),
             rs_cases=rs_cases,
             th_cases=th_cases,
+            pushover=pushover,
             warning=warning,
         )
 
@@ -635,8 +710,40 @@ class OpenSeesEngine:
         return result
 
     # --------------------------------------------------------- model assembly
-    def _build(self, pdelta: bool = False) -> _Assembly:
-        """(Re)build the OpenSees domain from the (meshed) BuildingModel."""
+    def _hinge_plan(self, case) -> Dict[Tuple[str, str], float]:
+        """(member uid, "i"|"j") -> yield moment for a pushover case (v0.5).
+
+        ``column_base``: hinge at the LOWER end of every eligible column;
+        ``all_ends``: hinges at both ends of every eligible member.  A
+        member is eligible when ``case.My`` names it or ``default_My`` is
+        set (columns only for ``column_base``); all other members stay
+        elastic — no hinge is inserted.
+        """
+        plan: Dict[Tuple[str, str], float] = {}
+        for m in self.model.members:
+            my = case.My.get(m.uid, case.default_My)
+            if my is None:
+                continue
+            if case.hinges == "column_base":
+                if m.kind != "column":
+                    continue
+                end = "i" if m.pi[2] <= m.pj[2] else "j"
+                plan[(m.uid, end)] = float(my)
+            else:  # all_ends
+                plan[(m.uid, "i")] = float(my)
+                plan[(m.uid, "j")] = float(my)
+        return plan
+
+    def _build(self, pdelta: bool = False, hinge_case=None) -> _Assembly:
+        """(Re)build the OpenSees domain from the (meshed) BuildingModel.
+
+        ``hinge_case`` (v0.5, pushover only): a :class:`PushoverCase` whose
+        hinge plan inserts zeroLength rotational springs (Steel01 about
+        both bending axes, stiff elastic torsion, translations tied with
+        equalDOF) between duplicated nodes at the hinge locations.  Hinged
+        builds are NOT stored as ``self._asm`` (the elastic assembly stays
+        the engine-wide reference).
+        """
         model = self.model
         if self._mesh is None:
             self._mesh = mesh_model(model)
@@ -690,6 +797,11 @@ class OpenSeesEngine:
             rot_presence[nidx] = rot_presence.get(nidx, np.zeros((3, 3))) + mat3
 
         eye3 = np.eye(3)
+        mtag = 9                       # uniaxial material tags (guard uses 1)
+        hinge_plan: Dict[Tuple[str, str], float] = (
+            self._hinge_plan(hinge_case) if hinge_case is not None else {})
+        # (uid, end, member, orig node tag, dup node tag, My)
+        hinge_dups: List[tuple] = []
         for m in model.members:
             sec = model.sections[m.section]
             mat = model.materials[sec.material]
@@ -699,6 +811,8 @@ class OpenSeesEngine:
             segs = mesh.segments[m.uid]
             last = len(segs) - 1
             torsion_only = np.outer(xax, xax)
+            my_i = hinge_plan.get((m.uid, "i"))
+            my_j = hinge_plan.get((m.uid, "j"))
             for seg in segs:
                 etag += 1
                 ops.geomTransf("PDelta" if pdelta else "Linear", etag, *vecxz)
@@ -706,8 +820,21 @@ class OpenSeesEngine:
                 rel_j = "Mj" in toks and seg.index == last
                 code = (1 if rel_i else 0) + (2 if rel_j else 0)
                 extra = ["-releasez", code, "-releasey", code] if code else []
+                ni_tag, nj_tag = seg.ni + 1, seg.nj + 1
+                # v0.5 pushover hinges: the member end connects to a
+                # duplicated node; the spring bridges original <-> duplicate
+                if my_i is not None and seg.index == 0:
+                    tag += 1
+                    ops.node(tag, *mesh.points[seg.ni])
+                    hinge_dups.append((m.uid, "i", m, seg.ni + 1, tag, my_i))
+                    ni_tag = tag
+                if my_j is not None and seg.index == last:
+                    tag += 1
+                    ops.node(tag, *mesh.points[seg.nj])
+                    hinge_dups.append((m.uid, "j", m, seg.nj + 1, tag, my_j))
+                    nj_tag = tag
                 ops.element("elasticBeamColumn", etag,
-                            seg.ni + 1, seg.nj + 1,
+                            ni_tag, nj_tag,
                             A_eff, mat.E, mat.G, J_eff, I22_eff, I33_eff,
                             etag, *extra)
                 asm.seg_ele[(m.uid, seg.index)] = etag
@@ -716,6 +843,41 @@ class OpenSeesEngine:
                     if released:
                         released_nodes.add(node)
             asm.ele_nodes[m.uid] = (segs[0].ni + 1, segs[-1].nj + 1)
+
+        # --- pushover hinge springs (v0.5) ---------------------------------
+        # Steel01 (bilinear) about both member bending axes with
+        # k_theta = n*6EI/L (n = HINGE_STIFFNESS_FACTOR) and hardening
+        # ratio b = h/(n+1-h*n); stiff elastic torsion; translations tied
+        # exactly with equalDOF (needs the Transformation handler).
+        for uid, end, m, orig_tag, dup_tag, my in hinge_dups:
+            sec = model.sections[m.section]
+            mat = model.materials[sec.material]
+            A_eff, I22_eff, I33_eff, J_eff = self._eff_props(sec)
+            L = m.length
+            n_f = HINGE_STIFFNESS_FACTOR
+            k22 = n_f * 6.0 * mat.E * I22_eff / L
+            k33 = n_f * 6.0 * mat.E * I33_eff / L
+            kt = n_f * max(6.0 * mat.E * I22_eff, 6.0 * mat.E * I33_eff,
+                           mat.G * J_eff) / L
+            h = hinge_case.hardening
+            b = h / (n_f + 1.0 - h * n_f)
+            xax, yax, _, _, _ = _local_axes(m)
+            mtag += 1
+            ops.uniaxialMaterial("Elastic", mtag, kt)
+            t_tag = mtag
+            mtag += 1
+            ops.uniaxialMaterial("Steel01", mtag, my, k22, b)
+            y_tag = mtag
+            mtag += 1
+            ops.uniaxialMaterial("Steel01", mtag, my, k33, b)
+            z_tag = mtag
+            etag += 1
+            ops.element("zeroLength", etag, orig_tag, dup_tag,
+                        "-mat", t_tag, y_tag, z_tag, "-dir", 4, 5, 6,
+                        "-orient", *xax, *yax)
+            ops.equalDOF(orig_tag, dup_tag, 1, 2, 3)
+            asm.hinge_ele[(uid, end)] = etag
+            asm.hinge_dup_of[dup_tag] = orig_tag
 
         # --- shell elements -------------------------------------------------
         if mesh.quads:
@@ -742,6 +904,65 @@ class OpenSeesEngine:
                 for n in quad.nodes:
                     rot_add(n, eye3)   # shells stiffen all three rotations
 
+        # --- link elements (v0.5) -------------------------------------------
+        # zeroLength with one elastic uniaxial material per non-zero
+        # stiffness entry; default orientation = GLOBAL axes (local axes ==
+        # global for v0.5).  A pure spring: element length carries no
+        # rigid-arm moment transfer.
+        link_node_k: Dict[int, List[float]] = {}
+        for lk in model.links:
+            ni = self._find_node(asm, lk.pi)
+            nj = self._find_node(asm, lk.pj)
+            dirs = [d + 1 for d in range(6) if lk.stiffness[d] > 0.0]
+            mats: List[int] = []
+            for d in dirs:
+                mtag += 1
+                ops.uniaxialMaterial("Elastic", mtag,
+                                     float(lk.stiffness[d - 1]))
+                mats.append(mtag)
+            etag += 1
+            ops.element("zeroLength", etag, ni, nj, "-mat", *mats,
+                        "-dir", *dirs)
+            asm.link_ele[lk.uid] = etag
+            for t in (ni, nj):
+                acc = link_node_k.setdefault(t, [0.0] * 6)
+                for d in range(6):
+                    acc[d] += float(lk.stiffness[d])
+
+        # --- prospective rigid-diaphragm slaves (v0.5: per-story option) ---
+        prospective_slaves: set = set()
+        for s in model.stories:
+            if model.effective_diaphragm(s.name) != "rigid":
+                continue
+            plane = [t for t, c in asm.struct_coords.items()
+                     if abs(c[2] - s.elevation) < _TOL]
+            if len(plane) >= 2:
+                prospective_slaves.update(plane)
+
+        # --- auto-restrain DOFs of link-only nodes (v0.5) -------------------
+        # A node connected ONLY to links has zero stiffness on every DOF
+        # its links do not spring: restrain those (translations AND
+        # rotations), leaving diaphragm-tied dofs (ux/uy/rz of prospective
+        # slaves) to the diaphragm constraint.
+        touched = {seg.ni for segs in mesh.segments.values() for seg in segs}
+        touched |= {seg.nj for segs in mesh.segments.values() for seg in segs}
+        touched |= {n for q in mesh.quads for n in q.nodes}
+        for t in sorted(link_node_k):
+            if (t - 1) in touched:
+                continue                       # frame/shell stiffness present
+            prev = asm.node_restraints.get(t, (0,) * 6)
+            k6 = link_node_k[t]
+            newfix = [0] * 6
+            for d in range(6):
+                if prev[d] or k6[d] > 0.0:
+                    continue
+                if d in (0, 1, 5) and t in prospective_slaves:
+                    continue
+                newfix[d] = 1
+            if any(newfix):
+                ops.fix(t, *newfix)
+                record_fix(t, newfix)
+
         # --- auto-restrain rotations left unstiffened by releases ----------
         # A node attached ONLY through moment-released member ends has zero
         # stiffness about axes perpendicular to those members: OpenSees would
@@ -749,13 +970,6 @@ class OpenSeesEngine:
         # member end still rotates freely behind its release).  rz of
         # prospective rigid-diaphragm slaves is left to the diaphragm tie.
         if released_nodes:
-            prospective_slaves: set = set()
-            if model.rigid_diaphragms:
-                for s in model.stories:
-                    plane = [t for t, c in asm.struct_coords.items()
-                             if abs(c[2] - s.elevation) < _TOL]
-                    if len(plane) >= 2:
-                        prospective_slaves.update(plane)
             for nidx in sorted(released_nodes):
                 ntag = nidx + 1
                 S = rot_presence[nidx]
@@ -782,24 +996,25 @@ class OpenSeesEngine:
             asm.story_nodes[s.name] = [t for t, c in asm.struct_coords.items()
                                        if abs(c[2] - s.elevation) < _TOL]
 
-        # --- rigid diaphragms ----------------------------------------------
-        if model.rigid_diaphragms:
-            cx, cy = model.plan_center()
-            for s in model.stories:
-                slaves = asm.story_nodes[s.name]
-                if len(slaves) < 2:
-                    continue
-                # round z exactly like node keys so OpenSees sees the master
-                # in the same horizontal plane as its slaves
-                elev = round(s.elevation, 6)
-                tag += 1
-                ops.node(tag, cx, cy, elev)
-                ops.fix(tag, 0, 0, 1, 1, 1, 0)
-                ops.rigidDiaphragm(3, tag, *slaves)
-                asm.masters[s.name] = tag
-                asm.node_coords[tag] = (cx, cy, elev)
-                asm.node_restraints[tag] = (0, 0, 1, 1, 1, 0)
-        asm.use_transformation = bool(asm.masters)
+        # --- rigid diaphragms (v0.5: per-story "rigid" | "none") ------------
+        cx, cy = model.plan_center()
+        for s in model.stories:
+            if model.effective_diaphragm(s.name) != "rigid":
+                continue
+            slaves = asm.story_nodes[s.name]
+            if len(slaves) < 2:
+                continue
+            # round z exactly like node keys so OpenSees sees the master
+            # in the same horizontal plane as its slaves
+            elev = round(s.elevation, 6)
+            tag += 1
+            ops.node(tag, cx, cy, elev)
+            ops.fix(tag, 0, 0, 1, 1, 1, 0)
+            ops.rigidDiaphragm(3, tag, *slaves)
+            asm.masters[s.name] = tag
+            asm.node_coords[tag] = (cx, cy, elev)
+            asm.node_restraints[tag] = (0, 0, 1, 1, 1, 0)
+        asm.use_transformation = bool(asm.masters) or bool(hinge_dups)
 
         # --- zero-free-DOF guard --------------------------------------------
         # A model whose every node is fully restrained (e.g. a single
@@ -823,7 +1038,8 @@ class OpenSeesEngine:
 
         # --- mass -----------------------------------------------------------
         self._assign_mass(asm)
-        self._asm = asm
+        if hinge_case is None:
+            self._asm = asm
         return asm
 
     def _assign_mass(self, asm: _Assembly) -> None:
@@ -1465,6 +1681,134 @@ class OpenSeesEngine:
         ops.integrator("LoadControl", 1.0)
         ops.analysis("Static")
 
+    # ------------------------------------------------------------- pushover
+    @staticmethod
+    def _setup_pushover_analysis(asm: _Assembly, ctrl: Optional[int] = None,
+                                 dof: int = 1, du: float = 0.0) -> None:
+        """Newton (NormDispIncr 1e-6, 50) static analysis; LoadControl for
+        the gravity stage, DisplacementControl(ctrl, dof, du) for the push."""
+        ops.wipeAnalysis()
+        ops.constraints("Transformation" if asm.use_transformation
+                        else "Plain")
+        ops.numberer("RCM")
+        ops.system("BandGeneral")
+        ops.test("NormDispIncr", 1.0e-6, 50)
+        ops.algorithm("Newton")
+        if ctrl is None:
+            ops.integrator("LoadControl", 1.0)
+        else:
+            ops.integrator("DisplacementControl", ctrl, dof, du)
+        ops.analysis("Static")
+
+    def run_pushover(self, name: str) -> PushoverResults:
+        """Run one nonlinear static pushover case (cached per engine).
+
+        Stages (see :class:`PushoverCase` for the hinge idealization):
+
+        1. gravity: the case's ``gravity`` pattern combination is applied
+           with Newton and held constant (``loadConst -time 0``);
+        2. push: a UNIT reference force at the roof control DOF (top-story
+           diaphragm master, else the topmost structural node; lowest tag
+           breaks ties) is scaled by DisplacementControl in
+           ``target_drift * roof_elevation / steps`` equal increments.
+
+        Per converged step the roof displacement (past the gravity state),
+        the total base shear (support reactions, gravity share subtracted)
+        and every hinge spring rotation are recorded.  On a step that fails
+        to converge (Newton, then a NewtonLineSearch retry) the run stops
+        early and returns the partial curve with a warning.
+        """
+        if name in self._po_cache:
+            return self._po_cache[name]
+        model = self.model
+        if name not in model.pushover_cases:
+            raise ValueError(f"Unknown pushover case {name!r}")
+        case = model.pushover_cases[name]
+        if not model.stories:
+            raise ValueError(f"Pushover case {name!r}: the model has no "
+                             "stories (no roof to control)")
+
+        asm = self._build(hinge_case=case)
+        self._seg_span_loads = {}
+        self._seg_fef = {}
+        dof = 1 if case.direction == "X" else 2
+        top = model.stories[-1]
+        if top.name in asm.masters:
+            ctrl = asm.masters[top.name]
+        else:
+            zmax = max(c[2] for c in asm.struct_coords.values())
+            ctrl = min(t for t, c in asm.struct_coords.items()
+                       if abs(c[2] - zmax) < _TOL)
+        H = top.elevation
+        if H <= 0.0:
+            raise ValueError(f"Pushover case {name!r}: roof elevation must "
+                             "be > 0")
+
+        # base-shear nodes: supports PLUS hinge duplicates of supported
+        # nodes — the equalDOF translation tie routes the element shear to
+        # the duplicate's reaction record, not the retained support's
+        support_set = set(asm.support_tags)
+        base_tags = list(asm.support_tags) + [
+            d for d, o in asm.hinge_dup_of.items() if o in support_set]
+
+        warn_list: List[str] = []
+        base0 = 0.0
+        d0 = 0.0
+        if case.gravity:
+            ops.timeSeries("Linear", 1)
+            ops.pattern("Plain", 1, 1)
+            for pat_name, scale in case.gravity.items():
+                self._apply_pattern(asm, pat_name, scale)
+            self._setup_pushover_analysis(asm)
+            if ops.analyze(1) != 0:
+                raise RuntimeError(f"Pushover case {name!r}: gravity stage "
+                                   "failed to converge")
+            ops.loadConst("-time", 0.0)
+            ops.reactions()
+            base0 = sum(ops.nodeReaction(t)[dof - 1] for t in base_tags)
+            d0 = ops.nodeDisp(ctrl, dof)
+
+        ops.timeSeries("Linear", 2)
+        ops.pattern("Plain", 2, 2)
+        vec = [0.0] * 6
+        vec[dof - 1] = 1.0
+        ops.load(ctrl, *vec)
+        du = case.target_drift * H / case.steps
+        self._setup_pushover_analysis(asm, ctrl=ctrl, dof=dof, du=du)
+
+        roof_disp: List[float] = []
+        base_shear: List[float] = []
+        hinge_rot: Dict[str, float] = {}
+        for k in range(case.steps):
+            ok = ops.analyze(1)
+            if ok != 0:
+                ops.algorithm("NewtonLineSearch")
+                ok = ops.analyze(1)
+                ops.algorithm("Newton")
+            if ok != 0:
+                warn_list.append(
+                    f"pushover stopped early at step {k}/{case.steps}: "
+                    "the solution did not converge (partial capacity "
+                    "curve returned)")
+                break
+            roof_disp.append(float(ops.nodeDisp(ctrl, dof)) - d0)
+            ops.reactions()
+            v = -(sum(ops.nodeReaction(t)[dof - 1]
+                      for t in base_tags) - base0)
+            base_shear.append(float(v))
+            for (uid, _end), etag in asm.hinge_ele.items():
+                defo = ops.eleResponse(etag, "deformation")
+                rot = (max(abs(defo[1]), abs(defo[2]))
+                       if len(defo) >= 3 else 0.0)
+                if rot > hinge_rot.get(uid, 0.0):
+                    hinge_rot[uid] = float(rot)
+
+        result = PushoverResults(
+            name, roof_disp, base_shear, [u / H for u in roof_disp],
+            hinge_rot, warn_list)
+        self._po_cache[name] = result
+        return result
+
     # -------------------------------------------------------- time history
     def run_time_history(self, name: str) -> THResults:
         """Run one linear time-history case (cached per engine instance).
@@ -1730,10 +2074,13 @@ class OpenSeesEngine:
     # ---------------------------------------------------------------- modal
     @staticmethod
     def _eigen_ok(vals, n: int) -> bool:
+        # eigenvalues below 1e-100 (rad/s)^2 are numerical garbage from a
+        # non-converged Arpack run (periods ~1e50 s), not physics: reject
+        # them so the dense fallback solver takes over.
         if not vals or len(vals) < n:
             return False
-        return all(isinstance(v, (int, float)) and math.isfinite(v) and v > 0.0
-                   for v in list(vals)[:n])
+        return all(isinstance(v, (int, float)) and math.isfinite(v)
+                   and v > 1e-100 for v in list(vals)[:n])
 
     def _solve_eigen(self, n: int, n_massed: int) -> List[float]:
         """Eigenvalues; falls back to -fullGenLapack on failure.

@@ -24,6 +24,18 @@ v0.4 additions:
   the current model (body: ``{name, direction, V, exposure, Cp,
   importance}``; ``V`` required, m/s) and return the updated model dict.
 
+v0.5 additions (no new endpoints — the existing model/analyze round trip
+carries every new field, see CONTRACT.md "v0.5 additions"):
+
+* ``POST /api/model`` accepts/echoes shell-region ``openings`` (rectangular
+  holes in region-parametric u/v fractions), ``pushover_cases`` (nonlinear
+  static pushover definitions), the ``diaphragm``/``story_diaphragm``
+  rigid|none options, and ``links`` (6-DOF spring elements);
+* ``POST /api/analyze`` results gain a ``"pushover"`` block per pushover
+  case: ``{roof_disp, base_shear, roof_drift, hinge_rotations, warnings}``
+  (skipped with a top-level ``"warning"`` when the combined pushover steps
+  exceed 2000).
+
 Saved models live as ``<name>.skyframe.json`` files in ``~/.skyframe/models``
 (override with the ``SKYFRAME_MODELS_DIR`` environment variable; the
 directory is created on demand).  Names must match ``[A-Za-z0-9 _-]{1,60}``.
