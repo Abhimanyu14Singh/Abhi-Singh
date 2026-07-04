@@ -463,14 +463,27 @@ TH_DIRECTIONS = ("X", "Y")
 
 @dataclass
 class TimeHistoryCase:
-    """Linear time-history case (v0.4): uniform ground acceleration.
+    """Time-history case (v0.4 linear, v0.6 nonlinear): uniform ground accel.
 
     ``accel`` is the ground-acceleration record in m/s^2 sampled at constant
     spacing ``dt`` (the sample at index k applies at t = k*dt); ``scale``
-    multiplies the record.  The engine integrates the elastic model with
-    Newmark constant-average acceleration (gamma=1/2, beta=1/4,
-    unconditionally stable) at the record dt, with Rayleigh damping fitted
-    to ratio ``damping`` at modes 1 and min(3, n_modes).
+    multiplies the record.  The engine integrates the model with Newmark
+    constant-average acceleration (gamma=1/2, beta=1/4, unconditionally
+    stable) at the record dt, with Rayleigh damping fitted to ratio
+    ``damping`` at modes 1 and min(3, n_modes) of the INITIAL elastic model.
+
+    v0.6 nonlinear fields (reuse the v0.5 pushover hinge idealization —
+    see :class:`PushoverCase` for ``hinges``/``My``/``default_My``/
+    ``hardening`` semantics, identical here):
+
+    * ``nonlinear`` — insert Steel01 zeroLength rotational hinges exactly
+      like a pushover case and integrate with Newton (fallback
+      NewtonLineSearch) instead of the linear algorithm;
+    * ``gravity`` — pattern -> factor combination applied statically FIRST
+      and held constant (``loadConst``); the reported time series are the
+      response PAST the gravity state;
+    * ``My`` / ``default_My`` / ``hardening`` / ``hinges`` — the hinge plan
+      (members with neither ``My`` entry nor ``default_My`` stay elastic).
     """
 
     name: str
@@ -479,11 +492,20 @@ class TimeHistoryCase:
     dt: float                      # s
     damping: float = 0.05          # Rayleigh target damping ratio
     scale: float = 1.0             # multiplies accel
+    nonlinear: bool = False                                  # v0.6
+    gravity: Dict[str, float] = field(default_factory=dict)  # v0.6
+    hinges: str = "column_base"                              # v0.6
+    My: Dict[str, float] = field(default_factory=dict)       # v0.6, kN*m
+    default_My: Optional[float] = None                       # v0.6
+    hardening: float = 0.02                                  # v0.6
 
     def to_dict(self) -> dict:
         return {"name": self.name, "direction": self.direction,
                 "accel": [float(a) for a in self.accel],
-                "dt": self.dt, "damping": self.damping, "scale": self.scale}
+                "dt": self.dt, "damping": self.damping, "scale": self.scale,
+                "nonlinear": self.nonlinear, "gravity": dict(self.gravity),
+                "hinges": self.hinges, "My": dict(self.My),
+                "default_My": self.default_My, "hardening": self.hardening}
 
 
 PUSHOVER_DIRECTIONS = ("X", "Y")
@@ -532,6 +554,40 @@ class PushoverCase:
                 "target_drift": self.target_drift, "steps": self.steps,
                 "hinges": self.hinges, "My": dict(self.My),
                 "default_My": self.default_My, "hardening": self.hardening}
+
+
+STAGED_MODES = ("per_story",)
+
+
+@dataclass
+class StagedCase:
+    """Staged-construction (sequential gravity) case (v0.6).
+
+    ``stages == "per_story"`` (the only v0.6 mode): the engine analyses the
+    building story by story with the REBUILD-AND-ACCUMULATE method — at
+    stage k a fresh model containing only stories 1..k (members, shells,
+    supports, diaphragms, links) is solved under ONLY story k's gravity
+    loads from ``pattern``; per-member forces and per-node incremental
+    displacements are accumulated across stages (each stage's increments
+    are measured in that stage's fresh geometry — geometry updating is
+    ignored, the standard linear staged-analysis assumption).  Members not
+    yet built in a stage simply receive no increment that stage.
+
+    ``include_live`` (pattern -> factor) is applied at the END on the full
+    structure in one unstaged increment.  The engine also solves the
+    one-shot application of the same total loads internally and reports a
+    comparison (see CONTRACT v0.6).
+    """
+
+    name: str
+    pattern: str = "DEAD"
+    stages: str = "per_story"
+    include_live: Dict[str, float] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "pattern": self.pattern,
+                "stages": self.stages,
+                "include_live": dict(self.include_live)}
 
 
 @dataclass
@@ -616,6 +672,7 @@ class BuildingModel:
     rs_cases: Dict[str, ResponseSpectrumCase] = field(default_factory=dict)
     th_cases: Dict[str, TimeHistoryCase] = field(default_factory=dict)  # v0.4
     pushover_cases: Dict[str, PushoverCase] = field(default_factory=dict)  # v0.5
+    staged_cases: Dict[str, StagedCase] = field(default_factory=dict)  # v0.6
     num_modes: int = 6
 
     # ---------------- convenience API ----------------
@@ -796,6 +853,10 @@ class BuildingModel:
                     raise ValueError(f"Combo {combo.name}: time-history case "
                                      f"{c!r} cannot enter a load combo "
                                      "(v0.4)")
+                if c in self.staged_cases:
+                    raise ValueError(f"Combo {combo.name}: staged case "
+                                     f"{c!r} cannot enter a load combo "
+                                     "(v0.6)")
                 raise ValueError(f"Combo {combo.name}: unknown case {c}")
 
     def add_rs_case(self, name: str, direction: str,
@@ -837,16 +898,25 @@ class BuildingModel:
 
     def add_th_case(self, name: str, direction: str, accel: List[float],
                     dt: float, damping: float = 0.05,
-                    scale: float = 1.0) -> TimeHistoryCase:
-        th = TimeHistoryCase(name, direction,
-                             [float(a) for a in accel], float(dt),
-                             damping=float(damping), scale=float(scale))
+                    scale: float = 1.0, nonlinear: bool = False,
+                    gravity: Optional[Dict[str, float]] = None,
+                    hinges: str = "column_base",
+                    My: Optional[Dict[str, float]] = None,
+                    default_My: Optional[float] = None,
+                    hardening: float = 0.02) -> TimeHistoryCase:
+        th = TimeHistoryCase(
+            name, direction, [float(a) for a in accel], float(dt),
+            damping=float(damping), scale=float(scale),
+            nonlinear=bool(nonlinear), gravity=dict(gravity or {}),
+            hinges=hinges,
+            My={k: float(v) for k, v in (My or {}).items()},
+            default_My=(None if default_My is None else float(default_My)),
+            hardening=float(hardening))
         self._validate_th_case(th)
         self.th_cases[name] = th
         return th
 
-    @staticmethod
-    def _validate_th_case(th: TimeHistoryCase) -> None:
+    def _validate_th_case(self, th: TimeHistoryCase) -> None:
         if th.direction not in TH_DIRECTIONS:
             raise ValueError(f"TH case {th.name}: direction must be X|Y, "
                              f"got {th.direction!r}")
@@ -862,6 +932,56 @@ class BuildingModel:
             raise ValueError(f"TH case {th.name}: damping must be in (0, 1)")
         if not math.isfinite(th.scale):
             raise ValueError(f"TH case {th.name}: scale must be finite")
+        # v0.6 nonlinear fields (mirror the pushover-case rules)
+        if th.hinges not in PUSHOVER_HINGE_MODES:
+            raise ValueError(f"TH case {th.name}: hinges must be "
+                             f"column_base|all_ends, got {th.hinges!r}")
+        if not (math.isfinite(th.hardening) and 0.0 <= th.hardening < 1.0):
+            raise ValueError(f"TH case {th.name}: hardening must be in "
+                             "[0, 1)")
+        for p in th.gravity:
+            if p not in self.patterns:
+                raise ValueError(f"TH case {th.name}: gravity references "
+                                 f"unknown pattern {p}")
+        uids = {m.uid for m in self.members}
+        for uid, my in th.My.items():
+            if uid not in uids:
+                raise ValueError(f"TH case {th.name}: My references "
+                                 f"unknown member {uid!r}")
+            if not (isinstance(my, (int, float)) and math.isfinite(my)
+                    and my > 0.0):
+                raise ValueError(f"TH case {th.name}: My[{uid!r}] must be "
+                                 "a finite value > 0")
+        if th.default_My is not None and not (
+                math.isfinite(th.default_My) and th.default_My > 0.0):
+            raise ValueError(f"TH case {th.name}: default_My must be a "
+                             "finite value > 0 (or None)")
+
+    def add_staged_case(self, name: str, pattern: str = "DEAD",
+                        stages: str = "per_story",
+                        include_live: Optional[Dict[str, float]] = None
+                        ) -> StagedCase:
+        sc = StagedCase(name, pattern=pattern, stages=stages,
+                        include_live={k: float(v) for k, v in
+                                      (include_live or {}).items()})
+        self._validate_staged_case(sc)
+        self.staged_cases[name] = sc
+        return sc
+
+    def _validate_staged_case(self, sc: StagedCase) -> None:
+        if sc.stages not in STAGED_MODES:
+            raise ValueError(f"Staged case {sc.name}: stages must be one of "
+                             f"{STAGED_MODES}, got {sc.stages!r}")
+        if sc.pattern not in self.patterns:
+            raise ValueError(f"Staged case {sc.name}: unknown pattern "
+                             f"{sc.pattern}")
+        for p, f in sc.include_live.items():
+            if p not in self.patterns:
+                raise ValueError(f"Staged case {sc.name}: include_live "
+                                 f"references unknown pattern {p}")
+            if not math.isfinite(float(f)):
+                raise ValueError(f"Staged case {sc.name}: include_live "
+                                 f"factor for {p} must be finite")
 
     def add_pushover_case(self, name: str, direction: str,
                           gravity: Optional[Dict[str, float]] = None,
@@ -1133,6 +1253,8 @@ class BuildingModel:
             self._validate_th_case(th)
         for po in self.pushover_cases.values():
             self._validate_pushover_case(po)
+        for sc in self.staged_cases.values():
+            self._validate_staged_case(sc)
         link_uids = set()
         for lk in self.links:
             if lk.uid in link_uids:
@@ -1170,6 +1292,8 @@ class BuildingModel:
             "th_cases": {k: v.to_dict() for k, v in self.th_cases.items()},
             "pushover_cases": {k: v.to_dict()
                                for k, v in self.pushover_cases.items()},
+            "staged_cases": {k: v.to_dict()
+                             for k, v in self.staged_cases.items()},
             "num_modes": self.num_modes,
         }
 
@@ -1311,11 +1435,20 @@ class BuildingModel:
                 damping=float(rd.get("damping", 0.05)),
                 scale=float(rd.get("scale", 1.0)))
         for name, td in (d.get("th_cases") or {}).items():
+            tmy = td.get("default_My")
             mdl.th_cases[name] = TimeHistoryCase(
                 name=td.get("name", name), direction=td["direction"],
                 accel=[float(a) for a in td["accel"]], dt=float(td["dt"]),
                 damping=float(td.get("damping", 0.05)),
-                scale=float(td.get("scale", 1.0)))
+                scale=float(td.get("scale", 1.0)),
+                # v0.6 nonlinear fields; pre-v0.6 files stay linear
+                nonlinear=bool(td.get("nonlinear", False)),
+                gravity={p: float(f)
+                         for p, f in (td.get("gravity") or {}).items()},
+                hinges=td.get("hinges", "column_base"),
+                My={u: float(v) for u, v in (td.get("My") or {}).items()},
+                default_My=(None if tmy is None else float(tmy)),
+                hardening=float(td.get("hardening", 0.02)))
         for name, pd in (d.get("pushover_cases") or {}).items():
             dmy = pd.get("default_My")
             mdl.pushover_cases[name] = PushoverCase(
@@ -1328,6 +1461,13 @@ class BuildingModel:
                 My={u: float(v) for u, v in (pd.get("My") or {}).items()},
                 default_My=(None if dmy is None else float(dmy)),
                 hardening=float(pd.get("hardening", 0.02)))
+        for name, sd in (d.get("staged_cases") or {}).items():
+            mdl.staged_cases[name] = StagedCase(
+                name=sd.get("name", name),
+                pattern=sd.get("pattern", "DEAD"),
+                stages=sd.get("stages", "per_story"),
+                include_live={p: float(f) for p, f in
+                              (sd.get("include_live") or {}).items()})
         mdl.num_modes = int(d.get("num_modes", 6))
         mdl.validate()
         return mdl

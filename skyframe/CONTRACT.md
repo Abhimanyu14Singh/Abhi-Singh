@@ -542,3 +542,130 @@ No new endpoints: ``POST /api/model`` round-trips every v0.5 field
 (``openings``, ``pushover_cases``, ``diaphragm``, ``story_diaphragm``,
 ``links``) and ``POST /api/analyze`` returns the ``"pushover"`` results
 block documented above.
+
+---
+
+# v0.6 additions — engine: staged construction, nonlinear time history
+
+## Staged construction (sequential gravity)
+
+```python
+@dataclass StagedCase:          # model.staged_cases: Dict[str, StagedCase]
+    name: str
+    pattern: str = "DEAD"                # gravity pattern that is staged
+    stages: str = "per_story"            # the ONLY v0.6 mode
+    include_live: Dict[str, float] = {}  # pattern -> factor, applied at the
+                                         # END on the full structure, UNSTAGED
+# BuildingModel.add_staged_case(...); serialised under "staged_cases"
+# (absent key = none, pre-v0.6 files unchanged).  Staged cases may NOT
+# enter load combos.
+```
+
+**Method (documented exactly — REBUILD-AND-ACCUMULATE element staging):**
+``engine.run_staged(name)`` (also run by ``engine.run()``, cached, never
+capped) solves one FRESH OpenSees model per stage k containing ONLY
+stories 1..k — members, shells, supports, diaphragms and links of those
+stories — under ONLY story k's gravity loads from ``pattern``, then
+ACCUMULATES the per-stage linear increments: member end forces and
+station forces per uid, reactions and structural-node displacements
+matched by coordinates (1e-6), diaphragm-master values and story results
+by story name, base totals by summation.  Members/regions not yet built
+in a stage receive no increment; node displacements accumulate the
+increments measured in each stage's fresh geometry (geometry updating is
+ignored — the standard linear staged-analysis assumption), which is what
+produces the "slab built level" effect: for a 2-story axial stack the
+staged top-node settlement excludes the stage-1 shortening P1*L/EA that
+one-shot analysis includes.  Load attribution: member loads follow their
+member's story (falling back to the story owning the member's topmost
+endpoint), area loads their region's story (same fallback), nodal loads
+the story owning their z (story k covers (elev_{k-1}, elev_k]), story
+forces their named story.  ``include_live`` is then applied on the FULL
+structure in one unstaged increment.  Every partial structure 1..k must
+be stable on its own (a story propped only by later construction cannot
+be staged).
+
+**Comparison:** the engine also solves the one-shot application of the
+same TOTAL loads (staged pattern at 1.0 + include_live factors) on the
+full structure internally.
+
+```jsonc
+results["staged"][name] = {        // top-level "staged" key always present
+  // ... the standard static-case shape holding the ACCUMULATED final
+  // state: node_disp / reactions / base / member_forces / story /
+  // member_stations (shell_forces are NOT reported for staged cases —
+  // quad indexing is not stable across stage meshes), PLUS:
+  "comparison": {
+    "column_axial_max_diff_pct": 0.0,  // max |N_staged - N_oneshot| over
+                                       // column end-i axials, % of the
+                                       // largest one-shot column axial
+                                       // (0.0 with no columns / all-zero)
+    "oneshot_case": { ... }            // full static-case shape of the
+                                       // internal one-shot solve
+  }
+}
+```
+
+For LINEAR elastic response, statically determinate quantities (e.g.
+column axials of a symmetric gravity stack) are one-shot identical, while
+statically indeterminate quantities (e.g. beam end moments in a multi-
+story frame) genuinely differ — both are pinned by closed-form tests.
+
+## Nonlinear time history
+
+```python
+# TimeHistoryCase gains (all round-trip; absent keys = linear, pre-v0.6):
+#   nonlinear: bool = False
+#   gravity: Dict[str, float] = {}     # pattern -> factor, static stage first
+#   hinges: str = "column_base"        # "column_base" | "all_ends" (v0.5)
+#   My: Dict[str, float] = {}          # member uid -> yield moment (kN*m)
+#   default_My: float | None = None
+#   hardening: float = 0.02            # post-yield ratio, [0, 1)
+# add_th_case(...) accepts all of the above; validation mirrors the
+# pushover-case rules (unknown members/patterns, ranges).
+```
+
+When ``nonlinear`` is set, ``run_time_history``:
+
+* builds the model with the SAME Steel01 zeroLength hinge springs as a
+  v0.5 pushover case (identical hinge plan, ``k_theta = n*6EI/L`` with
+  n = 10, ``b = h/(n+1-h*n)``, equalDOF translations — CONTRACT v0.5);
+* applies the ``gravity`` combination statically first (Newton,
+  ``NormDispIncr 1e-8, 25``) and holds it (``loadConst -time 0``); ALL
+  reported series are the response PAST the gravity state;
+* integrates with Newmark constant-average acceleration + Newton
+  (``test NormDispIncr 1e-8, 25``), one NewtonLineSearch retry per failed
+  step (both failing raises);
+* Rayleigh damping: a0/a1 fitted to ``damping`` at modes 1 and min(3, n)
+  of the INITIAL ELASTIC model (hinges excluded), applied with
+  COMMITTED-stiffness proportionality (``betaKcomm``) — the standard
+  hinge-model choice; initial-stiffness proportionality would put
+  spurious post-yield damping moments ``a1*k_theta*theta_dot`` (which can
+  exceed My) on the stiff hinge springs.  Linear cases keep the exact
+  v0.4 behavior (identical for an elastic response);
+* base_FX/base_FY sum the support reactions PLUS the hinge-duplicate
+  nodes of supported originals (the equalDOF tie routes the element shear
+  there, as in pushover).
+
+``results["th_cases"][name]`` keeps the exact v0.4 shape for linear cases
+and gains, for nonlinear cases only:
+
+```jsonc
+{
+  "hinge_rotations": {"<uid>": peak_abs_rotation},  // rad, both axes, all
+                                                    // steps; every hinged
+                                                    // member has an entry
+  "yielded": ["<uid>", ...]   // sorted; hinge exceeded My/k_theta about
+                              // either bending axis at any step
+}
+```
+
+**Step cap:** unchanged and COMBINED — ``engine.run()`` skips ALL TH
+cases (linear and nonlinear together) when their total step count
+exceeds 20 000, with the same top-level ``"warning"``;
+``run_time_history`` itself is never capped.
+
+## API
+
+No new endpoints: ``POST /api/model`` round-trips ``staged_cases`` and
+the nonlinear TimeHistoryCase fields; ``POST /api/analyze`` returns the
+``"staged"`` results block and the nonlinear TH keys documented above.

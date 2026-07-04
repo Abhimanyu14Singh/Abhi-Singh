@@ -18,7 +18,18 @@ into an OpenSees domain (ndm=3, ndf=6) and runs:
   displacement-controlled push on the roof control DOF after a held
   gravity stage, with bilinear (Steel01) zeroLength rotational hinge
   springs at the locations a :class:`PushoverCase` names (see
-  ``CONTRACT.md`` v0.5 for the exact stiff-hinge idealization).
+  ``CONTRACT.md`` v0.5 for the exact stiff-hinge idealization),
+* staged-construction cases (``run_staged``, v0.6): sequential
+  story-by-story gravity by the REBUILD-AND-ACCUMULATE method — at stage
+  k a fresh model of stories 1..k is solved under only story k's gravity
+  loads and the increments are accumulated; an internal one-shot solve of
+  the same total loads feeds the reported comparison,
+* nonlinear time-history cases (``TimeHistoryCase.nonlinear``, v0.6):
+  the v0.5 pushover hinge machinery (Steel01 zeroLength springs) under
+  Newmark + Newton (``NormDispIncr 1e-8, 25``; NewtonLineSearch retry),
+  optional held gravity stage, Rayleigh damping fitted to the INITIAL
+  elastic modes and applied with committed-stiffness proportionality
+  (``betaKcomm`` — avoids spurious hinge damping moments).
 
 v0.5 also adds: shell-region OPENINGS (meshed around, exact net-area load
 conservation — handled in :mod:`skyframe.core.mesh`), the per-story
@@ -82,7 +93,8 @@ import openseespy.opensees as ops
 from skyframe.core.mesh import MeshedModel, Segment, mesh_model
 from skyframe.core.model import (G_ACCEL, BuildingModel, FrameMember,
                                  FrameSection, LoadCase, LoadCombo,
-                                 ResponseSpectrumCase)
+                                 LoadPattern, ResponseSpectrumCase,
+                                 ShellRegion)
 
 # time-history step cap for engine.run(): if the model's TH cases together
 # exceed this many integration steps they are skipped in run() (a warning is
@@ -378,6 +390,10 @@ class _Assembly:
     #   v0.5 pushover: (member uid, "i"|"j") -> zeroLength hinge element tag
     hinge_dup_of: Dict[int, int] = field(default_factory=dict)
     #   v0.5 pushover: duplicated hinge node tag -> original node tag
+    hinge_rot_yield: Dict[Tuple[str, str], Tuple[float, float]] = field(
+        default_factory=dict)
+    #   v0.6: (uid, end) -> (My/k22, My/k33) yield rotations of the hinge
+    #   springs about the local y and z bending axes
     link_ele: Dict[str, int] = field(default_factory=dict)   # v0.5 links
 
     def free_massed_dofs(self) -> int:
@@ -453,13 +469,21 @@ class ModalResults:
 
 @dataclass
 class THResults:
-    """Results of one linear time-history case (v0.4).
+    """Results of one time-history case (v0.4 linear, v0.6 nonlinear).
 
     Time series are sampled AFTER each integration step, i.e. entry k is
     the state at t = (k+1)*dt.  ``base_FX``/``base_FY`` are total base
     reactions (element resisting forces at the supports).  Story shears in
     ``peaks`` come from inertia-force equilibrium (story masses times total
     accelerations, cumulative from the top; damping forces neglected).
+
+    v0.6 nonlinear cases additionally report ``hinge_rotations`` (peak
+    absolute hinge spring rotation per member uid across both bending axes
+    and all steps, rad) and ``yielded`` (uids of members whose hinge
+    exceeded its yield rotation My/k_theta about either axis); with a
+    ``gravity`` stage all series are the response PAST the gravity state.
+    Both keys appear in ``to_dict()`` only for nonlinear cases (the v0.4
+    linear shape is unchanged).
     """
 
     name: str
@@ -469,9 +493,12 @@ class THResults:
     base_FX: List[float]
     base_FY: List[float]
     peaks: dict           # {"story": {story: {ux..shear_y}}, "base": {FX,FY}}
+    nonlinear: bool = False                                     # v0.6
+    hinge_rotations: Dict[str, float] = field(default_factory=dict)  # v0.6
+    yielded: List[str] = field(default_factory=list)            # v0.6
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "t": list(self.t),
             "story_ux": {s: list(v) for s, v in self.story_ux.items()},
             "story_uy": {s: list(v) for s, v in self.story_uy.items()},
@@ -483,6 +510,11 @@ class THResults:
                 "base": dict(self.peaks.get("base", {})),
             },
         }
+        if self.nonlinear:
+            d["hinge_rotations"] = {u: float(r) for u, r in
+                                    self.hinge_rotations.items()}
+            d["yielded"] = list(self.yielded)
+        return d
 
 
 @dataclass
@@ -517,6 +549,35 @@ class PushoverResults:
 
 
 @dataclass
+class StagedResults:
+    """Results of one staged-construction case (v0.6).
+
+    ``case`` holds the ACCUMULATED final state (per-stage increments summed
+    across the sequential story-by-story analysis, plus the unstaged
+    ``include_live`` increment) in the standard static-case shape;
+    ``oneshot`` is the internally-solved one-shot application of the same
+    total loads on the full structure.  ``column_axial_max_diff_pct`` is
+    the maximum |N_staged - N_oneshot| over all column end-i axial forces,
+    as a percentage of the largest one-shot column axial (0.0 when the
+    model has no columns or all one-shot column axials are zero).
+    """
+
+    name: str
+    case: CaseResults
+    oneshot: CaseResults
+    column_axial_max_diff_pct: float
+
+    def to_dict(self) -> dict:
+        d = self.case.to_dict()
+        d["comparison"] = {
+            "column_axial_max_diff_pct":
+                float(self.column_axial_max_diff_pct),
+            "oneshot_case": self.oneshot.to_dict(),
+        }
+        return d
+
+
+@dataclass
 class AnalysisResults:
     """Full analysis bundle: geometry, all cases, combos, and modal."""
 
@@ -533,6 +594,7 @@ class AnalysisResults:
     rs_cases: Dict[str, CaseResults] = field(default_factory=dict)
     th_cases: Dict[str, THResults] = field(default_factory=dict)
     pushover: Dict[str, PushoverResults] = field(default_factory=dict)
+    staged: Dict[str, StagedResults] = field(default_factory=dict)  # v0.6
     warning: str = ""                    # e.g. TH cases skipped (step cap)
 
     def to_dict(self) -> dict:
@@ -549,6 +611,7 @@ class AnalysisResults:
             "rs_cases": {n: c.to_dict() for n, c in self.rs_cases.items()},
             "th_cases": {n: c.to_dict() for n, c in self.th_cases.items()},
             "pushover": {n: p.to_dict() for n, p in self.pushover.items()},
+            "staged": {n: s.to_dict() for n, s in self.staged.items()},
             "modal": self.modal.to_dict(),
         }
         if self.warning:
@@ -575,6 +638,7 @@ class OpenSeesEngine:
         self._rs_cache: Dict[str, CaseResults] = {}
         self._th_cache: Dict[str, THResults] = {}
         self._po_cache: Dict[str, PushoverResults] = {}
+        self._staged_cache: Dict[str, StagedResults] = {}
         self._modal_cache: Dict[int, ModalResults] = {}
         self._members_by_uid: Dict[str, FrameMember] = {m.uid: m for m in model.members}
         self._asm: Optional[_Assembly] = None
@@ -620,6 +684,8 @@ class OpenSeesEngine:
             else:
                 pushover = {name: self.run_pushover(name)
                             for name in model.pushover_cases}
+        staged = {name: self.run_staged(name)
+                  for name in model.staged_cases}
         asm = self._asm if self._asm is not None else self._build()
         members = [{"uid": m.uid, "kind": m.kind, "section": m.section,
                     "ni": asm.ele_nodes[m.uid][0], "nj": asm.ele_nodes[m.uid][1],
@@ -639,6 +705,7 @@ class OpenSeesEngine:
             rs_cases=rs_cases,
             th_cases=th_cases,
             pushover=pushover,
+            staged=staged,
             warning=warning,
         )
 
@@ -878,6 +945,7 @@ class OpenSeesEngine:
             ops.equalDOF(orig_tag, dup_tag, 1, 2, 3)
             asm.hinge_ele[(uid, end)] = etag
             asm.hinge_dup_of[dup_tag] = orig_tag
+            asm.hinge_rot_yield[(uid, end)] = (my / k22, my / k33)
 
         # --- shell elements -------------------------------------------------
         if mesh.quads:
@@ -1809,24 +1877,266 @@ class OpenSeesEngine:
         self._po_cache[name] = result
         return result
 
+    # ------------------------------------------------- staged construction
+    def _stage_of_z(self, z: float) -> int:
+        """0-based story index owning elevation ``z`` (story k covers
+        (elev_{k-1}, elev_k]; z at/below the first elevation -> story 0;
+        above the roof -> the top story)."""
+        for i, s in enumerate(self.model.stories):
+            if z <= s.elevation + _TOL:
+                return i
+        return len(self.model.stories) - 1
+
+    def _stage_of_member(self, m: FrameMember,
+                         sidx: Dict[str, int]) -> int:
+        """Construction stage of a member: its ``story`` when set, else the
+        story owning its topmost endpoint elevation."""
+        if m.story in sidx:
+            return sidx[m.story]
+        return self._stage_of_z(max(m.pi[2], m.pj[2]))
+
+    def _stage_of_region(self, r: ShellRegion,
+                         sidx: Dict[str, int]) -> int:
+        """Construction stage of a shell region (story, else topmost z)."""
+        if r.story in sidx:
+            return sidx[r.story]
+        return self._stage_of_z(max(c[2] for c in r.corners))
+
+    def _split_staged_pattern(self, pat: LoadPattern) -> List[LoadPattern]:
+        """Split one gravity pattern into per-story stage patterns.
+
+        Attribution: member loads follow their member's stage; area loads
+        follow their region's stage; nodal loads the story owning their z;
+        story forces their named story.
+        """
+        model = self.model
+        sidx = {s.name: i for i, s in enumerate(model.stories)}
+        n = len(model.stories)
+        parts = [LoadPattern(f"__stage{i + 1}__", pat.kind)
+                 for i in range(n)]
+        for ml in pat.all_member_loads():     # includes legacy member_udls
+            m = self._members_by_uid.get(ml.member_uid)
+            if m is None:
+                raise ValueError(f"Staged pattern {pat.name!r}: load "
+                                 f"references unknown member "
+                                 f"{ml.member_uid!r}")
+            parts[self._stage_of_member(m, sidx)].member_loads.append(ml)
+        for al in pat.area_loads:
+            region = model._shell(al.region_uid)
+            if region is None:
+                raise ValueError(f"Staged pattern {pat.name!r}: area load "
+                                 f"references unknown shell region "
+                                 f"{al.region_uid!r}")
+            parts[self._stage_of_region(region, sidx)].area_loads.append(al)
+        for nl in pat.nodal_loads:
+            parts[self._stage_of_z(nl.point[2])].nodal_loads.append(nl)
+        for sf in pat.story_forces:
+            parts[sidx.get(sf.story, n - 1)].story_forces.append(sf)
+        return parts
+
+    def _stage_submodel(self, k: int) -> BuildingModel:
+        """Fresh BuildingModel containing only stories 1..k+1 (0-based k):
+        members, shells, supports, links, and diaphragm settings of the
+        included stories; no loads/cases (the caller sets them)."""
+        model = self.model
+        stories = model.stories[:k + 1]
+        names = {s.name for s in stories}
+        elev_k = stories[-1].elevation
+        sidx = {s.name: i for i, s in enumerate(model.stories)}
+        sub = BuildingModel(name=f"{model.name} [stage {k + 1}]")
+        sub.materials = dict(model.materials)
+        sub.sections = dict(model.sections)
+        sub.shell_sections = dict(model.shell_sections)
+        sub.grid = model.grid
+        sub.stories = list(stories)
+        sub.members = [m for m in model.members
+                       if self._stage_of_member(m, sidx) <= k]
+        sub.shells = [r for r in model.shells
+                      if self._stage_of_region(r, sidx) <= k]
+        sub.base_fixity = model.base_fixity
+        sub.supports = [s for s in model.supports
+                        if s.point[2] <= elev_k + _TOL]
+        sub.rigid_diaphragms = model.rigid_diaphragms
+        sub.diaphragm = model.diaphragm
+        sub.story_diaphragm = {s2: v for s2, v in
+                               model.story_diaphragm.items() if s2 in names}
+        sub.links = [lk for lk in model.links
+                     if max(lk.pi[2], lk.pj[2]) <= elev_k + _TOL]
+        sub.num_modes = 0
+        return sub
+
+    def run_staged(self, name: str) -> StagedResults:
+        """Run one staged-construction case (v0.6, cached per engine).
+
+        REBUILD-AND-ACCUMULATE sequential gravity: for each stage k a
+        FRESH OpenSees model containing only stories 1..k is built and
+        solved (linear static) under ONLY story k's gravity loads from the
+        case's pattern; member end forces, station forces, reactions, base
+        totals, story values, and node displacements are ACCUMULATED across
+        stages (structural nodes matched by coordinates, diaphragm masters
+        by story).  Each stage's increments are measured in that stage's
+        fresh geometry — geometry updating is ignored, the standard
+        assumption of linear staged analysis.  Members/regions not yet
+        built in a stage receive no increment.  ``include_live`` patterns
+        are then applied on the FULL structure in one unstaged increment.
+        Finally the one-shot application of the same total loads is solved
+        internally for the reported comparison.
+
+        Every partial structure 1..k must be stable on its own (a story
+        propped only by later construction cannot be staged).
+        """
+        if name in self._staged_cache:
+            return self._staged_cache[name]
+        model = self.model
+        if name not in model.staged_cases:
+            raise ValueError(f"Unknown staged case {name!r}")
+        sc = model.staged_cases[name]
+        if not model.stories:
+            raise ValueError(f"Staged case {name!r}: the model has no "
+                             "stories to stage")
+        if sc.pattern not in model.patterns:
+            raise ValueError(f"Staged case {name!r}: unknown pattern "
+                             f"{sc.pattern!r}")
+        n = len(model.stories)
+        parts = self._split_staged_pattern(model.patterns[sc.pattern])
+
+        disp_acc: Dict[Vec3, np.ndarray] = {}
+        master_acc: Dict[str, np.ndarray] = {}
+        reac_acc: Dict[Vec3, np.ndarray] = {}
+        base_acc = {key: 0.0 for key in ("FX", "FY", "FZ", "MX", "MY", "MZ")}
+        mf_acc: Dict[str, np.ndarray] = {}
+        st_acc: Dict[str, dict] = {}
+        story_acc: Dict[str, Dict[str, float]] = {}
+
+        def accumulate(eng: "OpenSeesEngine", res: CaseResults) -> None:
+            asm = eng._asm
+            for t, c in asm.struct_coords.items():
+                key = _pkey(c)
+                disp_acc[key] = (disp_acc.get(key, np.zeros(6))
+                                 + np.asarray(res.node_disp[t]))
+            for s_name, mt in asm.masters.items():
+                master_acc[s_name] = (master_acc.get(s_name, np.zeros(6))
+                                      + np.asarray(res.node_disp[mt]))
+            for t in asm.support_tags:
+                key = _pkey(asm.node_coords[t])
+                reac_acc[key] = (reac_acc.get(key, np.zeros(6))
+                                 + np.asarray(res.reactions[t]))
+            for key2 in base_acc:
+                base_acc[key2] += res.base[key2]
+            for uid, f in res.member_forces.items():
+                mf_acc[uid] = mf_acc.get(uid, np.zeros(12)) + np.asarray(f)
+            for uid, st in res.member_stations.items():
+                entry = st_acc.setdefault(uid, {"x": list(st["x"])})
+                for key3 in ("N", "V2", "V3", "T", "M2", "M3"):
+                    entry[key3] = (entry.get(key3,
+                                             np.zeros(len(st[key3])))
+                                   + np.asarray(st[key3]))
+            for s_name, vals in res.story.items():
+                acc = story_acc.setdefault(s_name,
+                                           {k4: 0.0 for k4 in vals})
+                for k4, v in vals.items():
+                    acc[k4] += v
+
+        for k in range(n):
+            sub = self._stage_submodel(k)
+            sub.patterns = {"__stage__": parts[k]}
+            sub.cases = {"__stage__": LoadCase("__stage__",
+                                               {"__stage__": 1.0})}
+            eng = OpenSeesEngine(sub)
+            accumulate(eng, eng.run_static("__stage__"))
+
+        if sc.include_live:
+            sub = self._stage_submodel(n - 1)      # full structure
+            sub.patterns = dict(model.patterns)
+            sub.cases = {"__live__": LoadCase("__live__",
+                                              dict(sc.include_live))}
+            eng = OpenSeesEngine(sub)
+            accumulate(eng, eng.run_static("__live__"))
+
+        # one-shot comparison: the same total loads applied at once on the
+        # full structure (stage-n geometry == the full model geometry, so
+        # its FE node tags match the parent results exactly)
+        sub = self._stage_submodel(n - 1)
+        sub.patterns = dict(model.patterns)
+        facs = {sc.pattern: 1.0}
+        for p, f in sc.include_live.items():
+            facs[p] = facs.get(p, 0.0) + f
+        sub.cases = {"__oneshot__": LoadCase("__oneshot__", facs)}
+        eng_full = OpenSeesEngine(sub)
+        oneshot = eng_full.run_static("__oneshot__")
+        full_asm = eng_full._asm
+
+        zeros6 = np.zeros(6)
+        node_disp = {t: [float(v) for v in disp_acc.get(_pkey(c), zeros6)]
+                     for t, c in full_asm.struct_coords.items()}
+        for s_name, mt in full_asm.masters.items():
+            node_disp[mt] = [float(v) for v in
+                             master_acc.get(s_name, zeros6)]
+        reactions = {t: [float(v) for v in
+                         reac_acc.get(_pkey(full_asm.node_coords[t]),
+                                      zeros6)]
+                     for t in full_asm.support_tags}
+        member_forces = {uid: [float(v) for v in vec]
+                         for uid, vec in mf_acc.items()}
+        member_stations = {
+            uid: {k5: (list(v) if k5 == "x" else [float(x) for x in v])
+                  for k5, v in st.items()}
+            for uid, st in st_acc.items()}
+        empty_story = {"ux": 0.0, "uy": 0.0, "drift_x": 0.0, "drift_y": 0.0,
+                       "shear_x": 0.0, "shear_y": 0.0}
+        story = {s.name: dict(story_acc.get(s.name, empty_story))
+                 for s in model.stories}
+        case = CaseResults(name, node_disp, reactions, base_acc,
+                           member_forces, story, member_stations)
+
+        cols = [m.uid for m in model.members if m.kind == "column"]
+        pct = 0.0
+        if cols:
+            ref = max(abs(oneshot.member_forces[u][0]) for u in cols)
+            if ref > 0.0:
+                pct = 100.0 * max(
+                    abs(member_forces[u][0] - oneshot.member_forces[u][0])
+                    for u in cols) / ref
+        result = StagedResults(name, case, oneshot, pct)
+        self._staged_cache[name] = result
+        return result
+
     # -------------------------------------------------------- time history
     def run_time_history(self, name: str) -> THResults:
-        """Run one linear time-history case (cached per engine instance).
+        """Run one time-history case (cached per engine instance).
 
-        Direct integration of the elastic model under uniform ground
-        excitation (``UniformExcitation`` with a ``Path`` time series whose
-        sample k applies at t = k*dt):
+        Direct integration under uniform ground excitation
+        (``UniformExcitation`` with a ``Path`` time series whose sample k
+        applies at t = k*dt):
 
         * Newmark constant-average acceleration (gamma=1/2, beta=1/4,
           unconditionally stable), one step per record sample at the
           record dt;
-        * Rayleigh damping ``C = a0*M + a1*K`` with a0/a1 fitted to the
-          case's damping ratio at modes 1 and min(3, n):
+        * Rayleigh damping fitted to the case's damping ratio at modes 1
+          and min(3, n) of the INITIAL ELASTIC model (hinges excluded):
           ``a0 = 2 z wi wj/(wi+wj)``, ``a1 = 2 z/(wi+wj)`` (for a single
-          mode this reduces to ``a0 = z*w``, ``a1 = z/w``);
+          mode this reduces to ``a0 = z*w``, ``a1 = z/w``).  Linear cases
+          use current-stiffness proportionality (identical for elastic);
+          nonlinear cases apply the same fitted a0/a1 with
+          COMMITTED-stiffness proportionality (``betaKcomm``), the
+          standard hinge-model choice — initial-stiffness proportionality
+          would put spurious post-yield damping moments
+          ``a1*k_theta*theta_dot`` (easily exceeding My) on the stiff
+          hinge springs;
         * per step: story displacements (diaphragm masters, else the story
           node average), base reactions, and massed-node accelerations for
           the inertia-equilibrium story shears in ``peaks``.
+
+        v0.6 nonlinear cases (``TimeHistoryCase.nonlinear``): the model is
+        built with the SAME Steel01 zeroLength hinge springs as a pushover
+        case (see CONTRACT v0.5 for the stiff-hinge idealization); the
+        case's ``gravity`` pattern combination is applied statically first
+        (Newton) and held (``loadConst``); the transient solve uses Newton
+        (``NormDispIncr 1e-8, 25``) with a NewtonLineSearch retry per
+        failed step; all reported series are the response PAST the gravity
+        state; ``hinge_rotations``/``yielded`` are recorded per member.
+        Base reactions include the hinge-duplicate nodes of supported
+        originals (the equalDOF tie routes the element shear there).
         """
         if name in self._th_cache:
             return self._th_cache[name]
@@ -1834,8 +2144,9 @@ class OpenSeesEngine:
         if name not in model.th_cases:
             raise ValueError(f"Unknown time-history case {name!r}")
         th = model.th_cases[name]
+        nonlinear = bool(getattr(th, "nonlinear", False))
 
-        modal = self.run_modal()
+        modal = self.run_modal()      # INITIAL elastic modes (no hinges)
         if not modal.periods:
             raise RuntimeError(
                 f"TH case {name!r}: the model has no dynamic modes "
@@ -1846,12 +2157,74 @@ class OpenSeesEngine:
         a0 = 2.0 * th.damping * w_i * w_j / (w_i + w_j)
         a1 = 2.0 * th.damping / (w_i + w_j)
 
-        asm = self._build()
-        ops.rayleigh(a0, a1, 0.0, 0.0)
+        asm = self._build(hinge_case=th if nonlinear else None)
+        self._seg_span_loads = {}
+        self._seg_fef = {}
+        if nonlinear:
+            # committed-stiffness proportionality (betaKcomm): the a0/a1
+            # FIT comes from the initial elastic modes, but C follows the
+            # committed stiffness so the stiff hinge springs cannot
+            # generate spurious post-yield damping moments (the well-known
+            # betaKinit artifact: a1*k_theta*theta_dot can exceed My)
+            ops.rayleigh(a0, 0.0, 0.0, a1)
+        else:
+            ops.rayleigh(a0, a1, 0.0, 0.0)     # elastic: K == Kinit
+        dof = 1 if th.direction == "X" else 2
+        stories = model.stories
+
+        # base-reaction nodes: supports plus hinge duplicates of supported
+        # originals (same routing as pushover base shear)
+        support_set = set(asm.support_tags)
+        base_tags = list(asm.support_tags) + [
+            d for d, o in asm.hinge_dup_of.items() if o in support_set]
+
+        def story_uxuy(s) -> Tuple[float, float]:
+            if s.name in asm.masters:
+                d = ops.nodeDisp(asm.masters[s.name])
+                return d[0], d[1]
+            nodes = asm.story_nodes[s.name]
+            if not nodes:
+                return 0.0, 0.0
+            return (sum(ops.nodeDisp(t, 1) for t in nodes) / len(nodes),
+                    sum(ops.nodeDisp(t, 2) for t in nodes) / len(nodes))
+
+        def base_fxfy() -> Tuple[float, float]:
+            fx = fy = 0.0
+            for t in base_tags:
+                r = ops.nodeReaction(t)
+                fx += r[0]
+                fy += r[1]
+            return fx, fy
+
+        # gravity stage (v0.6): applied statically, held constant; the
+        # reported series are the increments past this state
+        story0 = {s.name: (0.0, 0.0) for s in stories}
+        base0 = (0.0, 0.0)
+        if th.gravity:
+            ops.timeSeries("Linear", 10)
+            ops.pattern("Plain", 10, 10)
+            for pat_name, scale in th.gravity.items():
+                self._apply_pattern(asm, pat_name, scale)
+            ops.wipeAnalysis()
+            ops.constraints("Transformation" if asm.use_transformation
+                            else "Plain")
+            ops.numberer("RCM")
+            ops.system("BandGeneral")
+            ops.test("NormDispIncr", 1.0e-8, 25)
+            ops.algorithm("Newton")
+            ops.integrator("LoadControl", 1.0)
+            ops.analysis("Static")
+            if ops.analyze(1) != 0:
+                raise RuntimeError(f"TH case {name!r}: gravity stage "
+                                   "failed to converge")
+            ops.loadConst("-time", 0.0)
+            story0 = {s.name: story_uxuy(s) for s in stories}
+            ops.reactions()
+            base0 = base_fxfy()
+
         ops.timeSeries("Path", 1, "-dt", float(th.dt),
                        "-values", *[float(a) for a in th.accel],
                        "-factor", float(th.scale))
-        dof = 1 if th.direction == "X" else 2
         ops.pattern("UniformExcitation", 1, dof, "-accel", 1)
 
         ops.wipeAnalysis()
@@ -1859,11 +2232,14 @@ class OpenSeesEngine:
                         else "Plain")
         ops.numberer("RCM")
         ops.system("BandGeneral")
-        ops.algorithm("Linear")
+        if nonlinear:
+            ops.test("NormDispIncr", 1.0e-8, 25)
+            ops.algorithm("Newton")
+        else:
+            ops.algorithm("Linear")
         ops.integrator("Newmark", 0.5, 0.25)
         ops.analysis("Transient")
 
-        stories = model.stories
         massed = [(t, d, m) for (t, d), m in asm.mass_map.items()
                   if d in (1, 2)]
         massed_tags = sorted({t for t, _, _ in massed})
@@ -1875,25 +2251,25 @@ class OpenSeesEngine:
         svy: Dict[str, List[float]] = {s.name: [] for s in stories}
         bfx: List[float] = []
         bfy: List[float] = []
+        hinge_rot: Dict[str, float] = {uid: 0.0
+                                       for (uid, _e) in asm.hinge_ele}
+        yielded: set = set()
         for k in range(n):
-            if ops.analyze(1, th.dt) != 0:
+            ok = ops.analyze(1, th.dt)
+            if ok != 0 and nonlinear:
+                ops.algorithm("NewtonLineSearch")
+                ok = ops.analyze(1, th.dt)
+                ops.algorithm("Newton")
+            if ok != 0:
                 raise RuntimeError(
                     f"Time-history analysis failed at step {k + 1}/{n} "
                     f"for case {name!r}")
             t_out.append((k + 1) * th.dt)
             # story displacements (masters, else story-node average)
             for s in stories:
-                if s.name in asm.masters:
-                    d = ops.nodeDisp(asm.masters[s.name])
-                    ux, uy = d[0], d[1]
-                else:
-                    nodes = asm.story_nodes[s.name]
-                    ux = (sum(ops.nodeDisp(t, 1) for t in nodes) / len(nodes)
-                          if nodes else 0.0)
-                    uy = (sum(ops.nodeDisp(t, 2) for t in nodes) / len(nodes)
-                          if nodes else 0.0)
-                sux[s.name].append(ux)
-                suy[s.name].append(uy)
+                ux, uy = story_uxuy(s)
+                sux[s.name].append(ux - story0[s.name][0])
+                suy[s.name].append(uy - story0[s.name][1])
             # inertia-equilibrium story shears: total accel = relative
             # (nodeAccel) + ground (Path sample at the current time)
             ag = th.scale * (th.accel[k + 1] if k + 1 < n else 0.0)
@@ -1910,13 +2286,21 @@ class OpenSeesEngine:
                 svx[s.name].append(vx)
                 svy[s.name].append(vy)
             ops.reactions()
-            fx = fy = 0.0
-            for t in asm.support_tags:
-                r = ops.nodeReaction(t)
-                fx += r[0]
-                fy += r[1]
-            bfx.append(fx)
-            bfy.append(fy)
+            fx, fy = base_fxfy()
+            bfx.append(fx - base0[0])
+            bfy.append(fy - base0[1])
+            # hinge tracking (nonlinear): peak rotation + yield detection
+            for (uid, _end), etag in asm.hinge_ele.items():
+                defo = ops.eleResponse(etag, "deformation")
+                if len(defo) < 3:
+                    continue
+                ry, rz = abs(defo[1]), abs(defo[2])
+                rot = max(ry, rz)
+                if rot > hinge_rot.get(uid, 0.0):
+                    hinge_rot[uid] = float(rot)
+                ry_y, rz_y = asm.hinge_rot_yield[(uid, _end)]
+                if ry > ry_y * (1.0 + 1e-9) or rz > rz_y * (1.0 + 1e-9):
+                    yielded.add(uid)
 
         def peak(vals: Sequence[float]) -> float:
             return max(abs(v) for v in vals) if len(vals) else 0.0
@@ -1938,7 +2322,9 @@ class OpenSeesEngine:
             prev_ux, prev_uy = ux_s, uy_s
         peaks = {"story": peaks_story,
                  "base": {"FX": peak(bfx), "FY": peak(bfy)}}
-        result = THResults(name, t_out, sux, suy, bfx, bfy, peaks)
+        result = THResults(name, t_out, sux, suy, bfx, bfy, peaks,
+                           nonlinear=nonlinear, hinge_rotations=hinge_rot,
+                           yielded=sorted(yielded))
         self._th_cache[name] = result
         return result
 
