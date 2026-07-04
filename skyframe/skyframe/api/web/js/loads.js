@@ -130,6 +130,8 @@ export class LoadsEditor {
 
     for (const name of names) {
       const p = m.patterns[name];
+      const wrap = document.createElement("div");
+      wrap.className = "lp-wrap";
       const row = document.createElement("div");
       row.className = "lp-row";
 
@@ -153,20 +155,95 @@ export class LoadsEditor {
       const nm = (p.member_loads || []).length;
       const na = (p.area_loads || []).length;
       const ns = (p.story_forces || []).length;
+      const nt = (p.thermal_loads || []).length;
       counts.innerHTML =
-        `<b>${nm}</b> member · <b>${na}</b> area · <b>${ns}</b> story`;
-      counts.title = `${nm} member load${nm === 1 ? "" : "s"}, ${na} area load${na === 1 ? "" : "s"}, ${ns} story force${ns === 1 ? "" : "s"}`;
+        `<b>${nm}</b> member · <b>${na}</b> area · <b>${ns}</b> story` +
+        (nt ? ` · <b>${nt}</b> ΔT` : "");
+      counts.title = `${nm} member load${nm === 1 ? "" : "s"}, ${na} area load${na === 1 ? "" : "s"}, ${ns} story force${ns === 1 ? "" : "s"}, ${nt} thermal load${nt === 1 ? "" : "s"}`;
       row.appendChild(counts);
 
       const refs = ME.patternRefs(m, name);
       row.appendChild(this._delBtn(refs, `pattern ${name}`, () => {
         if (ME.deletePattern(m, name)) this._mutated();
       }));
-      list.appendChild(row);
+      wrap.appendChild(row);
+
+      // v0.8 — accidental torsion for lateral (quake / wind) patterns
+      const isLateral = p.kind === "quake" || p.kind === "wind" || !!p.wind || !!p.elf;
+      if (isLateral) wrap.appendChild(this._accidentalTorsion(m, p));
+
+      list.appendChild(wrap);
     }
     sec.appendChild(list);
     sec.appendChild(this._windCard(m));
+    sec.appendChild(this._thermalCard(m));
     return sec;
+  }
+
+  /* ---- v0.8: accidental-torsion row (ASCE 7 §12.8.4) for a lateral pattern */
+  _accidentalTorsion(m, p) {
+    const wrap = document.createElement("div");
+    wrap.className = "acc-tors";
+    const toggle = document.createElement("label");
+    toggle.className = "pd-toggle acc-tors-toggle" + (p.accidental_torsion ? " is-on" : "");
+    toggle.title = "Adds a story torque Mt = ±ecc·B·Fx per ASCE 7-16 §12.8.4";
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.className = "acc-tors-cb"; cb.checked = !!p.accidental_torsion;
+    toggle.append(cb, document.createTextNode("Accidental torsion (±ecc)"));
+
+    const eccWrap = document.createElement("label");
+    eccWrap.className = "rs-field acc-ecc" + (p.accidental_torsion ? "" : " hidden");
+    const es = document.createElement("span");
+    es.innerHTML = `ecc <span class="unit">fraction of B</span>`;
+    const eccIn = document.createElement("input");
+    eccIn.type = "number"; eccIn.step = "0.01"; eccIn.min = "0"; eccIn.max = "0.5";
+    eccIn.className = "acc-ecc-in";
+    eccIn.value = String(p.ecc ?? 0.05);
+    eccIn.addEventListener("change", () => {
+      const v = parseFloat(eccIn.value);
+      if (isFinite(v) && v >= 0 && v <= 0.5) { p.ecc = v; this._mutated(false); }
+      else eccIn.value = String(p.ecc ?? 0.05);
+    });
+    eccWrap.append(es, eccIn);
+
+    cb.addEventListener("change", () => {
+      p.accidental_torsion = cb.checked;
+      toggle.classList.toggle("is-on", cb.checked);
+      eccWrap.classList.toggle("hidden", !cb.checked);
+      this._mutated(false);
+    });
+
+    const note = document.createElement("span");
+    note.className = "acc-tors-note muted";
+    note.textContent = "±5% mass eccentricity adds a per-story torque (ASCE 7 §12.8.4).";
+
+    wrap.append(toggle, eccWrap, note);
+    return wrap;
+  }
+
+  /* ---- v0.8: global thermal expansion coefficient card */
+  _thermalCard(m) {
+    const card = document.createElement("div");
+    card.className = "wind-card thermal-card";
+    card.id = "thermalCard";
+    card.innerHTML = `
+      <div class="wind-head">
+        <b>Thermal expansion</b>
+        <span class="muted">global α · assign per-member ΔT in Model mode</span>
+      </div>
+      <div class="wind-fields">
+        <label class="rs-field"><span>α <span class="unit">/°C</span></span>
+          <input id="thermAlpha" type="number" step="1e-6" min="0" value="${m.thermal_alpha ?? 1.2e-5}"></label>
+        <span class="code-note muted" style="flex:1 1 200px">Coefficient of thermal expansion applied to every member's
+          ΔT thermal load. Select a beam/column in <b>Model</b> mode to assign ΔT.</span>
+      </div>`;
+    const inp = card.querySelector("#thermAlpha");
+    inp.addEventListener("change", () => {
+      const v = parseFloat(inp.value);
+      if (isFinite(v) && v >= 0) { m.thermal_alpha = v; this._mutated(false); }
+      else inp.value = String(m.thermal_alpha ?? 1.2e-5);
+    });
+    return card;
   }
 
   /* ---- v0.4: wind pattern generator (POST /api/pattern/wind, mock local) */

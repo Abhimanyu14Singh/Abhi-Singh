@@ -102,6 +102,10 @@
             <svg viewBox="0 0 16 16"><path d="M1.5 8h2l1.5-3 2 6 2-6 2 6 1.5-3h2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>
             <span>Link</span><kbd>L</kbd>
           </button>
+          <button class="tool-btn" data-tool="spring" title="Spring support — click a base-level point to add a 6-dof elastic support (G)">
+            <svg viewBox="0 0 16 16"><path d="M8 1.5v1.5l-2.4 1 2.4 1-2.4 1 2.4 1-2.4 1 2.4 1v1.5M3.5 12.5h9M4.5 12.5 3 14M8 12.5 6.5 14M11.5 12.5 10 14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/></svg>
+            <span>Spring</span><kbd>G</kbd>
+          </button>
           <button class="tool-btn" data-tool="erase" title="Erase — click an element (E)">
             <svg viewBox="0 0 16 16"><path d="M6.5 3.5 13 10l-3 3H7l-4.5-4.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M13.5 13H8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
             <span>Erase</span><kbd>E</kbd>
@@ -371,6 +375,7 @@
               <span class="hidden" id="legendWall"><i class="area" style="background:rgba(95,143,201,.35);border-color:rgba(125,168,216,.8)"></i>wall</span>
               <span class="hidden" id="legendSlab"><i class="area" style="background:rgba(154,167,180,.28);border-color:rgba(154,167,180,.7)"></i>slab</span>
               <span class="hidden" id="legendLink"><i style="background:var(--green)"></i>link</span>
+              <span class="hidden" id="legendSpring"><i style="background:#2fbf74"></i>spring</span>
               <span class="hidden" id="legendDeformed"><i style="background:var(--accent)"></i>deformed</span>
             </div>
             <div class="contour-legend hidden" id="contourLegend">
@@ -422,6 +427,26 @@
           <div class="charts-row" id="chartsRow"></div>
           <div class="table-scroll">
             <table class="data-table" id="storyTable"></table>
+          </div>
+          <!-- v0.8: center of mass / center of rigidity plan -->
+          <div class="cmcr-block hidden" id="cmcrBlock">
+            <div class="cmcr-head">
+              <div>
+                <h3>Center of mass / rigidity</h3>
+                <p class="muted" id="cmcrNote"></p>
+              </div>
+              <label class="cmcr-story">Story
+                <select id="cmStorySelect"></select>
+              </label>
+            </div>
+            <div class="cmcr-body">
+              <div class="cmcr-plan" id="cmcrPlan"></div>
+              <div class="cmcr-legend">
+                <span><i class="dot" style="background:var(--series-y)"></i>CM — center of mass</span>
+                <span><i class="cross"></i>CR — center of rigidity</span>
+                <span><i class="vec"></i>eccentricity vector (ASCE 7 §12.8.4)</span>
+              </div>
+            </div>
           </div>
         </div>
       </section>

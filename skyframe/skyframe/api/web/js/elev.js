@@ -5,6 +5,8 @@
    Owns only view + interaction; model mutations happen in app.js via the
    onDraw / onErase / onSelect callbacks (same contract as PlanEditor). */
 
+import { springKey } from "./modeledit.js";
+
 const NS = "http://www.w3.org/2000/svg";
 const el = (tag, attrs = {}) => {
   const e = document.createElementNS(NS, tag);
@@ -22,6 +24,7 @@ const C = {
   braceRubber: "rgba(201, 133, 0, 0.9)",
   link: "#34c384",
   linkRubber: "rgba(52, 195, 132, 0.9)",
+  spring: "#2fbf74",                              // grounded spring support (v0.8)
   wallFill: "rgba(95, 143, 201, 0.20)",
   wallEdge: "rgba(125, 168, 216, 0.8)",
   openEdge: "rgba(53, 181, 229, 0.7)",
@@ -291,6 +294,20 @@ export class ElevEditor {
         "data-ref": `link:${lk.uid}`,
       }));
     }
+
+    // v0.8: spring supports in the plane — grounded green coil glyphs
+    for (const sp of (m.spring_supports || [])) {
+      if (!this.inPlane(sp.point)) continue;
+      const seld = isSel("spring", springKey(sp.point));
+      this.gElems.appendChild(el("path", {
+        d: springGlyphElev(this.sOf(sp.point), sp.point[2], 0.34),
+        fill: "none", stroke: seld ? C.sel : C.spring,
+        "stroke-width": seld ? 2.6 : 1.8,
+        "stroke-linejoin": "round", "stroke-linecap": "round",
+        "vector-effect": "non-scaling-stroke",
+        "data-ref": `spring:${springKey(sp.point)}`,
+      }));
+    }
   }
 
   /** Opening rectangle of a wall in (s, z) space (bilinear on corners). */
@@ -366,6 +383,11 @@ export class ElevEditor {
     if (!m || !pl) return [];
     const tol = HIT_PX / this.scale;
     const out = [];
+    for (const sp of (m.spring_supports || [])) {
+      if (this.inPlane(sp.point) &&
+          Math.hypot(w.s - this.sOf(sp.point), w.z - sp.point[2]) <= Math.max(tol, 0.4))
+        out.push({ type: "spring", uid: springKey(sp.point) });
+    }
     const seg = (mm) => distToSeg(w.s, w.z, this.sOf(mm.pi), mm.pi[2], this.sOf(mm.pj), mm.pj[2]);
     const inPl = mm => this.inPlane(mm.pi) && this.inPlane(mm.pj);
     for (const mm of m.members)
@@ -424,6 +446,10 @@ export class ElevEditor {
       const cz = sh.corners.reduce((a, c) => a + c[2], 0) / 4;
       if (sh.corners.some(c => inBox(this.sOf(c), c[2])) || inBox(cx, cz) || inBox(cs, cz))
         refs.push({ type: "shell", uid: sh.uid });
+    }
+    for (const sp of (m.spring_supports || [])) {
+      if (this.inPlane(sp.point) && inBox(this.sOf(sp.point), sp.point[2]))
+        refs.push({ type: "spring", uid: springKey(sp.point) });
     }
     return refs;
   }
@@ -528,6 +554,13 @@ export class ElevEditor {
         const s = nearVal(pl.ticks, w.s);
         const p = this.world3(s, 0);
         this.opts.onDraw("column", { x: p[0], y: p[1], z: w.z, elev: true });
+        break;
+      }
+      case "spring": {
+        // grounded spring at a grid intersection on the base level
+        const s = nearVal(pl.ticks, w.s);
+        const base = this.levels()[0];
+        this.opts.onDraw("spring", { p: this.world3(s, base), elev: true });
         break;
       }
       case "beam": {
@@ -660,6 +693,23 @@ export class ElevEditor {
       }));
     }
   }
+}
+
+/** v0.8 — grounded spring glyph in (s, z) space, one path `d`; z grows up so
+    the ground line sits BELOW the node. Non-scaling stroke. */
+export function springGlyphElev(s, z, a) {
+  const top = z + a * 2.2;                  // node above the ground line
+  const n = 4, span = top - z;
+  let d = `M${s},${top}`;
+  for (let k = 1; k <= n; k++)
+    d += ` L${s + (k % 2 ? a : -a) * 0.7},${top - span * k / (n + 1)}`;
+  d += ` L${s},${z}`;                       // land on the ground (z = base)
+  d += ` M${s - a},${z} L${s + a},${z}`;    // ground line
+  for (let k = -1; k <= 1; k++) {           // hatches below the ground
+    const s0 = s + k * a * 0.7;
+    d += ` M${s0},${z} L${s0 - a * 0.55},${z - a * 0.55}`;
+  }
+  return d;
 }
 
 /* ------------------------------------------------ helpers */

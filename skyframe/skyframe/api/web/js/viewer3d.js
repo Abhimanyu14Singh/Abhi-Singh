@@ -36,6 +36,8 @@ const COLORS = {
   beam: "#77879b",
   brace: "#c98500",
   link: "#34c384",                             // v0.5 two-node links (springs)
+  spring: "#2fbf74",                           // v0.8 grounded spring supports
+  thermal: "#e5a50a",                          // v0.8 ΔT thermal badge
   grid: "rgba(120, 140, 165, 0.16)",
   gridLabel: "rgba(140, 160, 185, 0.55)",
   slabFill: "rgba(53, 181, 229, 0.045)",
@@ -205,6 +207,12 @@ export class Viewer3D {
     // v0.5: two-node links (green spring glyphs)
     this.linkSegs = (m.links || []).map(l => ({ p1: l.pi, p2: l.pj, uid: l.uid }));
 
+    // v0.8: grounded spring supports + members carrying thermal loads
+    this.springPts = (m.spring_supports || []).map(s => s.point);
+    this.thermalUids = new Set();
+    for (const p of Object.values(m.patterns || {}))
+      for (const t of (p.thermal_loads || [])) this.thermalUids.add(t.member_uid);
+
     let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
     for (const s of this.segs) for (const p of [s.p1, s.p2]) {
       for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], p[i]); hi[i] = Math.max(hi[i], p[i]); }
@@ -213,6 +221,9 @@ export class Viewer3D {
       for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], p[i]); hi[i] = Math.max(hi[i], p[i]); }
     }
     for (const lk of this.linkSegs) for (const p of [lk.p1, lk.p2]) {
+      for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], p[i]); hi[i] = Math.max(hi[i], p[i]); }
+    }
+    for (const p of this.springPts) {
       for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], p[i]); hi[i] = Math.max(hi[i], p[i]); }
     }
     if (!this.segs.length && !this.shellPolys.length) { lo = [0, 0, 0]; hi = [10, 10, 10]; }
@@ -626,6 +637,37 @@ export class Viewer3D {
       ctx.fill();
     }
 
+    // ---- v0.8 spring supports: grounded green coil + hatched ground symbol
+    for (const p of (this.springPts || [])) {
+      const pc = P.toCam(p);
+      if (pc[2] < P.near) continue;
+      const sp = P.proj(pc);
+      const r = Math.min(Math.max(120 / pc[2], 5), 13);
+      ctx.globalAlpha = overlayActive ? 0.4 : 1;
+      drawSpringGlyph(ctx, sp.x, sp.y, r, COLORS.spring);
+      ctx.globalAlpha = 1;
+    }
+
+    // ---- v0.8 ΔT badges on members carrying thermal loads
+    if (this.thermalUids && this.thermalUids.size && !overlayActive) {
+      ctx.font = "700 9px -apple-system, 'Segoe UI', sans-serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      const drawn = new Set();
+      for (const s of this._segsScreen) {
+        if (!this.thermalUids.has(s.seg.uid) || drawn.has(s.seg.uid)) continue;
+        drawn.add(s.seg.uid);
+        const mx = (s.x1 + s.x2) / 2, my = (s.y1 + s.y2) / 2;
+        ctx.beginPath();
+        ctx.arc(mx, my, 8, 0, 2 * Math.PI);
+        ctx.fillStyle = "rgba(229,165,10,0.18)";
+        ctx.fill();
+        ctx.strokeStyle = COLORS.thermal; ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = COLORS.thermal;
+        ctx.fillText("ΔT", mx, my + 0.5);
+      }
+    }
+
     // ---- overlays
     if (overlayActive && this.results) this._renderOverlay(P);
 
@@ -852,6 +894,33 @@ function distToSeg(px, py, x1, y1, x2, y2) {
   let t = l2 ? ((px - x1) * dx + (py - y1) * dy) / l2 : 0;
   t = Math.max(0, Math.min(1, t));
   return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+
+/** v0.8 — grounded spring glyph in screen space: a coil hanging from the base
+    point down to a hatched ground line. */
+function drawSpringGlyph(ctx, x, y, r, color) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.6;
+  ctx.lineJoin = "round"; ctx.lineCap = "round";
+  const gy = y + r * 1.15;                 // ground line below the node (screen y down)
+  const a = r * 0.55, n = 4, span = gy - y;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  for (let k = 1; k <= n; k++)
+    ctx.lineTo(x + (k % 2 ? a : -a), y + span * k / (n + 1));
+  ctx.lineTo(x, gy);
+  // ground line
+  ctx.moveTo(x - r * 0.9, gy);
+  ctx.lineTo(x + r * 0.9, gy);
+  // hatches
+  for (let k = -1; k <= 1; k++) {
+    const x0 = x + k * r * 0.6;
+    ctx.moveTo(x0, gy);
+    ctx.lineTo(x0 - r * 0.45, gy + r * 0.45);
+  }
+  ctx.stroke();
+  ctx.restore();
 }
 
 /** v0.5 — screen-space zigzag path between two points (link/spring glyph). */

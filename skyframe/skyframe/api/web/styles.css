@@ -1350,3 +1350,55 @@ details.mgr-mods[open] summary { color: var(--text-2); }
 .import-warnings ul { margin: 8px 0 0; padding-left: 18px; }
 .import-warnings li { font-size: 11.5px; color: var(--text-2); margin: 3px 0; }
 .import-ok { color: var(--green); font-size: 12px; margin: 0; }
+
+/* ============================================================
+   v0.8 — spring supports, accidental torsion, thermal, CM/CR
+   ============================================================ */
+
+/* spring-support stiffness grid (reuses .link-stiff layout) */
+.spring-stiff label span .unit { text-transform: none; letter-spacing: 0; }
+
+/* accidental-torsion row under a lateral pattern */
+.lp-wrap { display: flex; flex-direction: column; }
+.acc-tors {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px;
+  margin: 2px 0 8px; padding: 6px 8px;
+  background: var(--surface-1); border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+.acc-tors-toggle { flex: none; }
+.acc-ecc { flex-direction: row; align-items: center; gap: 6px; }
+.acc-ecc span { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .4px; }
+.acc-ecc input { width: 68px; padding: 3px 6px; font-size: 11.5px; }
+.acc-tors-note { font-size: 10.5px; flex: 1 1 180px; }
+
+/* thermal-expansion card */
+.thermal-card .wind-fields { align-items: center; }
+.thermal-card input#thermAlpha { width: 120px; }
+
+/* ---- CM / CR plan block (Story tab) */
+.cmcr-block {
+  margin-top: 16px; padding: 14px 16px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+}
+.cmcr-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.cmcr-head h3 { font-size: 13px; font-weight: 650; margin-bottom: 3px; }
+.cmcr-head .muted { font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.cmcr-story { font-size: 11px; color: var(--text-3); display: flex; align-items: center; gap: 6px; }
+.cmcr-story select { padding: 4px 8px; }
+.cmcr-body { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin-top: 12px; }
+.cmcr-plan { flex: none; }
+.cmcr-svg { display: block; width: 300px; max-width: 100%; height: auto;
+  background: var(--surface-1); border: 1px solid var(--border-soft); border-radius: 8px; }
+.cmcr-legend { display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--text-2); }
+.cmcr-legend span { display: flex; align-items: center; gap: 8px; }
+.cmcr-legend i { width: 14px; height: 14px; flex: none; display: inline-block; }
+.cmcr-legend i.dot { border-radius: 50%; background: var(--series-y); }
+.cmcr-legend i.cross { position: relative; }
+.cmcr-legend i.cross::before, .cmcr-legend i.cross::after {
+  content: ""; position: absolute; background: var(--green);
+}
+.cmcr-legend i.cross::before { left: 6px; top: 0; width: 2px; height: 14px; }
+.cmcr-legend i.cross::after { top: 6px; left: 0; height: 2px; width: 14px; }
+.cmcr-legend i.vec { height: 0; border-top: 2px dashed var(--amber); align-self: center; }
+tr.cm-active td { background: var(--accent-ghost) !important; }

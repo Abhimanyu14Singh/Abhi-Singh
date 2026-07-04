@@ -120,18 +120,24 @@ export function mockModel(p = {}) {
     fx: dir === "x" ? +(o.quake_coeff * W_ * wh_[i] / sumWh_).toFixed(2) : 0,
     fy: dir === "y" ? +(o.quake_coeff * W_ * wh_[i] / sumWh_).toFixed(2) : 0,
   }));
+  // v0.8: a demo thermal load on a first-story beam (ΔT +30 °C)
+  const firstBeam = members.find(mm => mm.kind === "beam" && mm.story === stories[0].name);
   const patterns = {
     DEAD: {
       name: "DEAD", kind: "dead", member_loads: beamUdls(o.dead_udl),
       area_loads: shells.filter(s => s.kind === "slab").map(s => ({ region_uid: s.uid, q: 2.0 })),
       story_forces: [],
+      // v0.8: uniform thermal load on a demo beam
+      thermal_loads: firstBeam ? [{ member_uid: firstBeam.uid, dT: 30 }] : [],
     },
     LIVE: {
       name: "LIVE", kind: "live", member_loads: beamUdls(o.live_udl),
       area_loads: shells.filter(s => s.kind === "slab").map(s => ({ region_uid: s.uid, q: 3.0 })),
       story_forces: [],
     },
-    EQX: { name: "EQX", kind: "quake", member_loads: [], area_loads: [], story_forces: storyForces("x") },
+    // v0.8: EQX ships with accidental torsion enabled (ASCE 7 §12.8.4)
+    EQX: { name: "EQX", kind: "quake", member_loads: [], area_loads: [], story_forces: storyForces("x"),
+      accidental_torsion: true, ecc: 0.05 },
     EQY: { name: "EQY", kind: "quake", member_loads: [], area_loads: [], story_forces: storyForces("y") },
   };
 
@@ -216,6 +222,12 @@ export function mockModel(p = {}) {
     diaphragm: "rigid",
     story_diaphragm: {},
     links: [],
+    // v0.8: two demo spring supports at base grid corners (6-dof)
+    spring_supports: [
+      { point: [xs[0], ys[0], 0], stiffness: [1.5e5, 1.5e5, 3e5, 0, 0, 0] },
+      { point: [xs[xs.length - 1], ys[0], 0], stiffness: [1e5, 1e5, 2.5e5, 0, 0, 0] },
+    ],
+    thermal_alpha: 1.2e-5,
     combos: {
       "1.2D + 1.6L": { name: "1.2D + 1.6L", combo_type: "add", cases: { DEAD: 1.2, LIVE: 1.6 } },
       "1.2D + 1.0L + 1.0EX": { name: "1.2D + 1.0L + 1.0EX", combo_type: "add", cases: { DEAD: 1.2, LIVE: 1.0, EQX: 1.0 } },
@@ -797,6 +809,25 @@ export function mockResults(model) {
     pushover[name] = { roof_disp, base_shear, roof_drift, hinge_rotations, warnings };
   }
 
+  /* ---- v0.8: center of mass / center of rigidity per story. Present only
+     when diaphragms exist (rigid globally or per story). CM drifts with
+     height (mass irregularity); CR sits eccentric from CM — the two markers
+     and their eccentricity vector drive the Story-tab plan diagram. */
+  const story_props = {};
+  const gx0 = xs2[0], gx1 = xs2[xs2.length - 1], gy0 = ys2[0], gy1 = ys2[ys2.length - 1];
+  const Bx = gx1 - gx0 || 1, By = gy1 - gy0 || 1;
+  storyOrder.forEach((s, i) => {
+    const eff = (model.story_diaphragm && model.story_diaphragm[s]) || model.diaphragm || "rigid";
+    if (eff === "none") return;
+    const t = storyOrder.length > 1 ? i / (storyOrder.length - 1) : 0;
+    story_props[s] = {
+      cm_x: +(cx + Bx * (0.02 + 0.07 * t) * jit(0.08)).toFixed(4),
+      cm_y: +(cy + By * (0.015 + 0.02 * t) * jit(0.08)).toFixed(4),
+      cr_x: +(cx - Bx * 0.035 * jit(0.08)).toFixed(4),
+      cr_y: +(cy - By * 0.012 * jit(0.08)).toFixed(4),
+    };
+  });
+
   const out = {
     model_name: model.name,
     nodes, members, supports,
@@ -809,6 +840,7 @@ export function mockResults(model) {
     modal: { periods, frequencies, participation, shapes },
   };
   if (Object.keys(pushover).length) out.pushover = pushover;
+  if (Object.keys(story_props).length) out.story_props = story_props;
   return out;
 }
 

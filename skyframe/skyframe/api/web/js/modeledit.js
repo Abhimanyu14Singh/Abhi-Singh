@@ -23,6 +23,11 @@ export function normalizeModel(m) {
     if (!p.kind) p.kind = guessPatternKind(p.name || "");
     // v0.7 — ETABS-style self-weight factor (absent = 0.0)
     if (!isFinite(p.self_weight_factor)) p.self_weight_factor = 0.0;
+    // v0.8 — accidental torsion (ASCE 7 §12.8.4) + thermal loads
+    p.accidental_torsion = !!p.accidental_torsion;
+    if (!isFinite(p.ecc)) p.ecc = 0.05;
+    p.thermal_loads = (Array.isArray(p.thermal_loads) ? p.thermal_loads : [])
+      .filter(t => t && t.member_uid != null && isFinite(t.dT));
   }
   // v0.3 — analysis cases, combos, response-spectrum cases
   m.cases = m.cases || {};
@@ -99,6 +104,16 @@ export function normalizeModel(m) {
           l.stiffness.every(v => isFinite(v))))
       l.stiffness = [1e5, 1e5, 1e5, 1e4, 1e4, 1e4];
   }
+  // v0.8 — spring supports + global thermal expansion coefficient
+  m.spring_supports = Array.isArray(m.spring_supports) ? m.spring_supports : [];
+  for (const s of m.spring_supports) {
+    if (!(Array.isArray(s.point) && s.point.length === 3 && s.point.every(v => isFinite(v))))
+      s.point = [0, 0, 0];
+    if (!(Array.isArray(s.stiffness) && s.stiffness.length === 6 &&
+          s.stiffness.every(v => isFinite(v) && v >= 0)))
+      s.stiffness = [1e5, 1e5, 1e5, 0, 0, 0];
+  }
+  if (!isFinite(m.thermal_alpha)) m.thermal_alpha = 1.2e-5;
   // v0.6 — staged construction cases (sequential gravity)
   m.staged_cases = m.staged_cases || {};
   for (const [n, sc] of Object.entries(m.staged_cases)) {
@@ -328,6 +343,61 @@ export function addLink(model, pi, pj) {
   return link;
 }
 
+/* ================================================================
+   v0.8 — spring supports (grounded 6-dof stiffness at a base point)
+   ================================================================ */
+/** Stable string key for a spring support (its base point). */
+export function springKey(point) {
+  return point.map(v => +(+v).toFixed(4)).join(",");
+}
+
+/** Add a spring support at a base point with a default 6-dof stiffness
+    [kx,ky,kz,krx,kry,krz]. Duplicate-safe by point. */
+export function addSpringSupport(model, x, y, z, stiffness) {
+  model.spring_supports = model.spring_supports || [];
+  const point = [x, y, z];
+  if (model.spring_supports.some(s => near(s.point, point))) return null;
+  const sp = {
+    point,
+    stiffness: (Array.isArray(stiffness) && stiffness.length === 6)
+      ? stiffness.map(Number) : [1e5, 1e5, 1e5, 0, 0, 0],
+  };
+  model.spring_supports.push(sp);
+  return sp;
+}
+
+export function springByKey(model, key) {
+  return (model.spring_supports || []).find(s => springKey(s.point) === key) || null;
+}
+
+/* ---- thermal loads (per pattern: {member_uid, dT °C}) */
+export function getThermalLoad(model, pat, uid) {
+  const p = model.patterns[pat];
+  if (!p) return null;
+  const t = (p.thermal_loads || []).find(t => t.member_uid === uid);
+  return t ? t.dT : null;
+}
+
+export function setThermalLoad(model, pat, uid, dT) {
+  const p = ensurePattern(model, pat);
+  p.thermal_loads = (p.thermal_loads || []).filter(t => t.member_uid !== uid);
+  if (isFinite(dT) && dT !== 0) p.thermal_loads.push({ member_uid: uid, dT });
+}
+
+/** Patterns carrying a thermal load on a given member. */
+export function memberThermalPatterns(model, uid) {
+  const out = [];
+  for (const p of Object.values(model.patterns || {}))
+    if ((p.thermal_loads || []).some(t => t.member_uid === uid)) out.push(p.name);
+  return out;
+}
+
+/** Any pattern carries a thermal load on this member. */
+export function anyThermalMember(model, uid) {
+  return Object.values(model.patterns || {}).some(p =>
+    (p.thermal_loads || []).some(t => t.member_uid === uid));
+}
+
 /* ---- shell openings (region-parametric fractions 0..1) */
 export function addOpening(shell) {
   shell.openings = shell.openings || [];
@@ -392,10 +462,15 @@ export function eraseElement(model, ref) {
   if (ref.type === "member") {
     const i = model.members.findIndex(m => m.uid === ref.uid);
     if (i >= 0) { model.members.splice(i, 1); removed = true; }
-    for (const p of Object.values(model.patterns))
+    for (const p of Object.values(model.patterns)) {
       p.member_loads = (p.member_loads || []).filter(l => l.member_uid !== ref.uid);
+      p.thermal_loads = (p.thermal_loads || []).filter(t => t.member_uid !== ref.uid);
+    }
     for (const pc of Object.values(model.pushover_cases || {}))
       if (pc.My) delete pc.My[ref.uid];
+  } else if (ref.type === "spring") {
+    const i = (model.spring_supports || []).findIndex(s => springKey(s.point) === ref.uid);
+    if (i >= 0) { model.spring_supports.splice(i, 1); removed = true; }
   } else if (ref.type === "link") {
     const i = (model.links || []).findIndex(l => l.uid === ref.uid);
     if (i >= 0) { model.links.splice(i, 1); removed = true; }
@@ -411,10 +486,11 @@ export function eraseElement(model, ref) {
 /* ------------------------------------------------ loads */
 export function ensurePattern(model, name) {
   if (!model.patterns[name])
-    model.patterns[name] = { name, member_loads: [], area_loads: [] };
+    model.patterns[name] = { name, member_loads: [], area_loads: [], thermal_loads: [] };
   const p = model.patterns[name];
   p.member_loads = p.member_loads || [];
   p.area_loads = p.area_loads || [];
+  p.thermal_loads = p.thermal_loads || [];
   return p;
 }
 

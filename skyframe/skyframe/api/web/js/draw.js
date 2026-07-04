@@ -4,6 +4,7 @@
    the onDraw / onErase / onSelect callbacks. */
 
 import { zigzagPoints } from "./elev.js";
+import { springKey, anyThermalMember } from "./modeledit.js";
 
 const NS = "http://www.w3.org/2000/svg";
 const el = (tag, attrs = {}) => {
@@ -24,6 +25,8 @@ const C = {
   slabEdge: "rgba(154, 167, 180, 0.45)",
   link: "#34c384",                        // green — link/spring glyph (v0.5)
   linkRubber: "rgba(52, 195, 132, 0.9)",
+  spring: "#2fbf74",                      // green — grounded spring support (v0.8)
+  thermal: "#e5a50a",                     // amber — ΔT thermal badge (v0.8)
   sel: "#35b5e5",
   snap: "#35b5e5",
   rubber: "rgba(53, 181, 229, 0.9)",
@@ -246,6 +249,20 @@ export class PlanEditor {
         "data-ref": `link:${lk.uid}`,
       }));
     }
+
+    // v0.8: spring supports — grounded green coil glyphs at their base points
+    // (base anchors show on every story plan). One <path> so hover/erase clone.
+    for (const sp of (m.spring_supports || [])) {
+      const seld = isSel("spring", springKey(sp.point));
+      this.gElems.appendChild(el("path", {
+        d: springGlyphPlan(sp.point[0], sp.point[1], 0.34),
+        fill: "none", stroke: seld ? C.sel : C.spring,
+        "stroke-width": seld ? 2.6 : 1.8,
+        "stroke-linejoin": "round", "stroke-linecap": "round",
+        "vector-effect": "non-scaling-stroke",
+        "data-ref": `spring:${springKey(sp.point)}`,
+      }));
+    }
   }
 
   /** Links visible on the current story plan (both endpoint z within span). */
@@ -279,6 +296,24 @@ export class PlanEditor {
     };
     g.x_lines.forEach((x, i) => mk(x, y1 + mY + 10 / this.scale, g.x_labels[i]));
     g.y_lines.forEach((y, i) => mk(x0 - mX - 10 / this.scale, y, g.y_labels[i]));
+
+    // v0.8: ΔT badges on current-story members carrying a thermal load
+    const story = this.opts.getStory();
+    for (const mm of m.members) {
+      if (mm.story !== story || !anyThermalMember(m, mm.uid)) continue;
+      const [px, py] = this.toScreen((mm.pi[0] + mm.pj[0]) / 2, (mm.pi[1] + mm.pj[1]) / 2);
+      const bg = el("circle", {
+        cx: px, cy: py, r: 8.5, fill: "rgba(229,165,10,0.16)",
+        stroke: C.thermal, "stroke-width": 1,
+      });
+      const t = el("text", {
+        x: px, y: py + 0.5, fill: C.thermal, "font-size": 9, "font-weight": 700,
+        "text-anchor": "middle", "dominant-baseline": "central", "font-family": "inherit",
+      });
+      t.textContent = "ΔT";
+      this.gLabels.appendChild(bg);
+      this.gLabels.appendChild(t);
+    }
   }
 
   /* ------------------------------------------------ snapping */
@@ -328,6 +363,11 @@ export class PlanEditor {
     const story = this.opts.getStory();
     const tol = HIT_PX / this.scale;
     const out = [];
+    // v0.8: spring supports first (small deliberate anchors, base level)
+    for (const sp of (m.spring_supports || [])) {
+      if (Math.hypot(w.x - sp.point[0], w.y - sp.point[1]) <= Math.max(tol, 0.4))
+        out.push({ type: "spring", uid: springKey(sp.point) });
+    }
     for (const mm of m.members) {
       if (mm.story !== story || mm.kind !== "column") continue;
       const sec = m.sections[mm.section];
@@ -401,6 +441,10 @@ export class PlanEditor {
       if (inBox(lk.pi[0], lk.pi[1]) || inBox(lk.pj[0], lk.pj[1]) ||
           inBox((lk.pi[0] + lk.pj[0]) / 2, (lk.pi[1] + lk.pj[1]) / 2))
         refs.push({ type: "link", uid: lk.uid });
+    }
+    for (const sp of (m.spring_supports || [])) {
+      if (inBox(sp.point[0], sp.point[1]))
+        refs.push({ type: "spring", uid: springKey(sp.point) });
     }
     return refs;
   }
@@ -498,6 +542,9 @@ export class PlanEditor {
     switch (this.tool) {
       case "column":
         this.opts.onDraw("column", pt);
+        break;
+      case "spring":
+        this.opts.onDraw("spring", pt);   // base-level spring at the snapped point
         break;
       case "beam":
       case "wall":
@@ -620,6 +667,24 @@ export class PlanEditor {
       }));
     }
   }
+}
+
+/** v0.8 — grounded spring glyph (coil + ground hatch) as one path `d`,
+    in world coordinates; drawn with non-scaling stroke. */
+export function springGlyphPlan(cx, cy, a) {
+  const top = cy + a * 1.1;                 // node sits above the ground line
+  const gy = cy - a * 1.1;                  // ground line
+  const n = 4, span = top - gy;
+  let d = `M${cx},${top}`;
+  for (let k = 1; k <= n; k++)
+    d += ` L${cx + (k % 2 ? a : -a) * 0.7},${top - span * k / (n + 1)}`;
+  d += ` L${cx},${gy}`;                     // land on the ground
+  d += ` M${cx - a},${gy} L${cx + a},${gy}`; // ground line
+  for (let k = -1; k <= 1; k++) {           // hatches
+    const x0 = cx + k * a * 0.7;
+    d += ` M${x0},${gy} L${x0 - a * 0.55},${gy - a * 0.55}`;
+  }
+  return d;
 }
 
 /* ------------------------------------------------ geometry helpers */

@@ -253,15 +253,30 @@ export function buildReportHtml(model, results, opts = {}) {
     ...Object.entries(r.rs_cases || {}).map(([n, cd]) => [`RS: ${n}`, cd, "response spectrum ±"]),
   ];
 
+  // v0.8 — center of mass / rigidity per story (case-independent story_props,
+  // else on the case's story dict). Present only when diaphragms exist.
+  const cmcrOf = (cd, s) => {
+    const sp = (r.story_props && r.story_props[s]) || (cd.story && cd.story[s]) || {};
+    return ["cm_x", "cm_y", "cr_x", "cr_y"].some(k => isFinite(sp[k])) ? sp : null;
+  };
+  const hasCmCr = r.story_order.some(s => cmcrOf({}, s));
   const storyTableFor = cd => table(
     [{ label: "Story", txt: true }, "Elev (m)", "ux (mm)", "uy (mm)",
-     "drift ‰ x", "drift ‰ y", "Vx (kN)", "Vy (kN)"],
+     "drift ‰ x", "drift ‰ y", "Vx (kN)", "Vy (kN)",
+     ...(hasCmCr ? ["CM x (m)", "CM y (m)", "CR x (m)", "CR y (m)", "e (m)"] : [])],
     [...r.story_order].reverse().map(s => {
       const st = (cd.story && cd.story[s]) || {};
-      return [T(s), fmt(r.story_elev[s], 1),
+      const row = [T(s), fmt(r.story_elev[s], 1),
         fmt((st.ux || 0) * 1000, 2), fmt((st.uy || 0) * 1000, 2),
         fmt((st.drift_x || 0) * 1000, 3), fmt((st.drift_y || 0) * 1000, 3),
         fmt(st.shear_x || 0, 1), fmt(st.shear_y || 0, 1)];
+      if (hasCmCr) {
+        const cc = cmcrOf(cd, s);
+        const ecc = cc ? Math.hypot((cc.cm_x ?? 0) - (cc.cr_x ?? 0), (cc.cm_y ?? 0) - (cc.cr_y ?? 0)) : null;
+        row.push(fmt(cc && cc.cm_x, 2), fmt(cc && cc.cm_y, 2),
+          fmt(cc && cc.cr_x, 2), fmt(cc && cc.cr_y, 2), fmt(ecc, 3));
+      }
+      return row;
     }));
 
   const storyBlocks = caseEntries.map(([name, cd, kind]) => {

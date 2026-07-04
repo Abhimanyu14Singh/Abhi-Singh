@@ -21,6 +21,7 @@ const store = {
   tab: "view3d",
   firstSolveDone: false,
   driftLimitPct: 0.5,    // % — 1/200
+  cmStory: null,         // v0.8 — story shown in the CM/CR plan diagram
   overlay: { deformed: false, modal: false, modeIndex: 0, scaleMult: 1 },
   forcesSort: { key: "M3", dir: -1 },
   forcesFilter: "",
@@ -540,6 +541,8 @@ function syncShellLegend() {
   $("legendSlab").classList.toggle("hidden", !shells.some(s => s.kind === "slab"));
   $("legendLink").classList.toggle("hidden",
     !((store.model && store.model.links) || []).length);
+  $("legendSpring").classList.toggle("hidden",
+    !((store.model && store.model.spring_supports) || []).length);
 }
 
 /* ================================================================
@@ -669,6 +672,15 @@ function targetStories() {
 
 function handleDraw(tool, payload) {
   const m = store.model;
+  // v0.8: spring supports are global base anchors — not per-story
+  if (tool === "spring") {
+    const base = m.stories.length ? m.stories[0].elevation - m.stories[0].height : 0;
+    if (ME.addSpringSupport(m, payload.x, payload.y, base)) {
+      markDirty();
+      renderStaticViews();
+    }
+    return;
+  }
   let made = 0;
   for (const st of targetStories()) {
     let el = null;
@@ -732,6 +744,9 @@ function handleElevDraw(tool, payload) {
     if (ME.addWallAt(m, corners, ME.storyContainingZ(m, z1))) made++;
   } else if (tool === "link") {
     if (ME.addLink(m, payload.p1, payload.p2)) made++;
+  } else if (tool === "spring") {
+    const p = payload.p;
+    if (ME.addSpringSupport(m, p[0], p[1], p[2])) made++;
   }
   if (made) {
     markDirty();
@@ -786,7 +801,7 @@ function setTool(tool) {
 /* ---- properties / assignment panel */
 function selObjects() {
   const m = store.model;
-  const members = [], shells = [], links = [];
+  const members = [], shells = [], links = [], springs = [];
   for (const ref of store.selection) {
     if (ref.type === "member") {
       const mm = m.members.find(x => x.uid === ref.uid);
@@ -794,12 +809,15 @@ function selObjects() {
     } else if (ref.type === "link") {
       const l = (m.links || []).find(x => x.uid === ref.uid);
       if (l) links.push(l);
+    } else if (ref.type === "spring") {
+      const s = ME.springByKey(m, ref.uid);
+      if (s) springs.push(s);
     } else {
       const s = m.shells.find(x => x.uid === ref.uid);
       if (s) shells.push(s);
     }
   }
-  return { members, shells, links };
+  return { members, shells, links, springs };
 }
 
 const commonVal = (arr, f) => {
@@ -817,8 +835,8 @@ function optionList(names, selected, mixed) {
 
 function renderProps() {
   const box = $("propsContent");
-  const { members, shells, links } = selObjects();
-  const total = members.length + shells.length + links.length;
+  const { members, shells, links, springs } = selObjects();
+  const total = members.length + shells.length + links.length + springs.length;
   if (!total) {
     box.innerHTML = `<div class="props-empty">
       <p>Nothing selected.</p>
@@ -836,6 +854,7 @@ function renderProps() {
   const kinds = [
     [columns.length, "column"], [beams.length, "beam"], [braces.length, "brace"],
     [walls.length, "wall"], [slabs.length, "slab"], [links.length, "link"],
+    [springs.length, "spring"],
   ].filter(([n]) => n).map(([n, k]) => `${n} ${k}${n > 1 ? "s" : ""}`).join(" · ");
 
   const pats = ME.patternNames(m);
@@ -884,6 +903,18 @@ function renderProps() {
             value="${udl === undefined ? "" : udl}" placeholder="${udl === undefined ? "mixed" : ""}"></div>
       </div>`;
     }
+    // v0.8 — thermal load (ΔT °C) into a pattern's thermal_loads
+    const dT = commonVal(members, x => ME.getThermalLoad(m, store.loadPattern, x.uid) ?? 0);
+    html += `
+      <h3 class="group-title">Thermal load <span class="unit">uniform ΔT · α ${(m.thermal_alpha ?? 1.2e-5).toExponential(1)} /°C</span></h3>
+      <div class="load-row">
+        <div class="field"><label for="propThermPat">Pattern</label>
+          <select id="propThermPat">${patOpts(store.loadPattern)}</select></div>
+        <div class="field"><label for="propThermDT">ΔT <span class="unit">°C</span></label>
+          <input id="propThermDT" type="number" step="5"
+            value="${dT === undefined ? "" : dT}" placeholder="${dT === undefined ? "mixed" : "0 = none"}"></div>
+      </div>
+      <p class="muted" style="font-size:11px">Adds a uniform temperature change to the selected member${members.length > 1 ? "s" : ""} in the chosen pattern (ETABS-style thermal load).</p>`;
   }
 
   if (shells.length) {
@@ -952,6 +983,26 @@ function renderProps() {
           <input type="number" class="linkK" data-si="${i}" step="1000" min="0"
             value="${v === undefined ? "" : v}" placeholder="${v === undefined ? "mixed" : ""}"></label>`;
       }).join("") + `</div>`;
+  }
+
+  /* v0.8 — spring support stiffness (6 dof, grounded) */
+  if (springs.length) {
+    const SK = [
+      ["Kx", "kN/m"], ["Ky", "kN/m"], ["Kz", "kN/m"],
+      ["Krx", "kN·m/rad"], ["Kry", "kN·m/rad"], ["Krz", "kN·m/rad"],
+    ];
+    const pt = springs.length === 1
+      ? ` <span class="unit">@ ${fmt(springs[0].point[0], 1)}, ${fmt(springs[0].point[1], 1)}, ${fmt(springs[0].point[2], 1)} m</span>` : "";
+    html += `
+      <h3 class="group-title">Spring support stiffness${pt}</h3>
+      <div class="link-stiff spring-stiff">` +
+      SK.map(([lbl, unit], i) => {
+        const v = commonVal(springs, s => s.stiffness[i]);
+        return `<label><span>${lbl} <span class="unit">${unit}</span></span>
+          <input type="number" class="springK" data-si="${i}" step="10000" min="0"
+            value="${v === undefined ? "" : v}" placeholder="${v === undefined ? "mixed" : ""}"></label>`;
+      }).join("") + `</div>
+      <p class="muted" style="font-size:11px;margin-top:6px">Replaces base fixity at these points with a 6-dof elastic support.</p>`;
   }
 
   html += `<h3 class="group-title"></h3>
@@ -1059,6 +1110,27 @@ function renderProps() {
       for (const l of links) l.stiffness[i] = v;
       markDirty();
     }));
+
+  /* v0.8 — spring support stiffness wiring */
+  box.querySelectorAll(".springK").forEach(inp =>
+    inp.addEventListener("change", () => {
+      const v = parseFloat(inp.value);
+      if (!isFinite(v) || v < 0) return;
+      const i = parseInt(inp.dataset.si, 10);
+      for (const s of springs) s.stiffness[i] = v;
+      markDirty();
+    }));
+
+  /* v0.8 — member thermal-load wiring */
+  on("propThermPat", "change", e => { store.loadPattern = e.target.value; renderProps(); });
+  on("propThermDT", "change", e => {
+    const v = parseFloat(e.target.value);
+    if (!isFinite(v)) return;
+    for (const mm of members) ME.setThermalLoad(m, $("propThermPat").value, mm.uid, v);
+    markDirty();
+    store.modelEdited = true;
+    refreshDrawViews();     // ΔT badges live in the label layer
+  });
 }
 
 /** v0.5 — mini SVG preview of a shell region with opening cutouts. */
@@ -2074,21 +2146,42 @@ function renderResultsTabs() {
 }
 
 /* ---- story tab */
+/** v0.8 — CM/CR for a story (case-independent story_props, or on the case's
+    story dict). Returns the {cm_x,cm_y,cr_x,cr_y} object or null. */
+function storyCmCr(s) {
+  const r = store.results;
+  if (!r) return null;
+  const cd = tableCaseData();
+  const sp = (r.story_props && r.story_props[s]) ||
+    (cd && cd.story && cd.story[s]) || {};
+  const has = ["cm_x", "cm_y", "cr_x", "cr_y"].some(k => isFinite(sp[k]));
+  return has ? sp : null;
+}
+function hasCmCr() {
+  const r = store.results;
+  return !!(r && r.story_order.some(s => storyCmCr(s)));
+}
+
 function renderStoryTab() {
   const r = store.results, cd = tableCaseData();
   if (!cd) return;
   renderStoryCharts($("chartsRow"), r, cd, store.driftLimitPct);
 
+  const cmcr = hasCmCr();
   const limRatio = store.driftLimitPct / 100;
   const head = `<thead><tr>
     <th class="txt">Story</th><th>Elev m</th>
     <th>ux mm</th><th>uy mm</th>
     <th>drift ‰ x</th><th>drift ‰ y</th>
-    <th>Vx kN</th><th>Vy kN</th></tr></thead>`;
+    <th>Vx kN</th><th>Vy kN</th>` +
+    (cmcr ? `<th>CM x m</th><th>CM y m</th><th>CR x m</th><th>CR y m</th><th>e m</th>` : "") +
+    `</tr></thead>`;
   const rows = [...r.story_order].reverse().map(s => {
     const st = cd.story[s] || {};
     const exx = Math.abs(st.drift_x || 0) > limRatio, exy = Math.abs(st.drift_y || 0) > limRatio;
-    return `<tr>
+    const cc = cmcr ? storyCmCr(s) : null;
+    const ecc = cc ? Math.hypot((cc.cm_x ?? 0) - (cc.cr_x ?? 0), (cc.cm_y ?? 0) - (cc.cr_y ?? 0)) : null;
+    return `<tr${s === store.cmStory ? ` class="cm-active"` : ""}>
       <td class="txt">${esc(s)}</td>
       <td class="dim">${fmt(r.story_elev[s], 1)}</td>
       <td>${fmt((st.ux || 0) * 1000, 1)}</td>
@@ -2096,9 +2189,78 @@ function renderStoryTab() {
       <td class="${exx ? "exceed" : ""}">${fmt(Math.abs(st.drift_x || 0) * 1000, 2)}</td>
       <td class="${exy ? "exceed" : ""}">${fmt(Math.abs(st.drift_y || 0) * 1000, 2)}</td>
       <td>${fmt(st.shear_x || 0, 1)}</td>
-      <td>${fmt(st.shear_y || 0, 1)}</td></tr>`;
+      <td>${fmt(st.shear_y || 0, 1)}</td>` +
+      (cmcr ? (cc
+        ? `<td>${fmt(cc.cm_x, 2)}</td><td>${fmt(cc.cm_y, 2)}</td>
+           <td>${fmt(cc.cr_x, 2)}</td><td>${fmt(cc.cr_y, 2)}</td><td>${fmt(ecc, 3)}</td>`
+        : `<td class="dim">—</td><td class="dim">—</td><td class="dim">—</td><td class="dim">—</td><td class="dim">—</td>`) : "") +
+      `</tr>`;
   }).join("");
   $("storyTable").innerHTML = head + `<tbody>${rows}</tbody>`;
+
+  renderCmCrBlock();
+}
+
+/** v0.8 — Center of mass / rigidity plan diagram for a selected story. */
+function renderCmCrBlock() {
+  const block = $("cmcrBlock");
+  if (!block) return;
+  const r = store.results;
+  const avail = hasCmCr();
+  block.classList.toggle("hidden", !avail);
+  if (!avail) return;
+
+  const stories = [...r.story_order].reverse().filter(s => storyCmCr(s));
+  if (!store.cmStory || !stories.includes(store.cmStory)) store.cmStory = stories[0] || null;
+
+  const sel = $("cmStorySelect");
+  sel.innerHTML = stories.map(s =>
+    `<option value="${esc(s)}"${s === store.cmStory ? " selected" : ""}>${esc(s)}</option>`).join("");
+
+  const cc = storyCmCr(store.cmStory);
+  const ecc = cc ? Math.hypot((cc.cm_x ?? 0) - (cc.cr_x ?? 0), (cc.cm_y ?? 0) - (cc.cr_y ?? 0)) : 0;
+  $("cmcrNote").innerHTML =
+    `<b>${esc(store.cmStory)}</b> · CM (${fmt(cc.cm_x, 2)}, ${fmt(cc.cm_y, 2)}) · ` +
+    `CR (${fmt(cc.cr_x, 2)}, ${fmt(cc.cr_y, 2)}) · eccentricity <b>e = ${fmt(ecc, 3)} m</b>`;
+  $("cmcrPlan").innerHTML = cmcrPlanSvg(cc);
+}
+
+/** SVG markup: story footprint outline + CM (filled circle), CR (target
+    cross) and the eccentricity vector between them. */
+function cmcrPlanSvg(cc) {
+  const g = store.model.grid;
+  const x0 = g.x_lines[0], x1 = g.x_lines[g.x_lines.length - 1];
+  const y0 = g.y_lines[0], y1 = g.y_lines[g.y_lines.length - 1];
+  const W = 300, H = 220, P = 26;
+  const spanX = Math.max(x1 - x0, 1), spanY = Math.max(y1 - y0, 1);
+  const sc = Math.min((W - 2 * P) / spanX, (H - 2 * P) / spanY);
+  const px = x => P + (x - x0) * sc;
+  const py = y => H - P - (y - y0) * sc;                 // y up
+  const mline = "rgba(120,140,165,0.5)", flt = "rgba(120,140,165,0.22)";
+  let svg = `<svg viewBox="0 0 ${W} ${H}" class="cmcr-svg" aria-label="Story CM/CR plan">`;
+  // footprint + grid lines
+  svg += `<rect x="${px(x0)}" y="${py(y1)}" width="${(x1 - x0) * sc}" height="${(y1 - y0) * sc}"
+    fill="rgba(53,181,229,0.04)" stroke="${mline}" stroke-width="1.2"/>`;
+  for (const x of g.x_lines)
+    svg += `<line x1="${px(x)}" y1="${py(y0)}" x2="${px(x)}" y2="${py(y1)}" stroke="${flt}" stroke-width="1"/>`;
+  for (const y of g.y_lines)
+    svg += `<line x1="${px(x0)}" y1="${py(y)}" x2="${px(x1)}" y2="${py(y)}" stroke="${flt}" stroke-width="1"/>`;
+  const cmx = px(cc.cm_x), cmy = py(cc.cm_y), crx = px(cc.cr_x), cry = py(cc.cr_y);
+  // eccentricity vector CR → CM
+  svg += `<line x1="${crx}" y1="${cry}" x2="${cmx}" y2="${cmy}"
+    stroke="var(--amber)" stroke-width="1.6" stroke-dasharray="5 3"/>`;
+  // CR — target cross
+  svg += `<g stroke="var(--green)" stroke-width="1.8" fill="none">
+    <circle cx="${crx}" cy="${cry}" r="6.5"/>
+    <line x1="${crx - 9}" y1="${cry}" x2="${crx + 9}" y2="${cry}"/>
+    <line x1="${crx}" y1="${cry - 9}" x2="${crx}" y2="${cry + 9}"/></g>`;
+  // CM — filled circle
+  svg += `<circle cx="${cmx}" cy="${cmy}" r="5.5" fill="var(--series-y)" stroke="#0d1117" stroke-width="1"/>`;
+  // legend text
+  svg += `<text x="${cmx + 8}" y="${cmy + 3}" fill="var(--series-y)" font-size="10" font-weight="700" font-family="inherit">CM</text>`;
+  svg += `<text x="${crx + 9}" y="${cry - 8}" fill="var(--green)" font-size="10" font-weight="700" font-family="inherit">CR</text>`;
+  svg += `</svg>`;
+  return svg;
 }
 
 /* ---- modal tab */
@@ -2735,12 +2897,21 @@ function csvRows(kind) {
   const cd = tableCaseData();
   if (kind === "story") {
     if (!cd) return null;
+    const cmcr = hasCmCr();
     return [
-      ["story", "elev_m", "ux_m", "uy_m", "drift_x", "drift_y", "shear_x_kN", "shear_y_kN"],
+      ["story", "elev_m", "ux_m", "uy_m", "drift_x", "drift_y", "shear_x_kN", "shear_y_kN",
+        ...(cmcr ? ["cm_x_m", "cm_y_m", "cr_x_m", "cr_y_m", "ecc_m"] : [])],
       ...[...r.story_order].reverse().map(s => {
         const st = (cd.story && cd.story[s]) || {};
-        return [s, r.story_elev[s], st.ux || 0, st.uy || 0,
+        const base = [s, r.story_elev[s], st.ux || 0, st.uy || 0,
           st.drift_x || 0, st.drift_y || 0, st.shear_x || 0, st.shear_y || 0];
+        if (cmcr) {
+          const cc = storyCmCr(s);
+          const ecc = cc ? Math.hypot((cc.cm_x ?? 0) - (cc.cr_x ?? 0), (cc.cm_y ?? 0) - (cc.cr_y ?? 0)) : "";
+          base.push(cc ? cc.cm_x ?? "" : "", cc ? cc.cm_y ?? "" : "",
+            cc ? cc.cr_x ?? "" : "", cc ? cc.cr_y ?? "" : "", cc ? ecc : "");
+        }
+        return base;
       }),
     ];
   }
@@ -3218,6 +3389,12 @@ function wire() {
     if (isFinite(v) && v > 0) { store.driftLimitPct = v; renderStoryTab(); }
   });
 
+  // v0.8 — CM/CR plan story selector
+  $("cmStorySelect").addEventListener("change", e => {
+    store.cmStory = e.target.value;
+    renderCmCrBlock();
+  });
+
   // forces filter
   $("forcesFilter").addEventListener("input", e => {
     store.forcesFilter = e.target.value;
@@ -3226,7 +3403,7 @@ function wire() {
 
   // keyboard
   const TABS = ["view3d", "story", "modal", "reactions", "forces", "design", "th", "pushover"];
-  const TOOL_KEYS = { v: "select", c: "column", b: "beam", x: "brace", w: "wall", s: "slab", l: "link", e: "erase" };
+  const TOOL_KEYS = { v: "select", c: "column", b: "beam", x: "brace", w: "wall", s: "slab", l: "link", g: "spring", e: "erase" };
   document.addEventListener("keydown", e => {
     const tag = (e.target.tagName || "").toLowerCase();
     // v0.3 dialogs respond to Escape even while an input has focus
@@ -3357,6 +3534,8 @@ async function boot() {
     openImportDialog, doImport, setImportFmt, readImportFile, importModelFile,
     renderImportStories, openGallery, pickTemplate, TEMPLATES,
     selectMemberFrom3D, renderThTab,
+    // v0.8
+    renderStoryTab, renderCmCrBlock, storyCmCr, hasCmCr, renderStoryCharts,
   };
 }
 
