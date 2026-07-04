@@ -37,7 +37,16 @@ scrutinized benchmark tests.
 - [x] End-to-end: draw → save → mesh → analyze → diagrams, verified in browser
 - [x] All suites green in CI-style run; docs updated
 
-## Phase 4 — Parity increment 2  (backlog, in priority order)
+## Phase 4 — Parity increment 2  ✅ items 1-5 done
+- [x] 1. Model save/open (.skyframe JSON files) with File menu + gallery
+- [x] 2. Load pattern / case / combo editor UI (with per-case P-Delta toggle)
+- [x] 3. Response-spectrum analysis (CQC/SRSS, spectrum editor + live preview)
+- [x] 4. P-Delta (OpenSees PDelta transforms, two-stage gravity solve)
+- [x] 5. Steel section library (22 AISC W-shapes + picker UI)
+- [ ] 6. Wall/slab openings; elevation-view drawing
+- [ ] 7. Nonlinear static pushover (OpenSees fiber hinges)
+
+### Original backlog (superseded above)
 1. Model save/open (.skyframe JSON files) + example model gallery
 2. Load pattern / case / combo editor UI
 3. Response-spectrum analysis (modal combination, CQC) — OpenSees-native
