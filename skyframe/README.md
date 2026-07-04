@@ -67,16 +67,22 @@ print(results["cases"]["EQX"]["story"]["Story1"]["drift_x"])
 
 See `examples/four_story_office.py` for a complete scripted run.
 
-## Analysis capabilities (v0.1)
+## Analysis capabilities (v0.2)
 
 | Feature | Status |
 |---|---|
 | 3D elastic frame analysis (columns / beams / braces) | ✅ |
+| **ETABS-style drawing**: plan-view editor, draw columns/beams/walls/slabs, assign sections/releases/loads | ✅ |
+| Shell walls & slabs (OpenSees ShellMITC4) with auto quad meshing | ✅ |
+| Frame–shell mesh compatibility (members auto-split to match mesh nodes, results re-aggregated) | ✅ |
+| Membrane slabs: two-way 45° tributary load distribution to beams | ✅ |
+| Member end releases; point / partial / trapezoidal member loads (exact fixed-end forces) | ✅ |
+| 11-station member force diagrams (N, V2, V3, T, M2, M3) | ✅ |
 | Rigid floor diaphragms with auto mass (from dead load or explicit) | ✅ |
 | Linear static load cases + linear load combinations | ✅ |
 | Equivalent-static seismic pattern (auto triangular distribution) | ✅ |
 | Eigenvalue / modal analysis with mass-participation ratios | ✅ |
-| Story drifts, story shears, base reactions, member local forces | ✅ |
+| Story drifts, story shears, base reactions, area/line/nodal loads | ✅ |
 | Response-spectrum, time-history, P-Delta, nonlinear hinges | 🚧 roadmap (OpenSees supports all of these) |
 
 ## Validation
