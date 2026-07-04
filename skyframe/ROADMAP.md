@@ -88,6 +88,13 @@ scrutinized benchmark tests.
 - [x] Center of mass / center of rigidity per story + plan display
 - [x] REST endpoints; all fields round-trip through /api/model
 
+## Wave 10 — rigid offsets, irregularity, design envelope  ✅ done
+- [x] Rigid end-offsets (beam/column rigid zones via rigid links)
+- [x] Story lateral stiffness (V/drift) output
+- [x] ASCE 7 §12.3 torsional-irregularity + soft-story diagnostics
+- [x] Design over all load combinations (governing combo per member)
+- [x] UI: offset inputs + glyph, diagnostics chips, design envelope toggle
+
 ## Phase 4 — Parity increment 2  ✅ done
 - [x] 1. Model save/open (.skyframe JSON files) with File menu + gallery
 - [x] 2. Load pattern / case / combo editor UI (with per-case P-Delta toggle)
