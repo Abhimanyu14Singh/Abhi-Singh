@@ -5,7 +5,25 @@ into an OpenSees domain (ndm=3, ndf=6) and runs:
 
 * linear static load cases (``run_static``),
 * load combos by pure result superposition,
-* eigenvalue / modal analysis (``run_modal``).
+* eigenvalue / modal analysis (``run_modal``),
+* response-spectrum analysis (``run_response_spectrum``, v0.3),
+* P-Delta static cases (``LoadCase.pdelta``, v0.3).
+
+v0.3 response-spectrum analysis is EXACT modal statics: for each mode i the
+equivalent static force vector ``f_i = Gamma_i * Sa_i * g * M * phi_i`` is
+applied as nodal loads and solved through the ordinary linear static
+pipeline, so every reported quantity (displacements, reactions, member
+forces, stations, story values) is the true modal response
+``r_i = Gamma_i * Sa_i * g / omega_i^2`` on that quantity's influence line.
+Modal responses are then combined per quantity with CQC (constant damping
+ratio; standard correlation coefficient) or SRSS — positive envelopes.
+
+v0.3 P-Delta cases use ``geomTransf('PDelta', ...)`` on ALL frame members
+(the linearized "lean-column" geometric stiffness ``-P/L`` on the transverse
+sway DOFs) and a Newton solve: the gravity state (``pdelta_gravity`` or, if
+``None``, the case's own patterns) is applied first, held constant
+(``loadConst``), then the case's own loads are solved on the gravity-
+stiffened geometry; two-stage runs report the case's INCREMENTAL response.
 
 v0.2: shell regions are meshed (:mod:`skyframe.core.mesh`) into ShellMITC4
 elements with ElasticMembranePlateSection; frame members are split so their
@@ -38,7 +56,8 @@ import numpy as np
 import openseespy.opensees as ops
 
 from skyframe.core.mesh import MeshedModel, Segment, mesh_model
-from skyframe.core.model import BuildingModel, FrameMember, LoadCase
+from skyframe.core.model import (G_ACCEL, BuildingModel, FrameMember,
+                                 LoadCase, ResponseSpectrumCase)
 
 _TOL = 1e-6
 _N_STATIONS = 11
@@ -237,6 +256,48 @@ def _section_forces(fi: Sequence[float], records: Sequence[SpanLoad],
 
 
 # --------------------------------------------------------------------------- #
+# response-spectrum helpers
+# --------------------------------------------------------------------------- #
+def _interp_spectrum(spectrum: Sequence[Sequence[float]], T: float) -> float:
+    """Sa(T) by LINEAR interpolation of [[T, Sa], ...], clamped at the ends."""
+    pts = sorted((float(p[0]), float(p[1])) for p in spectrum)
+    if T <= pts[0][0]:
+        return pts[0][1]
+    if T >= pts[-1][0]:
+        return pts[-1][1]
+    for (t0, s0), (t1, s1) in zip(pts, pts[1:]):
+        if t0 <= T <= t1:
+            if t1 - t0 < 1e-12:
+                return s1
+            return s0 + (s1 - s0) * (T - t0) / (t1 - t0)
+    return pts[-1][1]  # pragma: no cover - unreachable
+
+
+def _cqc_matrix(omegas: Sequence[float], zeta: float) -> np.ndarray:
+    """CQC cross-correlation matrix for constant modal damping ``zeta``.
+
+    Standard Der Kiureghian coefficient (beta = omega_i / omega_j):
+    ``rho_ij = 8 z^2 (1+b) b^1.5 / ((1-b^2)^2 + 4 z^2 b (1+b)^2)``;
+    ``rho_ii = 1``.
+    """
+    n = len(omegas)
+    rho = np.eye(n)
+    for i in range(n):
+        for j in range(i + 1, n):
+            b = omegas[i] / omegas[j]
+            num = 8.0 * zeta * zeta * (1.0 + b) * b ** 1.5
+            den = (1.0 - b * b) ** 2 + 4.0 * zeta * zeta * b * (1.0 + b) ** 2
+            rho[i, j] = rho[j, i] = num / den
+    return rho
+
+
+def _modal_combine(values: Sequence[float], rho: np.ndarray) -> float:
+    """Positive CQC/SRSS envelope of one quantity's per-mode values."""
+    v = np.asarray(values)
+    return float(math.sqrt(max(float(v @ rho @ v), 0.0)))
+
+
+# --------------------------------------------------------------------------- #
 # assembled-domain bookkeeping
 # --------------------------------------------------------------------------- #
 @dataclass
@@ -282,9 +343,10 @@ class CaseResults:
     story: Dict[str, Dict[str, float]]          # story -> ux/uy/drift/shear
     member_stations: Dict[str, Dict[str, List[float]]] = field(
         default_factory=dict)                   # uid -> x/N/V2/V3/T/M2/M3
+    warning: str = ""                           # e.g. P-Delta superposition
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "node_disp": {str(t): list(v) for t, v in self.node_disp.items()},
             "reactions": {str(t): list(v) for t, v in self.reactions.items()},
             "base": dict(self.base),
@@ -293,6 +355,9 @@ class CaseResults:
             "member_stations": {u: {k: list(v) for k, v in st.items()}
                                 for u, st in self.member_stations.items()},
         }
+        if self.warning:
+            d["warning"] = self.warning
+        return d
 
 
 @dataclass
@@ -328,6 +393,7 @@ class AnalysisResults:
     combos: Dict[str, CaseResults]
     modal: ModalResults
     shell_quads: List[dict] = field(default_factory=list)
+    rs_cases: Dict[str, CaseResults] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -340,6 +406,7 @@ class AnalysisResults:
             "shell_quads": [dict(q) for q in self.shell_quads],
             "cases": {n: c.to_dict() for n, c in self.cases.items()},
             "combos": {n: c.to_dict() for n, c in self.combos.items()},
+            "rs_cases": {n: c.to_dict() for n, c in self.rs_cases.items()},
             "modal": self.modal.to_dict(),
         }
 
@@ -360,6 +427,8 @@ class OpenSeesEngine:
     def __init__(self, model: BuildingModel):
         self.model = model
         self._case_cache: Dict[str, CaseResults] = {}
+        self._rs_cache: Dict[str, CaseResults] = {}
+        self._modal_cache: Dict[int, ModalResults] = {}
         self._members_by_uid: Dict[str, FrameMember] = {m.uid: m for m in model.members}
         self._asm: Optional[_Assembly] = None
         self._mesh: Optional[MeshedModel] = None
@@ -369,12 +438,14 @@ class OpenSeesEngine:
 
     # ------------------------------------------------------------------ API
     def run(self) -> AnalysisResults:
-        """Run every load case, every combo, and modal analysis."""
+        """Run every load case, combo, RS case, and modal analysis."""
         model = self.model
         cases = {name: self.run_static(name) for name in model.cases}
         combos = {name: self._combine(name, combo.cases)
                   for name, combo in model.combos.items()}
         modal = self.run_modal()
+        rs_cases = {name: self.run_response_spectrum(name)
+                    for name in model.rs_cases}
         asm = self._asm if self._asm is not None else self._build()
         members = [{"uid": m.uid, "kind": m.kind, "section": m.section,
                     "ni": asm.ele_nodes[m.uid][0], "nj": asm.ele_nodes[m.uid][1],
@@ -391,16 +462,21 @@ class OpenSeesEngine:
             combos=combos,
             modal=modal,
             shell_quads=list(asm.shell_quads),
+            rs_cases=rs_cases,
         )
 
     def run_static(self, case_name: str) -> CaseResults:
-        """Solve one linear static load case (cached per engine instance)."""
+        """Solve one static load case (cached per engine instance)."""
         if case_name in self._case_cache:
             return self._case_cache[case_name]
         model = self.model
         if case_name not in model.cases:
             raise ValueError(f"Unknown load case {case_name!r}")
         case = model.cases[case_name]
+        if case.pdelta:
+            result = self._run_static_pdelta(case)
+            self._case_cache[case_name] = result
+            return result
 
         asm = self._build()
         self._seg_span_loads = {}
@@ -427,7 +503,10 @@ class OpenSeesEngine:
         return result
 
     def run_modal(self, num_modes: Optional[int] = None) -> ModalResults:
-        """Eigenvalue analysis: periods, frequencies, shapes, participation."""
+        """Eigenvalue analysis: periods, frequencies, shapes, participation.
+
+        Cached per effective mode count so RS cases reuse the eigen solve.
+        """
         model = self.model
         asm = self._build()
         # only masses on unrestrained dofs yield generalized eigenpairs;
@@ -436,6 +515,8 @@ class OpenSeesEngine:
         n = min(num_modes or model.num_modes, n_massed)
         if n <= 0:
             return ModalResults([], [], [], {})
+        if n in self._modal_cache:
+            return self._modal_cache[n]
 
         self._setup_analysis(asm)
         lambdas = self._solve_eigen(n, n_massed)
@@ -445,10 +526,12 @@ class OpenSeesEngine:
                          for t in asm.node_coords}
                   for mode in range(1, n + 1)}
         participation = self._participation(asm, periods, shapes)
-        return ModalResults(periods, frequencies, participation, shapes)
+        result = ModalResults(periods, frequencies, participation, shapes)
+        self._modal_cache[n] = result
+        return result
 
     # --------------------------------------------------------- model assembly
-    def _build(self) -> _Assembly:
+    def _build(self, pdelta: bool = False) -> _Assembly:
         """(Re)build the OpenSees domain from the (meshed) BuildingModel."""
         model = self.model
         if self._mesh is None:
@@ -513,7 +596,7 @@ class OpenSeesEngine:
             torsion_only = np.outer(xax, xax)
             for seg in segs:
                 etag += 1
-                ops.geomTransf("Linear", etag, *vecxz)
+                ops.geomTransf("PDelta" if pdelta else "Linear", etag, *vecxz)
                 rel_i = "Mi" in toks and seg.index == 0
                 rel_j = "Mj" in toks and seg.index == last
                 code = (1 if rel_i else 0) + (2 if rel_j else 0)
@@ -892,7 +975,9 @@ class OpenSeesEngine:
             ops.load(pidx + 1, 0.0, 0.0, -q * w_node, 0.0, 0.0, 0.0)
 
     # ----------------------------------------------- per-member results
-    def _member_outputs(self, asm: _Assembly
+    def _member_outputs(self, asm: _Assembly,
+                        baseline: Optional[Dict[Tuple[str, int],
+                                                List[float]]] = None
                         ) -> Tuple[Dict[str, List[float]],
                                    Dict[str, Dict[str, List[float]]]]:
         """End forces + 11-station internal forces per ORIGINAL member.
@@ -900,7 +985,9 @@ class OpenSeesEngine:
         End forces of a split member are the (corrected) end-i forces of its
         first segment and end-j forces of its last segment.  Station forces
         come from exact statics: corrected segment end-i forces plus the
-        recorded span loads integrated in closed form.
+        recorded span loads integrated in closed form.  ``baseline`` (v0.3,
+        P-Delta two-stage runs) holds per-segment local forces of the
+        gravity state to subtract, so the case reports its own increment.
         """
         member_forces: Dict[str, List[float]] = {}
         member_stations: Dict[str, Dict[str, List[float]]] = {}
@@ -910,6 +997,10 @@ class OpenSeesEngine:
             for seg in segs:
                 etag = asm.seg_ele[(m.uid, seg.index)]
                 f = ops.eleResponse(etag, "localForce")
+                if baseline:
+                    snap = baseline.get((m.uid, seg.index))
+                    if snap is not None:
+                        f = [v - s for v, s in zip(f, snap)]
                 fef = self._seg_fef.get((m.uid, seg.index))
                 if fef is not None:
                     f = [float(v + c) for v, c in zip(f, fef)]
@@ -942,6 +1033,7 @@ class OpenSeesEngine:
     # ------------------------------------------------------------- analysis
     @staticmethod
     def _setup_analysis(asm: _Assembly) -> None:
+        ops.wipeAnalysis()
         ops.constraints("Transformation" if asm.use_transformation else "Plain")
         ops.numberer("RCM")
         ops.system("BandGeneral")
@@ -1019,6 +1111,10 @@ class OpenSeesEngine:
     def _combine(self, name: str, factors: Dict[str, float]) -> CaseResults:
         """Linear superposition of already-solved case results."""
         parts = [(self.run_static(case_name), f) for case_name, f in factors.items()]
+        warning = ""
+        if any(self.model.cases[c].pdelta for c in factors):
+            warning = ("superposition includes a P-Delta (nonlinear) case; "
+                       "linear combination is approximate")
 
         def comb_vecs(get) -> dict:
             first = get(parts[0][0])
@@ -1043,6 +1139,218 @@ class OpenSeesEngine:
                 entry[key] = [
                     sum(f * res.member_stations[uid][key][i]
                         for res, f in parts)
+                    for i in range(len(st0[key]))]
+            member_stations[uid] = entry
+        return CaseResults(
+            name=name,
+            node_disp=comb_vecs(lambda r: r.node_disp),
+            reactions=comb_vecs(lambda r: r.reactions),
+            base=base,
+            member_forces=comb_vecs(lambda r: r.member_forces),
+            story=story,
+            member_stations=member_stations,
+            warning=warning,
+        )
+
+    # ----------------------------------------------------- P-Delta statics
+    def _run_static_pdelta(self, case: LoadCase) -> CaseResults:
+        """Solve one P-Delta case (Newton on the PDelta transformation).
+
+        Two-stage when ``pdelta_gravity`` names a distinct gravity state:
+        gravity is applied and held (``loadConst``), then the case's own
+        loads are solved; the reported response is the INCREMENT past the
+        gravity state (the standard linearized-P-Delta case result).  With
+        ``pdelta_gravity is None`` the case's own patterns are the gravity
+        state and a single nonlinear stage is reported in full.
+        """
+        model = self.model
+        asm = self._build(pdelta=True)
+        self._seg_span_loads = {}
+        self._seg_fef = {}
+
+        snap_disp: Dict[int, List[float]] = {}
+        snap_reac: Dict[int, List[float]] = {}
+        snap_ele: Dict[Tuple[str, int], List[float]] = {}
+        two_stage = case.pdelta_gravity is not None
+
+        if two_stage:
+            ops.timeSeries("Linear", 1)
+            ops.pattern("Plain", 1, 1)
+            for pat_name, scale in case.pdelta_gravity.items():
+                self._apply_pattern(asm, pat_name, scale)
+            self._setup_nonlinear_analysis(asm)
+            if ops.analyze(1) != 0:
+                raise RuntimeError(
+                    f"P-Delta analysis failed to converge for case "
+                    f"{case.name!r} (gravity stage: patterns "
+                    f"{case.pdelta_gravity})")
+            ops.loadConst("-time", 0.0)
+            snap_disp = {t: list(ops.nodeDisp(t)) for t in asm.node_coords}
+            ops.reactions()
+            snap_reac = {t: list(ops.nodeReaction(t))
+                         for t in asm.support_tags}
+            for key, etag in asm.seg_ele.items():
+                snap_ele[key] = [float(v)
+                                 for v in ops.eleResponse(etag, "localForce")]
+            # stage-1 span-load bookkeeping must not leak into the case's
+            # reported member forces/stations (they belong to gravity)
+            self._seg_span_loads = {}
+            self._seg_fef = {}
+
+        ops.timeSeries("Linear", 2)
+        ops.pattern("Plain", 2, 2)
+        for pat_name, scale in case.patterns.items():
+            self._apply_pattern(asm, pat_name, scale)
+        self._setup_nonlinear_analysis(asm)
+        if ops.analyze(1) != 0:
+            raise RuntimeError(
+                f"P-Delta analysis failed to converge for case "
+                f"{case.name!r}. The load level may exceed the elastic "
+                "buckling capacity of the gravity state, or the model may "
+                "be unstable; reduce loads or check supports.")
+
+        node_disp = {t: [d - s for d, s in
+                         zip(ops.nodeDisp(t), snap_disp.get(t, (0.0,) * 6))]
+                     for t in asm.node_coords}
+        ops.reactions()
+        reactions = {t: [r - s for r, s in
+                         zip(ops.nodeReaction(t), snap_reac.get(t, (0.0,) * 6))]
+                     for t in asm.support_tags}
+        base = self._base_totals(asm, reactions)
+        member_forces, member_stations = self._member_outputs(
+            asm, baseline=snap_ele)
+        story = self._story_results(asm, case, node_disp)
+        return CaseResults(case.name, node_disp, reactions, base,
+                           member_forces, story, member_stations)
+
+    @staticmethod
+    def _setup_nonlinear_analysis(asm: _Assembly) -> None:
+        ops.wipeAnalysis()
+        ops.constraints("Transformation" if asm.use_transformation else "Plain")
+        ops.numberer("RCM")
+        ops.system("BandGeneral")
+        ops.test("NormDispIncr", 1.0e-8, 20)
+        ops.algorithm("Newton")
+        ops.integrator("LoadControl", 1.0)
+        ops.analysis("Static")
+
+    # --------------------------------------------------- response spectrum
+    def run_response_spectrum(self, name: str) -> CaseResults:
+        """Run one response-spectrum case (cached per engine instance).
+
+        Exact modal statics: per mode the equivalent static force vector
+        ``f_i = Gamma_i * Sa_i * g * M * phi_i`` is solved through the
+        ordinary linear static pipeline; per-mode (signed) results are then
+        combined per quantity with CQC or SRSS into positive envelopes.
+        """
+        if name in self._rs_cache:
+            return self._rs_cache[name]
+        model = self.model
+        if name not in model.rs_cases:
+            raise ValueError(f"Unknown response-spectrum case {name!r}")
+        rs = model.rs_cases[name]
+
+        n_req = rs.num_modes if rs.num_modes > 0 else None
+        modal = self.run_modal(n_req)
+        if not modal.periods:
+            raise RuntimeError(
+                f"RS case {name!r}: the model has no dynamic modes "
+                "(no mass on unrestrained DOFs)")
+        asm = self._asm  # tags are stable across rebuilds (same mesh)
+        mass_map = dict(asm.mass_map)
+        gamma_key = "gamma_x" if rs.direction == "X" else "gamma_y"
+
+        omegas: List[float] = []
+        per_mode: List[CaseResults] = []
+        for i, T in enumerate(modal.periods, start=1):
+            omega = 2.0 * math.pi / T
+            gamma = modal.participation[i - 1][gamma_key]
+            sa = _interp_spectrum(rs.spectrum, T) * rs.scale * G_ACCEL
+            phi = modal.shapes[i]
+            loads = {(t, dof): gamma * sa * m * phi[t][dof - 1]
+                     for (t, dof), m in mass_map.items()}
+            omegas.append(omega)
+            per_mode.append(self._modal_static(loads))
+
+        rho = (np.eye(len(omegas)) if rs.combo_method == "SRSS"
+               else _cqc_matrix(omegas, rs.damping))
+        result = self._combine_rsa(name, per_mode, rho)
+        self._rs_cache[name] = result
+        return result
+
+    def _modal_static(self, loads: Dict[Tuple[int, int], float]) -> CaseResults:
+        """Linear static solve under explicit (node, dof) -> value loads."""
+        asm = self._build()
+        self._seg_span_loads = {}
+        self._seg_fef = {}
+        ops.timeSeries("Linear", 1)
+        ops.pattern("Plain", 1, 1)
+        for (t, dof), v in loads.items():
+            if v == 0.0:
+                continue
+            vec = [0.0] * 6
+            vec[dof - 1] = v
+            ops.load(t, *vec)
+        self._setup_analysis(asm)
+        if ops.analyze(1) != 0:
+            raise RuntimeError("Modal static analysis failed")
+
+        node_disp = {t: list(ops.nodeDisp(t)) for t in asm.node_coords}
+        ops.reactions()
+        reactions = {t: list(ops.nodeReaction(t)) for t in asm.support_tags}
+        base = self._base_totals(asm, reactions)
+        member_forces, member_stations = self._member_outputs(asm)
+
+        # story values: modal story shear = cumulative applied modal force
+        # at & above each story (loads live on massed nodes / masters)
+        story: Dict[str, Dict[str, float]] = {}
+        prev_ux = prev_uy = 0.0
+        for s in self.model.stories:
+            if s.name in asm.masters:
+                d = node_disp[asm.masters[s.name]]
+                ux, uy = d[0], d[1]
+            else:
+                nodes = asm.story_nodes[s.name]
+                ux = (sum(node_disp[t][0] for t in nodes) / len(nodes)
+                      if nodes else 0.0)
+                uy = (sum(node_disp[t][1] for t in nodes) / len(nodes)
+                      if nodes else 0.0)
+            vx = sum(v for (t, dof), v in loads.items()
+                     if dof == 1 and asm.node_coords[t][2] >= s.elevation - _TOL)
+            vy = sum(v for (t, dof), v in loads.items()
+                     if dof == 2 and asm.node_coords[t][2] >= s.elevation - _TOL)
+            h = s.height if s.height > 0 else 1.0
+            story[s.name] = {"ux": ux, "uy": uy,
+                             "drift_x": (ux - prev_ux) / h,
+                             "drift_y": (uy - prev_uy) / h,
+                             "shear_x": vx, "shear_y": vy}
+            prev_ux, prev_uy = ux, uy
+        return CaseResults("", node_disp, reactions, base, member_forces,
+                           story, member_stations)
+
+    @staticmethod
+    def _combine_rsa(name: str, parts: List[CaseResults],
+                     rho: np.ndarray) -> CaseResults:
+        """CQC/SRSS-combine per-mode results, quantity by quantity."""
+
+        def comb_vecs(get) -> dict:
+            first = get(parts[0])
+            return {k: [_modal_combine([get(p)[k][i] for p in parts], rho)
+                        for i in range(len(v))]
+                    for k, v in first.items()}
+
+        base = {k: _modal_combine([p.base[k] for p in parts], rho)
+                for k in ("FX", "FY", "FZ", "MX", "MY", "MZ")}
+        story = {s: {k: _modal_combine([p.story[s][k] for p in parts], rho)
+                     for k in s0}
+                 for s, s0 in parts[0].story.items()}
+        member_stations: Dict[str, Dict[str, List[float]]] = {}
+        for uid, st0 in parts[0].member_stations.items():
+            entry: Dict[str, List[float]] = {"x": list(st0["x"])}
+            for key in ("N", "V2", "V3", "T", "M2", "M3"):
+                entry[key] = [
+                    _modal_combine([p.member_stations[uid][key][i]
+                                    for p in parts], rho)
                     for i in range(len(st0[key]))]
             member_stations[uid] = entry
         return CaseResults(
@@ -1090,6 +1398,11 @@ class OpenSeesEngine:
         Uses the Python-side diagonal mass map (mass lives on diaphragm
         masters and explicitly-massed nodes), so slave-node eigenvector
         values never enter the sums.
+
+        v0.3: each entry also carries the modal participation FACTORS
+        ``gamma_x`` / ``gamma_y`` (``Gamma = L / (phi^T M phi)``, sign
+        follows the eigenvector normalisation; ``Gamma * phi`` is
+        normalisation-invariant and is what RSA uses).
         """
         totals = {dof: sum(m for (t, d), m in asm.mass_map.items() if d == dof)
                   for dof in (1, 2, 6)}
@@ -1099,11 +1412,16 @@ class OpenSeesEngine:
             den = sum(m * phi[t][d - 1] ** 2 for (t, d), m in asm.mass_map.items())
             entry: Dict[str, float] = {"mode": i, "T": period}
             for dof, key in ((1, "ux"), (2, "uy"), (6, "rz")):
+                gamma_key = {1: "gamma_x", 2: "gamma_y"}.get(dof)
                 if den <= 0.0 or totals[dof] <= 0.0:
                     entry[key] = 0.0
+                    if gamma_key:
+                        entry[gamma_key] = 0.0
                     continue
                 num = sum(m * phi[t][d - 1]
                           for (t, d), m in asm.mass_map.items() if d == dof)
                 entry[key] = (num * num / den) / totals[dof]
+                if gamma_key:
+                    entry[gamma_key] = num / den
             out.append(entry)
         return out

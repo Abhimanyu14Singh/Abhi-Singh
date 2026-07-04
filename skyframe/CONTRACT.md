@@ -154,3 +154,90 @@ member-detail panel with N/V2/M3 diagrams from member_stations.
 Members carry `pi`/`pj` coordinate triples; the UI draws from `to_dict()` of
 model (geometry) + results (deformations keyed by node tag; node coords in
 results.nodes).
+
+---
+
+# v0.3 additions — save/open, response spectrum, P-Delta, section library
+
+## Model save/open API
+
+Saved models are `<name>.skyframe.json` files (the exact `model.to_dict()`
+JSON) in a models directory: default `~/.skyframe/models`, overridable via
+the `SKYFRAME_MODELS_DIR` environment variable; created on demand.  Names
+must match `[A-Za-z0-9 _-]{1,60}` (else 400).
+
+| Method | Path                      | Body / Response |
+|--------|---------------------------|-----------------|
+| GET    | `/api/models`             | `[{"name", "mtime", "stories", "members"}, …]` (mtime = epoch seconds; stories/members = counts) |
+| POST   | `/api/models/<name>`      | saves the CURRENT model → its listing entry; 400 `{"error"}` on a bad name |
+| POST   | `/api/models/<name>/open` | loads the file into the current model (`BuildingModel.from_dict`) → model dict; 404 if missing, 400 if the file is invalid |
+| DELETE | `/api/models/<name>`      | `{"deleted": name}`; 404 if missing |
+
+## Response-spectrum analysis (RSA)
+
+```python
+@dataclass ResponseSpectrumCase:
+    name: str
+    direction: str                 # "X" | "Y"
+    spectrum: List[[T, Sa]]        # T in s, Sa in g; LINEAR interpolation at
+                                   #   modal periods, clamped to end values
+    num_modes: int = 0             # 0 = all computed modes
+    combo_method: str = "CQC"      # "CQC" | "SRSS"
+    damping: float = 0.05          # constant modal damping ratio (CQC)
+    scale: float = 1.0             # multiplies Sa
+# BuildingModel gains: rs_cases: Dict[str, ResponseSpectrumCase]
+#   (+ add_rs_case(...)); included in to_dict()/from_dict() as "rs_cases".
+# RS cases may NOT appear inside LoadCombos (v0.3 keeps them separate).
+```
+
+Engine (`engine.run_response_spectrum(name) -> CaseResults`, also run by
+`engine.run()`): exact modal statics — per mode the equivalent static force
+vector `f_i = Γ_i · Sa_i · g · M · φ_i` is applied as nodal loads and solved
+through the ordinary linear static pipeline, then every quantity is combined
+across modes (CQC with the standard constant-damping correlation
+coefficient, or SRSS).  Story drifts are combined per mode (ETABS-style),
+NOT recomputed from combined displacements.  All RSA results are POSITIVE
+envelopes.
+
+`results.to_dict()` gains `"rs_cases": {"<name>": <same shape as a case>}`
+(node_disp / reactions / base / member_forces / story / member_stations, all
+combined absolute values; story shear = combined cumulative modal force).
+
+Modal `participation` entries gain the participation FACTORS `"gamma_x"` /
+`"gamma_y"` per mode (`Γ = L/M*`; sign follows the eigenvector
+normalisation — `Γ·φ` is normalisation-invariant).
+
+## P-Delta static cases
+
+```python
+# LoadCase gains:
+#   pdelta: bool = False
+#   pdelta_gravity: Dict[str, float] | None = None   # pattern -> factor;
+#       None => the case's own patterns ARE the gravity state
+```
+
+When `pdelta` is on, ALL frame members use `geomTransf('PDelta', …)` — the
+linearized "lean-column" geometric stiffness (−P/L on the transverse sway
+translations) — and the case is solved with Newton
+(`test NormDispIncr 1e-8 20`).  With a distinct `pdelta_gravity` state the
+engine runs two stages: gravity first, `loadConst -time 0.0`, then the
+case's own loads; the reported result is the case's INCREMENT past the
+gravity state (standard linearized-P-Delta case output).  A pure-gravity
+P-Delta case (`pdelta_gravity=None`) is a single reported stage.
+Non-convergence raises a clear error.  Combos that superpose a P-Delta case
+still combine linearly but carry
+`"warning": "superposition includes a P-Delta (nonlinear) case; …"` in the
+combo's results dict (the key is absent for all-linear combos).
+
+## Steel section library
+
+`skyframe/core/sections_library.py`: 22 common AISC W-shapes (W8x31 …
+W36x150) with A, I33, I22, J (and drawing b/h) converted exactly from the
+AISC Manual (15th ed.) imperial values to SI (m).  API:
+
+| Method | Path                    | Response |
+|--------|-------------------------|----------|
+| GET    | `/api/sections/library` | `[{"name", "A", "I33", "I22", "J", "b", "h"}, …]` (SI units) |
+
+`FrameSection.from_library("W12x26", material)` builds a ready-to-add
+section from the library.

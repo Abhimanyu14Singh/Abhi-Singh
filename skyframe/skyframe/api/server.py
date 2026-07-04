@@ -10,6 +10,18 @@ Endpoints per ``CONTRACT.md``:
 * ``POST /api/model/quick`` — regenerate the model via ``quick_building``
 * ``POST /api/analyze``     — run the OpenSees engine on the current model
 
+v0.3 additions:
+
+* ``GET    /api/models``             — saved-model listing (name/mtime/counts)
+* ``POST   /api/models/<name>``      — save the current model to disk
+* ``POST   /api/models/<name>/open`` — load a saved model as the current one
+* ``DELETE /api/models/<name>``      — delete a saved model
+* ``GET    /api/sections/library``   — built-in steel section library (SI)
+
+Saved models live as ``<name>.skyframe.json`` files in ``~/.skyframe/models``
+(override with the ``SKYFRAME_MODELS_DIR`` environment variable; the
+directory is created on demand).  Names must match ``[A-Za-z0-9 _-]{1,60}``.
+
 The server keeps one current :class:`BuildingModel` in module-level state
 (default: ``quick_building()``).  ``python -m skyframe.api.server`` serves
 on 127.0.0.1:8600.
@@ -17,13 +29,16 @@ on 127.0.0.1:8600.
 
 from __future__ import annotations
 
+import json
 import os
+import re
 from typing import Any, Dict
 
 from flask import Flask, jsonify, request, send_from_directory
 
 from skyframe.core.builder import quick_building
 from skyframe.core.model import BuildingModel
+from skyframe.core.sections_library import library_to_dict
 
 try:
     from skyframe.engine.opensees_engine import OpenSeesEngine
@@ -55,6 +70,36 @@ _QUICK_PARAMS: Dict[str, tuple] = {
     "name": ("str", None, None),
     "base_fixity": ("choice", ("fixed", "pinned"), None),
 }
+
+
+_MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9 _-]{1,60}$")
+_MODEL_SUFFIX = ".skyframe.json"
+
+
+def _models_dir() -> str:
+    """Saved-models directory (created on demand).
+
+    ``SKYFRAME_MODELS_DIR`` overrides the default ``~/.skyframe/models``.
+    Read per-request so tests (and users) can repoint it via the env var.
+    """
+    path = os.environ.get("SKYFRAME_MODELS_DIR") or os.path.join(
+        os.path.expanduser("~"), ".skyframe", "models")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _model_path(name: str) -> str:
+    return os.path.join(_models_dir(), name + _MODEL_SUFFIX)
+
+
+def _model_entry(name: str, path: str) -> Dict[str, Any]:
+    """Cheap listing entry: name, mtime, story & member counts."""
+    with open(path, "r", encoding="utf-8") as fh:
+        d = json.load(fh)
+    return {"name": name,
+            "mtime": os.path.getmtime(path),
+            "stories": len(d.get("stories") or []),
+            "members": len(d.get("members") or [])}
 
 
 def _validate_quick_kwargs(body: Dict[str, Any]) -> Dict[str, Any]:
@@ -135,6 +180,62 @@ def create_app() -> Flask:
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify(_state["model"].to_dict())
+
+    # ------------------------------------------------ v0.3: model save/open
+    @app.get("/api/models")
+    def list_models():
+        entries = []
+        for fn in sorted(os.listdir(_models_dir())):
+            if not fn.endswith(_MODEL_SUFFIX):
+                continue
+            name = fn[:-len(_MODEL_SUFFIX)]
+            try:
+                entries.append(_model_entry(name, _model_path(name)))
+            except (OSError, ValueError):
+                continue  # unreadable/corrupt file: skip from the gallery
+        return jsonify(entries)
+
+    @app.post("/api/models/<name>")
+    def save_model(name: str):
+        if not _MODEL_NAME_RE.fullmatch(name):
+            return jsonify({"error": "Model name must match "
+                                     "[A-Za-z0-9 _-]{1,60}"}), 400
+        path = _model_path(name)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(_state["model"].to_dict(), fh)
+        return jsonify(_model_entry(name, path))
+
+    @app.post("/api/models/<name>/open")
+    def open_model(name: str):
+        if not _MODEL_NAME_RE.fullmatch(name):
+            return jsonify({"error": "Model name must match "
+                                     "[A-Za-z0-9 _-]{1,60}"}), 400
+        path = _model_path(name)
+        if not os.path.isfile(path):
+            return jsonify({"error": f"No saved model named {name!r}"}), 404
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                model = BuildingModel.from_dict(json.load(fh))
+        except (ValueError, KeyError, TypeError) as exc:
+            return jsonify({"error": f"Saved model is invalid: {exc}"}), 400
+        _state["model"] = model
+        return jsonify(model.to_dict())
+
+    @app.delete("/api/models/<name>")
+    def delete_model(name: str):
+        if not _MODEL_NAME_RE.fullmatch(name):
+            return jsonify({"error": "Model name must match "
+                                     "[A-Za-z0-9 _-]{1,60}"}), 400
+        path = _model_path(name)
+        if not os.path.isfile(path):
+            return jsonify({"error": f"No saved model named {name!r}"}), 404
+        os.remove(path)
+        return jsonify({"deleted": name})
+
+    # ------------------------------------------------ v0.3: section library
+    @app.get("/api/sections/library")
+    def sections_library():
+        return jsonify(library_to_dict())
 
     @app.post("/api/analyze")
     def analyze():

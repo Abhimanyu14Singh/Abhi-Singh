@@ -91,6 +91,16 @@ class FrameSection:
         J = a * c ** 3 * (16.0 / 3.0 - 3.36 * (c / a) * (1.0 - c ** 4 / (12.0 * a ** 4)))
         return FrameSection(name, material, A, I33, I22, J, b=b, h=h)
 
+    @staticmethod
+    def from_library(name: str, material: str) -> "FrameSection":
+        """Build a section from the built-in steel shape library (v0.3).
+
+        ``name`` is an AISC label like ``"W12x26"``; properties come from
+        :mod:`skyframe.core.sections_library` (SI units).
+        """
+        from skyframe.core.sections_library import library_section
+        return library_section(name, material)
+
     def to_dict(self) -> dict:
         return asdict(self)
 
@@ -321,13 +331,57 @@ class LoadPattern:
 
 @dataclass
 class LoadCase:
-    """Linear static case: scaled sum of load patterns."""
+    """Static case: scaled sum of load patterns.
+
+    ``pdelta`` (v0.3): solve the case on the P-Delta geometric stiffness
+    (OpenSees ``geomTransf('PDelta', ...)`` on every frame member).  The
+    gravity state that generates the geometric stiffness is defined by
+    ``pdelta_gravity`` (pattern -> factor); when ``None`` the case's own
+    patterns ARE the gravity state and the case is solved in a single
+    nonlinear stage.  Otherwise the engine applies the gravity state first,
+    holds it constant, then applies the case's own patterns and reports the
+    case's incremental (gravity-stiffened) response.
+    """
 
     name: str
     patterns: Dict[str, float]  # pattern name -> scale factor
+    pdelta: bool = False
+    pdelta_gravity: Optional[Dict[str, float]] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+RS_DIRECTIONS = ("X", "Y")
+RS_COMBO_METHODS = ("CQC", "SRSS")
+
+
+@dataclass
+class ResponseSpectrumCase:
+    """Response-spectrum analysis case (v0.3).
+
+    ``spectrum`` is a list of ``[T, Sa]`` points, T in seconds, Sa in units
+    of g.  Sa at a modal period is LINEARLY interpolated (clamped to the end
+    values outside the tabulated range).  ``num_modes == 0`` means "use all
+    modes the modal analysis computes".  Modal responses are combined with
+    CQC (constant damping ratio ``damping``) or SRSS; all combined results
+    are positive envelopes.  ``scale`` multiplies Sa.
+    """
+
+    name: str
+    direction: str                       # "X" | "Y"
+    spectrum: List[List[float]]          # [[T, Sa(g)], ...]
+    num_modes: int = 0                   # 0 = all computed modes
+    combo_method: str = "CQC"            # "CQC" | "SRSS"
+    damping: float = 0.05
+    scale: float = 1.0
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "direction": self.direction,
+                "spectrum": [[float(t), float(sa)] for t, sa in self.spectrum],
+                "num_modes": self.num_modes,
+                "combo_method": self.combo_method,
+                "damping": self.damping, "scale": self.scale}
 
 
 @dataclass
@@ -363,6 +417,7 @@ class BuildingModel:
     patterns: Dict[str, LoadPattern] = field(default_factory=dict)
     cases: Dict[str, LoadCase] = field(default_factory=dict)
     combos: Dict[str, LoadCombo] = field(default_factory=dict)
+    rs_cases: Dict[str, ResponseSpectrumCase] = field(default_factory=dict)
     num_modes: int = 6
 
     # ---------------- convenience API ----------------
@@ -467,21 +522,69 @@ class BuildingModel:
             self.patterns[name] = LoadPattern(name, kind)
         return self.patterns[name]
 
-    def add_case(self, name: str, patterns: Dict[str, float]) -> LoadCase:
+    def add_case(self, name: str, patterns: Dict[str, float],
+                 pdelta: bool = False,
+                 pdelta_gravity: Optional[Dict[str, float]] = None) -> LoadCase:
         for p in patterns:
             if p not in self.patterns:
                 raise ValueError(f"Case {name}: unknown pattern {p}")
-        c = LoadCase(name, dict(patterns))
+        for p in (pdelta_gravity or {}):
+            if p not in self.patterns:
+                raise ValueError(f"Case {name}: pdelta_gravity references "
+                                 f"unknown pattern {p}")
+        c = LoadCase(name, dict(patterns), pdelta=bool(pdelta),
+                     pdelta_gravity=(dict(pdelta_gravity)
+                                     if pdelta_gravity else None))
         self.cases[name] = c
         return c
 
     def add_combo(self, name: str, cases: Dict[str, float]) -> LoadCombo:
         for c in cases:
             if c not in self.cases:
+                if c in self.rs_cases:
+                    raise ValueError(f"Combo {name}: response-spectrum case "
+                                     f"{c!r} cannot enter a load combo (v0.3)")
                 raise ValueError(f"Combo {name}: unknown case {c}")
         cb = LoadCombo(name, dict(cases))
         self.combos[name] = cb
         return cb
+
+    def add_rs_case(self, name: str, direction: str,
+                    spectrum: List[List[float]], num_modes: int = 0,
+                    combo_method: str = "CQC", damping: float = 0.05,
+                    scale: float = 1.0) -> ResponseSpectrumCase:
+        rs = ResponseSpectrumCase(
+            name, direction,
+            [[float(t), float(sa)] for t, sa in spectrum],
+            num_modes=int(num_modes), combo_method=combo_method,
+            damping=float(damping), scale=float(scale))
+        self._validate_rs_case(rs)
+        self.rs_cases[name] = rs
+        return rs
+
+    @staticmethod
+    def _validate_rs_case(rs: ResponseSpectrumCase) -> None:
+        if rs.direction not in RS_DIRECTIONS:
+            raise ValueError(f"RS case {rs.name}: direction must be X|Y, "
+                             f"got {rs.direction!r}")
+        if rs.combo_method not in RS_COMBO_METHODS:
+            raise ValueError(f"RS case {rs.name}: combo_method must be "
+                             f"CQC|SRSS, got {rs.combo_method!r}")
+        if not rs.spectrum:
+            raise ValueError(f"RS case {rs.name}: spectrum must have at "
+                             "least one [T, Sa] point")
+        for pt in rs.spectrum:
+            if len(pt) != 2:
+                raise ValueError(f"RS case {rs.name}: spectrum points must "
+                                 "be [T, Sa] pairs")
+            t, sa = float(pt[0]), float(pt[1])
+            if t < 0.0 or sa < 0.0:
+                raise ValueError(f"RS case {rs.name}: spectrum values must "
+                                 f"be >= 0 (got [{t}, {sa}])")
+        if not 0.0 < rs.damping < 1.0:
+            raise ValueError(f"RS case {rs.name}: damping must be in (0, 1)")
+        if rs.num_modes < 0:
+            raise ValueError(f"RS case {rs.name}: num_modes must be >= 0")
 
     # ---------------- derived data ----------------
     def story_elevations(self) -> Dict[str, float]:
@@ -626,10 +729,20 @@ class BuildingModel:
             for p in case.patterns:
                 if p not in self.patterns:
                     raise ValueError(f"Case {case.name}: unknown pattern {p}")
+            for p in (case.pdelta_gravity or {}):
+                if p not in self.patterns:
+                    raise ValueError(f"Case {case.name}: pdelta_gravity "
+                                     f"references unknown pattern {p}")
         for combo in self.combos.values():
             for c in combo.cases:
                 if c not in self.cases:
+                    if c in self.rs_cases:
+                        raise ValueError(f"Combo {combo.name}: response-"
+                                         f"spectrum case {c!r} cannot enter "
+                                         "a load combo (v0.3)")
                     raise ValueError(f"Combo {combo.name}: unknown case {c}")
+        for rs in self.rs_cases.values():
+            self._validate_rs_case(rs)
 
     # ---------------- (de)serialisation ----------------
     def to_dict(self) -> dict:
@@ -652,6 +765,7 @@ class BuildingModel:
             "patterns": {k: v.to_dict() for k, v in self.patterns.items()},
             "cases": {k: v.to_dict() for k, v in self.cases.items()},
             "combos": {k: v.to_dict() for k, v in self.combos.items()},
+            "rs_cases": {k: v.to_dict() for k, v in self.rs_cases.items()},
             "num_modes": self.num_modes,
         }
 
@@ -748,11 +862,25 @@ class BuildingModel:
                                                float(a["q"])))
             mdl.patterns[name] = pat
         for name, cd in (d.get("cases") or {}).items():
-            mdl.cases[name] = LoadCase(cd.get("name", name), {
-                p: float(f) for p, f in (cd.get("patterns") or {}).items()})
+            pg = cd.get("pdelta_gravity")
+            mdl.cases[name] = LoadCase(
+                cd.get("name", name),
+                {p: float(f) for p, f in (cd.get("patterns") or {}).items()},
+                pdelta=bool(cd.get("pdelta", False)),
+                pdelta_gravity=({p: float(f) for p, f in pg.items()}
+                                if pg else None))
         for name, cd in (d.get("combos") or {}).items():
             mdl.combos[name] = LoadCombo(cd.get("name", name), {
                 c: float(f) for c, f in (cd.get("cases") or {}).items()})
+        for name, rd in (d.get("rs_cases") or {}).items():
+            mdl.rs_cases[name] = ResponseSpectrumCase(
+                name=rd.get("name", name), direction=rd["direction"],
+                spectrum=[[float(p[0]), float(p[1])]
+                          for p in rd["spectrum"]],
+                num_modes=int(rd.get("num_modes", 0)),
+                combo_method=rd.get("combo_method", "CQC"),
+                damping=float(rd.get("damping", 0.05)),
+                scale=float(rd.get("scale", 1.0)))
         mdl.num_modes = int(d.get("num_modes", 6))
         mdl.validate()
         return mdl
