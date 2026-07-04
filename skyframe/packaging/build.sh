@@ -8,8 +8,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."          # skyframe project root
 
-echo "==> Installing SkyFrame + packaging deps"
-pip install -q -e '.[desktop,dev]'
+echo "==> Installing SkyFrame + packaging deps (clean, non-editable)"
+# A non-editable install is REQUIRED: PyInstaller's collect_all bundles the
+# files from site-packages, and an editable install can leave it bundling
+# stale staged copies (old web/ assets, old server routes). Force a clean
+# copy of the current tree into site-packages before freezing.
+rm -rf build skyframe.egg-info
+pip uninstall -y skyframe >/dev/null 2>&1 || true
+pip install -q '.[desktop,dev]'
 
 echo "==> Sanity: OpenSees imports"
 python -c "import openseespy.opensees as ops; print('    opensees OK')"
