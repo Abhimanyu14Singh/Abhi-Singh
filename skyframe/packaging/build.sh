@@ -8,14 +8,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."          # skyframe project root
 
-echo "==> Installing SkyFrame + packaging deps (clean, non-editable)"
-# A non-editable install is REQUIRED: PyInstaller's collect_all bundles the
-# files from site-packages, and an editable install can leave it bundling
-# stale staged copies (old web/ assets, old server routes). Force a clean
-# copy of the current tree into site-packages before freezing.
+echo "==> Installing dependencies (once; tolerate already-satisfied)"
+# Deps are installed separately from SkyFrame so a slow/flaky dependency
+# build never blocks refreshing SkyFrame's own files in site-packages.
+pip install -q --upgrade wheel setuptools
+pip install -q openseespy numpy flask pywebview pyinstaller pytest
+
+echo "==> Reinstalling SkyFrame's own files (fresh, non-editable, no dep churn)"
+# CRITICAL: PyInstaller's collect_all bundles from site-packages. An editable
+# install (or a stale build/ staging dir) makes it freeze OLD web assets and
+# server routes. Force-copy the current tree in, dependencies untouched.
 rm -rf build skyframe.egg-info
-pip uninstall -y skyframe >/dev/null 2>&1 || true
-pip install -q '.[desktop,dev]'
+pip install -q --no-deps --force-reinstall .
 
 echo "==> Sanity: OpenSees imports"
 python -c "import openseespy.opensees as ops; print('    opensees OK')"

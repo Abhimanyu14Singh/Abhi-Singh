@@ -61,18 +61,25 @@ scrutinized benchmark tests.
 - [x] Semi-rigid diaphragm option
 - [x] Link elements (linear springs/dampers between points)
 
-## Wave 7 — remaining gaps  ✅ done (engine + modules; UI surfacing pending)
+## Wave 7 — remaining gaps  ✅ done (engine + modules + UI)
 - [x] Staged construction: sequential story-by-story gravity application
-      (OpenSees loadConst staging) with comparison to one-shot analysis
-- [x] Concrete design (preliminary): rebar input on rectangular sections,
-      ACI 318 flexural + shear capacity checks, demand/capacity table
-- [x] ETABS .e2k import (text subset: stories, points, line objects,
-      sections, load patterns) with import warnings
-- [x] Nonlinear time history (hysteretic Steel01/Concrete hinges on frame
-      members, Newmark + Newton) — validated on SDOF hysteretic benchmarks
-- IFC import: exploratory only (schema size makes a faithful importer a
-  separate project; a geometry-only IfcBeam/IfcColumn reader is the wave
-  target)
+      with comparison to one-shot analysis (+ case editor UI)
+- [x] Concrete design (preliminary): rebar input, ACI 318 flexural + shear
+      capacity checks, demand/capacity table (+ Design tab UI)
+- [x] ETABS .e2k import (stories, points, line objects, sections, patterns)
+      with import warnings (+ Import dialog UI)
+- [x] Nonlinear time history (Steel01 hinges, Newmark + Newton) — validated
+      on SDOF elastoplastic benchmark (+ nonlinear toggle UI)
+- [x] IFC geometry reader (storeys, columns/beams, rectangular extrusions)
+- [x] REST API for all design checks and importers; UI panels for each
+
+## Wave 8 — ASCE 7 code tools  ✅ done
+- [x] Self-weight loads (real member + shell density) with UI card
+- [x] ASCE 7-16 design response spectrum + code RS case (live preview UI)
+- [x] Automatic LRFD / ASD load-combination generation (UI card)
+- [x] Equivalent-lateral-force seismic pattern (UI card)
+- [x] REST endpoints + Loads-editor "Code tools (ASCE 7)" section
+- [x] Local standalone build (packaging/build.sh) — no cloud CI needed
 
 ## Phase 4 — Parity increment 2  ✅ done
 - [x] 1. Model save/open (.skyframe JSON files) with File menu + gallery
