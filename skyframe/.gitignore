@@ -8,3 +8,5 @@ dist/
 packaging/build/
 packaging/dist/
 examples/*.results.json
+packaging/*.tar.gz
+packaging/*.zip
