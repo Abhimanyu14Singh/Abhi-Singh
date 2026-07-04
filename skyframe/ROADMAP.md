@@ -61,11 +61,18 @@ scrutinized benchmark tests.
 - [ ] Semi-rigid diaphragm option
 - [ ] Link elements (linear springs/dampers between points)
 
-## Acknowledged long-horizon gaps (tracked, not scheduled)
-- Staged construction / sequential analysis
-- Full code-based concrete design (needs rebar modelling)
-- IFC import/export; ETABS .e2k import
-- Nonlinear time history with hysteretic materials
+## Wave 7 — remaining gaps (scheduled after Wave 6; scoped, not skipped)
+- [ ] Staged construction: sequential story-by-story gravity application
+      (OpenSees loadConst staging) with comparison to one-shot analysis
+- [ ] Concrete design (preliminary): rebar input on rectangular sections,
+      ACI 318 flexural + shear capacity checks, demand/capacity table
+- [ ] ETABS .e2k import (text subset: stories, points, line objects,
+      sections, load patterns) with import warnings
+- [ ] Nonlinear time history (hysteretic Steel01/Concrete hinges on frame
+      members, Newmark + Newton) — validated on SDOF hysteretic benchmarks
+- IFC import: exploratory only (schema size makes a faithful importer a
+  separate project; a geometry-only IfcBeam/IfcColumn reader is the wave
+  target)
 
 ## Phase 4 — Parity increment 2  ✅ items 1-5 done
 - [x] 1. Model save/open (.skyframe JSON files) with File menu + gallery
