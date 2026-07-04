@@ -37,29 +37,29 @@ scrutinized benchmark tests.
 - [x] End-to-end: draw → save → mesh → analyze → diagrams, verified in browser
 - [x] All suites green in CI-style run; docs updated
 
-## Wave 5 — ETABS gap closure I  ⏳ in progress
-- [ ] Envelope load combinations (min/max)
-- [ ] Mass source (e.g. DEAD + 0.25·LIVE)
-- [ ] Stiffness modifiers (cracked sections; frame + shell)
-- [ ] Auto wind lateral pattern (ASCE 7-style Kz profile)
-- [ ] Linear time-history analysis (Newmark, Rayleigh damping)
-- [ ] Column orientation angle
-- [ ] Shell internal forces + 3D force contours
-- [ ] Grid & story editors; brace drawing tool (with X-pair)
-- [ ] Printable report generator; CSV export everywhere
-- [ ] Wind / time-history / envelope / mass-source / modifier UIs
+## Wave 5 — ETABS gap closure I  ✅ done
+- [x] Envelope load combinations (min/max)
+- [x] Mass source (e.g. DEAD + 0.25·LIVE)
+- [x] Stiffness modifiers (cracked sections; frame + shell)
+- [x] Auto wind lateral pattern (ASCE 7-style Kz profile)
+- [x] Linear time-history analysis (Newmark, Rayleigh damping)
+- [x] Column orientation angle
+- [x] Shell internal forces + 3D force contours
+- [x] Grid & story editors; brace drawing tool (with X-pair)
+- [x] Printable report generator; CSV export everywhere
+- [x] Wind / time-history / envelope / mass-source / modifier UIs
 
-## Wave 5.5 — parallel modules  ⏳ in progress
-- [ ] Preliminary steel design checks (AISC 360 elastic interaction, clearly
+## Wave 5.5 — parallel modules  ✅ done
+- [x] Preliminary steel design checks (AISC 360 elastic interaction, clearly
       labelled preliminary — not a stamped-design replacement)
-- [ ] DXF import (grid + members from LINE entities on named layers)
+- [x] DXF import (grid + members from LINE entities on named layers)
 
-## Wave 6 — ETABS gap closure II  ⏭ queued (starts when Wave 5 silos free)
-- [ ] Wall/slab openings (mesher + model + UI)
-- [ ] Elevation-view drawing mode
-- [ ] Nonlinear static pushover (displacement-controlled, fiber/plastic hinges)
-- [ ] Semi-rigid diaphragm option
-- [ ] Link elements (linear springs/dampers between points)
+## Wave 6 — ETABS gap closure II  ✅ done
+- [x] Wall/slab openings (mesher + model + UI)
+- [x] Elevation-view drawing mode
+- [x] Nonlinear static pushover (displacement-controlled, fiber/plastic hinges)
+- [x] Semi-rigid diaphragm option
+- [x] Link elements (linear springs/dampers between points)
 
 ## Wave 7 — remaining gaps (scheduled after Wave 6; scoped, not skipped)
 - [ ] Staged construction: sequential story-by-story gravity application
