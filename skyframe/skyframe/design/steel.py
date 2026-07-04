@@ -48,7 +48,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-__all__ = ["MemberCheck", "check_members", "summarize", "E_STEEL"]
+__all__ = ["MemberCheck", "check_members", "check_members_envelope",
+           "summarize", "E_STEEL"]
 
 # --------------------------------------------------------------------------- #
 # constants
@@ -136,6 +137,7 @@ class MemberCheck:
     status: str = "N/A"                # "OK" | "NG" | "N/A"
     notes: List[str] = field(default_factory=list)
     preliminary: bool = True           # ALWAYS True — screening check only
+    governing_combo: str = ""          # v0.9 envelope: governing combo name
 
     def to_dict(self) -> dict:
         return {
@@ -145,6 +147,7 @@ class MemberCheck:
             "phiMn22": self.phiMn22, "ratio": self.ratio,
             "equation": self.equation, "status": self.status,
             "notes": list(self.notes), "preliminary": True,
+            "governing_combo": self.governing_combo,
         }
 
 
@@ -339,6 +342,42 @@ def check_members(model, results, case_or_combo: str, *,
             chk.equation = "H1-1b"
         chk.status = "OK" if chk.ratio <= 1.0 else "NG"
     return checks
+
+
+def check_members_envelope(model, results, combos: Optional[List[str]] = None,
+                           **kw) -> List[MemberCheck]:
+    """Governing AISC 360 member checks over a set of load combinations.
+
+    Runs :func:`check_members` for every combo in ``combos`` (default: every
+    name in ``results['combos']``) and returns, per member, the check with
+    the LARGEST interaction ratio, tagged with ``governing_combo``.  A member
+    that is "N/A" (no ratio) in every combo keeps the first combo's check.
+    ``**kw`` is forwarded unchanged (Fy, kx, ky, Lb, phi_b, phi_c).  A
+    single-combo envelope equals that combo's checks (plus the tag).
+    """
+    d = results.to_dict() if hasattr(results, "to_dict") else results
+    if combos is None:
+        combos = list((d.get("combos") or {}).keys())
+    if not combos:
+        raise ValueError("check_members_envelope: no combos to envelope "
+                         "(none supplied and results has no 'combos')")
+    per_combo = {c: check_members(model, d, c, **kw) for c in combos}
+    n = len(per_combo[combos[0]])
+    out: List[MemberCheck] = []
+    for i in range(n):
+        gov = per_combo[combos[0]][i]
+        gov_combo = combos[0]
+
+        def rr(chk: MemberCheck) -> float:
+            return chk.ratio if chk.ratio is not None else -math.inf
+
+        for c in combos[1:]:
+            chk = per_combo[c][i]
+            if rr(chk) > rr(gov):
+                gov, gov_combo = chk, c
+        gov.governing_combo = gov_combo
+        out.append(gov)
+    return out
 
 
 def summarize(checks: List[MemberCheck]) -> dict:

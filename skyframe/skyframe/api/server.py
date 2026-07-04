@@ -446,20 +446,27 @@ def create_app() -> Flask:
         """
         if not _OPENSEES_OK:
             return jsonify({"error": "OpenSeesPy is not available"}), 400
-        from skyframe.design.steel import check_members, summarize
+        from skyframe.design.steel import (check_members,
+                                           check_members_envelope, summarize)
         body = request.get_json(silent=True) or {}
         case = body.get("case")
-        if not isinstance(case, str) or not case:
-            return jsonify({"error": "'case' (name of a case/combo) is "
-                                     "required"}), 400
+        combos = body.get("combos")     # v0.9: True or ["name", ...]
+        if not combos and (not isinstance(case, str) or not case):
+            return jsonify({"error": "'case' (name of a case/combo) or "
+                                     "'combos' is required"}), 400
         kw = {k: float(body[k]) for k in ("Fy", "kx", "ky", "Lb")
               if isinstance(body.get(k), (int, float))}
         try:
             results = OpenSeesEngine(_state["model"]).run()
-            checks = check_members(_state["model"], results, case, **kw)
+            if combos:
+                names = combos if isinstance(combos, list) else None
+                checks = check_members_envelope(
+                    _state["model"], results, combos=names, **kw)
+            else:
+                checks = check_members(_state["model"], results, case, **kw)
         except Exception as exc:
             return jsonify({"error": str(exc)}), 400
-        return jsonify({"preliminary": True, "case": case,
+        return jsonify({"preliminary": True, "case": case, "combos": combos,
                         "checks": [c.to_dict() for c in checks],
                         "summary": summarize(checks)})
 
@@ -472,13 +479,15 @@ def create_app() -> Flask:
         """
         if not _OPENSEES_OK:
             return jsonify({"error": "OpenSeesPy is not available"}), 400
-        from skyframe.design.concrete import (RebarLayout,
-                                              check_concrete_members)
+        from skyframe.design.concrete import (
+            RebarLayout, check_concrete_members,
+            check_concrete_members_envelope)
         from skyframe.design.concrete import summarize as summ_c
         body = request.get_json(silent=True) or {}
         case = body.get("case")
-        if not isinstance(case, str) or not case:
-            return jsonify({"error": "'case' is required"}), 400
+        combos = body.get("combos")     # v0.9: True or ["name", ...]
+        if not combos and (not isinstance(case, str) or not case):
+            return jsonify({"error": "'case' or 'combos' is required"}), 400
         raw = body.get("rebar")
         if not isinstance(raw, dict):
             return jsonify({"error": "'rebar' must be a {uid: layout} "
@@ -488,13 +497,18 @@ def create_app() -> Flask:
             kw = {"fc": float(body["fc"])} if isinstance(
                 body.get("fc"), (int, float)) else {}
             results = OpenSeesEngine(_state["model"]).run()
-            checks = check_concrete_members(
-                _state["model"], results, case, rebar, **kw)
+            if combos:
+                names = combos if isinstance(combos, list) else None
+                checks = check_concrete_members_envelope(
+                    _state["model"], results, rebar, combos=names, **kw)
+            else:
+                checks = check_concrete_members(
+                    _state["model"], results, case, rebar, **kw)
         except (TypeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 400
         except Exception as exc:
             return jsonify({"error": str(exc)}), 400
-        return jsonify({"preliminary": True, "case": case,
+        return jsonify({"preliminary": True, "case": case, "combos": combos,
                         "checks": [c.to_dict() for c in checks],
                         "summary": summ_c(checks)})
 

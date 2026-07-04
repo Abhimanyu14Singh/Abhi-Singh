@@ -65,7 +65,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 __all__ = [
-    "RebarLayout", "ConcreteCheck", "check_concrete_members", "summarize",
+    "RebarLayout", "ConcreteCheck", "check_concrete_members",
+    "check_concrete_members_envelope", "summarize",
     "ES_REBAR", "PHI_COMPRESSION", "beta1", "rho_min", "phi_from_strain",
     "beam_flexure", "beam_shear", "column_interaction",
 ]
@@ -144,6 +145,7 @@ class ConcreteCheck:
     status: str = "N/A"                  # "OK" | "NG" | "N/A"
     notes: List[str] = field(default_factory=list)
     preliminary: bool = True             # ALWAYS True — screening check only
+    governing_combo: str = ""            # v0.9 envelope: governing combo name
 
     def to_dict(self) -> dict:
         return {
@@ -157,6 +159,7 @@ class ConcreteCheck:
             "ratio": self.ratio, "equation": self.equation,
             "status": self.status, "notes": list(self.notes),
             "preliminary": True,
+            "governing_combo": self.governing_combo,
         }
 
 
@@ -603,6 +606,45 @@ def _validate_layout(lay: RebarLayout) -> Optional[str]:
     if lay.stirrup_legs < 1:
         return f"invalid rebar layout: stirrup_legs = {lay.stirrup_legs}"
     return None
+
+
+def check_concrete_members_envelope(
+        model, results, rebar: Dict[str, RebarLayout],
+        combos: Optional[List[str]] = None, **kw) -> List[ConcreteCheck]:
+    """Governing ACI 318 concrete checks over a set of load combinations.
+
+    Runs :func:`check_concrete_members` for every combo in ``combos``
+    (default: every name in ``results['combos']``) and returns, per member,
+    the check with the LARGEST demand/capacity ratio, tagged with
+    ``governing_combo``.  A member that is "N/A" in every combo keeps the
+    first combo's check.  ``**kw`` is forwarded (fc, phi_flexure, phi_shear).
+    A single-combo envelope equals that combo's checks (plus the tag).
+    """
+    d = results.to_dict() if hasattr(results, "to_dict") else results
+    if combos is None:
+        combos = list((d.get("combos") or {}).keys())
+    if not combos:
+        raise ValueError("check_concrete_members_envelope: no combos to "
+                         "envelope (none supplied and results has no "
+                         "'combos')")
+    per_combo = {c: check_concrete_members(model, d, c, rebar, **kw)
+                 for c in combos}
+    n = len(per_combo[combos[0]])
+    out: List[ConcreteCheck] = []
+    for i in range(n):
+        gov = per_combo[combos[0]][i]
+        gov_combo = combos[0]
+
+        def rr(chk: ConcreteCheck) -> float:
+            return chk.ratio if chk.ratio is not None else -math.inf
+
+        for c in combos[1:]:
+            chk = per_combo[c][i]
+            if rr(chk) > rr(gov):
+                gov, gov_combo = chk, c
+        gov.governing_combo = gov_combo
+        out.append(gov)
+    return out
 
 
 def summarize(checks: List[ConcreteCheck]) -> dict:

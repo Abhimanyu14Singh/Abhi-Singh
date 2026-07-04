@@ -114,6 +114,14 @@ PUSHOVER_STEP_CAP = 2000
 # stiffness ratio exactly the case's ``hardening`` h.
 HINGE_STIFFNESS_FACTOR = 10.0
 
+# v0.9 rigid-end offsets: the rigid arm connecting a member's real end node to
+# the offset (flexible-element) node is a very-stiff elasticBeamColumn whose
+# E/G are the member's scaled by this factor (a "stiff element" rigid link —
+# CONTRACT v0.9 documents this choice over rigidLid constraints).  1e6 makes
+# the arm ~1e6x stiffer than the flexible span, so results match the exact
+# rigid-link value to well within the 1e-4 test tolerance.
+RIGID_LINK_FACTOR = 1.0e6
+
 _TOL = 1e-6
 _N_STATIONS = 11
 
@@ -600,6 +608,12 @@ class AnalysisResults:
     staged: Dict[str, StagedResults] = field(default_factory=dict)  # v0.6
     story_props: Dict[str, Dict[str, float]] = field(default_factory=dict)
     #   v0.8: per-story center of mass / center of rigidity (diaphragms only)
+    story_stiffness: Dict[str, Dict[str, Dict[str, float]]] = field(
+        default_factory=dict)
+    #   v0.9: per lateral case/story lateral stiffness {"kx","ky"} = V/Δ
+    irregularity: Dict[str, Dict[str, Dict[str, object]]] = field(
+        default_factory=dict)
+    #   v0.9: per lateral case/story ASCE 7 torsional + soft-story flags
     warning: str = ""                    # e.g. TH cases skipped (step cap)
 
     def to_dict(self) -> dict:
@@ -622,6 +636,14 @@ class AnalysisResults:
         if self.story_props:
             d["story_props"] = {s: dict(v)
                                 for s, v in self.story_props.items()}
+        if self.story_stiffness:
+            d["story_stiffness"] = {
+                c: {s: dict(v) for s, v in by_story.items()}
+                for c, by_story in self.story_stiffness.items()}
+        if self.irregularity:
+            d["irregularity"] = {
+                c: {s: dict(v) for s, v in by_story.items()}
+                for c, by_story in self.irregularity.items()}
         if self.warning:
             d["warning"] = self.warning
         return d
@@ -696,6 +718,12 @@ class OpenSeesEngine:
                   for name in model.staged_cases}
         story_props = self._compute_story_props()
         asm = self._asm if self._asm is not None else self._build()
+        # v0.9 seismic diagnostics over static cases + additive combos
+        diag_src = dict(cases)
+        for cname, cb in model.combos.items():
+            if cb.combo_type == "add" and cname in combos:
+                diag_src[cname] = combos[cname]
+        story_stiffness, irregularity = self._seismic_diagnostics(asm, diag_src)
         members = [{"uid": m.uid, "kind": m.kind, "section": m.section,
                     "ni": asm.ele_nodes[m.uid][0], "nj": asm.ele_nodes[m.uid][1],
                     "story": m.story}
@@ -716,6 +744,8 @@ class OpenSeesEngine:
             pushover=pushover,
             staged=staged,
             story_props=story_props,
+            story_stiffness=story_stiffness,
+            irregularity=irregularity,
             warning=warning,
         )
 
@@ -931,9 +961,20 @@ class OpenSeesEngine:
             torsion_only = np.outer(xax, xax)
             my_i = hinge_plan.get((m.uid, "i"))
             my_j = hinge_plan.get((m.uid, "j"))
+            # v0.9 rigid-end offsets: elastic element over the CLEAR span,
+            # stiff rigid-link arms to the real end nodes.  Only single-segment
+            # members (no shell-edge split) may carry offsets.
+            off_i, off_j = m.rigid_offset_i, m.rigid_offset_j
+            has_offset = (off_i + off_j) > _TOL
+            if has_offset and len(segs) != 1:
+                raise ValueError(
+                    f"Member {m.uid}: rigid end offsets are not supported on "
+                    "members split by shell-edge compatibility")
             for seg in segs:
                 etag += 1
-                ops.geomTransf("PDelta" if pdelta else "Linear", etag, *vecxz)
+                beam_etag = etag
+                ops.geomTransf("PDelta" if pdelta else "Linear",
+                               beam_etag, *vecxz)
                 rel_i = "Mi" in toks and seg.index == 0
                 rel_j = "Mj" in toks and seg.index == last
                 code = (1 if rel_i else 0) + (2 if rel_j else 0)
@@ -951,11 +992,42 @@ class OpenSeesEngine:
                     ops.node(tag, *mesh.points[seg.nj])
                     hinge_dups.append((m.uid, "j", m, seg.nj + 1, tag, my_j))
                     nj_tag = tag
-                ops.element("elasticBeamColumn", etag,
+                # rigid arms: insert an offset node inboard of each offset end
+                # and a very-stiff beam from the real/hinge node to it; the
+                # elastic element then spans the two offset nodes.
+                if has_offset and off_i > _TOL:
+                    pI = mesh.points[seg.ni]
+                    p_off = (pI[0] + off_i * xax[0], pI[1] + off_i * xax[1],
+                             pI[2] + off_i * xax[2])
+                    tag += 1
+                    ops.node(tag, *p_off)
+                    etag += 1
+                    ops.geomTransf("PDelta" if pdelta else "Linear",
+                                   etag, *vecxz)
+                    ops.element("elasticBeamColumn", etag, ni_tag, tag, A_eff,
+                                mat.E * RIGID_LINK_FACTOR,
+                                mat.G * RIGID_LINK_FACTOR, J_eff, I22_eff,
+                                I33_eff, etag)
+                    ni_tag = tag
+                if has_offset and off_j > _TOL:
+                    pJ = mesh.points[seg.nj]
+                    p_off = (pJ[0] - off_j * xax[0], pJ[1] - off_j * xax[1],
+                             pJ[2] - off_j * xax[2])
+                    tag += 1
+                    ops.node(tag, *p_off)
+                    etag += 1
+                    ops.geomTransf("PDelta" if pdelta else "Linear",
+                                   etag, *vecxz)
+                    ops.element("elasticBeamColumn", etag, tag, nj_tag, A_eff,
+                                mat.E * RIGID_LINK_FACTOR,
+                                mat.G * RIGID_LINK_FACTOR, J_eff, I22_eff,
+                                I33_eff, etag)
+                    nj_tag = tag
+                ops.element("elasticBeamColumn", beam_etag,
                             ni_tag, nj_tag,
                             A_eff, mat.E, mat.G, J_eff, I22_eff, I33_eff,
-                            etag, *extra)
-                asm.seg_ele[(m.uid, seg.index)] = etag
+                            beam_etag, *extra)
+                asm.seg_ele[(m.uid, seg.index)] = beam_etag
                 for node, released in ((seg.ni, rel_i), (seg.nj, rel_j)):
                     rot_add(node, torsion_only if released else eye3)
                     if released:
@@ -1849,6 +1921,113 @@ class OpenSeesEngine:
             else:
                 out[s.name] = model.plan_center()
         return out
+
+    # ---------------------------------------- v0.9 seismic diagnostics
+    @staticmethod
+    def _tors_ratio(u: float, rz: float, B: float) -> float:
+        """ASCE 7 §12.3.2.1 torsional ratio delta_max/delta_avg of two ends.
+
+        The diaphragm ends transverse to the loading axis are at +/- B/2 from
+        the master; their displacements in the loading direction are
+        ``u +/- rz*(B/2)``.  Returns 1.0 for a non-rotating (symmetric) story.
+        """
+        d1 = abs(u + rz * B / 2.0)
+        d2 = abs(u - rz * B / 2.0)
+        davg = 0.5 * (d1 + d2)
+        return max(d1, d2) / davg if davg > 1e-30 else 1.0
+
+    def _seismic_diagnostics(self, asm: _Assembly,
+                             results_by_name: Dict[str, CaseResults]
+                             ) -> Tuple[Dict[str, Dict[str, Dict[str, float]]],
+                                        Dict[str, Dict[str, Dict[str, object]]]]:
+        """Per lateral case: story lateral stiffness + ASCE 7 irregularity.
+
+        Pure POST-PROCESSING of the already-solved case results (no new
+        solves).  A case is diagnosed only when it carries a non-zero story
+        shear.  Story stiffness ``k = V_story / Delta`` uses the interstory
+        drift displacement ``Delta`` (m).  Torsional-irregularity ratios come
+        from the diaphragm master's translation + rotation (§12.3.2.1); the
+        soft-story stiffness ratio compares each story's stiffness (in the
+        case's dominant loading direction) with the story above and the
+        average of the three above (Table 12.3-2).
+        """
+        model = self.model
+        lx, ly = model.plan_extents()
+        stories = list(model.stories)               # bottom -> top
+        order = [s.name for s in stories]
+        stiffness: Dict[str, Dict[str, Dict[str, float]]] = {}
+        irregularity: Dict[str, Dict[str, Dict[str, object]]] = {}
+        for name, res in results_by_name.items():
+            st = res.story
+            if not any(abs(st.get(n, {}).get("shear_x", 0.0)) > 1e-12
+                       or abs(st.get(n, {}).get("shear_y", 0.0)) > 1e-12
+                       for n in order):
+                continue
+            kx_by: Dict[str, float] = {}
+            ky_by: Dict[str, float] = {}
+            prev_ux = prev_uy = 0.0
+            sk: Dict[str, Dict[str, float]] = {}
+            for s in stories:
+                info = st.get(s.name)
+                if info is None:
+                    continue
+                ux, uy = info["ux"], info["uy"]
+                dx, dy = ux - prev_ux, uy - prev_uy
+                vx, vy = info["shear_x"], info["shear_y"]
+                kx = (abs(vx / dx) if abs(dx) > 1e-15 and abs(vx) > 1e-15
+                      else 0.0)
+                ky = (abs(vy / dy) if abs(dy) > 1e-15 and abs(vy) > 1e-15
+                      else 0.0)
+                kx_by[s.name] = kx
+                ky_by[s.name] = ky
+                sk[s.name] = {"kx": kx, "ky": ky}
+                prev_ux, prev_uy = ux, uy
+            stiffness[name] = sk
+            # dominant loading direction picks the soft-story stiffness column
+            sum_vx = sum(abs(st.get(n, {}).get("shear_x", 0.0)) for n in order)
+            sum_vy = sum(abs(st.get(n, {}).get("shear_y", 0.0)) for n in order)
+            k_primary = kx_by if sum_vx >= sum_vy else ky_by
+            irr: Dict[str, Dict[str, object]] = {}
+            for idx, s in enumerate(stories):
+                if s.name not in st:
+                    continue
+                master = asm.masters.get(s.name)
+                if master is not None and master in res.node_disp:
+                    d = res.node_disp[master]
+                    u_x, u_y, rz = d[0], d[1], d[5]
+                else:
+                    u_x = st[s.name]["ux"]
+                    u_y = st[s.name]["uy"]
+                    rz = 0.0
+                tr_x = self._tors_ratio(u_x, rz, ly)
+                tr_y = self._tors_ratio(u_y, rz, lx)
+                trmax = max(tr_x, tr_y)
+                flag = ("extreme" if trmax >= 1.4 else
+                        "torsional" if trmax >= 1.2 else "none")
+                entry: Dict[str, object] = {
+                    "tors_ratio_x": tr_x, "tors_ratio_y": tr_y, "flag": flag}
+                # soft-story stiffness ratio (Table 12.3-2)
+                k_here = k_primary.get(s.name, 0.0)
+                k_above = (k_primary.get(order[idx + 1])
+                           if idx + 1 < len(order) else None)
+                above3 = [k_primary.get(n, 0.0)
+                          for n in order[idx + 1:idx + 4]]
+                avg3 = (sum(above3) / len(above3)) if above3 else None
+                soft_flag = ""
+                if k_above and k_above > 1e-15:
+                    entry["stiff_ratio"] = k_here / k_above
+                    r = k_here / k_above
+                    ra = (k_here / avg3) if avg3 and avg3 > 1e-15 else None
+                    if r < 0.6 or (ra is not None and ra < 0.7):
+                        soft_flag = "extreme_soft"
+                    elif r < 0.7 or (ra is not None and ra < 0.8):
+                        soft_flag = "soft"
+                else:
+                    entry["stiff_ratio"] = None
+                entry["soft_flag"] = soft_flag
+                irr[s.name] = entry
+            irregularity[name] = irr
+        return stiffness, irregularity
 
     # --------------------------------------------------------------- combos
     def _combine(self, name: str, combo: LoadCombo) -> CaseResults:

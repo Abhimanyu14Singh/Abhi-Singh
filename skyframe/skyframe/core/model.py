@@ -179,10 +179,29 @@ class FrameMember:
     #                                 member axis (degrees, right-hand about
     #                                 local +x); rotates the default local
     #                                 y/z triad (column orientation angle)
+    # v0.9 rigid-end offsets (ETABS-style rigid-zone). ``rigid_i``/``rigid_j``
+    # are the rigid-zone LENGTHS (m) at the i/j ends (e.g. half the supporting
+    # column depth); ``rigid_factor`` (0..1) is the fraction of that offset
+    # taken as rigid (ETABS rigid-zone factor).  The engine models the elastic
+    # element over the CLEAR span L - rigid_factor*(rigid_i + rigid_j) with
+    # very-stiff rigid links to the real end nodes at pi/pj.
+    rigid_i: float = 0.0
+    rigid_j: float = 0.0
+    rigid_factor: float = 1.0
 
     @property
     def length(self) -> float:
         return math.dist(self.pi, self.pj)
+
+    @property
+    def rigid_offset_i(self) -> float:
+        """Effective rigid-zone length at end i (rigid_factor * rigid_i)."""
+        return self.rigid_factor * self.rigid_i
+
+    @property
+    def rigid_offset_j(self) -> float:
+        """Effective rigid-zone length at end j (rigid_factor * rigid_j)."""
+        return self.rigid_factor * self.rigid_j
 
     def release_tokens(self) -> set:
         """Parsed set of release tokens (subset of {"Mi", "Mj"})."""
@@ -192,6 +211,8 @@ class FrameMember:
         return {"uid": self.uid, "kind": self.kind, "section": self.section,
                 "pi": list(self.pi), "pj": list(self.pj), "story": self.story,
                 "releases": self.releases, "angle": self.angle,
+                "rigid_i": self.rigid_i, "rigid_j": self.rigid_j,
+                "rigid_factor": self.rigid_factor,
                 "length": self.length}
 
 
@@ -773,21 +794,43 @@ class BuildingModel:
     def add_member(self, kind: str, section: str,
                    pi: Tuple[float, float, float], pj: Tuple[float, float, float],
                    story: str = "", uid: str = "",
-                   releases: str = "", angle: float = 0.0) -> FrameMember:
+                   releases: str = "", angle: float = 0.0,
+                   rigid_i: float = 0.0, rigid_j: float = 0.0,
+                   rigid_factor: float = 1.0) -> FrameMember:
         if section not in self.sections:
             raise ValueError(f"Unknown section {section}")
         uid = uid or f"{kind[0].upper()}{len(self.members) + 1}"
         m = FrameMember(uid, kind, section,
                         tuple(float(v) for v in pi),
                         tuple(float(v) for v in pj), story,
-                        releases=releases, angle=float(angle))
+                        releases=releases, angle=float(angle),
+                        rigid_i=float(rigid_i), rigid_j=float(rigid_j),
+                        rigid_factor=float(rigid_factor))
         if m.length < 1e-9:
             raise ValueError(f"Member {uid} has zero length")
         if not m.release_tokens() <= {"Mi", "Mj"}:
             raise ValueError(f"Member {uid}: bad releases {releases!r} "
                              "(tokens must be 'Mi'/'Mj')")
+        self._validate_rigid_offsets(m)
         self.members.append(m)
         return m
+
+    @staticmethod
+    def _validate_rigid_offsets(m: FrameMember) -> None:
+        for key in ("rigid_i", "rigid_j", "rigid_factor"):
+            v = getattr(m, key)
+            if not (isinstance(v, (int, float)) and math.isfinite(v)):
+                raise ValueError(f"Member {m.uid}: {key} must be finite "
+                                 f"(got {v!r})")
+        if m.rigid_i < 0.0 or m.rigid_j < 0.0:
+            raise ValueError(f"Member {m.uid}: rigid_i/rigid_j must be >= 0")
+        if not 0.0 <= m.rigid_factor <= 1.0:
+            raise ValueError(f"Member {m.uid}: rigid_factor must be in [0, 1] "
+                             f"(got {m.rigid_factor})")
+        if m.rigid_offset_i + m.rigid_offset_j >= m.length - 1e-9:
+            raise ValueError(f"Member {m.uid}: rigid offsets "
+                             f"({m.rigid_offset_i + m.rigid_offset_j:.4g} m) "
+                             f"leave no clear span (length {m.length:.4g} m)")
 
     def add_shell_section(self, sec: ShellSection) -> ShellSection:
         if sec.material not in self.materials:
@@ -1317,6 +1360,7 @@ class BuildingModel:
             if not m.release_tokens() <= {"Mi", "Mj"}:
                 raise ValueError(f"Member {m.uid}: bad releases "
                                  f"{m.releases!r}")
+            self._validate_rigid_offsets(m)
         region_uids = set()
         for r in self.shells:
             if r.uid in region_uids:
@@ -1475,7 +1519,10 @@ class BuildingModel:
                 pj=tuple(float(v) for v in md["pj"]),
                 story=md.get("story", ""),
                 releases=md.get("releases", ""),
-                angle=float(md.get("angle", 0.0))))
+                angle=float(md.get("angle", 0.0)),
+                rigid_i=float(md.get("rigid_i", 0.0)),
+                rigid_j=float(md.get("rigid_j", 0.0)),
+                rigid_factor=float(md.get("rigid_factor", 1.0))))
         for rd in d.get("shells") or []:
             mdl.shells.append(ShellRegion(
                 uid=rd["uid"], kind=rd["kind"], behavior=rd["behavior"],
