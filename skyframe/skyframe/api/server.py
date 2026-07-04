@@ -6,6 +6,7 @@ Endpoints per ``CONTRACT.md``:
 * ``GET  /static/<path>``   — static assets from the same web dir
 * ``GET  /api/health``      — liveness + OpenSees availability
 * ``GET  /api/model``       — current model as a dict
+* ``POST /api/model``       — replace the model (``BuildingModel.from_dict``)
 * ``POST /api/model/quick`` — regenerate the model via ``quick_building``
 * ``POST /api/analyze``     — run the OpenSees engine on the current model
 
@@ -110,6 +111,18 @@ def create_app() -> Flask:
     @app.get("/api/model")
     def get_model():
         return jsonify(_state["model"].to_dict())
+
+    @app.post("/api/model")
+    def set_model():
+        body = request.get_json(silent=True)
+        if body is None:
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        try:
+            model = BuildingModel.from_dict(body)
+        except (ValueError, KeyError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        _state["model"] = model
+        return jsonify(model.to_dict())
 
     @app.post("/api/model/quick")
     def quick_model():

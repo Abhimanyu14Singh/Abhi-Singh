@@ -17,6 +17,30 @@ from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Tuple
 
 G_ACCEL = 9.80665  # m/s^2
+_PLANAR_TOL = 1e-6  # m
+
+
+def _vsub(a: Tuple[float, float, float], b: Tuple[float, float, float]):
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def _vcross(a, b):
+    return (a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0])
+
+
+def _polygon_area3d(pts: List[Tuple[float, float, float]]) -> float:
+    """Area of a planar 3D polygon (vector shoelace: 0.5*|sum p_i x p_i+1|)."""
+    sx = sy = sz = 0.0
+    n = len(pts)
+    for i in range(n):
+        a, b = pts[i], pts[(i + 1) % n]
+        c = _vcross(a, b)
+        sx += c[0]
+        sy += c[1]
+        sz += c[2]
+    return 0.5 * math.sqrt(sx * sx + sy * sy + sz * sz)
 
 
 # --------------------------------------------------------------------------- #
@@ -71,6 +95,18 @@ class FrameSection:
         return asdict(self)
 
 
+@dataclass
+class ShellSection:
+    """Shell section (maps to OpenSees ElasticMembranePlateSection)."""
+
+    name: str
+    material: str
+    thickness: float  # m
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
 # --------------------------------------------------------------------------- #
 # Geometry
 # --------------------------------------------------------------------------- #
@@ -114,15 +150,50 @@ class FrameMember:
     pi: Tuple[float, float, float]  # (x, y, z) end i
     pj: Tuple[float, float, float]  # (x, y, z) end j
     story: str = ""                 # owning story name (reporting)
+    releases: str = ""              # comma-sep tokens "Mi"/"Mj": moment release
+    #                                 about BOTH local y & z at that end
 
     @property
     def length(self) -> float:
         return math.dist(self.pi, self.pj)
 
+    def release_tokens(self) -> set:
+        """Parsed set of release tokens (subset of {"Mi", "Mj"})."""
+        return {t.strip() for t in self.releases.split(",") if t.strip()}
+
     def to_dict(self) -> dict:
         return {"uid": self.uid, "kind": self.kind, "section": self.section,
                 "pi": list(self.pi), "pj": list(self.pj), "story": self.story,
-                "length": self.length}
+                "releases": self.releases, "length": self.length}
+
+
+@dataclass
+class ShellRegion:
+    """Planar 4-corner quad region: a wall or a slab.
+
+    ``behavior == "shell"``    — meshed into ShellMITC4 finite elements.
+    ``behavior == "membrane"`` — slabs only: never meshed; its area loads are
+    distributed to the edge beams by two-way (45 degree) tributary areas.
+    Corners must be planar and listed counter-clockwise.
+    """
+
+    uid: str
+    kind: str                              # "wall" | "slab"
+    behavior: str                          # "shell" | "membrane"
+    section: str                           # ShellSection name (membrane: unused)
+    corners: List[Tuple[float, float, float]]
+    mesh_size: float = 1.0                 # m, target FE size (shell behavior)
+    story: str = ""
+
+    @property
+    def area(self) -> float:
+        return _polygon_area3d([tuple(c) for c in self.corners])
+
+    def to_dict(self) -> dict:
+        return {"uid": self.uid, "kind": self.kind, "behavior": self.behavior,
+                "section": self.section,
+                "corners": [list(c) for c in self.corners],
+                "mesh_size": self.mesh_size, "story": self.story}
 
 
 # --------------------------------------------------------------------------- #
@@ -130,9 +201,51 @@ class FrameMember:
 # --------------------------------------------------------------------------- #
 @dataclass
 class MemberUDL:
-    """Uniform gravity load on a member (kN/m, positive downward)."""
+    """Uniform gravity load on a member (kN/m, positive downward).
+
+    Legacy v0.1 load; kept as a compatible alias for
+    ``MemberLoad(kind="udl", direction="gravity", a=0, b=1)``.
+    """
     member_uid: str
     w: float
+
+
+MEMBER_LOAD_KINDS = ("udl", "point", "trapezoid")
+MEMBER_LOAD_DIRECTIONS = ("gravity", "local_y", "global_x", "global_y",
+                          "global_z")
+
+
+@dataclass
+class MemberLoad:
+    """General frame-member load.
+
+    ``kind``:
+      * ``"udl"``       — uniform ``w`` (kN/m) over the fraction span [a, b]
+      * ``"point"``     — concentrated ``w`` (kN) at fraction ``a``
+      * ``"trapezoid"`` — linear from ``w`` (at ``a``) to ``w2`` (at ``b``), kN/m
+
+    ``a``/``b`` are FRACTIONS (0..1) of the member length.
+
+    ``direction``:
+      * ``"gravity"``  — global -Z, positive value acts downward
+      * ``"local_y"``  — along the member's local +y axis
+      * ``"global_x"|"global_y"|"global_z"`` — along that global axis
+    """
+
+    member_uid: str
+    kind: str = "udl"
+    w: float = 0.0
+    w2: float = 0.0
+    a: float = 0.0
+    b: float = 1.0
+    direction: str = "gravity"
+
+
+@dataclass
+class AreaLoad:
+    """Uniform area load on a shell region (kPa, positive DOWNWARD)."""
+    region_uid: str
+    q: float
 
 
 @dataclass
@@ -186,6 +299,14 @@ class LoadPattern:
     member_udls: List[MemberUDL] = field(default_factory=list)
     nodal_loads: List[NodalLoad] = field(default_factory=list)
     story_forces: List[StoryForce] = field(default_factory=list)
+    member_loads: List[MemberLoad] = field(default_factory=list)
+    area_loads: List[AreaLoad] = field(default_factory=list)
+
+    def all_member_loads(self) -> List[MemberLoad]:
+        """member_loads plus legacy member_udls expressed as MemberLoads."""
+        legacy = [MemberLoad(u.member_uid, kind="udl", w=u.w,
+                             direction="gravity") for u in self.member_udls]
+        return legacy + list(self.member_loads)
 
     def to_dict(self) -> dict:
         return {
@@ -193,6 +314,8 @@ class LoadPattern:
             "member_udls": [asdict(u) for u in self.member_udls],
             "nodal_loads": [asdict(n) for n in self.nodal_loads],
             "story_forces": [asdict(s) for s in self.story_forces],
+            "member_loads": [asdict(m) for m in self.member_loads],
+            "area_loads": [asdict(a) for a in self.area_loads],
         }
 
 
@@ -226,9 +349,11 @@ class BuildingModel:
     name: str = "Untitled Building"
     materials: Dict[str, Material] = field(default_factory=dict)
     sections: Dict[str, FrameSection] = field(default_factory=dict)
+    shell_sections: Dict[str, ShellSection] = field(default_factory=dict)
     grid: Optional[GridSystem] = None
     stories: List[Story] = field(default_factory=list)        # bottom -> top
     members: List[FrameMember] = field(default_factory=list)
+    shells: List[ShellRegion] = field(default_factory=list)
     base_fixity: str = "fixed"                                 # "fixed" | "pinned"
     supports: List[PointSupport] = field(default_factory=list)
     nodal_masses: List[NodalMass] = field(default_factory=list)
@@ -267,15 +392,75 @@ class BuildingModel:
 
     def add_member(self, kind: str, section: str,
                    pi: Tuple[float, float, float], pj: Tuple[float, float, float],
-                   story: str = "", uid: str = "") -> FrameMember:
+                   story: str = "", uid: str = "",
+                   releases: str = "") -> FrameMember:
         if section not in self.sections:
             raise ValueError(f"Unknown section {section}")
         uid = uid or f"{kind[0].upper()}{len(self.members) + 1}"
-        m = FrameMember(uid, kind, section, tuple(pi), tuple(pj), story)
+        m = FrameMember(uid, kind, section,
+                        tuple(float(v) for v in pi),
+                        tuple(float(v) for v in pj), story,
+                        releases=releases)
         if m.length < 1e-9:
             raise ValueError(f"Member {uid} has zero length")
+        if not m.release_tokens() <= {"Mi", "Mj"}:
+            raise ValueError(f"Member {uid}: bad releases {releases!r} "
+                             "(tokens must be 'Mi'/'Mj')")
         self.members.append(m)
         return m
+
+    def add_shell_section(self, sec: ShellSection) -> ShellSection:
+        if sec.material not in self.materials:
+            raise ValueError(f"Shell section {sec.name}: unknown material "
+                             f"{sec.material}")
+        if sec.thickness <= 0.0:
+            raise ValueError(f"Shell section {sec.name}: thickness must be > 0")
+        self.shell_sections[sec.name] = sec
+        return sec
+
+    def add_shell(self, kind: str, behavior: str, section: str,
+                  corners: List[Tuple[float, float, float]],
+                  mesh_size: float = 1.0, story: str = "",
+                  uid: str = "") -> ShellRegion:
+        """Add a wall/slab region (validates shape, planarity, references)."""
+        uid = uid or f"{'W' if kind == 'wall' else 'S'}{len(self.shells) + 1}"
+        region = ShellRegion(uid, kind, behavior, section,
+                             [tuple(float(v) for v in c) for c in corners],
+                             mesh_size=float(mesh_size), story=story)
+        self._validate_shell(region)
+        self.shells.append(region)
+        return region
+
+    def _validate_shell(self, region: ShellRegion) -> None:
+        if region.kind not in ("wall", "slab"):
+            raise ValueError(f"Shell {region.uid}: kind must be wall|slab")
+        if region.behavior not in ("shell", "membrane"):
+            raise ValueError(f"Shell {region.uid}: behavior must be "
+                             "shell|membrane")
+        if region.behavior == "membrane" and region.kind != "slab":
+            raise ValueError(f"Shell {region.uid}: membrane behavior is only "
+                             "supported for slabs")
+        if len(region.corners) != 4:
+            raise ValueError(f"Shell {region.uid}: needs exactly 4 corners")
+        if region.behavior == "shell":
+            if region.section not in self.shell_sections:
+                raise ValueError(f"Shell {region.uid}: unknown shell section "
+                                 f"{region.section}")
+            if region.mesh_size <= 0.0:
+                raise ValueError(f"Shell {region.uid}: mesh_size must be > 0")
+        c = [tuple(map(float, p)) for p in region.corners]
+        if region.area < 1e-9:
+            raise ValueError(f"Shell {region.uid}: degenerate (zero area)")
+        # planarity: distance of corner 3 from the plane of corners 0-1-2
+        n = _vcross(_vsub(c[1], c[0]), _vsub(c[2], c[0]))
+        nn = math.sqrt(n[0] ** 2 + n[1] ** 2 + n[2] ** 2)
+        if nn < 1e-12:
+            raise ValueError(f"Shell {region.uid}: corners 0-1-2 are collinear")
+        d = _vsub(c[3], c[0])
+        dist = abs(d[0] * n[0] + d[1] * n[1] + d[2] * n[2]) / nn
+        if dist > _PLANAR_TOL:
+            raise ValueError(f"Shell {region.uid}: corners are not planar "
+                             f"(off-plane {dist:.2e} m)")
 
     def pattern(self, name: str, kind: str = "other") -> LoadPattern:
         if name not in self.patterns:
@@ -335,11 +520,37 @@ class BuildingModel:
                     m = self._member(udl.member_uid)
                     if m is not None and m.story == s.name and m.kind != "column":
                         total_w += fac * udl.w * m.length
+                for ml in pat.member_loads:
+                    if ml.direction != "gravity":
+                        continue
+                    m = self._member(ml.member_uid)
+                    if m is None or m.story != s.name or m.kind == "column":
+                        continue
+                    if ml.kind == "point":
+                        total_w += fac * ml.w
+                    elif ml.kind == "udl":
+                        total_w += fac * ml.w * (ml.b - ml.a) * m.length
+                    else:  # trapezoid
+                        total_w += fac * 0.5 * (ml.w + ml.w2) \
+                            * (ml.b - ml.a) * m.length
+                for al in pat.area_loads:
+                    region = self._shell(al.region_uid)
+                    if region is None or not self._region_on_story(region, s):
+                        continue
+                    total_w += fac * al.q * region.area
                 for nl in pat.nodal_loads:
                     if abs(nl.point[2] - s.elevation) < 1e-6:
                         total_w += fac * (-nl.fz)  # downward = -fz
             masses[s.name] = total_w / G_ACCEL
         return masses
+
+    @staticmethod
+    def _region_on_story(region: ShellRegion, story: Story) -> bool:
+        """Attribute a shell region to a story (mass bookkeeping)."""
+        if region.story:
+            return region.story == story.name
+        zs = [c[2] for c in region.corners]
+        return abs(max(zs) - story.elevation) < 1e-6
 
     def _member(self, uid: str) -> Optional[FrameMember]:
         for m in self.members:
@@ -347,22 +558,201 @@ class BuildingModel:
                 return m
         return None
 
+    def _shell(self, uid: str) -> Optional[ShellRegion]:
+        for r in self.shells:
+            if r.uid == uid:
+                return r
+        return None
+
+    # ---------------- validation ----------------
+    def validate(self) -> None:
+        """Cross-reference validation; raises ValueError on the first issue."""
+        for sec in self.sections.values():
+            if sec.material not in self.materials:
+                raise ValueError(f"Section {sec.name}: unknown material "
+                                 f"{sec.material}")
+        for ssec in self.shell_sections.values():
+            if ssec.material not in self.materials:
+                raise ValueError(f"Shell section {ssec.name}: unknown "
+                                 f"material {ssec.material}")
+        uids = set()
+        for m in self.members:
+            if m.uid in uids:
+                raise ValueError(f"Duplicate member uid {m.uid!r}")
+            uids.add(m.uid)
+            if m.section not in self.sections:
+                raise ValueError(f"Member {m.uid}: unknown section {m.section}")
+            if m.length < 1e-9:
+                raise ValueError(f"Member {m.uid} has zero length")
+            if not m.release_tokens() <= {"Mi", "Mj"}:
+                raise ValueError(f"Member {m.uid}: bad releases "
+                                 f"{m.releases!r}")
+        region_uids = set()
+        for r in self.shells:
+            if r.uid in region_uids:
+                raise ValueError(f"Duplicate shell uid {r.uid!r}")
+            region_uids.add(r.uid)
+            self._validate_shell(r)
+        for pat in self.patterns.values():
+            for u in pat.member_udls:
+                if u.member_uid not in uids:
+                    raise ValueError(f"Pattern {pat.name}: UDL references "
+                                     f"unknown member {u.member_uid!r}")
+            for ml in pat.member_loads:
+                if ml.member_uid not in uids:
+                    raise ValueError(f"Pattern {pat.name}: member load "
+                                     f"references unknown member "
+                                     f"{ml.member_uid!r}")
+                if ml.kind not in MEMBER_LOAD_KINDS:
+                    raise ValueError(f"Pattern {pat.name}: bad member load "
+                                     f"kind {ml.kind!r}")
+                if ml.direction not in MEMBER_LOAD_DIRECTIONS:
+                    raise ValueError(f"Pattern {pat.name}: bad member load "
+                                     f"direction {ml.direction!r}")
+                if ml.kind == "point":
+                    if not 0.0 <= ml.a <= 1.0:
+                        raise ValueError(f"Pattern {pat.name}: point load "
+                                         f"position a={ml.a} outside [0, 1]")
+                elif not 0.0 <= ml.a <= ml.b <= 1.0:
+                    raise ValueError(f"Pattern {pat.name}: load span "
+                                     f"[{ml.a}, {ml.b}] must satisfy "
+                                     "0 <= a <= b <= 1")
+            for al in pat.area_loads:
+                if al.region_uid not in region_uids:
+                    raise ValueError(f"Pattern {pat.name}: area load "
+                                     f"references unknown shell region "
+                                     f"{al.region_uid!r}")
+        for case in self.cases.values():
+            for p in case.patterns:
+                if p not in self.patterns:
+                    raise ValueError(f"Case {case.name}: unknown pattern {p}")
+        for combo in self.combos.values():
+            for c in combo.cases:
+                if c not in self.cases:
+                    raise ValueError(f"Combo {combo.name}: unknown case {c}")
+
     # ---------------- (de)serialisation ----------------
     def to_dict(self) -> dict:
         return {
             "name": self.name,
             "materials": {k: v.to_dict() for k, v in self.materials.items()},
             "sections": {k: v.to_dict() for k, v in self.sections.items()},
+            "shell_sections": {k: v.to_dict()
+                               for k, v in self.shell_sections.items()},
             "grid": self.grid.to_dict() if self.grid else None,
             "stories": [s.to_dict() for s in self.stories],
             "members": [m.to_dict() for m in self.members],
+            "shells": [r.to_dict() for r in self.shells],
             "base_fixity": self.base_fixity,
             "supports": [s.to_dict() for s in self.supports],
             "nodal_masses": [m.to_dict() for m in self.nodal_masses],
             "rigid_diaphragms": self.rigid_diaphragms,
             "story_masses": self.compute_story_masses(),
+            "mass_from_patterns": dict(self.mass_from_patterns),
             "patterns": {k: v.to_dict() for k, v in self.patterns.items()},
             "cases": {k: v.to_dict() for k, v in self.cases.items()},
             "combos": {k: v.to_dict() for k, v in self.combos.items()},
             "num_modes": self.num_modes,
         }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "BuildingModel":
+        """Rebuild a model from ``to_dict()`` output (exact round trip).
+
+        ``story_masses`` from the dict are kept as *explicit* masses so a
+        round-tripped model reports the exact same masses it was saved with.
+        Derived fields (section G, member length, grid labels) are ignored.
+        Raises ``ValueError``/``TypeError``/``KeyError`` on malformed input.
+        """
+        if not isinstance(d, dict):
+            raise ValueError("model must be a JSON object")
+        mdl = cls(name=str(d.get("name", "Untitled Building")))
+        for name, md in (d.get("materials") or {}).items():
+            mdl.materials[name] = Material(
+                name=md.get("name", name), E=float(md["E"]),
+                nu=float(md.get("nu", 0.2)),
+                unit_weight=float(md.get("unit_weight", 24.0)))
+        for name, sd in (d.get("sections") or {}).items():
+            mdl.sections[name] = FrameSection(
+                name=sd.get("name", name), material=sd["material"],
+                A=float(sd["A"]), I33=float(sd["I33"]), I22=float(sd["I22"]),
+                J=float(sd["J"]), b=float(sd.get("b", 0.0)),
+                h=float(sd.get("h", 0.0)))
+        for name, sd in (d.get("shell_sections") or {}).items():
+            mdl.shell_sections[name] = ShellSection(
+                name=sd.get("name", name), material=sd["material"],
+                thickness=float(sd["thickness"]))
+        gd = d.get("grid")
+        if gd:
+            mdl.grid = GridSystem([float(x) for x in gd["x_lines"]],
+                                  [float(y) for y in gd["y_lines"]])
+        for sd in d.get("stories") or []:
+            mdl.stories.append(Story(sd["name"], float(sd["height"]),
+                                     float(sd.get("elevation", 0.0))))
+        for md in d.get("members") or []:
+            mdl.members.append(FrameMember(
+                uid=md["uid"], kind=md["kind"], section=md["section"],
+                pi=tuple(float(v) for v in md["pi"]),
+                pj=tuple(float(v) for v in md["pj"]),
+                story=md.get("story", ""),
+                releases=md.get("releases", "")))
+        for rd in d.get("shells") or []:
+            mdl.shells.append(ShellRegion(
+                uid=rd["uid"], kind=rd["kind"], behavior=rd["behavior"],
+                section=rd.get("section", ""),
+                corners=[tuple(float(v) for v in c) for c in rd["corners"]],
+                mesh_size=float(rd.get("mesh_size", 1.0)),
+                story=rd.get("story", "")))
+        mdl.base_fixity = d.get("base_fixity", "fixed")
+        if mdl.base_fixity not in ("fixed", "pinned"):
+            raise ValueError(f"base_fixity must be fixed|pinned, got "
+                             f"{mdl.base_fixity!r}")
+        for sd in d.get("supports") or []:
+            r = [int(bool(v)) for v in sd["restraints"]]
+            if len(r) != 6:
+                raise ValueError("support restraints must have 6 entries")
+            mdl.supports.append(PointSupport(
+                tuple(float(v) for v in sd["point"]), tuple(r)))
+        for md in d.get("nodal_masses") or []:
+            mdl.nodal_masses.append(NodalMass(
+                tuple(float(v) for v in md["point"]),
+                mx=float(md.get("mx", 0.0)), my=float(md.get("my", 0.0)),
+                mz=float(md.get("mz", 0.0))))
+        mdl.rigid_diaphragms = bool(d.get("rigid_diaphragms", True))
+        mdl.story_masses = {k: float(v)
+                            for k, v in (d.get("story_masses") or {}).items()}
+        mdl.mass_from_patterns = {
+            k: float(v) for k, v in (d.get("mass_from_patterns") or {}).items()}
+        for name, pd in (d.get("patterns") or {}).items():
+            pat = LoadPattern(pd.get("name", name), pd.get("kind", "other"))
+            for u in pd.get("member_udls") or []:
+                pat.member_udls.append(MemberUDL(u["member_uid"],
+                                                 float(u["w"])))
+            for n in pd.get("nodal_loads") or []:
+                pat.nodal_loads.append(NodalLoad(
+                    tuple(float(v) for v in n["point"]),
+                    fx=float(n.get("fx", 0.0)), fy=float(n.get("fy", 0.0)),
+                    fz=float(n.get("fz", 0.0))))
+            for s in pd.get("story_forces") or []:
+                pat.story_forces.append(StoryForce(
+                    s["story"], fx=float(s.get("fx", 0.0)),
+                    fy=float(s.get("fy", 0.0))))
+            for m in pd.get("member_loads") or []:
+                pat.member_loads.append(MemberLoad(
+                    member_uid=m["member_uid"], kind=m.get("kind", "udl"),
+                    w=float(m.get("w", 0.0)), w2=float(m.get("w2", 0.0)),
+                    a=float(m.get("a", 0.0)), b=float(m.get("b", 1.0)),
+                    direction=m.get("direction", "gravity")))
+            for a in pd.get("area_loads") or []:
+                pat.area_loads.append(AreaLoad(a["region_uid"],
+                                               float(a["q"])))
+            mdl.patterns[name] = pat
+        for name, cd in (d.get("cases") or {}).items():
+            mdl.cases[name] = LoadCase(cd.get("name", name), {
+                p: float(f) for p, f in (cd.get("patterns") or {}).items()})
+        for name, cd in (d.get("combos") or {}).items():
+            mdl.combos[name] = LoadCombo(cd.get("name", name), {
+                c: float(f) for c, f in (cd.get("cases") or {}).items()})
+        mdl.num_modes = int(d.get("num_modes", 6))
+        mdl.validate()
+        return mdl
