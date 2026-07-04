@@ -866,3 +866,110 @@ diaphragms; keys omitted otherwise), per diaphragm story:
 `POST /api/model` round-trips ``spring_supports``, ``thermal_alpha``, and the
 pattern ``accidental_torsion``/``ecc``/``thermal_loads`` fields; the
 ``/api/analyze`` results carry ``story_props`` automatically.
+
+---
+
+# v0.9 additions — rigid-end offsets, seismic irregularity diagnostics, design envelopes
+
+## Rigid-end offsets (`skyframe/core/model.py`, engine)
+
+```python
+# FrameMember gains (ETABS-style rigid-zone; all round-trip, absent = defaults):
+#   rigid_i: float = 0.0        # rigid-zone LENGTH (m) at end i
+#   rigid_j: float = 0.0        # rigid-zone LENGTH (m) at end j
+#   rigid_factor: float = 1.0   # fraction of the offset taken as rigid (0..1)
+# Properties: rigid_offset_i = rigid_factor*rigid_i,
+#             rigid_offset_j = rigid_factor*rigid_j.
+# add_member(..., rigid_i=, rigid_j=, rigid_factor=); validation: rigid_i/j >= 0,
+#   rigid_factor in [0, 1], and rigid_offset_i + rigid_offset_j < length (a
+#   member must keep a positive clear span).
+```
+
+Engine: a member with a non-zero effective offset keeps its real end NODES at
+`pi`/`pj`; the elastic ``elasticBeamColumn`` spans the CLEAR length
+`L_clear = L - rigid_factor*(rigid_i + rigid_j)` between two intermediate
+offset nodes, each tied to the real end node by a **very-stiff
+elasticBeamColumn rigid arm** (E/G scaled by `RIGID_LINK_FACTOR = 1e6` — the
+"stiff element" choice from the two options; results match the exact rigid-link
+value to ~1e-6, well within the 1e-4 test tolerance).  `rigid_factor = 0`
+reproduces the plain member EXACTLY.  Rigid offsets are supported only on
+single-segment members (a member split for shell-edge compatibility raises a
+clear error).  Reported member end forces / stations come from the elastic
+(clear-span) element; member loads on an offset member act over the clear span
+(documented).  Works in linear, P-Delta, and combo runs.
+
+Hand-checked closed forms (all rigid-link precision): a horizontal cantilever
+with a rigid zone at the FIXED end (rigid_i = a) has tip deflection
+`P*(L - rf*a)^3 / (3 E I33)`; a rigid zone at the LOADED end additionally
+transfers the load's offset moment `M = P*a`
+(`P l^3/3EI + P a l^2/EI + P a^2 l/EI`, l = L-a); a fixed-fixed beam with equal
+end offsets a has central-point-load midspan deflection
+`P*(L-2a)^3/(192 E I33)`.
+
+## Story stiffness + seismic irregularity diagnostics
+
+Top-level results gain two blocks, computed by PURE post-processing of the
+already-solved cases (no new solves), for each static case AND additive combo
+that carries a non-zero story shear:
+
+```jsonc
+"story_stiffness": {
+  "<case>": {"<story>": {"kx": 0, "ky": 0}}      // k = V_story / Delta
+},
+"irregularity": {
+  "<case>": {"<story>": {
+     "tors_ratio_x": 1.0, "tors_ratio_y": 1.0,   // ASCE 7 §12.3.2.1
+     "flag": "none|torsional|extreme",           // 1.2 / 1.4 thresholds
+     "stiff_ratio": 0.0,   // k_story / k_story_above (null on the top story)
+     "soft_flag": "|soft|extreme_soft"           // Table 12.3-2 §12.3.2.2
+  }}
+}
+```
+
+* **Story lateral stiffness** `k = V_story / Delta` uses the interstory drift
+  DISPLACEMENT `Delta` (m) = story disp minus story-below disp; verified against
+  `Sum 12 E I / h^3` on a guided single-column shear frame.  `kx`/`ky` are 0
+  when that direction has no drift or no shear.
+* **Torsional-irregularity ratio** = `delta_max / delta_avg` of the two
+  diaphragm ends transverse to the loading axis, with
+  `delta_end = u ± rz*(B/2)` from the diaphragm master's translation `u` and
+  rotation `rz` (B = plan extent perpendicular to the force: `Ly` for x,
+  `Lx` for y).  `flag` = "torsional" at ratio >= 1.2, "extreme" at >= 1.4.
+  Master-less stories report ratio 1.0 (no rotation info).
+* **Soft-story stiffness ratio** compares each story's stiffness (in the
+  case's dominant loading direction) with the story above (`stiff_ratio`) and
+  the average of the three above; `soft_flag` = "soft" (< 70% of the story
+  above OR < 80% of avg-of-3) / "extreme_soft" (< 60% OR < 70% of avg-of-3).
+  The top story has `stiff_ratio = null` and an empty `soft_flag`.
+
+## Design over all load combinations (envelope)
+
+```python
+# skyframe/design/steel.py
+check_members_envelope(model, results, combos: list[str] | None = None, **kw)
+    -> list[MemberCheck]
+# skyframe/design/concrete.py
+check_concrete_members_envelope(model, results, rebar, combos=None, **kw)
+    -> list[ConcreteCheck]
+```
+
+Each runs the per-combo check for every name in `combos` (default: every name
+in `results["combos"]`) and returns, per member, the check with the LARGEST
+demand/capacity ratio, tagged with the new field `governing_combo` (added to
+`MemberCheck`/`ConcreteCheck` and their `to_dict()`; default `""`).  A member
+that is N/A in every combo keeps the first combo's check; a single-combo
+envelope equals that combo's checks (plus the tag).  `summarize(...)` works on
+the returned envelope list unchanged.
+
+## API additions
+
+`POST /api/design/steel` and `POST /api/design/concrete` gain an optional
+`"combos"` field: `true` runs the envelope over ALL combos in the freshly-run
+analysis, a `["name", ...]` list over the named combos; the single-case path
+(`"case"`) is unchanged.  The request needs `"case"` OR `"combos"` (else 400).
+Response items carry `governing_combo`; the response echoes `"combos"`.
+
+`POST /api/model` round-trips the FrameMember `rigid_i`/`rigid_j`/
+`rigid_factor` fields; `POST /api/analyze` returns the `story_stiffness` and
+`irregularity` blocks automatically (present when the model has a lateral case
+with story shear).
