@@ -1211,6 +1211,35 @@ class OpenSeesEngine:
             for t in nodes:
                 ops.load(t, fx / len(nodes), fy / len(nodes), 0.0, 0.0, 0.0, 0.0)
 
+        # v0.7 self-weight: an ETABS-style self-weight factor turns each
+        # material's real weight into exact loads through the existing member-
+        # load and area-load paths — a global -Z member load A*unit_weight
+        # (kN/m) on every frame member (applied via the "global_z" direction
+        # so vertical columns pick up their axial self-weight instead of being
+        # skipped) and an area load thickness*unit_weight (kN/m^2, downward)
+        # on every shell region that resolves to a shell section.
+        swf = getattr(pat, "self_weight_factor", 0.0)
+        if swf:
+            for member in model.members:
+                sec = model.sections.get(member.section)
+                mat = model.materials.get(sec.material) if sec else None
+                if sec is None or mat is None:
+                    continue
+                w_sw = swf * sec.A * mat.unit_weight        # kN/m, downward
+                if w_sw == 0.0:
+                    continue
+                self._apply_member_load(asm, member, "udl", -w_sw * scale,
+                                        0.0, 0.0, 1.0, "global_z")
+            for region in model.shells:
+                ssec = model.shell_sections.get(region.section)
+                mat = model.materials.get(ssec.material) if ssec else None
+                if ssec is None or mat is None:
+                    continue
+                q_sw = swf * ssec.thickness * mat.unit_weight   # kN/m^2 down
+                if q_sw == 0.0:
+                    continue
+                self._apply_area_load(asm, region.uid, q_sw * scale)
+
     # ----------------------------------------------- member load machinery
     def _apply_member_load(self, asm: _Assembly, member: FrameMember,
                            kind: str, w: float, w2: float, a: float, b: float,

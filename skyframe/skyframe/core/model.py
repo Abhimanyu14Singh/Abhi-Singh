@@ -379,12 +379,19 @@ class LoadPattern:
     """Named set of loads (like an ETABS load pattern)."""
 
     name: str
-    kind: str = "other"  # "dead" | "live" | "quake" | "other"
+    kind: str = "other"  # "dead" | "live" | "quake" | "wind" | "other"
     member_udls: List[MemberUDL] = field(default_factory=list)
     nodal_loads: List[NodalLoad] = field(default_factory=list)
     story_forces: List[StoryForce] = field(default_factory=list)
     member_loads: List[MemberLoad] = field(default_factory=list)
     area_loads: List[AreaLoad] = field(default_factory=list)
+    # v0.7 self-weight: ETABS-style — the pattern applies each material's real
+    # self-weight (unit_weight, kN/m^3) scaled by this factor.  0.0 (default)
+    # means the pattern carries no self-weight (pre-v0.7 behavior).  The
+    # engine turns it into an exact global -Z member load (A*unit_weight,
+    # kN/m) on every frame member and an area load (thickness*unit_weight,
+    # kN/m^2) on every shell region.
+    self_weight_factor: float = 0.0
 
     def all_member_loads(self) -> List[MemberLoad]:
         """member_loads plus legacy member_udls expressed as MemberLoads."""
@@ -400,6 +407,7 @@ class LoadPattern:
             "story_forces": [asdict(s) for s in self.story_forces],
             "member_loads": [asdict(m) for m in self.member_loads],
             "area_loads": [asdict(a) for a in self.area_loads],
+            "self_weight_factor": self.self_weight_factor,
         }
 
 
@@ -1151,6 +1159,29 @@ class BuildingModel:
                 for nl in pat.nodal_loads:
                     if abs(nl.point[2] - s.elevation) < 1e-6:
                         total_w += fac * (-nl.fz)  # downward = -fz
+                # v0.7: self-weight patterns contribute their real weight to
+                # story mass (beams + shells on the story; columns span
+                # stories and are excluded, matching the member-UDL rule).
+                swf = getattr(pat, "self_weight_factor", 0.0)
+                if swf:
+                    for m in self.members:
+                        if m.story != s.name or m.kind == "column":
+                            continue
+                        sec = self.sections.get(m.section)
+                        mat = (self.materials.get(sec.material)
+                               if sec else None)
+                        if sec is not None and mat is not None:
+                            total_w += (fac * swf * sec.A
+                                        * mat.unit_weight * m.length)
+                    for region in self.shells:
+                        if not self._region_on_story(region, s):
+                            continue
+                        ssec = self.shell_sections.get(region.section)
+                        mat = (self.materials.get(ssec.material)
+                               if ssec else None)
+                        if ssec is not None and mat is not None:
+                            total_w += (fac * swf * ssec.thickness
+                                        * mat.unit_weight * region.net_area)
             masses[s.name] = total_w / G_ACCEL
         return masses
 
@@ -1390,6 +1421,8 @@ class BuildingModel:
             k: float(v) for k, v in (d.get("mass_source") or {}).items()}
         for name, pd in (d.get("patterns") or {}).items():
             pat = LoadPattern(pd.get("name", name), pd.get("kind", "other"))
+            # v0.7 self-weight factor; absent (pre-v0.7 files) => 0.0
+            pat.self_weight_factor = float(pd.get("self_weight_factor", 0.0))
             for u in pd.get("member_udls") or []:
                 pat.member_udls.append(MemberUDL(u["member_uid"],
                                                  float(u["w"])))

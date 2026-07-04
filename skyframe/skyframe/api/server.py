@@ -54,7 +54,10 @@ from typing import Any, Dict
 
 from flask import Flask, jsonify, request, send_from_directory
 
-from skyframe.core.builder import make_wind_pattern, quick_building
+from skyframe.core.builder import (add_self_weight, make_wind_pattern,
+                                   quick_building)
+from skyframe.core.codes import (apply_asce7_combinations, asce7_elf,
+                                 make_rs_case_from_code)
 from skyframe.core.model import BuildingModel
 from skyframe.core.sections_library import library_to_dict
 
@@ -281,6 +284,92 @@ def create_app() -> Flask:
                 basic_wind_speed=float(v),
                 exposure=body.get("exposure", "C"),
                 cp_total=float(cp), importance=float(imp))
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(_state["model"].to_dict())
+
+    # -------------------------------------------- v0.7: self-weight + codes
+    def _num(body: Dict[str, Any], key: str, default=None, required=False):
+        """Fetch a numeric field (rejects bools), with optional default."""
+        if key not in body or body.get(key) is None:
+            if required:
+                raise ValueError(f"{key!r} is required")
+            return default
+        v = body[key]
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise ValueError(f"{key!r} must be a number")
+        return float(v)
+
+    @app.post("/api/pattern/selfweight")
+    def pattern_selfweight():
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        name = body.get("name", "SW")
+        if not isinstance(name, str) or not name.strip() or len(name) > 60:
+            return jsonify({"error": "'name' must be a non-empty string "
+                                     "(max 60 chars)"}), 400
+        try:
+            factor = _num(body, "factor", default=1.0)
+            add_self_weight(_state["model"], pattern=name.strip(),
+                            factor=factor)
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(_state["model"].to_dict())
+
+    @app.post("/api/combos/asce7")
+    def combos_asce7():
+        body = request.get_json(silent=True)
+        if body is None:
+            body = {}
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        standard = body.get("standard", "LRFD")
+        try:
+            apply_asce7_combinations(_state["model"], standard=standard)
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(_state["model"].to_dict())
+
+    @app.post("/api/case/rs-code")
+    def case_rs_code():
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        name = body.get("name")
+        if not isinstance(name, str) or not name.strip():
+            return jsonify({"error": "'name' is required"}), 400
+        try:
+            make_rs_case_from_code(
+                _state["model"], name.strip(),
+                direction=body.get("direction", "X"),
+                Ss=_num(body, "Ss", required=True),
+                S1=_num(body, "S1", required=True),
+                site_class=body.get("site_class", "D"),
+                R=_num(body, "R", default=8.0),
+                Ie=_num(body, "Ie", default=1.0))
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(_state["model"].to_dict())
+
+    @app.post("/api/pattern/elf")
+    def pattern_elf():
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        name = body.get("name", "ELF")
+        if not isinstance(name, str) or not name.strip() or len(name) > 60:
+            return jsonify({"error": "'name' must be a non-empty string "
+                                     "(max 60 chars)"}), 400
+        try:
+            asce7_elf(
+                _state["model"],
+                SDS=_num(body, "SDS", required=True),
+                SD1=_num(body, "SD1", required=True),
+                R=_num(body, "R", required=True),
+                Ie=_num(body, "Ie", default=1.0),
+                direction=body.get("direction", "X"),
+                name=name.strip())
         except (ValueError, TypeError) as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify(_state["model"].to_dict())

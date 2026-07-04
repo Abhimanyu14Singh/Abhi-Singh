@@ -6,6 +6,7 @@ v0.4 also hosts the automatic ASCE 7-style wind pattern generator
 
 from __future__ import annotations
 
+import math
 from typing import List, Optional
 
 from .model import (BuildingModel, FrameSection, GridSystem, LoadPattern,
@@ -104,6 +105,30 @@ def quick_building(
     mdl.add_combo("0.9D + 1.0EX", {"DEAD": 0.9, "EQX": 1.0})
     mdl.num_modes = min(3 * stories, 12)
     return mdl
+
+
+# --------------------------------------------------------------------------- #
+# v0.7: self-weight pattern helper
+# --------------------------------------------------------------------------- #
+def add_self_weight(model: BuildingModel, pattern: str = "SW",
+                    factor: float = 1.0) -> LoadPattern:
+    """Create (or update) a self-weight load pattern + matching case.
+
+    ETABS-style: the pattern applies each material's real self-weight
+    (``Material.unit_weight``, kN/m^3) scaled by ``factor`` — the engine
+    turns it into exact global -Z member loads (``A*unit_weight`` kN/m on
+    every frame member) and shell area loads (``thickness*unit_weight``
+    kN/m^2).  The pattern is stored under ``pattern`` with kind ``"dead"``
+    and a single-pattern case of the same name is added if absent.  Add the
+    pattern to ``model.mass_source`` to include self-weight in story masses.
+    """
+    if not math.isfinite(float(factor)):
+        raise ValueError("self-weight factor must be finite")
+    pat = model.pattern(pattern, "dead")
+    pat.self_weight_factor = float(factor)
+    if pattern not in model.cases:
+        model.add_case(pattern, {pattern: 1.0})
+    return pat
 
 
 # --------------------------------------------------------------------------- #

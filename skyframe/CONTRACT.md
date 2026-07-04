@@ -687,3 +687,81 @@ the nonlinear TimeHistoryCase fields; ``POST /api/analyze`` returns the
 All design/import results carry `preliminary: true` where applicable; every
 importer returns non-fatal parse issues in `warnings` (never 500). Design
 endpoints run a fresh analysis of the current model before checking.
+
+---
+
+# v0.7 additions — self-weight loads + ASCE 7-16 code helpers
+
+## Self-weight (`skyframe/core/model.py`, engine)
+
+```python
+# LoadPattern gains (ETABS-style: a pattern applies self-weight * factor):
+#   self_weight_factor: float = 0.0
+```
+
+* When a pattern in the active case has `self_weight_factor != 0`, the engine
+  adds each material's real self-weight (`Material.unit_weight`, kN/m^3):
+  * every FRAME member gets a global -Z distributed load
+    `factor * A * unit_weight` (kN/m over its length), applied through the
+    exact member-load path via the `"global_z"` direction so vertical
+    COLUMNS pick up their axial self-weight (they are not skipped like a
+    plain "gravity" load) — nominal `A` (stiffness modifiers do NOT scale
+    weight);
+  * every SHELL region that resolves to a `ShellSection` gets an area load
+    `factor * thickness * unit_weight` (kN/m^2, downward) through the exact
+    area-load path (shell FE tributary or membrane two-way distribution).
+* `compute_story_masses` includes a self-weight pattern automatically when
+  it is in `mass_source` (beams + shells on the story; columns are excluded,
+  matching the existing member-UDL rule).
+* `to_dict`/`from_dict` round-trip `self_weight_factor`; absent key
+  (pre-v0.7) = 0.0.
+* Builder helper: `add_self_weight(model, pattern="SW", factor=1.0)` creates
+  (or updates) a kind-`"dead"` self-weight pattern plus a matching
+  single-pattern case and returns the pattern.
+
+## Code helpers (`skyframe/core/codes.py`, NEW — ASCE 7-16)
+
+```python
+site_coefficients(Ss, S1, site_class="D") -> (Fa, Fv)
+    # Tables 11.4-1 / 11.4-2 (classes A-E), linear interpolation across the
+    # Ss/S1 breakpoints, clamped at the end columns.
+spectrum_parameters(Ss, S1, site_class="D") -> (SDS, SD1, SMS, SM1, T0, Ts)
+    # SMS=Fa*Ss, SM1=Fv*S1, SDS=2/3 SMS, SD1=2/3 SM1, T0=0.2 SD1/SDS,
+    # Ts=SD1/SDS.
+asce7_spectrum(Ss, S1, site_class="D", TL=8.0) -> [[T, Sa_g], ...]
+    # multilinear design spectrum: ramp 0.4 SDS -> SDS on [0,T0], flat SDS on
+    # [T0,Ts], SD1/T on [Ts,TL], SD1*TL/T^2 beyond; corner points sampled
+    # exactly. Suitable for a ResponseSpectrumCase.
+make_rs_case_from_code(model, name, direction, Ss, S1, site_class="D",
+                       R=8.0, Ie=1.0, TL=8.0, num_modes=0,
+                       combo_method="CQC", damping=0.05) -> ResponseSpectrumCase
+    # spectrum = asce7_spectrum(...); the design reduction Ie/R (§12.9.1.1)
+    # is carried on the case `scale` (raw spectrum stays inspectable).
+asce7_combinations(model, standard="LRFD") -> {name: {case: factor}}
+    # ASCE 7-16 §2.3 (LRFD) or §2.4 (ASD) combos, cases matched by pattern
+    # kind (dead/live/quake/wind). ±E / ±W sign variants. A term whose kind
+    # has no matching case is dropped with a UserWarning (no DEAD => empty).
+apply_asce7_combinations(model, standard="LRFD") -> {name: {case: factor}}
+    # same dict, also added to model.combos.
+asce7_elf(model, SDS, SD1, R, Ie=1.0, Ct=0.0466, x=0.9, direction="X",
+          name="ELF") -> LoadPattern
+    # §12.8: Ta=Ct*hn^x (hn=top elevation); Cs=min(SDS/(R/Ie),
+    # SD1/(Ta(R/Ie))) floored at max(0.044 SDS Ie, 0.01); V=Cs*W (W from
+    # story masses); Fx=V*(w h^k)/sum(w h^k), k=1 (T<=0.5), 2 (T>=2.5),
+    # linear between. Stores a kind-"quake" story-force pattern.
+```
+
+LRFD combos for a model with DEAD/LIVE/EQX/EQY: `1.4D`; `1.2D+1.6L`;
+`1.2D+1.0L±1.0EQX`; `0.9D±1.0EQX`; and the EQY variants. ASD uses `D`,
+`D+L`, `D±0.7EQ`, `D+0.75L±0.525EQ`, `0.6D±0.7EQ` (wind uses 0.6W factors).
+
+## API additions
+
+| Method | Path                     | Body / Response |
+|--------|--------------------------|-----------------|
+| POST   | `/api/pattern/selfweight`| `{name?, factor?}` (defaults "SW"/1.0) → updated model dict; 400 on bad input |
+| POST   | `/api/combos/asce7`      | `{standard?}` ("LRFD"|"ASD", default LRFD) → updated model dict; 400 on bad standard |
+| POST   | `/api/case/rs-code`      | `{name, direction?, Ss, S1, site_class?, R?, Ie?}` → updated model dict; 400 on bad input |
+| POST   | `/api/pattern/elf`       | `{name?, SDS, SD1, R, Ie?, direction?}` → updated model dict; 400 on bad input |
+
+All four mutate the single current in-memory model and return `model.to_dict()`.
