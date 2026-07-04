@@ -40,7 +40,7 @@ export function mockModel(p = {}) {
   const members = [];
   const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
   const add = (kind, section, pi, pj, story, uid) =>
-    members.push({ uid, kind, section, pi, pj, story, length: dist(pi, pj), releases: "" });
+    members.push({ uid, kind, section, pi, pj, story, length: dist(pi, pj), releases: "", angle: 0 });
 
   stories.forEach((st, si) => {
     const zt = st.elevation, zb = st.elevation - st.height;
@@ -144,18 +144,29 @@ export function mockModel(p = {}) {
     },
   };
 
+  // v0.4: a demo time-history case (ramped decaying sine, m/s²)
+  const sine = [];
+  for (let i = 0; i <= 400; i++) {
+    const t = i * 0.02;
+    const env = Math.min(t / 1.0, 1) * Math.exp(-0.18 * Math.max(t - 4, 0));
+    sine.push(+(2.5 * env * Math.sin(2 * Math.PI * 1.2 * t)).toFixed(4));
+  }
+
   return {
     name: o.name,
     materials: { CONC: { name: "CONC", E: o.E, nu: 0.2, unit_weight: 24 } },
     sections: {
-      COL: { name: "COL", material: "CONC", b: o.column_size, h: o.column_size },
-      BEAM: { name: "BEAM", material: "CONC", b: o.beam_b, h: o.beam_h },
+      COL: { name: "COL", material: "CONC", b: o.column_size, h: o.column_size,
+        mod_A: 1, mod_I33: 1, mod_I22: 1, mod_J: 1 },
+      BEAM: { name: "BEAM", material: "CONC", b: o.beam_b, h: o.beam_h,
+        mod_A: 1, mod_I33: 1, mod_I22: 1, mod_J: 1 },
     },
     shell_sections, shells,
     grid, stories, members,
     base_fixity: o.base_fixity,
     supports: [], nodal_masses: [], rigid_diaphragms: true,
     story_masses,
+    mass_source: { DEAD: 1.0 },
     patterns,
     cases: {
       DEAD: { name: "DEAD", patterns: { DEAD: 1 }, pdelta: false },
@@ -164,11 +175,18 @@ export function mockModel(p = {}) {
       EQY: { name: "EQY", patterns: { EQY: 1 }, pdelta: false },
     },
     rs_cases,
+    th_cases: {
+      "TH-SINE-X": {
+        name: "TH-SINE-X", direction: "X", accel: sine,
+        dt: 0.02, damping: 0.05, scale: 1.0,
+      },
+    },
     combos: {
-      "1.2D + 1.6L": { name: "1.2D + 1.6L", cases: { DEAD: 1.2, LIVE: 1.6 } },
-      "1.2D + 1.0L + 1.0EX": { name: "1.2D + 1.0L + 1.0EX", cases: { DEAD: 1.2, LIVE: 1.0, EQX: 1.0 } },
-      "1.2D + 1.0L + 1.0EY": { name: "1.2D + 1.0L + 1.0EY", cases: { DEAD: 1.2, LIVE: 1.0, EQY: 1.0 } },
-      "0.9D + 1.0EX": { name: "0.9D + 1.0EX", cases: { DEAD: 0.9, EQX: 1.0 } },
+      "1.2D + 1.6L": { name: "1.2D + 1.6L", combo_type: "add", cases: { DEAD: 1.2, LIVE: 1.6 } },
+      "1.2D + 1.0L + 1.0EX": { name: "1.2D + 1.0L + 1.0EX", combo_type: "add", cases: { DEAD: 1.2, LIVE: 1.0, EQX: 1.0 } },
+      "1.2D + 1.0L + 1.0EY": { name: "1.2D + 1.0L + 1.0EY", combo_type: "add", cases: { DEAD: 1.2, LIVE: 1.0, EQY: 1.0 } },
+      "0.9D + 1.0EX": { name: "0.9D + 1.0EX", combo_type: "add", cases: { DEAD: 0.9, EQX: 1.0 } },
+      "ENV: EQ": { name: "ENV: EQ", combo_type: "envelope", cases: { EQX: 1.0, EQY: 1.0 } },
     },
     num_modes: Math.min(3 * o.stories, 12),
     _mock_params: o,
@@ -375,12 +393,90 @@ export function mockResults(model) {
     return { node_disp, reactions, base, member_forces, member_stations, story };
   }
 
+  /* ---- v0.4: per-quad shell internal forces for STATIC cases.
+     [Nxx, Nyy, Nxy, Mxx, Myy, Mxy, Vxz, Vyz] — kN/m and kN·m/m.
+     Deterministic plausible fields: slab sagging bubbles under gravity,
+     wall shear-flow + chord forces under lateral load. */
+  const regionOf = {};
+  for (const sh of (model.shells || [])) regionOf[sh.uid] = sh;
+  function shellForcesFor(mode, dirX) {
+    const sf = {};
+    shell_quads.forEach((q, i) => {
+      const c = [0, 0, 0];
+      for (const tg of q.nodes) {
+        const p = nodes[tg];
+        c[0] += p[0] / 4; c[1] += p[1] / 4; c[2] += p[2] / 4;
+      }
+      const sh = regionOf[q.region];
+      const kind = sh ? sh.kind : "slab";
+      let u = 0.5, v = 0.5, Lu = 6, Lv = 6;
+      if (sh) {
+        const xs3 = sh.corners.map(p => p[0]), ys3 = sh.corners.map(p => p[1]),
+          zs3 = sh.corners.map(p => p[2]);
+        if (kind === "slab") {
+          Lu = Math.max(...xs3) - Math.min(...xs3) || 1;
+          Lv = Math.max(...ys3) - Math.min(...ys3) || 1;
+          u = (c[0] - Math.min(...xs3)) / Lu;
+          v = (c[1] - Math.min(...ys3)) / Lv;
+        } else {
+          const a = sh.corners[0], b = sh.corners[1];
+          Lu = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+          Lv = Math.max(...zs3) - Math.min(...zs3) || 1;
+          u = ((c[0] - a[0]) * (b[0] - a[0]) + (c[1] - a[1]) * (b[1] - a[1])) / (Lu * Lu);
+          v = (c[2] - Math.min(...zs3)) / Lv;
+        }
+      }
+      let f;
+      if (kind === "slab") {
+        if (mode === "gravity") {
+          const bub = Math.sin(Math.PI * u) * Math.sin(Math.PI * v);   // 0 edge → 1 center
+          const q0 = 5.5;
+          const Mx = q0 * Lu * Lu / 24 * (bub - 0.32);
+          const My = q0 * Lv * Lv / 27 * (bub - 0.30);
+          f = [-q0 * 1.6 * (1 - bub), -q0 * 1.9 * (1 - bub),
+            q0 * 2.2 * (u - 0.5) * (v - 0.5) * 4,
+            Mx, My, Mx * 0.4 * (u - 0.5) * (v - 0.5) * 4,
+            q0 * Lu / 5 * (0.5 - u) * 2, q0 * Lv / 5 * (0.5 - v) * 2];
+        } else {
+          // diaphragm: modest in-plane shear, near-zero plate bending
+          const nq = V / 40 * (1 - c[2] / H);
+          f = [nq * (u - 0.5) * 2, nq * (v - 0.5) * 2, nq * (dirX ? 1 : 0.7),
+            0.15 * (u - 0.5), 0.12 * (v - 0.5), 0.05, 0.3, 0.25];
+        }
+      } else {                                     // wall
+        if (mode === "gravity") {
+          const Nc = -(1 - c[2] / H) * 55;
+          f = [8 * (u - 0.5), Nc, 5 * (u - 0.5) * (1 - v),
+            0.3 * (u - 0.5), 0.9 * (0.5 - v), 0.15, 0.4, 1.1];
+        } else {
+          const s = dirX ? 1 : 0.55;
+          const Vs = V * (1 - 0.8 * c[2] / H) * s;   // shear flow, decays with height
+          const nxy = Vs / Math.max(Lu, 1) / Math.max(supports.length / 4, 1);
+          const nxx = (u - 0.5) * 2 * V * (1 - c[2] / H) * 2.6 * s / Math.max(Lu, 1);
+          f = [nxx, nxx * 0.3, nxy,
+            0.6 * (u - 0.5) * s, 0.4 * (0.5 - v) * s, 0.2 * s,
+            1.4 * s * (0.5 - v), 0.8 * s];
+        }
+      }
+      sf[String(i)] = f.map(x => +(x * jit(0.06)).toFixed(4));
+    });
+    return sf;
+  }
+
   const cases = {
     DEAD: gravityCase((model._mock_params && model._mock_params.dead_udl) || 25, "DEAD"),
     LIVE: gravityCase((model._mock_params && model._mock_params.live_udl) || 10, "LIVE"),
     EQX: lateralCase(true),
     EQY: lateralCase(false),
   };
+  if (shell_quads.length) {
+    cases.DEAD.shell_forces = shellForcesFor("gravity", true);
+    const liveSf = shellForcesFor("gravity", true);
+    for (const k of Object.keys(liveSf)) liveSf[k] = liveSf[k].map(x => +(x * 0.42).toFixed(4));
+    cases.LIVE.shell_forces = liveSf;
+    cases.EQX.shell_forces = shellForcesFor("lateral", true);
+    cases.EQY.shell_forces = shellForcesFor("lateral", false);
+  }
 
   // combos = linear superposition of case dicts
   function combine(factors) {
@@ -411,8 +507,42 @@ export function mockResults(model) {
     }
     return out;
   }
+  /* ---- v0.4: envelope combos — element-wise max (standard keys) and min
+     (nested "min" block) across the factored single-case results. */
+  function foldInto(dst, src, fn) {
+    for (const [k, v] of Object.entries(src)) {
+      if (typeof v === "number") dst[k] = fn(dst[k] === undefined ? v : dst[k], v);
+      else if (Array.isArray(v)) {
+        if (!Array.isArray(dst[k])) dst[k] = v.slice();
+        else dst[k] = dst[k].map((x, i) => fn(x, v[i]));
+      } else if (v && typeof v === "object") {
+        dst[k] = dst[k] || {};
+        foldInto(dst[k], v, fn);
+      }
+    }
+  }
+  function combineEnvelope(factors) {
+    const parts = Object.entries(factors)
+      .filter(([cn]) => cases[cn])
+      .map(([cn, f]) => combine({ [cn]: f }));
+    if (!parts.length) return combine({});
+    const mx = JSON.parse(JSON.stringify(parts[0]));
+    const mn = JSON.parse(JSON.stringify(parts[0]));
+    for (let i = 1; i < parts.length; i++) {
+      foldInto(mx, parts[i], Math.max);
+      foldInto(mn, parts[i], Math.min);
+    }
+    // station x-coordinates stay coordinates, not extrema of themselves
+    for (const [u, st] of Object.entries(mx.member_stations || {}))
+      if (mn.member_stations[u]) mn.member_stations[u].x = st.x.slice();
+    return { ...mx, min: mn };
+  }
   const combos = {};
-  for (const [name, cb] of Object.entries(model.combos || {})) combos[name] = combine(cb.cases);
+  for (const [name, cb] of Object.entries(model.combos || {})) {
+    combos[name] = ((cb.combo_type || "add") === "envelope")
+      ? combineEnvelope(cb.cases)
+      : combine(cb.cases);
+  }
 
   // ---- v0.3: response-spectrum cases — POSITIVE ENVELOPES of a lateral run
   function envelope(src, f) {
@@ -473,6 +603,49 @@ export function mockResults(model) {
     shapes[String(m)] = shape;
   }
 
+  /* ---- v0.4: time-history cases — SDOF (first mode) central-difference
+     integration of the ground record, spread over the sway profile. */
+  const th_out = {};
+  for (const [name, tc] of Object.entries(model.th_cases || {})) {
+    const dt = (isFinite(tc.dt) && tc.dt > 0) ? tc.dt : 0.02;
+    const ag = (Array.isArray(tc.accel) && tc.accel.length ? tc.accel : [0, 0])
+      .map(a => a * (isFinite(tc.scale) ? tc.scale : 1));
+    const n = ag.length;
+    const dirX = tc.direction !== "Y";
+    const T = periods[dirX ? 0 : 1] || periods[0] || 0.6;
+    const om = 2 * Math.PI / T;
+    const zeta = isFinite(tc.damping) ? tc.damping : 0.05;
+    // u'' + 2ζω u' + ω² u = -ag   (central difference, u in m)
+    const u = new Array(n).fill(0);
+    if (n > 2) {
+      const a0 = 1 / (dt * dt) + zeta * om / dt;
+      for (let i = 1; i < n - 1; i++) {
+        const rhs = -ag[i]
+          - (om * om - 2 / (dt * dt)) * u[i]
+          - (1 / (dt * dt) - zeta * om / dt) * u[i - 1];
+        u[i + 1] = rhs / a0;
+      }
+    }
+    const t = Array.from({ length: n }, (_, i) => +(i * dt).toFixed(4));
+    const Mtot = W / G;                                  // tonnes
+    const round = v => +v.toFixed(6);
+    const story_ux = {}, story_uy = {};
+    for (const s of storyOrder) {
+      const f = sway(storyElev[s]);
+      const tr = u.map(x => round(x * f));
+      story_ux[s] = dirX ? tr : tr.map(() => 0);
+      story_uy[s] = dirX ? tr.map(() => 0) : tr;
+    }
+    const Vt = u.map(x => +(om * om * x * Mtot * 0.82).toFixed(3));   // kN
+    const base_FX = dirX ? Vt : Vt.map(() => 0);
+    const base_FY = dirX ? Vt.map(() => 0) : Vt;
+    const peakOf = arr => arr.reduce((a, b) => Math.max(a, Math.abs(b)), 0);
+    const peaks = { story: {}, base: { FX: peakOf(base_FX), FY: peakOf(base_FY) } };
+    for (const s of storyOrder)
+      peaks.story[s] = { ux: peakOf(story_ux[s]), uy: peakOf(story_uy[s]) };
+    th_out[name] = { t, story_ux, story_uy, base_FX, base_FY, peaks };
+  }
+
   return {
     model_name: model.name,
     nodes, members, supports,
@@ -480,8 +653,48 @@ export function mockResults(model) {
     story_elev: storyElev,
     shell_quads,
     cases, combos, rs_cases,
+    th_cases: th_out,
     modal: { periods, frequencies, participation, shapes },
   };
+}
+
+/* ================================================================
+   v0.4 — mock POST /api/pattern/wind
+   ================================================================ */
+
+/** Adds a wind load pattern with an ASCE-7-style story-force profile to the
+    model dict (mutates + returns it). p: {name, direction, V (m/s),
+    exposure "B"|"C"|"D", Cp}. */
+export function mockWindPattern(model, p = {}) {
+  const name = (p.name || "WIND").trim() || "WIND";
+  const dirX = p.direction !== "Y";
+  const V = isFinite(p.V) && p.V > 0 ? p.V : 40;         // m/s, 3-s gust
+  const exp_ = ["B", "C", "D"].includes(p.exposure) ? p.exposure : "C";
+  const Cp = isFinite(p.Cp) ? p.Cp : 0.8;
+  const alpha = { B: 7.0, C: 9.5, D: 11.5 }[exp_];
+  const zg = { B: 365.76, C: 274.32, D: 213.36 }[exp_];  // m
+  const Kz = z => 2.01 * Math.pow(Math.max(z, 4.6) / zg, 2 / alpha);
+  const qz = z => 0.613 * Kz(z) * V * V / 1000;          // kPa
+
+  const g = model.grid || { x_lines: [0, 18], y_lines: [0, 12] };
+  const width = dirX
+    ? (g.y_lines[g.y_lines.length - 1] - g.y_lines[0])   // face ⟂ X wind
+    : (g.x_lines[g.x_lines.length - 1] - g.x_lines[0]);
+
+  const stories = model.stories || [];
+  const story_forces = stories.map((st, i) => {
+    const hAbove = i + 1 < stories.length ? stories[i + 1].height : 0;
+    const trib = st.height / 2 + hAbove / 2;             // ground half sheds to base
+    const F = +(qz(st.elevation) * Cp * Math.max(width, 1) * trib).toFixed(2);
+    return { story: st.name, fx: dirX ? F : 0, fy: dirX ? 0 : F };
+  });
+
+  model.patterns = model.patterns || {};
+  model.patterns[name] = {
+    name, kind: "other", member_loads: [], area_loads: [], story_forces,
+    wind: { direction: dirX ? "X" : "Y", V, exposure: exp_, Cp },
+  };
+  return model;
 }
 
 /* ================================================================

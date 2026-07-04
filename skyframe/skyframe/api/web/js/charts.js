@@ -9,6 +9,21 @@ const S = {
   amber: "#e5a50a", surface: "#151b23",
 };
 
+/* v0.4 — theme swap so the same chart builders render on the report's
+   LIGHT, print-friendly page. Mutates S in place; callers restore "dark". */
+const THEMES = {
+  dark: { ...S },
+  light: {
+    x: "#1274ab", y: "#b93a67",
+    xRaw: "#1274ab", yRaw: "#b93a67",
+    grid: "#e3e8ee", axis: "#8a94a0", text: "#5c6672",
+    amber: "#b57e00", surface: "#ffffff",
+  },
+};
+export function setChartTheme(mode) {
+  Object.assign(S, THEMES[mode] || THEMES.dark);
+}
+
 const NS = "http://www.w3.org/2000/svg";
 function el(tag, attrs = {}, children = []) {
   const e = document.createElementNS(NS, tag);
@@ -424,4 +439,189 @@ export function renderStoryCharts(container, results, caseData, driftLimitPct) {
   container.appendChild(storyChart(shearRows, {
     title: "Story shear", unit: "kN", kind: "step", dec: 1,
   }));
+}
+
+/* ================================================================
+   v0.4 — time-history charts
+   ================================================================ */
+
+/** Symmetric-capable value ticks for a [lo, hi] domain that includes 0. */
+function spanTicks(lo, hi, n = 4) {
+  const span = Math.max(hi - lo, 1e-9);
+  const raw = span / n;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / mag;
+  const step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10) * mag;
+  const ticks = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-6; v += step) {
+    ticks.push(+v.toFixed(9));
+    if (ticks.length > 12) break;
+  }
+  return ticks;
+}
+
+/**
+ * Time-series line chart (full trace over t) with crosshair + tooltip.
+ * t: seconds; series: [{label, values, color}] (≤ 2); opts: {title, unit, dec}.
+ * Returns a .chart-card div.
+ */
+export function timeSeriesChart(t, series, opts = {}) {
+  const W = 640, H = 220;
+  const M = { l: 56, r: 12, t: 10, b: 30 };
+  const pw = W - M.l - M.r, ph = H - M.t - M.b;
+  const dec = opts.dec != null ? opts.dec : 2;
+
+  const tMax = t.length ? t[t.length - 1] : 1;
+  let lo = 0, hi = 0;
+  for (const s of series) for (const v of s.values) {
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  if (hi - lo < 1e-12) { hi += 1; lo -= 1; }
+  const pad = (hi - lo) * 0.08;
+  hi += pad; lo -= pad;
+  const xOf = tv => M.l + (tv / (tMax || 1)) * pw;
+  const yOf = v => M.t + (hi - v) / (hi - lo) * ph;
+
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
+
+  // value gridlines + labels
+  for (const v of spanTicks(lo, hi)) {
+    svg.appendChild(el("line", {
+      x1: M.l, x2: M.l + pw, y1: yOf(v), y2: yOf(v),
+      stroke: v === 0 ? S.axis : S.grid, "stroke-width": 1,
+    }));
+    svg.appendChild(txt("text", {
+      x: M.l - 6, y: yOf(v) + 3, fill: S.text, "font-size": 9, "text-anchor": "end",
+      style: "font-variant-numeric:tabular-nums",
+    }, fmt(v, Math.abs(hi) < 10 ? dec : 0)));
+  }
+  // time gridlines
+  for (const tv of spanTicks(0, tMax, 6)) {
+    if (tv < 0) continue;
+    svg.appendChild(el("line", {
+      x1: xOf(tv), x2: xOf(tv), y1: M.t, y2: M.t + ph,
+      stroke: S.grid, "stroke-width": 1, "stroke-opacity": 0.6,
+    }));
+    svg.appendChild(txt("text", {
+      x: xOf(tv), y: M.t + ph + 14, fill: S.text, "font-size": 9, "text-anchor": "middle",
+      style: "font-variant-numeric:tabular-nums",
+    }, fmt(tv, tMax < 10 ? 1 : 0)));
+  }
+  // axes + units
+  svg.appendChild(el("line", { x1: M.l, x2: M.l, y1: M.t, y2: M.t + ph, stroke: S.axis, "stroke-width": 1 }));
+  svg.appendChild(txt("text", {
+    x: M.l + pw, y: M.t + ph + 26, fill: S.axis, "font-size": 9, "text-anchor": "end",
+  }, "t  s"));
+
+  // series lines (thin, 2px)
+  series.forEach(ser => {
+    let d = "";
+    ser.values.forEach((v, i) => {
+      d += `${i ? "L" : "M"}${xOf(t[i]).toFixed(1)},${yOf(v).toFixed(1)}`;
+    });
+    svg.appendChild(el("path", {
+      d, fill: "none", stroke: ser.color || S.xRaw, "stroke-width": 1.6,
+      "stroke-linejoin": "round", "stroke-linecap": "round",
+    }));
+  });
+
+  // peak markers with direct labels (selective: one per series)
+  series.forEach(ser => {
+    let ip = 0;
+    ser.values.forEach((v, i) => { if (Math.abs(v) > Math.abs(ser.values[ip])) ip = i; });
+    const v = ser.values[ip];
+    if (!isFinite(v) || Math.abs(v) < 1e-12) return;
+    svg.appendChild(el("circle", {
+      cx: xOf(t[ip]), cy: yOf(v), r: 3.2,
+      fill: ser.color || S.xRaw, stroke: S.surface, "stroke-width": 1.5,
+    }));
+    const px = Math.max(M.l + 30, Math.min(xOf(t[ip]), M.l + pw - 46));
+    svg.appendChild(txt("text", {
+      x: px, y: v >= 0 ? Math.max(yOf(v) - 7, 9) : Math.min(yOf(v) + 13, H - 18),
+      fill: S.text, "font-size": 9, "text-anchor": "middle",
+      style: "font-variant-numeric:tabular-nums",
+    }, `${fmt(v, dec)} @ ${fmt(t[ip], 2)} s`));
+  });
+
+  // crosshair + tooltip
+  const cross = el("line", {
+    x1: 0, x2: 0, y1: M.t, y2: M.t + ph, stroke: S.axis,
+    "stroke-width": 1, "stroke-dasharray": "3 3", visibility: "hidden",
+  });
+  svg.appendChild(cross);
+  const hot = el("rect", { x: M.l, y: M.t, width: pw, height: ph, fill: "transparent" });
+  hot.addEventListener("mousemove", e => {
+    const rect = svg.getBoundingClientRect();
+    const sx = (e.clientX - rect.left) * (W / rect.width);
+    const tv = (sx - M.l) / pw * tMax;
+    let i = 0, bd = Infinity;
+    for (let k = 0; k < t.length; k++) {
+      const d = Math.abs(t[k] - tv);
+      if (d < bd) { bd = d; i = k; }
+    }
+    cross.setAttribute("x1", xOf(t[i]));
+    cross.setAttribute("x2", xOf(t[i]));
+    cross.setAttribute("visibility", "visible");
+    showTip(
+      `<b>t = ${fmt(t[i], 3)} s</b><br>` +
+      series.map(ser =>
+        `<span style="color:${ser.color || S.xRaw}">●</span> ${ser.label} ` +
+        `${fmt(ser.values[i], dec)} ${opts.unit || ""}`).join("<br>"),
+      e.clientX, e.clientY);
+  });
+  hot.addEventListener("mouseleave", () => {
+    cross.setAttribute("visibility", "hidden");
+    hideTip();
+  });
+  svg.appendChild(hot);
+
+  const card = document.createElement("div");
+  card.className = "chart-card";
+  const title = document.createElement("div");
+  title.className = "chart-title";
+  title.innerHTML = `${opts.title || ""} <span class="unit">${opts.unit || ""}</span>`;
+  card.appendChild(title);
+  card.appendChild(svg);
+  return card;
+}
+
+/**
+ * Compact acceleration-record sparkline (TH case card preview).
+ * Bare SVG: zero line, trace, peak annotation. accel in m/s², dt in s.
+ */
+export function thSparkline(accel, dt, opts = {}) {
+  const W = opts.width || 300, H = opts.height || 64;
+  const M = { l: 6, r: 6, t: 8, b: 14 };
+  const pw = W - M.l - M.r, ph = H - M.t - M.b;
+  const color = opts.color || S.xRaw;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", class: "th-spark" });
+  const vals = Array.isArray(accel) ? accel.filter(v => isFinite(v)) : [];
+  if (vals.length < 2) {
+    svg.appendChild(txt("text", {
+      x: W / 2, y: H / 2 + 3, fill: S.axis, "font-size": 10, "text-anchor": "middle",
+    }, "No record — paste values or seed the sine demo"));
+    return svg;
+  }
+  const peak = vals.reduce((a, b) => Math.max(a, Math.abs(b)), 0) || 1;
+  const dur = (vals.length - 1) * (dt || 0.02);
+  const xOf = i => M.l + (i / (vals.length - 1)) * pw;
+  const yOf = v => M.t + (1 - v / peak) * ph / 2;
+  svg.appendChild(el("line", {
+    x1: M.l, x2: M.l + pw, y1: yOf(0), y2: yOf(0), stroke: S.grid, "stroke-width": 1,
+  }));
+  let d = "";
+  vals.forEach((v, i) => { d += `${i ? "L" : "M"}${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`; });
+  svg.appendChild(el("path", {
+    d, fill: "none", stroke: color, "stroke-width": 1.2, "stroke-linejoin": "round",
+  }));
+  svg.appendChild(txt("text", {
+    x: M.l, y: H - 3, fill: S.text, "font-size": 9, "text-anchor": "start",
+    style: "font-variant-numeric:tabular-nums",
+  }, `${vals.length} pts · ${fmt(dur, 1)} s`));
+  svg.appendChild(txt("text", {
+    x: M.l + pw, y: H - 3, fill: S.text, "font-size": 9, "text-anchor": "end",
+    style: "font-variant-numeric:tabular-nums",
+  }, `peak ${fmt(peak, 2)} m/s²`));
+  return svg;
 }

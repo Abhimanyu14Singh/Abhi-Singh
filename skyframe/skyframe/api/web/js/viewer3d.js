@@ -1,6 +1,35 @@
 /* SkyFrame 3D viewer — hand-rolled perspective wireframe on 2D canvas.
    Orbit / pan / zoom, painter's-order depth sort, deformed-shape and
-   mode-shape overlays with cubic-Hermite member curves. */
+   mode-shape overlays with cubic-Hermite member curves.
+   v0.4: shell-force contour quads (diverging blue–white–red about 0). */
+
+/* Shell-force component → index in the 8-value shell_forces arrays
+   [Nxx, Nyy, Nxy, Mxx, Myy, Mxy, Vxz, Vyz]. */
+export const SHELL_COMPONENTS = {
+  M11: { idx: 3, unit: "kN·m/m", label: "M11 — plate bending x" },
+  M22: { idx: 4, unit: "kN·m/m", label: "M22 — plate bending y" },
+  M12: { idx: 5, unit: "kN·m/m", label: "M12 — twisting" },
+  N11: { idx: 0, unit: "kN/m", label: "N11 — membrane x" },
+  N22: { idx: 1, unit: "kN/m", label: "N22 — membrane y" },
+  N12: { idx: 2, unit: "kN/m", label: "N12 — membrane shear" },
+};
+
+/* Diverging scale poles (blue → white → red), symmetric about 0. */
+export const CONTOUR_STOPS = ["#2c7fd6", "#f2f5f8", "#e05252"];
+
+function hex2rgb(h) {
+  return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+}
+const _CSTOPS = CONTOUR_STOPS.map(hex2rgb);
+
+/** t in [-1, 1] → rgb() through blue–white–red. */
+export function divergingColor(t) {
+  t = Math.max(-1, Math.min(1, isFinite(t) ? t : 0));
+  const [a, b] = t < 0 ? [_CSTOPS[1], _CSTOPS[0]] : [_CSTOPS[1], _CSTOPS[2]];
+  const s = Math.abs(t);
+  const c = a.map((v, i) => Math.round(v + (b[i] - v) * s));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
 
 const COLORS = {
   column: "#5f8fc9",
@@ -46,6 +75,7 @@ export class Viewer3D {
     this.model = null;
     this.results = null;
     this.overlay = { deformed: false, modal: false, caseName: null, modeIndex: 0, scaleMult: 1 };
+    this.contours = { on: false, comp: "M11", caseName: null };   // v0.4
     this.labelsOn = true;
 
     // camera
@@ -90,6 +120,32 @@ export class Viewer3D {
   setOverlay(o) {
     Object.assign(this.overlay, o);
     this._dirty = true;
+  }
+
+  /** v0.4 — shell-force contours: {on, comp ("M11"…), caseName}. */
+  setContours(c) {
+    Object.assign(this.contours, c);
+    this._dirty = true;
+  }
+
+  /** Per-quad values + symmetric range for the active contour selection,
+      or null when unavailable (no results / not a static case). */
+  _contourData() {
+    const r = this.results, c = this.contours;
+    if (!c.on || !r || !r.shell_quads || !r.shell_quads.length) return null;
+    const cd = r.cases && r.cases[c.caseName];
+    const sf = cd && cd.shell_forces;
+    if (!sf) return null;
+    const comp = SHELL_COMPONENTS[c.comp] || SHELL_COMPONENTS.M11;
+    const vals = [];
+    let vmax = 0;
+    for (let i = 0; i < r.shell_quads.length; i++) {
+      const arr = sf[i] !== undefined ? sf[i] : sf[String(i)];
+      const v = (arr && isFinite(arr[comp.idx])) ? arr[comp.idx] : 0;
+      vals.push(v);
+      vmax = Math.max(vmax, Math.abs(v));
+    }
+    return { vals, vmax: vmax || 1e-9 };
   }
 
   setLabels(on) { this.labelsOn = on; if (!on) this._setHover(null); }
@@ -363,8 +419,10 @@ export class Viewer3D {
 
     // ---- depth-sorted drawables: slabs + shell regions + members
     const overlayActive = this.overlay.deformed || this.overlay.modal;
+    const contour = overlayActive ? null : this._contourData();   // v0.4
     const items = [];
     for (const poly of this.slabs) {
+      if (contour) continue;               // declutter under contour fields
       const pts = [];
       let zsum = 0, ok = true;
       for (const p of poly) {
@@ -375,6 +433,7 @@ export class Viewer3D {
       if (ok) items.push({ type: "slab", pts, z: zsum / poly.length });
     }
     for (const sh of (this.shellPolys || [])) {
+      if (contour && sh.behavior === "shell") continue;   // contour quads replace the fill
       const pts = [];
       let zsum = 0, ok = true;
       for (const p of sh.corners) {
@@ -383,6 +442,25 @@ export class Viewer3D {
         zsum += pc[2]; pts.push(P.proj(pc));
       }
       if (ok) items.push({ type: "shell", pts, z: zsum / sh.corners.length, kind: sh.kind });
+    }
+    // v0.4 — shell-force contour quads (colored by component value)
+    if (contour && this.results && this._nodeXYZ) {
+      this.results.shell_quads.forEach((q, i) => {
+        const pts = [];
+        let zsum = 0, ok = true;
+        for (const t of q.nodes) {
+          const p = this._nodeXYZ[t];
+          if (!p) { ok = false; break; }
+          const pc = P.toCam(p);
+          if (pc[2] < P.near) { ok = false; break; }
+          zsum += pc[2]; pts.push(P.proj(pc));
+        }
+        if (!ok) return;
+        items.push({
+          type: "cq", pts, z: zsum / q.nodes.length,
+          fill: divergingColor(contour.vals[i] / contour.vmax),
+        });
+      });
     }
     this._segsScreen = [];
     for (const seg of this.segs) {
@@ -402,6 +480,18 @@ export class Viewer3D {
         ctx.beginPath();
         it.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
         ctx.closePath(); ctx.fill(); ctx.stroke();
+      } else if (it.type === "cq") {
+        // contour quad: solid fill, thin dark seam between cells
+        ctx.beginPath();
+        it.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.closePath();
+        ctx.fillStyle = it.fill;
+        ctx.globalAlpha = 0.92;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = "rgba(13, 17, 23, 0.45)";
+        ctx.lineWidth = 0.7;
+        ctx.stroke();
       } else if (it.type === "shell") {
         // translucent shell region; ghosted outline only under overlays
         const wall = it.kind === "wall";
@@ -437,7 +527,7 @@ export class Viewer3D {
     }
 
     // ---- FE shell mesh lines (subtle, once analyzed)
-    if (!overlayActive && this.results && this.results.shell_quads &&
+    if (!overlayActive && !contour && this.results && this.results.shell_quads &&
         this.results.shell_quads.length && this._nodeXYZ) {
       ctx.strokeStyle = COLORS.meshLine;
       ctx.lineWidth = 0.8;

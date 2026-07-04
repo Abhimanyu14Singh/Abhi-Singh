@@ -1,10 +1,12 @@
-/* SkyFrame loads editor (v0.3) — load patterns, static cases (with P-Δ),
-   response-spectrum cases (with live spectrum preview) and combos.
+/* SkyFrame loads editor (v0.3/v0.4) — load patterns (incl. wind generator),
+   static cases (with P-Δ), response-spectrum cases (with live spectrum
+   preview), time-history cases (with sparkline preview), combos (add /
+   envelope) and the mass source.
    All edits are pure mutations on the client model dict via modeledit.js;
    the host app marks the model dirty through onChange(). No frameworks. */
 
 import * as ME from "./modeledit.js";
-import { spectrumChart } from "./charts.js";
+import { spectrumChart, thSparkline } from "./charts.js";
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fmt = (v, d = 2) => (v == null || !isFinite(v)) ? "—" :
@@ -15,14 +17,17 @@ const KIND_LABEL = { dead: "dead", live: "live", quake: "quake", other: "other" 
 export class LoadsEditor {
   /**
    * root: container element (the scrollable loads pane body)
-   * opts: { getModel, onChange, toast }
+   * opts: { getModel, onChange, toast, onWind }
    *   onChange() — called after EVERY model mutation (host marks dirty).
+   *   onWind(params) — async; generates a wind pattern (backend or mock).
    */
   constructor(root, opts) {
     this.root = root;
     this.getModel = opts.getModel;
     this.onChange = opts.onChange;
     this.toast = opts.toast;
+    this.onWind = opts.onWind || null;
+    this._wind = { name: "WX", direction: "X", V: 40, exposure: "C", Cp: 0.8 };
   }
 
   /** mutation helpers — structural edits re-render, value edits don't */
@@ -39,7 +44,9 @@ export class LoadsEditor {
     this.root.appendChild(this._patternsSection(m));
     this.root.appendChild(this._casesSection(m));
     this.root.appendChild(this._rsSection(m));
+    this.root.appendChild(this._thSection(m));
     this.root.appendChild(this._combosSection(m));
+    this.root.appendChild(this._massSection(m));
     this.root.scrollTop = scroll;
   }
 
@@ -141,7 +148,66 @@ export class LoadsEditor {
       list.appendChild(row);
     }
     sec.appendChild(list);
+    sec.appendChild(this._windCard(m));
     return sec;
+  }
+
+  /* ---- v0.4: wind pattern generator (POST /api/pattern/wind, mock local) */
+  _windCard(m) {
+    const card = document.createElement("div");
+    card.className = "wind-card";
+    card.id = "windCard";
+    const w = this._wind;
+    card.innerHTML = `
+      <div class="wind-head">
+        <b>Wind pattern generator</b>
+        <span class="muted">ASCE-style velocity-pressure profile → story forces</span>
+      </div>
+      <div class="wind-fields">
+        <label class="rs-field"><span>name</span>
+          <input id="windName" type="text" value="${esc(w.name)}" spellcheck="false"></label>
+        <label class="rs-field"><span>direction</span>
+          <select id="windDir">
+            <option value="X"${w.direction === "X" ? " selected" : ""}>X</option>
+            <option value="Y"${w.direction === "Y" ? " selected" : ""}>Y</option>
+          </select></label>
+        <label class="rs-field"><span>V (m/s)</span>
+          <input id="windV" type="number" min="10" step="1" value="${w.V}"></label>
+        <label class="rs-field"><span>exposure</span>
+          <select id="windExp">
+            ${["B", "C", "D"].map(e =>
+              `<option${e === w.exposure ? " selected" : ""}>${e}</option>`).join("")}
+          </select></label>
+        <label class="rs-field"><span>Cp</span>
+          <input id="windCp" type="number" min="0" step="0.05" value="${w.Cp}"></label>
+        <button class="btn btn-small" id="windGen">Generate</button>
+      </div>`;
+    const $id = id => card.querySelector(`#${id}`);
+    $id("windName").addEventListener("change", e => { w.name = e.target.value.trim() || "WX"; });
+    $id("windDir").addEventListener("change", e => { w.direction = e.target.value; });
+    $id("windV").addEventListener("change", e => {
+      const v = parseFloat(e.target.value);
+      if (isFinite(v) && v > 0) w.V = v; else e.target.value = String(w.V);
+    });
+    $id("windExp").addEventListener("change", e => { w.exposure = e.target.value; });
+    $id("windCp").addEventListener("change", e => {
+      const v = parseFloat(e.target.value);
+      if (isFinite(v)) w.Cp = v; else e.target.value = String(w.Cp);
+    });
+    $id("windGen").addEventListener("click", async () => {
+      if (!this.onWind) return;
+      const btn = $id("windGen");
+      btn.disabled = true;
+      try {
+        await this.onWind({ ...w });
+        this.render();
+      } catch (err) {
+        this.toast("Wind generation failed", err.message, "error", 7000);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    return card;
   }
 
   /* ============================================================ cases */
@@ -398,11 +464,148 @@ export class LoadsEditor {
     return card;
   }
 
+  /* ============================================================ TH cases (v0.4) */
+  _thSection(m) {
+    const sec = this._section("ls-th", "Time-history cases",
+      "Linear modal time-history — ground acceleration record in m/s². " +
+      "Results land in the <b>Time History</b> tab after a solve.",
+      "+ Add TH case", () => { ME.addThCase(m); this._mutated(); });
+
+    const list = document.createElement("div");
+    list.className = "loads-rows";
+    const names = Object.keys(m.th_cases);
+    if (!names.length) list.innerHTML = `<p class="muted loads-empty">No time-history cases yet.</p>`;
+
+    for (const name of names) list.appendChild(this._thCard(m, name));
+    sec.appendChild(list);
+    return sec;
+  }
+
+  _thCard(m, name) {
+    const tc = m.th_cases[name];
+    const card = document.createElement("div");
+    card.className = "rs-card th-card";
+
+    /* header: name · direction · damping · scale · dt · delete */
+    const head = document.createElement("div");
+    head.className = "rs-head";
+    head.appendChild(this._nameInput(name, "rs-name",
+      nu => ME.renameThCase(m, name, nu)));
+
+    const mkField = (label, node) => {
+      const w = document.createElement("label");
+      w.className = "rs-field";
+      const s = document.createElement("span");
+      s.textContent = label;
+      w.append(s, node);
+      return w;
+    };
+    const mkNum = (value, step, min, set) => {
+      const i = document.createElement("input");
+      i.type = "number"; i.step = step; i.min = String(min);
+      i.value = String(value);
+      i.addEventListener("change", () => {
+        const v = parseFloat(i.value);
+        if (isFinite(v) && v >= min && set(v) !== false) this._mutated(false);
+        else i.value = String(value);
+      });
+      return i;
+    };
+
+    const dir = document.createElement("select");
+    dir.innerHTML = `<option value="X">X</option><option value="Y">Y</option>`;
+    dir.value = tc.direction;
+    dir.addEventListener("change", () => { tc.direction = dir.value; this._mutated(false); });
+    head.appendChild(mkField("direction", dir));
+    head.appendChild(mkField("damping", mkNum(tc.damping, "0.01", 0, v => {
+      if (v >= 1) return false;
+      tc.damping = v;
+    })));
+    head.appendChild(mkField("scale", mkNum(tc.scale, "0.05", 0, v => { tc.scale = v; })));
+    const dtIn = mkNum(tc.dt, "0.005", 0.001, v => { tc.dt = v; });
+    head.appendChild(mkField("dt s", dtIn));
+
+    head.appendChild(this._delBtn(null, `TH case ${name}`, () => {
+      if (ME.deleteThCase(m, name)) this._mutated();
+    }));
+    card.appendChild(head);
+
+    /* body: accel textarea + sparkline preview */
+    const body = document.createElement("div");
+    body.className = "th-body";
+
+    const left = document.createElement("div");
+    left.className = "th-record";
+    const lbl = document.createElement("div");
+    lbl.className = "th-label";
+    lbl.innerHTML = `Acceleration record <span class="unit">m/s² · comma / whitespace separated</span>`;
+    const ta = document.createElement("textarea");
+    ta.className = "th-accel";
+    ta.spellcheck = false;
+    ta.rows = 5;
+    ta.placeholder = "0, 0.12, 0.31, …";
+    const fill = () => { ta.value = tc.accel.map(v => +(+v).toFixed(4)).join(", "); };
+    fill();
+    ta.addEventListener("change", () => {
+      const vals = ME.parseAccel(ta.value);
+      if (vals === null) {
+        this.toast("Record not parsed", "Only numbers, commas and whitespace are allowed", "error", 5000);
+        fill();
+        return;
+      }
+      tc.accel = vals;
+      this._mutated(false);
+      drawSpark();
+    });
+    const foot = document.createElement("div");
+    foot.className = "rs-table-foot";
+    const seed = document.createElement("button");
+    seed.className = "btn btn-small";
+    seed.textContent = "Sine demo";
+    seed.title = "Seed a ramped decaying 1.2 Hz sine record (8 s @ dt)";
+    seed.addEventListener("click", () => {
+      tc.accel = ME.sineRecord(tc.dt, 8);
+      fill();
+      this._mutated(false);
+      drawSpark();
+    });
+    const clear = document.createElement("button");
+    clear.className = "btn btn-small";
+    clear.textContent = "Clear";
+    clear.addEventListener("click", () => {
+      tc.accel = [];
+      fill();
+      this._mutated(false);
+      drawSpark();
+    });
+    foot.append(seed, clear);
+    left.append(lbl, ta, foot);
+
+    const right = document.createElement("div");
+    right.className = "rs-chart th-chart";
+    const drawSpark = () => {
+      right.textContent = "";
+      const title = document.createElement("div");
+      title.className = "chart-title";
+      title.innerHTML = `Record preview <span class="unit">${esc(tc.direction)} · ζ ${fmt(tc.damping, 3)} · ×${fmt(tc.scale, 2)}</span>`;
+      right.appendChild(title);
+      right.appendChild(thSparkline(tc.accel, tc.dt, { width: 320, height: 84 }));
+    };
+    drawSpark();
+    dir.addEventListener("change", drawSpark);
+    dtIn.addEventListener("change", drawSpark);
+
+    body.append(left, right);
+    card.appendChild(body);
+    return card;
+  }
+
   /* ============================================================ combos */
   _combosSection(m) {
     const sec = this._section("ls-combos", "Load combinations",
-      "Linear case × factor sums. <b>Static cases only</b> — response-spectrum " +
-      "cases don't combine in v0.3.",
+      "<b>add</b> = factored linear sum of case results · <b>envelope</b> = " +
+      "component-wise max/min across the factored cases (tables gain a " +
+      "max/min toggle). Static cases only.",
       "+ Add combo", () => { ME.addCombo(m); this._mutated(); });
 
     const list = document.createElement("div");
@@ -418,12 +621,38 @@ export class LoadsEditor {
       row.appendChild(this._nameInput(name, "lc-name",
         nu => ME.renameCombo(m, name, nu)));
       row.appendChild(this._factorChips(cb.cases, casePool, "Add a static case to this combo"));
+
+      const typ = document.createElement("select");
+      typ.className = "combo-type";
+      typ.title = "add: factored sum · envelope: max/min across the factored cases";
+      typ.innerHTML = `<option value="add">add</option><option value="envelope">envelope</option>`;
+      typ.value = cb.combo_type === "envelope" ? "envelope" : "add";
+      typ.addEventListener("change", () => { cb.combo_type = typ.value; this._mutated(false); });
+      row.appendChild(typ);
+
       row.appendChild(this._delBtn(null, `combo ${name}`, () => {
         if (ME.deleteCombo(m, name)) this._mutated();
       }));
       list.appendChild(row);
     }
     sec.appendChild(list);
+    return sec;
+  }
+
+  /* ============================================================ mass source (v0.4) */
+  _massSection(m) {
+    const sec = this._section("ls-mass", "Mass source",
+      "Seismic/dynamic mass = Σ pattern × factor (gravity loads → mass). " +
+      "Default is <b>1.0 × DEAD</b>.", null, null);
+    const row = document.createElement("div");
+    row.className = "lc-row mass-row";
+    const tag = document.createElement("span");
+    tag.className = "mass-tag";
+    tag.textContent = "mass =";
+    row.appendChild(tag);
+    row.appendChild(this._factorChips(m.mass_source, ME.patternNames(m),
+      "Add a pattern to the mass source"));
+    sec.appendChild(row);
     return sec;
   }
 }

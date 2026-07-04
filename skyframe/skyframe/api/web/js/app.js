@@ -1,11 +1,12 @@
 /* SkyFrame app shell — state store, API (with mock fallback), tabs,
    tables, overlay controls, model/draw mode. No frameworks. */
 
-import { Viewer3D } from "./viewer3d.js";
-import { renderStoryCharts, stationDiagram } from "./charts.js";
-import { mockModel, mockResults, mockSectionLibrary, mockModelFiles } from "./mock.js";
+import { Viewer3D, SHELL_COMPONENTS } from "./viewer3d.js";
+import { renderStoryCharts, stationDiagram, timeSeriesChart } from "./charts.js";
+import { mockModel, mockResults, mockSectionLibrary, mockModelFiles, mockWindPattern } from "./mock.js";
 import { PlanEditor } from "./draw.js";
 import { LoadsEditor } from "./loads.js";
+import { openReport, buildReportHtml } from "./report.js";
 import * as ME from "./modeledit.js";
 
 /* ------------------------------------------------ state */
@@ -35,6 +36,12 @@ const store = {
   fileName: null,        // current saved-model file name (null = unsaved)
   sectionLib: null,      // cached GET /api/sections/library
   libSearch: "",
+  // v0.4 — braces, contours, envelope combos, time history
+  braceXPair: false,     // brace tool adds the mirrored diagonal too
+  contour: { on: false, comp: "M11" },
+  envSide: "max",        // envelope-combo tables: "max" | "min"
+  thCase: null,          // selected time-history case
+  thStory: null,         // selected story for the TH displacement trace
 };
 
 const $ = id => document.getElementById(id);
@@ -105,6 +112,37 @@ async function postModel(payload) {
     return payload;                                // mock backend accepts locally
   }
   return api("/api/model", payload);
+}
+
+/* ---- v0.4: wind pattern generation.
+   Live path syncs the working model, POSTs /api/pattern/wind and adopts the
+   echoed model. Mock (or missing endpoint) computes the profile locally. */
+async function generateWindPattern(params) {
+  if (!store.mock) {
+    try {
+      const payload = JSON.parse(JSON.stringify(store.model));
+      delete payload._mock_params;
+      await postModel(payload);
+      const echoed = await api("/api/pattern/wind", params);
+      store.model = ME.normalizeModel(echoed);
+      store.modelEdited = true;
+      clearDirty();                                // client == server state
+      syncLoadsNav();
+      renderSummary();
+      toast("Wind pattern generated",
+        `“${params.name}” added via POST /api/pattern/wind`, "info", 5000);
+      return store.model;
+    } catch (e) {
+      console.warn("Wind endpoint unavailable, computing locally:", e.message);
+    }
+  }
+  mockWindPattern(store.model, params);
+  ME.normalizeModel(store.model);
+  markDirty();
+  toast("Wind pattern generated",
+    `“${params.name}” computed locally (${store.mock ? "mock mode" : "backend lacks /api/pattern/wind"})`,
+    "info", 5000);
+  return store.model;
 }
 
 /* ---- v0.3: model files + section library.
@@ -189,6 +227,22 @@ function caseData() {
   return (r.cases && r.cases[store.caseName]) || (r.combos && r.combos[store.caseName]) || null;
 }
 
+/* ---- v0.4: envelope combos — tables honour the max/min toggle.
+   Envelope results keep max in the standard keys and min in cd.min. */
+function tableCaseData() {
+  const cd = caseData();
+  return (cd && cd.min && store.envSide === "min") ? cd.min : cd;
+}
+
+function syncEnvToggle() {
+  const cd = caseData();
+  const has = !!(cd && cd.min);
+  $("envToggle").classList.toggle("hidden", !has);
+  if (!has) store.envSide = "max";
+  document.querySelectorAll("#envToggle .seg-btn").forEach(b =>
+    b.classList.toggle("is-active", b.dataset.env === store.envSide));
+}
+
 function rebuildCaseSelect() {
   const sel = $("caseSelect");
   sel.textContent = "";
@@ -245,6 +299,7 @@ function syncLoadsNav() {
   $("cnt-patterns").textContent = Object.keys(m.patterns || {}).length;
   $("cnt-cases").textContent = Object.keys(m.cases || {}).length;
   $("cnt-rs").textContent = Object.keys(m.rs_cases || {}).length;
+  $("cnt-th").textContent = Object.keys(m.th_cases || {}).length;
   $("cnt-combos").textContent = Object.keys(m.combos || {}).length;
 }
 
@@ -261,6 +316,7 @@ function setMode(mode) {
   $("analyzeSidebar").classList.toggle("hidden", editing);
   $("modelActions").classList.toggle("hidden", !editing);
   $("runBtn").classList.toggle("hidden", editing);
+  $("reportBtn").classList.toggle("hidden", editing);
   if (model) {
     rebuildStorySelect();
     planEditor.refresh();
@@ -360,6 +416,12 @@ function handleDraw(tool, payload) {
     let el = null;
     if (tool === "column") el = ME.addColumn(m, payload.x, payload.y, st);
     else if (tool === "beam") el = ME.addBeam(m, payload.p1, payload.p2, st);
+    else if (tool === "brace") {
+      el = ME.addBrace(m, payload.p1, payload.p2, st);
+      if (el) made++;
+      // X-pair: the mirrored diagonal (B bottom → A top)
+      el = store.braceXPair ? ME.addBrace(m, payload.p2, payload.p1, st) : null;
+    }
     else if (tool === "wall") el = ME.addWall(m, payload.p1, payload.p2, st);
     else if (tool === "slab") el = ME.addSlab(m, payload.x0, payload.y0, payload.x1, payload.y1, st);
     if (el) made++;
@@ -408,6 +470,7 @@ function setTool(tool) {
   store.tool = tool;
   document.querySelectorAll(".tool-btn").forEach(b =>
     b.classList.toggle("is-active", b.dataset.tool === tool));
+  $("braceOpts").classList.toggle("hidden", tool !== "brace");
   planEditor.setTool(tool);
 }
 
@@ -453,12 +516,13 @@ function renderProps() {
   }
 
   const m = store.model;
-  const beams = members.filter(x => x.kind !== "column");
+  const beams = members.filter(x => x.kind !== "column" && x.kind !== "brace");
   const columns = members.filter(x => x.kind === "column");
+  const braces = members.filter(x => x.kind === "brace");
   const walls = shells.filter(x => x.kind === "wall");
   const slabs = shells.filter(x => x.kind === "slab");
   const kinds = [
-    [columns.length, "column"], [beams.length, "beam"],
+    [columns.length, "column"], [beams.length, "beam"], [braces.length, "brace"],
     [walls.length, "wall"], [slabs.length, "slab"],
   ].filter(([n]) => n).map(([n, k]) => `${n} ${k}${n > 1 ? "s" : ""}`).join(" · ");
 
@@ -477,6 +541,16 @@ function renderProps() {
       <div class="field"><label for="propFrameSection">Section</label>
         <select id="propFrameSection">${optionList(Object.keys(m.sections), sec, sec === undefined)}</select>
       </div>`;
+    // v0.4: orientation angle for columns & braces (FrameMember.angle)
+    const angMembers = [...columns, ...braces];
+    if (angMembers.length) {
+      const ang = commonVal(angMembers, x => x.angle ?? 0);
+      html += `
+      <div class="field"><label for="propAngle">Orientation angle <span class="unit">deg · columns &amp; braces</span></label>
+        <input id="propAngle" type="number" step="5"
+          value="${ang === undefined ? "" : ang}" placeholder="${ang === undefined ? "mixed" : ""}">
+      </div>`;
+    }
     if (beams.length) {
       const relOf = (x, tok) => (x.releases || "").split(",").map(s => s.trim()).includes(tok);
       const mi = commonVal(beams, x => relOf(x, "Mi"));
@@ -547,6 +621,12 @@ function renderProps() {
   on("propFrameSection", "change", e => {
     for (const mm of members) mm.section = e.target.value;
     markDirty(); planEditor.renderStatic();
+  });
+  on("propAngle", "change", e => {
+    const v = parseFloat(e.target.value);
+    if (!isFinite(v)) return;
+    for (const mm of [...columns, ...braces]) mm.angle = v;
+    markDirty();
   });
   const applyReleases = () => {
     const mi = $("propRelMi").checked, mj = $("propRelMj").checked;
@@ -695,6 +775,39 @@ const mgrDel = (disabled, title, onDel) => {
   return b;
 };
 
+/** v0.4 — collapsed stiffness-modifier row for a frame section. */
+function frameModsDetails(s) {
+  const det = document.createElement("details");
+  det.className = "mgr-mods";
+  const sum = document.createElement("summary");
+  const fm = v => (v == null || !isFinite(v)) ? "1" : String(+(+v).toFixed(3));
+  const syncSum = () => {
+    sum.textContent = "Modifiers · " +
+      `A ×${fm(s.mod_A)} · I33 ×${fm(s.mod_I33)} · I22 ×${fm(s.mod_I22)} · J ×${fm(s.mod_J)}`;
+  };
+  syncSum();
+  const row = document.createElement("div");
+  row.className = "mods-row";
+  for (const [key, lbl] of [["mod_A", "mod A"], ["mod_I33", "mod I33"],
+                            ["mod_I22", "mod I22"], ["mod_J", "mod J"]]) {
+    const wrap = document.createElement("label");
+    const span = document.createElement("span");
+    span.textContent = lbl;
+    const i = mgrInput(fm(s[key]), { type: "number" });
+    i.step = "0.05"; i.min = "0.01";
+    i.title = "Stiffness modifier (multiplies the section property; default 1.0)";
+    i.addEventListener("change", () => {
+      const v = parseFloat(i.value);
+      if (isFinite(v) && v > 0) { s[key] = v; markDirty(); syncSum(); }
+      else i.value = fm(s[key]);
+    });
+    wrap.append(span, i);
+    row.appendChild(wrap);
+  }
+  det.append(sum, row);
+  return det;
+}
+
 function renderSectionMgr() {
   const m = store.model;
 
@@ -735,11 +848,12 @@ function renderSectionMgr() {
         del,
       ]));
     }
+    frameBox.appendChild(frameModsDetails(s));   // v0.4 stiffness modifiers
   }
 
   const shellBox = $("shellSectionRows");
   shellBox.textContent = "";
-  shellBox.appendChild(mgrRow(["Name", "Thickness (m)", "", "Material", ""], "mgr-row head"));
+  shellBox.appendChild(mgrRow(["Name", "Thickness (m)", "mod", "Material", ""], "mgr-row head"));
   for (const [name, s] of Object.entries(m.shell_sections)) {
     const nameIn = mgrInput(name);
     nameIn.addEventListener("change", () => {
@@ -749,10 +863,12 @@ function renderSectionMgr() {
       } else { markDirty(); renderSectionMgr(); }
     });
     const used = ME.shellSectionInUse(m, name);
+    const modIn = mgrNum(s.mod ?? 1, "0.05", v => s.mod = v);
+    modIn.title = "Stiffness modifier (multiplies the shell stiffness; default 1.0)";
     shellBox.appendChild(mgrRow([
       nameIn,
       mgrNum(s.thickness, "0.025", v => s.thickness = v),
-      "",
+      modIn,
       mgrMatSelect(m, s.material, v => s.material = v),
       mgrDel(used, used ? "In use by shell regions" : "Delete shell section", () => {
         delete m.shell_sections[name]; markDirty(); renderSectionMgr();
@@ -788,6 +904,161 @@ function renderSectionMgr() {
         delete m.materials[name]; markDirty(); renderSectionMgr();
       }),
     ]));
+  }
+}
+
+/* ================================================================
+   v0.4 — GRID & STORY EDITOR
+   ================================================================ */
+function openGridEditor() {
+  renderGridEditor();
+  $("gridModal").classList.remove("hidden");
+}
+
+function closeGridEditor() {
+  $("gridModal").classList.add("hidden");
+  rebuildStorySelect();
+  planEditor.refresh();
+  renderProps();
+  renderSummary();
+}
+
+/** Geometry changed: refresh model views + re-render the editor. */
+function afterGeometryEdit() {
+  markDirty();
+  rebuildStorySelect();
+  planEditor.refresh();
+  renderSummary();
+  renderGridEditor();
+}
+
+function renderGridEditor() {
+  const m = store.model;
+  if (!m || !m.grid) return;
+
+  const mkLines = (axis, box) => {
+    box.textContent = "";
+    const lines = axis === "x" ? m.grid.x_lines : m.grid.y_lines;
+    const labels = axis === "x" ? m.grid.x_labels : m.grid.y_labels;
+    lines.forEach((v, i) => {
+      const row = document.createElement("div");
+      row.className = "ge-line";
+      const lab = document.createElement("span");
+      lab.className = "ge-label";
+      lab.textContent = (labels && labels[i]) || String(i + 1);
+      const inp = document.createElement("input");
+      inp.type = "number"; inp.step = "0.5";
+      inp.value = String(v);
+      inp.addEventListener("change", () => {
+        const nv = parseFloat(inp.value);
+        if (ME.setGridLine(m, axis, i, nv)) afterGeometryEdit();
+        else {
+          inp.value = String(v);
+          toast("Grid edit rejected", "Positions must be numbers and can't collide with another line", "error", 4500);
+        }
+      });
+      const del = document.createElement("button");
+      del.className = "del"; del.textContent = "✕";
+      const blocked = lines.length <= 2;
+      del.disabled = blocked;
+      del.title = blocked ? "A grid keeps at least two lines per direction"
+        : "Remove line — members outside the grid are kept";
+      del.addEventListener("click", () => {
+        if (ME.removeGridLine(m, axis, i)) {
+          afterGeometryEdit();
+          toast("Grid line removed", "Members outside the grid are kept", "info", 3500);
+        }
+      });
+      row.append(lab, inp, del);
+      box.appendChild(row);
+    });
+  };
+  mkLines("x", $("gridXRows"));
+  mkLines("y", $("gridYRows"));
+
+  /* stories — top → bottom, like the story selector */
+  const box = $("storyRows");
+  box.textContent = "";
+  const head = document.createElement("div");
+  head.className = "ge-story head";
+  head.innerHTML = `<span>Name</span><span>Height m</span>
+    <span style="text-align:right">Elev m</span><span>Insert</span><span></span>`;
+  box.appendChild(head);
+
+  for (const st of [...m.stories].reverse()) {
+    const row = document.createElement("div");
+    row.className = "ge-story";
+
+    const nameIn = document.createElement("input");
+    nameIn.type = "text"; nameIn.value = st.name; nameIn.spellcheck = false;
+    nameIn.addEventListener("change", () => {
+      const nu = nameIn.value.trim();
+      if (ME.renameStory(m, st.name, nu)) afterGeometryEdit();
+      else {
+        nameIn.value = st.name;
+        toast("Rename failed", "Name empty or already in use", "error", 4000);
+      }
+    });
+
+    const hIn = document.createElement("input");
+    hIn.type = "number"; hIn.step = "0.1"; hIn.min = "0.5";
+    hIn.value = String(st.height);
+    hIn.addEventListener("change", () => {
+      const v = parseFloat(hIn.value);
+      if (ME.setStoryHeight(m, st.name, v)) {
+        store.modelEdited = true;
+        afterGeometryEdit();
+      } else hIn.value = String(st.height);
+    });
+
+    const elev = document.createElement("span");
+    elev.className = "ge-elev";
+    elev.textContent = `${fmt(st.elevation - st.height, 1)} – ${fmt(st.elevation, 1)}`;
+
+    const ins = document.createElement("span");
+    ins.className = "ge-ins";
+    const mkIns = (where, glyph, title) => {
+      const b = document.createElement("button");
+      b.className = "chip"; b.textContent = glyph; b.title = title;
+      b.addEventListener("click", () => {
+        const name = ME.insertStory(m, st.name, where);
+        if (name) {
+          store.modelEdited = true;
+          afterGeometryEdit();
+          toast("Story inserted", `${name} added ${where} ${st.name}`, "info", 3500);
+        }
+      });
+      return b;
+    };
+    ins.append(
+      mkIns("above", "▲+", `Insert an empty story above ${st.name}`),
+      mkIns("below", "▼+", `Insert an empty story below ${st.name}`));
+
+    const del = document.createElement("button");
+    del.className = "del"; del.textContent = "✕";
+    if (m.stories.length <= 1) {
+      del.disabled = true;
+      del.title = "The last story can't be deleted";
+    } else {
+      del.title = `Delete ${st.name} (its members are deleted too)`;
+      del.addEventListener("click", async () => {
+        const n = ME.storyElementCounts(m, st.name);
+        const ok = await askConfirm("Delete story",
+          `Delete ${st.name}? ${n.members} member${n.members === 1 ? "" : "s"} and ` +
+          `${n.shells} shell region${n.shells === 1 ? "" : "s"} on it will be deleted; ` +
+          `stories above translate down.`, "Delete story");
+        if (!ok) return;
+        if (ME.deleteStory(m, st.name)) {
+          store.modelEdited = true;
+          store.selection = [];
+          afterGeometryEdit();
+          toast("Story deleted", `${st.name} removed with its elements`, "info", 4000);
+        }
+      });
+    }
+
+    row.append(nameIn, hIn, elev, ins, del);
+    box.appendChild(row);
   }
 }
 
@@ -860,6 +1131,10 @@ function adoptModel(modelDict, fileName) {
   store.selection = [];
   store.selectedMemberUid = null;
   store.modelEdited = false;
+  store.contour = { on: false, comp: "M11" };     // v0.4
+  store.envSide = "max";
+  store.thCase = null;
+  store.thStory = null;
   clearDirty();
   closeMemberPanel();
   viewer.setResults(null);
@@ -1145,19 +1420,32 @@ function setResultsAvailable(on) {
   }
   $("chipDeformed").disabled = !on;
   $("chipMode").disabled = !on;
+  $("reportBtn").disabled = !on;                                  // v0.4
+  const hasTh = on && !!Object.keys(store.results?.th_cases || {}).length;
+  $("thTabBtn").classList.toggle("hidden", !hasTh);
+  $("empty-th").classList.toggle("hidden", hasTh);
+  $("content-th").classList.toggle("hidden", !hasTh);
+  if (!hasTh && store.tab === "th") switchTab("view3d");
+  if (!on) {
+    store.contour.on = false;
+    syncContoursUI();
+    syncEnvToggle();
+  }
 }
 
 function renderResultsTabs() {
   if (!store.results || !caseData()) return;
+  syncEnvToggle();
   renderStoryTab();
   renderModalTab();
   renderReactionsTab();
   renderForcesTab();
+  renderThTab();
 }
 
 /* ---- story tab */
 function renderStoryTab() {
-  const r = store.results, cd = caseData();
+  const r = store.results, cd = tableCaseData();
   if (!cd) return;
   renderStoryCharts($("chartsRow"), r, cd, store.driftLimitPct);
 
@@ -1233,8 +1521,12 @@ function viewModeIn3D(idx) {
 
 /* ---- reactions tab */
 function renderReactionsTab() {
-  const r = store.results, cd = caseData();
+  const r = store.results, cd = tableCaseData();
   if (!cd) return;
+  $("reactionsNote").textContent =
+    `Support reactions · ${caseLabel(store.caseName)}` +
+    (caseData()?.min ? ` · envelope ${store.envSide}` : "") +
+    (isRsCase(store.caseName) ? " · envelope ±" : "");
   const head = `<thead><tr>
     <th class="txt">Node</th><th>X m</th><th>Y m</th>
     <th>FX kN</th><th>FY kN</th><th>FZ kN</th>
@@ -1260,7 +1552,7 @@ function renderReactionsTab() {
 
 /* ---- member forces tab */
 function forcesRows() {
-  const r = store.results, cd = caseData();
+  const r = store.results, cd = tableCaseData();
   if (!cd || !cd.member_forces) return [];
   const rows = [];
   for (const m of r.members) {
@@ -1311,6 +1603,7 @@ function renderForcesTab() {
     <td>${fmt(x.N, 1)}</td><td>${fmt(x.V2, 1)}</td><td>${fmt(x.M3, 1)}</td></tr>`).join("");
   $("forcesTable").innerHTML = head + `<tbody>${body}</tbody>`;
   $("forcesCount").textContent = `${rows.length} members · ${caseLabel(store.caseName)}` +
+    (caseData()?.min ? ` · envelope ${store.envSide}` : "") +
     (isRsCase(store.caseName) ? " · envelope ±" : "");
   $("forcesTable").querySelectorAll("th.sortable").forEach(th =>
     th.addEventListener("click", () => {
@@ -1319,6 +1612,263 @@ function renderForcesTab() {
       else store.forcesSort = { key: k, dir: k === "uid" || k === "kind" || k === "story" || k === "section" ? 1 : -1 };
       renderForcesTab();
     }));
+}
+
+/* ================================================================
+   v0.4 — TIME HISTORY TAB
+   ================================================================ */
+function thData() {
+  const th = store.results && store.results.th_cases;
+  if (!th || !Object.keys(th).length) return null;
+  if (!store.thCase || !th[store.thCase]) store.thCase = Object.keys(th)[0];
+  return th[store.thCase];
+}
+
+function rebuildThSelects() {
+  const th = (store.results && store.results.th_cases) || {};
+  const names = Object.keys(th);
+  const sel = $("thCaseSelect");
+  sel.textContent = "";
+  for (const n of names) {
+    const o = document.createElement("option");
+    o.value = n; o.textContent = n;
+    sel.appendChild(o);
+  }
+  if (!store.thCase || !names.includes(store.thCase)) store.thCase = names[0] || null;
+  if (store.thCase) sel.value = store.thCase;
+
+  const stories = (store.results && store.results.story_order) || [];
+  const ssel = $("thStorySelect");
+  ssel.textContent = "";
+  for (const s of [...stories].reverse()) {       // roof first
+    const o = document.createElement("option");
+    o.value = s; o.textContent = s;
+    ssel.appendChild(o);
+  }
+  if (!store.thStory || !stories.includes(store.thStory))
+    store.thStory = stories[stories.length - 1] || null;
+  if (store.thStory) ssel.value = store.thStory;
+}
+
+function renderThTab() {
+  const td = thData();
+  if (!td) return;
+  const r = store.results;
+  const tc = (store.model.th_cases || {})[store.thCase] || {};
+  const dirX = tc.direction !== "Y";
+  const story = store.thStory;
+
+  $("thMeta").textContent =
+    `${td.t.length} steps · ${fmt(td.t[td.t.length - 1] || 0, 1)} s · ` +
+    `dir ${dirX ? "X" : "Y"} · ζ ${fmt(tc.damping ?? 0.05, 3)}`;
+
+  const box = $("thCharts");
+  box.textContent = "";
+  const ux = (td.story_ux && td.story_ux[story]) || [];
+  const uy = (td.story_uy && td.story_uy[story]) || [];
+  box.appendChild(timeSeriesChart(td.t, [
+    { label: `${story} ux`, values: ux.map(v => v * 1000), color: "#1e9ad4" },
+    { label: `${story} uy`, values: uy.map(v => v * 1000), color: "#d55181" },
+  ], { title: `Story displacement — ${story}`, unit: "mm", dec: 2 }));
+  box.appendChild(timeSeriesChart(td.t, [
+    { label: "base FX", values: td.base_FX || [], color: "#1e9ad4" },
+    { label: "base FY", values: td.base_FY || [], color: "#d55181" },
+  ], { title: "Base shear", unit: "kN", dec: 1 }));
+
+  /* peaks table: per-story displacement peaks + base row */
+  const head = `<thead><tr>
+    <th class="txt">Story</th><th>Elev m</th>
+    <th>peak |ux| mm</th><th>peak |uy| mm</th></tr></thead>`;
+  const rows = [...r.story_order].reverse().map(s => {
+    const p = (td.peaks && td.peaks.story && td.peaks.story[s]) || {};
+    return `<tr${s === story ? ` class="th-active"` : ""}>
+      <td class="txt">${esc(s)}</td>
+      <td class="dim">${fmt(r.story_elev[s], 1)}</td>
+      <td>${fmt((p.ux || 0) * 1000, 2)}</td>
+      <td>${fmt((p.uy || 0) * 1000, 2)}</td></tr>`;
+  }).join("");
+  const pb = (td.peaks && td.peaks.base) || {};
+  const totals = `<tr class="totals">
+    <td class="txt">peak base shear</td><td></td>
+    <td>${fmt(pb.FX || 0, 1)} kN</td><td>${fmt(pb.FY || 0, 1)} kN</td></tr>`;
+  $("thPeaksTable").innerHTML = head + `<tbody>${rows}${totals}</tbody>`;
+}
+
+/* ================================================================
+   v0.4 — SHELL FORCE CONTOURS
+   ================================================================ */
+function contourAvailability() {
+  const r = store.results;
+  if (!r || !r.shell_quads || !r.shell_quads.length)
+    return { ok: false, why: "run an analysis with meshed shells first" };
+  if (isRsCase(store.caseName) || (r.combos && r.combos[store.caseName]))
+    return { ok: false, why: "static cases only" };
+  const cd = r.cases && r.cases[store.caseName];
+  if (!cd || !cd.shell_forces)
+    return { ok: false, why: "no shell_forces in this case's results" };
+  return { ok: true, why: "" };
+}
+
+function syncContoursUI() {
+  const av = contourAvailability();
+  const chip = $("chipContours");
+  chip.disabled = !av.ok;
+  chip.title = av.ok
+    ? "Color shell elements by internal force"
+    : `Contours unavailable — ${av.why}`;
+  if (!av.ok) store.contour.on = false;
+  chip.classList.toggle("is-on", store.contour.on);
+  $("contourGroup").hidden = !store.contour.on;
+  $("contourComp").value = store.contour.comp;
+  viewer.setContours({
+    on: store.contour.on,
+    comp: store.contour.comp,
+    caseName: store.caseName,
+  });
+  renderContourLegend();
+}
+
+function renderContourLegend() {
+  const box = $("contourLegend");
+  const av = contourAvailability();
+  const show = store.contour.on && av.ok;
+  box.classList.toggle("hidden", !show);
+  if (!show) return;
+  const comp = SHELL_COMPONENTS[store.contour.comp] || SHELL_COMPONENTS.M11;
+  const sf = store.results.cases[store.caseName].shell_forces;
+  let lo = 0, hi = 0;
+  for (let i = 0; i < store.results.shell_quads.length; i++) {
+    const arr = sf[i] !== undefined ? sf[i] : sf[String(i)];
+    const v = (arr && isFinite(arr[comp.idx])) ? arr[comp.idx] : 0;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  const vmax = Math.max(Math.abs(lo), Math.abs(hi)) || 1;
+  $("contourLegendTitle").innerHTML =
+    `${esc(store.contour.comp)} <span class="unit">${esc(comp.unit)} · ${esc(caseLabel(store.caseName))}</span>`;
+  // symmetric diverging scale about 0 — label the true data min/max
+  $("clMin").textContent = fmt(-vmax, vmax < 10 ? 2 : 1);
+  $("clMax").textContent = `+${fmt(vmax, vmax < 10 ? 2 : 1)}`;
+}
+
+/* ================================================================
+   v0.4 — CSV EXPORT (client-side blob downloads, unrounded)
+   ================================================================ */
+const csvEsc = v => {
+  const s = String(v ?? "");
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+const toCsv = rows => rows.map(r => r.map(csvEsc).join(",")).join("\n") + "\n";
+const slug = s => String(s || "x").trim().replace(/[^A-Za-z0-9_-]+/g, "_")
+  .replace(/^_+|_+$/g, "").slice(0, 48) || "x";
+
+/** Rows (incl. header) for each exportable table — numbers UNROUNDED. */
+function csvRows(kind) {
+  const r = store.results;
+  if (!r) return null;
+  const cd = tableCaseData();
+  if (kind === "story") {
+    if (!cd) return null;
+    return [
+      ["story", "elev_m", "ux_m", "uy_m", "drift_x", "drift_y", "shear_x_kN", "shear_y_kN"],
+      ...[...r.story_order].reverse().map(s => {
+        const st = (cd.story && cd.story[s]) || {};
+        return [s, r.story_elev[s], st.ux || 0, st.uy || 0,
+          st.drift_x || 0, st.drift_y || 0, st.shear_x || 0, st.shear_y || 0];
+      }),
+    ];
+  }
+  if (kind === "modal") {
+    const modal = r.modal;
+    if (!modal || !modal.periods || !modal.periods.length) return null;
+    let cx = 0, cy = 0;
+    return [
+      ["mode", "T_s", "f_Hz", "ux", "uy", "rz", "gamma_x", "gamma_y", "cum_ux", "cum_uy"],
+      ...modal.participation.map((p, i) => {
+        cx += p.ux || 0; cy += p.uy || 0;
+        return [p.mode, modal.periods[i], modal.frequencies[i],
+          p.ux || 0, p.uy || 0, p.rz || 0,
+          p.gamma_x ?? "", p.gamma_y ?? "", cx, cy];
+      }),
+    ];
+  }
+  if (kind === "reactions") {
+    if (!cd) return null;
+    const tags = (r.supports || []).slice().sort((a, b) => {
+      const pa = r.nodes[a] || [0, 0], pb = r.nodes[b] || [0, 0];
+      return pa[1] - pb[1] || pa[0] - pb[0];
+    });
+    const b = cd.base || {};
+    return [
+      ["node", "x_m", "y_m", "FX_kN", "FY_kN", "FZ_kN", "MX_kNm", "MY_kNm", "MZ_kNm"],
+      ...tags.map(t => {
+        const p = r.nodes[t] || [0, 0, 0];
+        const f = (cd.reactions && cd.reactions[t]) || [0, 0, 0, 0, 0, 0];
+        return [t, p[0], p[1], ...f];
+      }),
+      ["TOTAL", "", "", b.FX || 0, b.FY || 0, b.FZ || 0, b.MX || 0, b.MY || 0, b.MZ || 0],
+    ];
+  }
+  if (kind === "forces") {
+    if (!cd || !cd.member_forces) return null;
+    // unrounded values, same filter+sort view the user sees
+    return [
+      ["member", "kind", "story", "section", "absN_max_kN", "absV2_max_kN", "absM3_max_kNm"],
+      ...forcesRows().map(x => [x.uid, x.kind, x.story, x.section, x.N, x.V2, x.M3]),
+    ];
+  }
+  if (kind === "th") {
+    const td = thData();
+    if (!td) return null;
+    const pb = (td.peaks && td.peaks.base) || {};
+    return [
+      ["story", "elev_m", "peak_ux_m", "peak_uy_m"],
+      ...[...r.story_order].reverse().map(s => {
+        const p = (td.peaks && td.peaks.story && td.peaks.story[s]) || {};
+        return [s, r.story_elev[s], p.ux || 0, p.uy || 0];
+      }),
+      ["BASE_SHEAR_PEAK_kN", "", pb.FX || 0, pb.FY || 0],
+    ];
+  }
+  return null;
+}
+
+function csvFileName(kind) {
+  const caseless = kind === "modal";
+  const caseTag = kind === "th" ? store.thCase : caseLabel(store.caseName) +
+    (caseData()?.min ? `-${store.envSide}` : "");
+  return `skyframe-${slug(store.model?.name)}-${kind}` +
+    (caseless ? "" : `-${slug(caseTag)}`) + ".csv";
+}
+
+function downloadCsv(kind) {
+  const rows = csvRows(kind);
+  if (!rows) {
+    toast("Nothing to export", "Run an analysis first", "error", 4000);
+    return;
+  }
+  const blob = new Blob([toCsv(rows)], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = csvFileName(kind);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast("CSV exported", a.download, "info", 3500);
+}
+
+/* ================================================================
+   v0.4 — REPORT
+   ================================================================ */
+function doReport() {
+  if (!store.results) return null;
+  const win = openReport(store.model, store.results, {
+    caseName: isRsCase(store.caseName) ? null : store.caseName,
+    driftLimitPct: store.driftLimitPct,
+  });
+  if (!win) toast("Popup blocked", "Allow popups for SkyFrame to open the report tab", "error", 8000);
+  return win;
 }
 
 /* ------------------------------------------------ overlay UI */
@@ -1394,11 +1944,13 @@ async function doRun() {
     if (!caseNames().includes(store.caseName)) store.caseName = null;
     rebuildCaseSelect();
     rebuildModeSelect();
+    rebuildThSelects();                            // v0.4
     viewer.setResults(results);
     setResultsAvailable(true);
     renderResultsTabs();
     renderMemberPanel();
     syncOverlayUI();
+    syncContoursUI();                              // v0.4
     renderSummary();
     setStatus("solved", "Solved ✓");
     if (!store.firstSolveDone) {
@@ -1425,9 +1977,61 @@ function wire() {
 
   $("caseSelect").addEventListener("change", e => {
     store.caseName = e.target.value;
+    store.envSide = "max";                         // v0.4: reset envelope side
     renderResultsTabs();
     renderMemberPanel();
     syncOverlayUI();
+    syncContoursUI();                              // v0.4
+  });
+
+  /* ---- v0.4: envelope max/min toggle */
+  document.querySelectorAll("#envToggle .seg-btn").forEach(b =>
+    b.addEventListener("click", () => {
+      if (store.envSide === b.dataset.env) return;
+      store.envSide = b.dataset.env;
+      renderResultsTabs();
+    }));
+
+  /* ---- v0.4: report + CSV buttons */
+  $("reportBtn").addEventListener("click", doReport);
+  $("csvStory").addEventListener("click", () => downloadCsv("story"));
+  $("csvModal").addEventListener("click", () => downloadCsv("modal"));
+  $("csvReactions").addEventListener("click", () => downloadCsv("reactions"));
+  $("csvForces").addEventListener("click", () => downloadCsv("forces"));
+  $("csvTh").addEventListener("click", () => downloadCsv("th"));
+
+  /* ---- v0.4: time-history tab controls */
+  $("thCaseSelect").addEventListener("change", e => {
+    store.thCase = e.target.value;
+    renderThTab();
+  });
+  $("thStorySelect").addEventListener("change", e => {
+    store.thStory = e.target.value;
+    renderThTab();
+  });
+
+  /* ---- v0.4: brace layout toggle */
+  document.querySelectorAll("#braceToggle .seg-btn").forEach(b =>
+    b.addEventListener("click", () => {
+      store.braceXPair = b.dataset.brace === "xpair";
+      document.querySelectorAll("#braceToggle .seg-btn").forEach(x =>
+        x.classList.toggle("is-active", x === b));
+    }));
+
+  /* ---- v0.4: grid & story editor */
+  $("gridEditBtn").addEventListener("click", openGridEditor);
+  $("gridModalClose").addEventListener("click", closeGridEditor);
+  $("gridModalDone").addEventListener("click", closeGridEditor);
+  $("gridModal").addEventListener("click", e => {
+    if (e.target === $("gridModal")) closeGridEditor();
+  });
+  $("addGridX").addEventListener("click", () => {
+    ME.addGridLine(store.model, "x");
+    afterGeometryEdit();
+  });
+  $("addGridY").addEventListener("click", () => {
+    ME.addGridLine(store.model, "y");
+    afterGeometryEdit();
   });
 
   /* ---- v0.2: mode switch, draw tools, save/discard, member panel */
@@ -1518,16 +2122,31 @@ function wire() {
   $("sidebarToggle").addEventListener("click", () =>
     applySidebar(!$("sidebar").classList.contains("collapsed")));
 
-  // overlay chips
+  // overlay chips (deformed / mode / contours are mutually exclusive)
   $("chipDeformed").addEventListener("click", () => {
     store.overlay.deformed = !store.overlay.deformed;
-    if (store.overlay.deformed) store.overlay.modal = false;
+    if (store.overlay.deformed) { store.overlay.modal = false; store.contour.on = false; }
     syncOverlayUI();
+    syncContoursUI();
   });
   $("chipMode").addEventListener("click", () => {
     store.overlay.modal = !store.overlay.modal;
-    if (store.overlay.modal) store.overlay.deformed = false;
+    if (store.overlay.modal) { store.overlay.deformed = false; store.contour.on = false; }
     syncOverlayUI();
+    syncContoursUI();
+  });
+  $("chipContours").addEventListener("click", () => {
+    store.contour.on = !store.contour.on;
+    if (store.contour.on) {
+      store.overlay.deformed = false;
+      store.overlay.modal = false;
+      syncOverlayUI();
+    }
+    syncContoursUI();
+  });
+  $("contourComp").addEventListener("change", e => {
+    store.contour.comp = e.target.value;
+    syncContoursUI();
   });
   $("chipLabels").addEventListener("click", () => {
     const on = !$("chipLabels").classList.contains("is-on");
@@ -1558,8 +2177,8 @@ function wire() {
   });
 
   // keyboard
-  const TABS = ["view3d", "story", "modal", "reactions", "forces"];
-  const TOOL_KEYS = { v: "select", c: "column", b: "beam", w: "wall", s: "slab", e: "erase" };
+  const TABS = ["view3d", "story", "modal", "reactions", "forces", "th"];
+  const TOOL_KEYS = { v: "select", c: "column", b: "beam", x: "brace", w: "wall", s: "slab", e: "erase" };
   document.addEventListener("keydown", e => {
     const tag = (e.target.tagName || "").toLowerCase();
     // v0.3 dialogs respond to Escape even while an input has focus
@@ -1567,6 +2186,7 @@ function wire() {
       if (confirmResolve) { settleConfirm(false); return; }
       if (!$("saveAsModal").classList.contains("hidden")) { $("saveAsModal").classList.add("hidden"); return; }
       if (!$("openModal").classList.contains("hidden")) { $("openModal").classList.add("hidden"); return; }
+      if (!$("gridModal").classList.contains("hidden")) { closeGridEditor(); return; }
       if (!$("fileMenu").classList.contains("hidden")) { toggleFileMenu(false); return; }
     }
     if (["input", "select", "textarea"].includes(tag)) return;
@@ -1594,7 +2214,10 @@ function wire() {
 
     if (store.mode !== "analyze") return;   // loads mode: no analyze shortcuts
 
-    if (e.key >= "1" && e.key <= "5") switchTab(TABS[+e.key - 1]);
+    if (e.key >= "1" && e.key <= "6") {
+      const t = TABS[+e.key - 1];
+      if (t && !(t === "th" && $("thTabBtn").classList.contains("hidden"))) switchTab(t);
+    }
     else if (e.key === "r" || e.key === "R") doRun();
     else if (e.key === "f" || e.key === "F") viewer.fit();
   });
@@ -1620,6 +2243,7 @@ async function boot() {
     getModel: () => store.model,
     onChange: markDirty,
     toast,
+    onWind: generateWindPattern,                   // v0.4
   });
   wire();
   try {
@@ -1647,6 +2271,11 @@ async function boot() {
     filesApi, saveToFile, adoptModel, caseLabel, isRsCase, caseData,
     renderSectionLib, fetchSectionLibrary, doRun, switchTab, syncOverlayUI,
     renderMemberPanel, closeMemberPanel, openSectionMgr,
+    // v0.4
+    openGridEditor, closeGridEditor, renderGridEditor, tableCaseData,
+    syncContoursUI, syncEnvToggle, renderThTab, rebuildThSelects,
+    csvRows, csvFileName, downloadCsv, doReport, buildReportHtml,
+    generateWindPattern, renderSectionMgr, contourAvailability,
   };
 }
 

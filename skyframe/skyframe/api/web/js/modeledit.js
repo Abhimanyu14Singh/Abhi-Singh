@@ -34,6 +34,28 @@ export function normalizeModel(m) {
   for (const [n, cb] of Object.entries(m.combos)) {
     cb.name = cb.name || n;
     cb.cases = cb.cases || {};
+    cb.combo_type = cb.combo_type === "envelope" ? "envelope" : "add";   // v0.4
+  }
+  // v0.4 — member orientation angle, stiffness modifiers, mass source,
+  // time-history cases
+  for (const mm of m.members) if (!isFinite(mm.angle)) mm.angle = 0;
+  for (const s of Object.values(m.sections)) {
+    for (const k of ["mod_A", "mod_I33", "mod_I22", "mod_J"])
+      if (!isFinite(s[k])) s[k] = 1.0;
+  }
+  for (const s of Object.values(m.shell_sections))
+    if (!isFinite(s.mod)) s.mod = 1.0;
+  if (!m.mass_source || typeof m.mass_source !== "object" ||
+      !Object.keys(m.mass_source).length)
+    m.mass_source = { DEAD: 1.0 };
+  m.th_cases = m.th_cases || {};
+  for (const [n, tc] of Object.entries(m.th_cases)) {
+    tc.name = tc.name || n;
+    tc.direction = tc.direction === "Y" ? "Y" : "X";
+    tc.accel = Array.isArray(tc.accel) ? tc.accel : [];
+    tc.dt = isFinite(tc.dt) && tc.dt > 0 ? tc.dt : 0.02;
+    tc.damping = isFinite(tc.damping) ? tc.damping : 0.05;
+    tc.scale = isFinite(tc.scale) ? tc.scale : 1.0;
   }
   for (const [n, rc] of Object.entries(m.rs_cases)) {
     rc.name = rc.name || n;
@@ -122,6 +144,23 @@ export function addBeam(model, p1, p2, story) {
     uid: nextUid(model, "B"), kind: "beam",
     section: defaultFrameSection(model, "beam"),
     pi, pj, story, length: dist(pi, pj), releases: "",
+  };
+  model.members.push(mem);
+  return mem;
+}
+
+/** v0.4 — diagonal brace: plan point A at the story's bottom elevation up
+    to plan point B at the story's top elevation. */
+export function addBrace(model, p1, p2, story) {
+  const { zb, zt } = storyZ(model, story);
+  const pi = [p1.x, p1.y, zb], pj = [p2.x, p2.y, zt];
+  if (Math.hypot(p2.x - p1.x, p2.y - p1.y) < 1e-6) return null;   // needs plan run
+  if (model.members.some(m => m.kind === "brace" && near(m.pi, pi) && near(m.pj, pj))) return null;
+  const names = Object.keys(model.sections);
+  const mem = {
+    uid: nextUid(model, "BR"), kind: "brace",
+    section: names[0] || defaultFrameSection(model, "beam"),
+    pi, pj, story, length: dist(pi, pj), releases: "", angle: 0,
   };
   model.members.push(mem);
   return mem;
@@ -414,6 +453,224 @@ export function renameRsCase(model, oldName, newName) {
 export function deleteRsCase(model, name) {
   delete model.rs_cases[name];
   return true;
+}
+
+/* ================================================================
+   v0.4 — grid & story editing
+   ================================================================ */
+
+/** A..Z, AA..AZ, … column-style labels. */
+function alphaLabel(i) {
+  let s = "";
+  i = Math.floor(i);
+  do { s = String.fromCharCode(65 + (i % 26)) + s; i = Math.floor(i / 26) - 1; } while (i >= 0);
+  return s;
+}
+
+export function relabelGrid(grid) {
+  grid.x_labels = grid.x_lines.map((_, i) => alphaLabel(i));
+  grid.y_labels = grid.y_lines.map((_, i) => String(i + 1));
+}
+
+/** Set a grid line position (keeps the list sorted, relabels).
+    Returns false when the value collides with another line. */
+export function setGridLine(model, axis, idx, value) {
+  const lines = axis === "x" ? model.grid.x_lines : model.grid.y_lines;
+  if (!isFinite(value) || idx < 0 || idx >= lines.length) return false;
+  if (lines.some((v, i) => i !== idx && Math.abs(v - value) < 1e-6)) return false;
+  lines[idx] = value;
+  lines.sort((a, b) => a - b);
+  relabelGrid(model.grid);
+  return true;
+}
+
+/** Append a grid line one typical bay beyond the last line. Returns its value. */
+export function addGridLine(model, axis) {
+  const lines = axis === "x" ? model.grid.x_lines : model.grid.y_lines;
+  const n = lines.length;
+  const spacing = n >= 2 ? lines[n - 1] - lines[n - 2] : 6;
+  const v = +((n ? lines[n - 1] : 0) + (spacing || 6)).toFixed(3);
+  lines.push(v);
+  lines.sort((a, b) => a - b);
+  relabelGrid(model.grid);
+  return v;
+}
+
+/** Remove a grid line (a grid keeps at least 2 lines per direction).
+    Members are untouched — anything outside the grid is kept. */
+export function removeGridLine(model, axis, idx) {
+  const lines = axis === "x" ? model.grid.x_lines : model.grid.y_lines;
+  if (lines.length <= 2 || idx < 0 || idx >= lines.length) return false;
+  lines.splice(idx, 1);
+  relabelGrid(model.grid);
+  return true;
+}
+
+/* ---- stories.
+   Height / order edits recompute every elevation AND remap member/shell
+   z-coordinates story by story, so elements stay attached to their story. */
+function storySpans(model) {
+  return model.stories.map(s => ({
+    name: s.name, zb: s.elevation - s.height, zt: s.elevation,
+  }));
+}
+
+function recomputeElevations(model) {
+  let z = 0;
+  for (const s of model.stories) { z += s.height; s.elevation = +z.toFixed(6); }
+}
+
+/** Remap all member/shell z-coords from an old story-span snapshot to the
+    current spans (linear within each story: bottoms→bottoms, tops→tops). */
+function remapStoryZ(model, oldSpans) {
+  const oldBy = {}; for (const o of oldSpans) oldBy[o.name] = o;
+  const newBy = {}; for (const n of storySpans(model)) newBy[n.name] = n;
+  const mapz = (story, z) => {
+    const o = oldBy[story], n = newBy[story];
+    if (!o || !n) return z;
+    const t = (o.zt - o.zb) > 1e-9 ? (z - o.zb) / (o.zt - o.zb) : 1;
+    return +(n.zb + t * (n.zt - n.zb)).toFixed(6);
+  };
+  for (const mm of model.members) {
+    mm.pi[2] = mapz(mm.story, mm.pi[2]);
+    mm.pj[2] = mapz(mm.story, mm.pj[2]);
+    mm.length = dist(mm.pi, mm.pj);
+  }
+  for (const sh of model.shells)
+    for (const c of sh.corners) c[2] = mapz(sh.story, c[2]);
+}
+
+export function setStoryHeight(model, name, h) {
+  const st = storyByName(model, name);
+  if (!st || !isFinite(h) || h <= 0) return false;
+  const snap = storySpans(model);
+  st.height = h;
+  recomputeElevations(model);
+  remapStoryZ(model, snap);
+  return true;
+}
+
+export function renameStory(model, oldName, newName) {
+  if (!newName || newName === oldName) return false;
+  if (model.stories.some(s => s.name === newName)) return false;
+  const st = storyByName(model, oldName);
+  if (!st) return false;
+  st.name = newName;
+  for (const mm of model.members) if (mm.story === oldName) mm.story = newName;
+  for (const sh of model.shells) if (sh.story === oldName) sh.story = newName;
+  if (model.story_masses && model.story_masses[oldName] !== undefined) {
+    model.story_masses[newName] = model.story_masses[oldName];
+    delete model.story_masses[oldName];
+  }
+  for (const p of Object.values(model.patterns || {}))
+    for (const f of (p.story_forces || []))
+      if (f.story === oldName) f.story = newName;
+  return true;
+}
+
+function uniqueStoryName(model) {
+  let mx = 0;
+  for (const s of model.stories) {
+    const g = /^Story(\d+)$/.exec(s.name);
+    if (g) mx = Math.max(mx, +g[1]);
+  }
+  let n = mx + 1;
+  while (model.stories.some(s => s.name === `Story${n}`)) n++;
+  return `Story${n}`;
+}
+
+/** Insert an empty story above/below `refName` (same height as the
+    reference story). Stories above translate up. Returns the new name. */
+export function insertStory(model, refName, where = "above") {
+  const i = model.stories.findIndex(s => s.name === refName);
+  if (i < 0) return null;
+  const snap = storySpans(model);
+  const ref = model.stories[i];
+  const st = { name: uniqueStoryName(model), height: ref.height, elevation: 0 };
+  model.stories.splice(where === "above" ? i + 1 : i, 0, st);
+  recomputeElevations(model);
+  remapStoryZ(model, snap);
+  if (model.story_masses) model.story_masses[st.name] = 0;
+  return st.name;
+}
+
+/** Elements assigned to a story (deleted along with it). */
+export function storyElementCounts(model, name) {
+  return {
+    members: model.members.filter(m => m.story === name).length,
+    shells: model.shells.filter(s => s.story === name).length,
+  };
+}
+
+/** Delete a story: its members/shells (and their loads) are removed and the
+    stories above translate down. Blocked for the last remaining story. */
+export function deleteStory(model, name) {
+  if (model.stories.length <= 1) return false;
+  const i = model.stories.findIndex(s => s.name === name);
+  if (i < 0) return false;
+  const snap = storySpans(model);
+  for (const mm of model.members.filter(m => m.story === name))
+    eraseElement(model, { type: "member", uid: mm.uid });
+  for (const sh of model.shells.filter(s => s.story === name))
+    eraseElement(model, { type: "shell", uid: sh.uid });
+  model.stories.splice(i, 1);
+  if (model.story_masses) delete model.story_masses[name];
+  for (const p of Object.values(model.patterns || {}))
+    p.story_forces = (p.story_forces || []).filter(f => f.story !== name);
+  recomputeElevations(model);
+  remapStoryZ(model, snap);
+  return true;
+}
+
+/* ================================================================
+   v0.4 — time-history cases
+   ================================================================ */
+
+/** Ramped decaying sine acceleration record (m/s²) — the "sine demo" seed. */
+export function sineRecord(dt = 0.02, dur = 8, freq = 1.2, amp = 2.5) {
+  const n = Math.round(dur / dt);
+  const out = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i * dt;
+    const env = Math.min(t / 1.0, 1) * Math.exp(-0.18 * Math.max(t - 4, 0));
+    out.push(+(amp * env * Math.sin(2 * Math.PI * freq * t)).toFixed(4));
+  }
+  return out;
+}
+
+export function addThCase(model, base = "TH") {
+  const name = uniqueKey(model.th_cases, base);
+  model.th_cases[name] = {
+    name, direction: "X", accel: sineRecord(),
+    dt: 0.02, damping: 0.05, scale: 1.0,
+  };
+  return name;
+}
+
+export function renameThCase(model, oldName, newName) {
+  if (!newName || newName === oldName || model.th_cases[newName]) return false;
+  model.th_cases[newName] = { ...model.th_cases[oldName], name: newName };
+  delete model.th_cases[oldName];
+  return true;
+}
+
+export function deleteThCase(model, name) {
+  delete model.th_cases[name];
+  return true;
+}
+
+/** Parse a comma/whitespace-separated acceleration record. Returns numbers
+    (silently dropping empty tokens) or null when any token is not a number. */
+export function parseAccel(text) {
+  const toks = String(text).trim().split(/[\s,;]+/).filter(t => t.length);
+  if (!toks.length) return [];
+  const out = [];
+  for (const t of toks) {
+    const v = parseFloat(t);
+    if (!isFinite(v)) return null;
+    out.push(v);
+  }
+  return out;
 }
 
 /* ---------------- v0.3: section library ---------------- */

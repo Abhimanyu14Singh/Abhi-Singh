@@ -15,6 +15,8 @@ const C = {
   gridLabel: "rgba(140, 160, 185, 0.75)",
   column: "#5f8fc9",
   beam: "#77879b",
+  brace: "#c98500",                       // amber — matches the 3D viewer
+  braceRubber: "rgba(201, 133, 0, 0.9)",
   wall: "rgba(95, 143, 201, 0.85)",
   slabFill: "rgba(154, 167, 180, 0.14)",
   slabEdge: "rgba(154, 167, 180, 0.45)",
@@ -187,11 +189,24 @@ export class PlanEditor {
       }));
     }
     for (const mm of m.members) {
-      if (mm.story !== story || mm.kind === "column") continue;
+      if (mm.story !== story || mm.kind === "column" || mm.kind === "brace") continue;
       const seld = isSel("member", mm.uid);
       this.gElems.appendChild(el("line", {
         x1: mm.pi[0], y1: mm.pi[1], x2: mm.pj[0], y2: mm.pj[1],
         stroke: seld ? C.sel : C.beam, "stroke-width": seld ? 3 : 2,
+        "stroke-linecap": "round", "vector-effect": "non-scaling-stroke",
+        "data-ref": `member:${mm.uid}`,
+      }));
+    }
+    // braces — dashed amber diagonals ON TOP of beams (they often share an
+    // edge with a beam in plan; the dashes must stay visible)
+    for (const mm of m.members) {
+      if (mm.story !== story || mm.kind !== "brace") continue;
+      const seld = isSel("member", mm.uid);
+      this.gElems.appendChild(el("line", {
+        x1: mm.pi[0], y1: mm.pi[1], x2: mm.pj[0], y2: mm.pj[1],
+        stroke: seld ? C.sel : C.brace, "stroke-width": seld ? 3 : 2,
+        "stroke-dasharray": "7 5",
         "stroke-linecap": "round", "vector-effect": "non-scaling-stroke",
         "data-ref": `member:${mm.uid}`,
       }));
@@ -444,6 +459,7 @@ export class PlanEditor {
         break;
       case "beam":
       case "wall":
+      case "brace":
         if (!this.pending) this.pending = pt;
         else if (Math.hypot(pt.x - this.pending.x, pt.y - this.pending.y) > 1e-9) {
           this.opts.onDraw(this.tool, { p1: this.pending, p2: pt });
@@ -529,7 +545,8 @@ export class PlanEditor {
         }));
       } else {
         g.appendChild(el("line", {
-          x1, y1, x2, y2, stroke: C.rubber,
+          x1, y1, x2, y2,
+          stroke: this.tool === "brace" ? C.braceRubber : C.rubber,
           "stroke-width": this.tool === "wall" ? 5 : 2, "stroke-dasharray": "7 5",
           "stroke-linecap": "round", opacity: 0.9,
         }));

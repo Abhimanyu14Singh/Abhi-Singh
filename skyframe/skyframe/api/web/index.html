@@ -56,6 +56,10 @@
           <span>Save Model</span>
         </button>
       </div>
+      <button class="btn" id="reportBtn" disabled title="Open a print-friendly analysis report in a new tab (after a solve)">
+        <svg viewBox="0 0 12 14" width="11" height="13" aria-hidden="true"><path d="M1.5 1h6l3 3v9h-9z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M3.5 7h5M3.5 9.2h5M3.5 11.4h3.4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+        Report
+      </button>
       <button class="btn btn-run" id="runBtn" title="Run all static cases, combos and modal analysis (R)">
         <span class="spinner hidden" id="runSpinner"></span>
         <span id="runBtnLabel">Run Analysis</span>
@@ -81,6 +85,10 @@
             <svg viewBox="0 0 16 16"><path d="M2 12 14 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="2" cy="12" r="1.8" fill="currentColor"/><circle cx="14" cy="4" r="1.8" fill="currentColor"/></svg>
             <span>Beam</span><kbd>B</kbd>
           </button>
+          <button class="tool-btn" data-tool="brace" title="Draw brace — click two plan points: A at story bottom, B at story top (X)">
+            <svg viewBox="0 0 16 16"><path d="M2.5 13.5 13.5 2.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="3 2.4"/><circle cx="2.5" cy="13.5" r="1.7" fill="currentColor"/><circle cx="13.5" cy="2.5" r="1.7" fill="currentColor"/></svg>
+            <span>Brace</span><kbd>X</kbd>
+          </button>
           <button class="tool-btn" data-tool="wall" title="Draw wall — click two points in plan (W)">
             <svg viewBox="0 0 16 16"><path d="M2 11 14 5" stroke="currentColor" stroke-width="5" stroke-linecap="butt"/></svg>
             <span>Wall</span><kbd>W</kbd>
@@ -95,6 +103,14 @@
           </button>
         </div>
 
+        <div id="braceOpts" class="hidden">
+          <h3 class="group-title">Brace layout</h3>
+          <div class="seg-toggle" id="braceToggle">
+            <button class="seg-btn is-active" data-brace="single" title="One diagonal: A (bottom) → B (top)">Single</button>
+            <button class="seg-btn" data-brace="xpair" title="Adds the mirrored diagonal too (X bracing)">X-pair</button>
+          </div>
+        </div>
+
         <h3 class="group-title">Apply to</h3>
         <div class="seg-toggle" id="applyToggle">
           <button class="seg-btn is-active" data-apply="one">This story</button>
@@ -103,6 +119,7 @@
 
         <h3 class="group-title">Properties</h3>
         <button class="btn btn-block" id="sectionMgrBtn" title="Manage frame sections, shell sections and materials">Section Manager…</button>
+        <button class="btn btn-block" id="gridEditBtn" style="margin-top:8px" title="Edit grid line positions, story heights and names">Edit Grid/Stories…</button>
 
         <div class="draw-help">
           <h3 class="group-title">Hints</h3>
@@ -110,6 +127,7 @@
           <p><kbd>Esc</kbd> cancels a two-click tool · <kbd>Del</kbd> deletes the selection.</p>
           <p><kbd>↑</kbd>/<kbd>↓</kbd> change story · right-drag pans · wheel zooms · dbl-click fits.</p>
           <p>Slab tool: click inside a grid cell to fill it.</p>
+          <p>Brace tool: point A takes the story bottom, point B the top; X-pair adds the mirror.</p>
         </div>
       </div>
 
@@ -119,7 +137,9 @@
           <button data-target="ls-patterns">Patterns <span class="nav-count" id="cnt-patterns">0</span></button>
           <button data-target="ls-cases">Static cases <span class="nav-count" id="cnt-cases">0</span></button>
           <button data-target="ls-rs">RS cases <span class="nav-count" id="cnt-rs">0</span></button>
+          <button data-target="ls-th">TH cases <span class="nav-count" id="cnt-th">0</span></button>
           <button data-target="ls-combos">Combos <span class="nav-count" id="cnt-combos">0</span></button>
+          <button data-target="ls-mass">Mass source</button>
         </div>
         <div class="draw-help">
           <h3 class="group-title">How it fits</h3>
@@ -265,7 +285,12 @@
         <button class="tab" data-tab="modal" role="tab">Modal</button>
         <button class="tab" data-tab="reactions" role="tab">Reactions</button>
         <button class="tab" data-tab="forces" role="tab">Member Forces</button>
+        <button class="tab hidden" data-tab="th" role="tab" id="thTabBtn">Time History</button>
         <div class="tabbar-spacer"></div>
+        <div class="seg-toggle env-toggle hidden" id="envToggle" title="Envelope combo — switch tables between the max and min envelope">
+          <button class="seg-btn is-active" data-env="max">max</button>
+          <button class="seg-btn" data-env="min">min</button>
+        </div>
         <label class="case-select-wrap" id="caseSelectWrap" hidden>
           <span>Case</span>
           <select id="caseSelect" class="case-select"></select>
@@ -277,7 +302,19 @@
         <div class="viewer-toolbar" id="viewerToolbar">
           <button class="chip" id="chipDeformed" disabled title="Overlay the deformed shape for the selected case">Deformed shape</button>
           <button class="chip" id="chipMode" disabled title="Animate a mode shape">Mode shape</button>
+          <button class="chip" id="chipContours" disabled title="Color shell elements by internal force (static cases only)">Contours</button>
           <button class="chip is-on" id="chipLabels" title="Show member info on hover">Labels</button>
+
+          <div class="toolbar-group" id="contourGroup" hidden>
+            <select id="contourComp" class="mini-select" title="Shell force component">
+              <option value="M11">M11</option>
+              <option value="M22">M22</option>
+              <option value="M12">M12</option>
+              <option value="N11">N11</option>
+              <option value="N22">N22</option>
+              <option value="N12">N12</option>
+            </select>
+          </div>
 
           <div class="toolbar-group" id="deformedGroup" hidden>
             <label class="mini-label">scale</label>
@@ -304,6 +341,13 @@
               <span class="hidden" id="legendWall"><i class="area" style="background:rgba(95,143,201,.35);border-color:rgba(125,168,216,.8)"></i>wall</span>
               <span class="hidden" id="legendSlab"><i class="area" style="background:rgba(154,167,180,.28);border-color:rgba(154,167,180,.7)"></i>slab</span>
               <span class="hidden" id="legendDeformed"><i style="background:var(--accent)"></i>deformed</span>
+            </div>
+            <div class="contour-legend hidden" id="contourLegend">
+              <div class="cl-title" id="contourLegendTitle">M11 <span class="unit">kN·m/m</span></div>
+              <div class="cl-bar"></div>
+              <div class="cl-labels">
+                <span id="clMin">−1</span><span>0</span><span id="clMax">+1</span>
+              </div>
             </div>
           </div>
           <aside class="member-panel hidden" id="memberPanel">
@@ -342,6 +386,7 @@
             <label class="drift-limit-wrap">Drift limit
               <input type="number" id="driftLimitInput" min="0.05" step="0.05" value="0.5"> %
             </label>
+            <button class="chip csv-btn" id="csvStory" title="Download this table as CSV (unrounded)">⬇ CSV</button>
           </div>
           <div class="charts-row" id="chartsRow"></div>
           <div class="table-scroll">
@@ -357,6 +402,10 @@
           <p>Run analysis to see modal results</p>
         </div>
         <div class="pane-content hidden" id="content-modal">
+          <div class="pane-tools">
+            <span class="muted">Periods, mass participation and participation factors Γ</span>
+            <button class="chip csv-btn" id="csvModal" title="Download this table as CSV (unrounded)">⬇ CSV</button>
+          </div>
           <div class="table-scroll">
             <table class="data-table" id="modalTable"></table>
           </div>
@@ -370,6 +419,10 @@
           <p>Run analysis to see support reactions</p>
         </div>
         <div class="pane-content hidden" id="content-reactions">
+          <div class="pane-tools">
+            <span class="muted" id="reactionsNote">Support reactions at restrained nodes</span>
+            <button class="chip csv-btn" id="csvReactions" title="Download this table as CSV (unrounded)">⬇ CSV</button>
+          </div>
           <div class="table-scroll">
             <table class="data-table" id="reactionsTable"></table>
           </div>
@@ -386,9 +439,35 @@
           <div class="forces-controls">
             <input type="search" id="forcesFilter" class="filter-input" placeholder="Filter by uid / kind / story…">
             <span class="muted" id="forcesCount"></span>
+            <span class="toolbar-spacer"></span>
+            <button class="chip csv-btn" id="csvForces" title="Download the filtered table as CSV (unrounded)">⬇ CSV</button>
           </div>
           <div class="table-scroll">
             <table class="data-table" id="forcesTable"></table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ TIME HISTORY (v0.4) ============ -->
+      <section class="tabpane" id="pane-th" role="tabpanel">
+        <div class="empty-state" id="empty-th">
+          <div class="empty-art">∿</div>
+          <p>Run analysis with a time-history case to see traces</p>
+        </div>
+        <div class="pane-content hidden" id="content-th">
+          <div class="charts-controls">
+            <div class="th-controls">
+              <label class="case-select-wrap"><span>TH case</span>
+                <select id="thCaseSelect" class="case-select"></select></label>
+              <label class="case-select-wrap"><span>Story</span>
+                <select id="thStorySelect" class="case-select"></select></label>
+              <span class="muted" id="thMeta"></span>
+            </div>
+            <button class="chip csv-btn" id="csvTh" title="Download the peaks table as CSV (unrounded)">⬇ CSV</button>
+          </div>
+          <div class="th-charts" id="thCharts"></div>
+          <div class="table-scroll">
+            <table class="data-table" id="thPeaksTable"></table>
           </div>
         </div>
       </section>
@@ -490,6 +569,43 @@
           <button class="btn" id="saveAsCancel">Cancel</button>
           <button class="btn btn-run" id="saveAsOk">Save</button>
         </div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ============ GRID & STORIES (v0.4) ============ -->
+  <div class="modal-backdrop hidden" id="gridModal">
+    <div class="modal modal-wide" role="dialog" aria-labelledby="gridModalTitle">
+      <header class="modal-head">
+        <h2 id="gridModalTitle">Edit Grid &amp; Stories</h2>
+        <button class="icon-btn" id="gridModalClose" title="Close" aria-label="Close grid editor">×</button>
+      </header>
+      <div class="modal-body grid-modal-body">
+        <section class="grid-pane">
+          <h3 class="ge-title">Grid lines <span class="muted">positions in m</span></h3>
+          <p class="muted ge-note">Members are never moved by grid edits — anything outside the grid is kept.</p>
+          <div class="ge-cols">
+            <div>
+              <div class="ge-col-head"><b>X lines</b>
+                <button class="btn btn-small" id="addGridX">+ Line</button></div>
+              <div class="ge-lines" id="gridXRows"></div>
+            </div>
+            <div>
+              <div class="ge-col-head"><b>Y lines</b>
+                <button class="btn btn-small" id="addGridY">+ Line</button></div>
+              <div class="ge-lines" id="gridYRows"></div>
+            </div>
+          </div>
+        </section>
+        <section class="story-pane-edit">
+          <h3 class="ge-title">Stories <span class="muted">top → bottom · heights in m</span></h3>
+          <p class="muted ge-note">Changing a height re-computes elevations and moves that story's members with it. Deleting a story deletes its members.</p>
+          <div class="ge-stories" id="storyRows"></div>
+        </section>
+      </div>
+      <footer class="modal-foot">
+        <span class="muted">Edits apply to the working model — Save Model to persist.</span>
+        <button class="btn" id="gridModalDone">Done</button>
       </footer>
     </div>
   </div>
