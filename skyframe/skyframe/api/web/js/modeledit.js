@@ -56,6 +56,13 @@ export function normalizeModel(m) {
     tc.dt = isFinite(tc.dt) && tc.dt > 0 ? tc.dt : 0.02;
     tc.damping = isFinite(tc.damping) ? tc.damping : 0.05;
     tc.scale = isFinite(tc.scale) ? tc.scale : 1.0;
+    // v0.6 — nonlinear (plastic-hinge) time history
+    tc.nonlinear = !!tc.nonlinear;
+    tc.gravity = (tc.gravity && typeof tc.gravity === "object") ? tc.gravity : {};
+    tc.hinges = tc.hinges === "all_ends" ? "all_ends" : "column_base";
+    tc.My = (tc.My && typeof tc.My === "object") ? tc.My : {};
+    if (tc.default_My != null && !isFinite(tc.default_My)) delete tc.default_My;
+    tc.hardening = isFinite(tc.hardening) ? tc.hardening : 0.02;
   }
   for (const [n, rc] of Object.entries(m.rs_cases)) {
     rc.name = rc.name || n;
@@ -89,6 +96,15 @@ export function normalizeModel(m) {
     if (!(Array.isArray(l.stiffness) && l.stiffness.length === 6 &&
           l.stiffness.every(v => isFinite(v))))
       l.stiffness = [1e5, 1e5, 1e5, 1e4, 1e4, 1e4];
+  }
+  // v0.6 — staged construction cases (sequential gravity)
+  m.staged_cases = m.staged_cases || {};
+  for (const [n, sc] of Object.entries(m.staged_cases)) {
+    sc.name = sc.name || n;
+    sc.pattern = sc.pattern || "DEAD";
+    sc.stages = "per_story";
+    sc.include_live = (sc.include_live && typeof sc.include_live === "object")
+      ? sc.include_live : {};
   }
   return m;
 }
@@ -830,6 +846,30 @@ export function renameThCase(model, oldName, newName) {
 
 export function deleteThCase(model, name) {
   delete model.th_cases[name];
+  return true;
+}
+
+/* ---------------- v0.6: staged construction cases ---------------- */
+export function addStagedCase(model, base = "STAGE") {
+  model.staged_cases = model.staged_cases || {};
+  const name = uniqueKey(model.staged_cases, base);
+  const pat = model.patterns && model.patterns.DEAD ? "DEAD"
+    : (patternNames(model)[0] || "DEAD");
+  model.staged_cases[name] = {
+    name, pattern: pat, stages: "per_story", include_live: {},
+  };
+  return name;
+}
+
+export function renameStagedCase(model, oldName, newName) {
+  if (!newName || newName === oldName || model.staged_cases[newName]) return false;
+  model.staged_cases[newName] = { ...model.staged_cases[oldName], name: newName };
+  delete model.staged_cases[oldName];
+  return true;
+}
+
+export function deleteStagedCase(model, name) {
+  delete model.staged_cases[name];
   return true;
 }
 
