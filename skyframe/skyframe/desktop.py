@@ -14,6 +14,7 @@ Modes:
 from __future__ import annotations
 
 import argparse
+import os
 import socket
 import sys
 import threading
@@ -71,11 +72,15 @@ def main(argv: list[str] | None = None) -> int:
     _start_server(port)
     if not _wait_healthy(port):
         print("SkyFrame: server failed to start", file=sys.stderr)
+        if args.smoke:
+            os._exit(1)
         return 1
 
     if args.smoke:
-        print(f"SkyFrame smoke check OK on port {port}")
-        return 0
+        print(f"SkyFrame smoke check OK on port {port}", flush=True)
+        # hard exit: skip atexit hooks (the OpenSees runtime can block
+        # interpreter shutdown in frozen windowed builds on Windows)
+        os._exit(0)
 
     url = f"http://127.0.0.1:{port}/"
     if args.server_only:

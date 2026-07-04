@@ -49,8 +49,19 @@ exe = EXE(
     console=False,
     icon=None,
 )
+# console-subsystem twin for headless/CI use (--server-only, --smoke):
+# valid stdio and no GUI subsystem quirks on Windows
+exe_cli = EXE(
+    pyz,
+    a.scripts,
+    exclude_binaries=True,
+    name="SkyFrameCLI",
+    console=True,
+    icon=None,
+)
 coll = COLLECT(
     exe,
+    exe_cli,
     a.binaries,
     a.datas,
     name="SkyFrame",

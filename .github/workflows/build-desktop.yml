@@ -37,6 +37,7 @@ jobs:
             os_name: linux
             artifact: SkyFrame-linux
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     defaults: { run: { working-directory: skyframe } }
     steps:
       - uses: actions/checkout@v4
@@ -58,7 +59,8 @@ jobs:
 
       - name: Smoke test the frozen app (headless)
         shell: bash
-        run: ./packaging/dist/SkyFrame/SkyFrame --smoke
+        timeout-minutes: 5
+        run: timeout 180 ./packaging/dist/SkyFrame/SkyFrameCLI --smoke
 
       - name: Package (zip)
         shell: bash
