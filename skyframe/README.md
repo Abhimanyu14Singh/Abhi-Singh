@@ -45,13 +45,36 @@ skyframe/
 | **Deformed shape overlay** | **Modal results** |
 | ![Deformed](docs/screenshots/live-05-deformed.png) | ![Modal](docs/screenshots/live-03-modal.png) |
 
-## Quickstart
+## Install the desktop app (built by GitHub Actions)
+
+Every push to the main branches (and every `v*` tag) triggers the
+**Build SkyFrame desktop app** workflow (`.github/workflows/build-desktop.yml`),
+which runs the full 42-benchmark validation suite and then produces
+ready-to-run installers:
+
+1. GitHub → **Actions** → *Build SkyFrame desktop app* → latest green run
+   (or **Run workflow** to build on demand).
+2. Download the artifact for your OS: `SkyFrame-windows` (zip) or
+   `SkyFrame-linux` (tar.gz). Tagged releases (`v0.2.0` …) get the same files
+   attached on the **Releases** page.
+3. Unpack anywhere and run `SkyFrame` (`SkyFrame.exe` on Windows). No Python,
+   no license server — the OpenSees solver is bundled and smoke-tested in CI.
+
+The desktop shell is [pywebview](https://pywebview.flowrl.com/) — a native OS
+webview (Edge WebView2 / WebKitGTK / WKWebView) around the same app, an
+Electron-style experience without shipping a browser. Linux needs
+`libwebkit2gtk-4.1` from your package manager; `./SkyFrame --server-only`
+runs it headless in any case.
+
+## Quickstart (from source)
 
 ```bash
-pip install -r requirements.txt        # openseespy, numpy, flask, pytest
+pip install -e .[desktop]              # openseespy, numpy, flask, pywebview
 # Linux: openseespy needs BLAS/LAPACK: apt-get install libblas3 liblapack3
 
-python3 -m skyframe.api.server         # → http://127.0.0.1:8600
+skyframe                               # native desktop window
+skyframe --server-only                 # or serve → http://127.0.0.1:8600
+python3 -m skyframe.api.server         # same, without installing
 ```
 
 Or script it:
