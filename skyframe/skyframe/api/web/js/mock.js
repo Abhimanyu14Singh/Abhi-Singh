@@ -195,6 +195,21 @@ export function mockModel(p = {}) {
       "TH-SINE-X": {
         name: "TH-SINE-X", direction: "X", accel: sine,
         dt: 0.02, damping: 0.05, scale: 1.0,
+        nonlinear: false, gravity: {}, hinges: "column_base", My: {}, hardening: 0.02,
+      },
+      "TH-NL-X": {
+        name: "TH-NL-X", direction: "X", accel: sine,
+        dt: 0.02, damping: 0.05, scale: 1.0,
+        // v0.6: nonlinear plastic-hinge run — yield moments on ground columns
+        nonlinear: true, gravity: { DEAD: 1.0 }, hinges: "column_base",
+        My: { ...pushMy }, default_My: 250, hardening: 0.03,
+      },
+    },
+    // v0.6: staged construction — sequential story-by-story DEAD build
+    staged_cases: {
+      "Staged-DEAD": {
+        name: "Staged-DEAD", pattern: "DEAD", stages: "per_story",
+        include_live: { LIVE: 0.25 },
       },
     },
     pushover_cases,
@@ -668,7 +683,75 @@ export function mockResults(model) {
     const peaks = { story: {}, base: { FX: peakOf(base_FX), FY: peakOf(base_FY) } };
     for (const s of storyOrder)
       peaks.story[s] = { ux: peakOf(story_ux[s]), uy: peakOf(story_uy[s]) };
-    th_out[name] = { t, story_ux, story_uy, base_FX, base_FY, peaks };
+    const rec = { t, story_ux, story_uy, base_FX, base_FY, peaks };
+
+    /* ---- v0.6: nonlinear (plastic-hinge) run gains hinge rotations + a
+       yielded-member list. Peak rotation scales with roof drift; a hinge is
+       "yielded" once its peak exceeds My/k_theta (approximated My/2e5). */
+    if (tc.nonlinear) {
+      const uids = Object.keys(tc.My || {}).length
+        ? Object.keys(tc.My)
+        : (tc.default_My != null
+          ? model.members.filter(mm => mm.kind === "column" &&
+              mm.story === storyOrder[0]).map(mm => mm.uid) : []);
+      const byUid = {};
+      for (const mm of model.members) byUid[mm.uid] = mm;
+      const uroof = peakOf(story_ux[storyOrder[storyOrder.length - 1]] || [0]) +
+        peakOf(story_uy[storyOrder[storyOrder.length - 1]] || [0]);
+      const drift = uroof / H;
+      const hinge_rotations = {}, yielded = [];
+      uids.forEach((uid, i) => {
+        const mm = byUid[uid];
+        if (!mm) return;
+        const si = Math.max(storyOrder.indexOf(mm.story), 0);
+        const rot = drift * 0.9 * (1 - si / Math.max(storyOrder.length, 1)) * jit(0.2);
+        hinge_rotations[uid] = +Math.max(rot, 0).toFixed(6);
+        const My = (tc.My && tc.My[uid] != null) ? tc.My[uid] : (tc.default_My || 250);
+        const thetaY = My / 2e5;
+        if (rot > thetaY) yielded.push(uid);
+      });
+      rec.hinge_rotations = hinge_rotations;
+      rec.yielded = yielded.sort();
+    }
+    th_out[name] = rec;
+  }
+
+  /* ---- v0.6: staged construction — the accumulated final state plus a
+     comparison to the internal one-shot solve. We reuse the DEAD gravity
+     case shape; staged column axials differ slightly from one-shot by the
+     documented "slab built level" effect (upper stories settle less). */
+  const staged = {};
+  for (const [name, sc] of Object.entries(model.staged_cases || {})) {
+    const base = gravityCase(
+      (model._mock_params && model._mock_params.dead_udl) || 25, sc.pattern || "DEAD");
+    const oneshot = JSON.parse(JSON.stringify(base));
+    const stagedState = JSON.parse(JSON.stringify(base));
+    // staged upper-story node displacements exclude lower-stage shortening
+    for (const [t, p] of Object.entries(nodes)) {
+      const frac = Math.min(1, (p[2] / H) * 0.6 + 0.4);   // upper nodes settle less
+      if (stagedState.node_disp[t])
+        stagedState.node_disp[t] = stagedState.node_disp[t].map(v => v * frac);
+    }
+    // staged beam end moments (indeterminate) genuinely differ from one-shot
+    let maxOne = 0, maxDiff = 0;
+    for (const mm of members) {
+      const one = oneshot.member_forces[mm.uid];
+      const st = stagedState.member_forces[mm.uid];
+      if (!one || !st) continue;
+      if (mm.kind === "column") {
+        maxOne = Math.max(maxOne, Math.abs(one[0]));
+        maxDiff = Math.max(maxDiff, Math.abs(st[0] - one[0]));
+      } else {
+        // shift indeterminate beam moments a few percent
+        st[5] = one[5] * 1.06 * jit(0.03);
+        st[11] = one[11] * 0.95 * jit(0.03);
+      }
+    }
+    stagedState.member_stations = buildStations(stagedState.member_forces,
+      udlOf(sc.pattern || "DEAD"));
+    const pct = maxOne > 1e-9 ? +(100 * maxDiff / maxOne).toFixed(3) : 0.0;
+    stagedState.comparison = { column_axial_max_diff_pct: pct, oneshot_case: oneshot };
+    staged[name] = stagedState;
   }
 
   /* ---- v0.5: pushover cases — bilinear-ish capacity curve with two slope
@@ -722,6 +805,7 @@ export function mockResults(model) {
     shell_quads,
     cases, combos, rs_cases,
     th_cases: th_out,
+    staged,
     modal: { periods, frequencies, participation, shapes },
   };
   if (Object.keys(pushover).length) out.pushover = pushover;
