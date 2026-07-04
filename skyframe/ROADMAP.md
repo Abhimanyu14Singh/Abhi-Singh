@@ -104,10 +104,13 @@ scrutinized benchmark tests.
 - [x] 6. Wall/slab openings; elevation-view drawing (Wave 6)
 - [x] 7. Nonlinear static pushover (OpenSees fiber hinges) (Wave 6)
 
-## Remaining UI surfacing (backend + API done; needs front-end panels)
-The Wave 7 analysis features are fully implemented, tested, and reachable
-over HTTP; they still need dedicated UI panels:
-- [ ] Staged-construction case editor + results view (`run_staged`)
-- [ ] Nonlinear time-history toggle + hysteresis plot (engine done)
-- [ ] Steel / concrete design-check tables (`/api/design/*`)
-- [ ] Import dialogs for DXF / e2k / IFC (`/api/import/*`)
+## Status
+All waves above are complete with engine + REST API + UI, pinned by a
+254-test suite. The app builds standalone locally (`packaging/build.sh`).
+
+## Possible future waves (not yet scheduled)
+- Linear buckling analysis (geometric-stiffness eigenproblem)
+- Winkler elastic-foundation line springs / mat foundations
+- Response-spectrum directional combination (100/30, orthogonal SRSS)
+- Multiple / non-orthogonal grid systems
+- Native Windows local build (same build.sh on a Windows host)
