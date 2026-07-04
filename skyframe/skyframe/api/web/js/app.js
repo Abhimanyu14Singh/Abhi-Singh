@@ -3,8 +3,9 @@
 
 import { Viewer3D } from "./viewer3d.js";
 import { renderStoryCharts, stationDiagram } from "./charts.js";
-import { mockModel, mockResults } from "./mock.js";
+import { mockModel, mockResults, mockSectionLibrary, mockModelFiles } from "./mock.js";
 import { PlanEditor } from "./draw.js";
+import { LoadsEditor } from "./loads.js";
 import * as ME from "./modeledit.js";
 
 /* ------------------------------------------------ state */
@@ -21,7 +22,7 @@ const store = {
   forcesFilter: "",
   lastSolveMs: null,
   // v0.2 — draw mode
-  mode: "analyze",       // "model" | "analyze"
+  mode: "analyze",       // "model" | "loads" | "analyze"
   story: null,           // current story name in the plan editor
   applyAll: false,       // drawing applies to all stories
   tool: "select",
@@ -30,6 +31,10 @@ const store = {
   modelEdited: false,    // 3D viewer needs a setModel refresh
   loadPattern: "DEAD",   // pattern for load assignment inputs
   selectedMemberUid: null, // member detail panel (analyze)
+  // v0.3 — model files & section library
+  fileName: null,        // current saved-model file name (null = unsaved)
+  sectionLib: null,      // cached GET /api/sections/library
+  libSearch: "",
 };
 
 const $ = id => document.getElementById(id);
@@ -102,6 +107,45 @@ async function postModel(payload) {
   return api("/api/model", payload);
 }
 
+/* ---- v0.3: model files + section library.
+   Each call tries the real endpoint, then falls back to the built-in mock
+   store so the UI stays usable while the backend catches up. */
+let filesUsingMock = false;
+async function filesCall(real, mock) {
+  if (!store.mock) {
+    try { const r = await real(); filesUsingMock = false; return r; }
+    catch (e) { console.warn("Model-files endpoint unavailable, using mock store:", e.message); }
+  }
+  filesUsingMock = true;
+  return mock();
+}
+const filesApi = {
+  list: () => filesCall(
+    () => api("/api/models"),
+    () => mockModelFiles.list()),
+  save: name => filesCall(
+    () => api(`/api/models/${encodeURIComponent(name)}`, null),
+    () => mockModelFiles.save(name, store.model)),
+  open: name => filesCall(
+    () => api(`/api/models/${encodeURIComponent(name)}/open`, null),
+    () => mockModelFiles.open(name)),
+  remove: name => filesCall(
+    () => fetch(`/api/models/${encodeURIComponent(name)}`, { method: "DELETE" })
+      .then(r => { if (!r.ok) throw new Error(`${r.status} ${r.statusText}`); return r.json().catch(() => ({})); }),
+    () => mockModelFiles.remove(name)),
+};
+
+async function fetchSectionLibrary() {
+  if (store.sectionLib) return store.sectionLib;
+  let lib;
+  if (!store.mock) {
+    try { lib = await api("/api/sections/library"); }
+    catch (e) { console.warn("Section library endpoint unavailable, using mock:", e.message); }
+  }
+  store.sectionLib = Array.isArray(lib) && lib.length ? lib : mockSectionLibrary();
+  return store.sectionLib;
+}
+
 /* ------------------------------------------------ viewer */
 let viewer = null;
 
@@ -114,21 +158,34 @@ function memberTooltip(seg) {
     const N = Math.max(Math.abs(f[0]), Math.abs(f[6]));
     const V = Math.max(Math.abs(f[1]), Math.abs(f[7]));
     const M = Math.max(Math.abs(f[5]), Math.abs(f[11]));
-    html += `<br><span class="tt-forces">${esc(store.caseName)}</span> · ` +
-      `N ${fmt(N)} · V ${fmt(V)} kN · M ${fmt(M)} kN·m`;
+    html += `<br><span class="tt-forces">${esc(caseLabel(store.caseName))}</span>` +
+      (isRsCase(store.caseName) ? ` <span style="color:var(--amber)">±</span>` : "") +
+      ` · N ${fmt(N)} · V ${fmt(V)} kN · M ${fmt(M)} kN·m`;
   }
   return html;
 }
 
-/* ------------------------------------------------ case selection */
+/* ------------------------------------------------ case selection
+   Response-spectrum cases are keyed "rs:<name>" internally so they can
+   never collide with a static case/combo name; caseLabel() renders them
+   as "RS: <name>". RS values are POSITIVE ENVELOPES. */
+const isRsCase = name => typeof name === "string" && name.startsWith("rs:");
+const caseLabel = name => isRsCase(name) ? `RS: ${name.slice(3)}` : (name || "");
+
 function caseNames() {
   if (!store.results) return [];
-  return [...Object.keys(store.results.cases || {}), ...Object.keys(store.results.combos || {})];
+  return [
+    ...Object.keys(store.results.cases || {}),
+    ...Object.keys(store.results.combos || {}),
+    ...Object.keys(store.results.rs_cases || {}).map(n => `rs:${n}`),
+  ];
 }
 
 function caseData() {
   const r = store.results;
   if (!r || !store.caseName) return null;
+  if (isRsCase(store.caseName))
+    return (r.rs_cases && r.rs_cases[store.caseName.slice(3)]) || null;
   return (r.cases && r.cases[store.caseName]) || (r.combos && r.combos[store.caseName]) || null;
 }
 
@@ -137,19 +194,21 @@ function rebuildCaseSelect() {
   sel.textContent = "";
   const r = store.results;
   if (!r) { $("caseSelectWrap").hidden = true; return; }
-  const mkGroup = (label, names) => {
-    if (!names.length) return;
+  const mkGroup = (label, entries) => {
+    if (!entries.length) return;
     const g = document.createElement("optgroup");
     g.label = label;
-    for (const n of names) {
+    for (const [value, text] of entries) {
       const o = document.createElement("option");
-      o.value = n; o.textContent = n;
+      o.value = value; o.textContent = text;
       g.appendChild(o);
     }
     sel.appendChild(g);
   };
-  mkGroup("Cases", Object.keys(r.cases || {}));
-  mkGroup("Combos", Object.keys(r.combos || {}));
+  mkGroup("Cases", Object.keys(r.cases || {}).map(n => [n, n]));
+  mkGroup("Combos", Object.keys(r.combos || {}).map(n => [n, n]));
+  mkGroup("Response spectrum — envelopes",
+    Object.keys(r.rs_cases || {}).map(n => [`rs:${n}`, `RS: ${n}`]));
   if (!store.caseName || !caseNames().includes(store.caseName)) {
     // prefer a lateral case (non-trivial story results) for the first look
     const names = caseNames();
@@ -178,21 +237,36 @@ function switchTab(tab) {
    v0.2 — MODEL (draw) MODE
    ================================================================ */
 let planEditor = null;
+let loadsEditor = null;   // v0.3 loads/cases/combos editor
+
+function syncLoadsNav() {
+  const m = store.model;
+  if (!m) return;
+  $("cnt-patterns").textContent = Object.keys(m.patterns || {}).length;
+  $("cnt-cases").textContent = Object.keys(m.cases || {}).length;
+  $("cnt-rs").textContent = Object.keys(m.rs_cases || {}).length;
+  $("cnt-combos").textContent = Object.keys(m.combos || {}).length;
+}
 
 function setMode(mode) {
   store.mode = mode;
-  const model = mode === "model";
+  const model = mode === "model", loads = mode === "loads", editing = model || loads;
   document.querySelectorAll(".mode-btn").forEach(b =>
     b.classList.toggle("is-active", b.dataset.mode === mode));
   $("drawMain").classList.toggle("hidden", !model);
-  $("analyzeMain").classList.toggle("hidden", model);
+  $("loadsMain").classList.toggle("hidden", !loads);
+  $("analyzeMain").classList.toggle("hidden", editing);
   $("drawSidebar").classList.toggle("hidden", !model);
-  $("analyzeSidebar").classList.toggle("hidden", model);
-  $("modelActions").classList.toggle("hidden", !model);
-  $("runBtn").classList.toggle("hidden", model);
+  $("loadsSidebar").classList.toggle("hidden", !loads);
+  $("analyzeSidebar").classList.toggle("hidden", editing);
+  $("modelActions").classList.toggle("hidden", !editing);
+  $("runBtn").classList.toggle("hidden", editing);
   if (model) {
     rebuildStorySelect();
     planEditor.refresh();
+  } else if (loads) {
+    loadsEditor.render();
+    syncLoadsNav();
   } else {
     if (store.modelEdited) {
       viewer.setModel(store.model);
@@ -207,12 +281,23 @@ function setMode(mode) {
 function markDirty() {
   store.dirty = true;
   store.modelEdited = true;
-  $("dirtyBadge").classList.remove("hidden");
   renderSummary();
+  syncDirtyUI();
+  if (store.mode === "loads") syncLoadsNav();
 }
 function clearDirty() {
   store.dirty = false;
-  $("dirtyBadge").classList.add("hidden");
+  syncDirtyUI();
+}
+
+/** File chip shows the saved-model name (+ amber dot when dirty). When no
+    file is associated, the classic "● unsaved" badge does the job alone. */
+function syncDirtyUI() {
+  const hasFile = !!store.fileName;
+  $("fileChip").classList.toggle("hidden", !hasFile);
+  if (hasFile) $("fileChipName").textContent = store.fileName;
+  $("fileDirtyDot").classList.toggle("hidden", !store.dirty);
+  $("dirtyBadge").classList.toggle("hidden", !store.dirty || hasFile);
 }
 
 function syncShellLegend() {
@@ -503,9 +588,62 @@ function renderProps() {
 }
 
 /* ---- section manager modal */
+const sci = v => (v == null || !isFinite(v)) ? "—" : Number(v).toExponential(2);
+
 function openSectionMgr() {
   renderSectionMgr();
   $("sectionModal").classList.remove("hidden");
+  // v0.3: lazy-load the section library on first open
+  $("libRows").innerHTML = `<p class="lib-none">Loading library…</p>`;
+  fetchSectionLibrary()
+    .then(() => renderSectionLib())
+    .catch(err => { $("libRows").innerHTML = `<p class="lib-none">Library unavailable — ${esc(err.message)}</p>`; });
+}
+
+function renderSectionLib() {
+  const m = store.model;
+  // material picker for newly added library sections
+  const matSel = $("libMaterial");
+  const prev = matSel.value;
+  matSel.textContent = "";
+  for (const n of Object.keys(m.materials)) {
+    const o = document.createElement("option");
+    o.value = n; o.textContent = n;
+    matSel.appendChild(o);
+  }
+  if (prev && m.materials[prev]) matSel.value = prev;
+
+  const box = $("libRows");
+  box.textContent = "";
+  const lib = store.sectionLib || [];
+  const q = store.libSearch.trim().toLowerCase();
+  const rows = q ? lib.filter(e => e.name.toLowerCase().includes(q)) : lib;
+  if (!rows.length) {
+    box.innerHTML = `<p class="lib-none">No library sections match “${esc(store.libSearch)}”.</p>`;
+    return;
+  }
+  box.appendChild(mgrRow(["Name", "A (m²)", "I33 (m⁴)", "I22 (m⁴)", ""], "mgr-row lib head"));
+  for (const entry of rows) {
+    const exists = !!m.sections[entry.name];
+    const btn = document.createElement("button");
+    btn.className = "btn btn-small";
+    btn.textContent = exists ? "Added" : "+ Add";
+    btn.disabled = exists;
+    btn.title = exists ? "Already a frame section in this model"
+      : `Add ${entry.name} as a frame section (${matSel.value || "default material"})`;
+    btn.addEventListener("click", () => {
+      const name = ME.addLibraryFrameSection(m, entry, matSel.value || ME.defaultMaterial(m));
+      if (name) {
+        markDirty();
+        renderSectionMgr();
+        renderSectionLib();
+        toast("Section added", `${name} is now available in all frame-section dropdowns`, "info", 4000);
+      }
+    });
+    box.appendChild(mgrRow(
+      [entry.name, sci(entry.A), sci(entry.I33), sci(entry.I22), btn],
+      "mgr-row lib" + (exists ? " added" : "")));
+  }
 }
 function closeSectionMgr() {
   $("sectionModal").classList.add("hidden");
@@ -572,15 +710,31 @@ function renderSectionMgr() {
       } else { markDirty(); renderSectionMgr(); }
     });
     const used = ME.sectionInUse(m, name);
-    frameBox.appendChild(mgrRow([
-      nameIn,
-      mgrNum(s.b, "0.05", v => s.b = v),
-      mgrNum(s.h, "0.05", v => s.h = v),
-      mgrMatSelect(m, s.material, v => s.material = v),
-      mgrDel(used, used ? "In use by members" : "Delete section", () => {
-        delete m.sections[name]; markDirty(); renderSectionMgr();
-      }),
-    ]));
+    const del = mgrDel(used, used ? "In use by members" : "Delete section", () => {
+      delete m.sections[name]; markDirty(); renderSectionMgr();
+    });
+    const isLibrary = s.shape === "W" || !(s.b > 0 && s.h > 0);
+    if (!isLibrary) {           // rectangular — b/h editable
+      frameBox.appendChild(mgrRow([
+        nameIn,
+        mgrNum(s.b, "0.05", v => s.b = v),
+        mgrNum(s.h, "0.05", v => s.h = v),
+        mgrMatSelect(m, s.material, v => s.material = v),
+        del,
+      ]));
+    } else {
+      // v0.3: property-based section from the library (A / I33 / I22 / J)
+      const props = document.createElement("span");
+      props.className = "sec-props";
+      props.title = `A ${sci(s.A)} m² · I33 ${sci(s.I33)} m⁴ · I22 ${sci(s.I22)} m⁴ · J ${sci(s.J)} m⁴`;
+      props.textContent = `${s.shape === "W" ? "W-shape" : "library"} · A ${sci(s.A)} · I33 ${sci(s.I33)}`;
+      frameBox.appendChild(mgrRow([
+        nameIn,
+        props,
+        mgrMatSelect(m, s.material, v => s.material = v),
+        del,
+      ]));
+    }
   }
 
   const shellBox = $("shellSectionRows");
@@ -659,6 +813,7 @@ async function saveModel() {
     planEditor.refresh();
     renderProps();
     renderSummary();
+    if (store.mode === "loads") { loadsEditor.render(); syncLoadsNav(); }
   } catch (err) {
     toast("Save failed", err.message, "error", 8000);
   } finally {
@@ -681,11 +836,216 @@ async function discardModel() {
     planEditor.refresh();
     renderProps();
     renderSummary();
+    if (store.mode === "loads") { loadsEditor.render(); syncLoadsNav(); }
     toast("Model reloaded", "Local edits discarded", "info", 4000);
   } catch (err) {
     toast("Reload failed", err.message, "error");
   } finally {
     btn.disabled = false;
+  }
+}
+
+/* ================================================================
+   v0.3 — MODEL FILES (File menu: New / Open / Save / Save As)
+   ================================================================ */
+const FILE_NAME_RE = /^[A-Za-z0-9 _-]+$/;
+
+/** Replace the working model and reset all dependent state. */
+function adoptModel(modelDict, fileName) {
+  store.model = ME.normalizeModel(modelDict);
+  store.fileName = fileName || null;
+  store.results = null;
+  store.overlay = { deformed: false, modal: false, modeIndex: 0, scaleMult: 1 };
+  store.lastSolveMs = null;
+  store.selection = [];
+  store.selectedMemberUid = null;
+  store.modelEdited = false;
+  clearDirty();
+  closeMemberPanel();
+  viewer.setResults(null);
+  viewer.setModel(store.model);
+  syncShellLegend();
+  rebuildStorySelect();
+  planEditor.refresh();
+  renderProps();
+  syncOverlayUI();
+  rebuildCaseSelect();
+  setResultsAvailable(false);
+  renderSummary();
+  syncDirtyUI();
+  if (store.mode === "loads") { loadsEditor.render(); syncLoadsNav(); }
+  setStatus("ready", "Ready");
+}
+
+/* ---- tiny promise-based confirm modal */
+let confirmResolve = null;
+function askConfirm(title, msg, okLabel = "OK") {
+  $("confirmTitle").textContent = title;
+  $("confirmMsg").textContent = msg;
+  $("confirmOk").textContent = okLabel;
+  $("confirmModal").classList.remove("hidden");
+  $("confirmOk").focus();
+  return new Promise(res => { confirmResolve = res; });
+}
+function settleConfirm(ok) {
+  if (!confirmResolve) return;
+  $("confirmModal").classList.add("hidden");
+  confirmResolve(ok);
+  confirmResolve = null;
+}
+
+/* ---- File menu */
+function toggleFileMenu(open) {
+  const want = open !== undefined ? open : $("fileMenu").classList.contains("hidden");
+  $("fileMenu").classList.toggle("hidden", !want);
+  $("fileMenuBtn").setAttribute("aria-expanded", String(want));
+}
+
+async function fileNew() {
+  const ok = await askConfirm("New model",
+    (store.dirty ? "You have unsaved changes. " : "") +
+    "Start a new model with quick-building defaults?", "New model");
+  if (!ok) return;
+  try {
+    adoptModel(await generateModel({}), null);
+    toast("New model", "Quick-building defaults loaded", "info", 4000);
+  } catch (err) {
+    toast("New model failed", err.message, "error");
+  }
+}
+
+/* ---- Open dialog */
+function fmtMtime(t) {
+  if (!isFinite(t)) return "—";
+  const d = new Date(t * 1000);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) +
+    " " + d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+async function openFileDialog() {
+  $("openModal").classList.remove("hidden");
+  $("filesTable").innerHTML = `<tbody><tr><td class="txt dim">Loading…</td></tr></tbody>`;
+  $("filesEmpty").classList.add("hidden");
+  try {
+    const files = await filesApi.list();
+    renderFilesTable(files);
+  } catch (err) {
+    $("filesTable").innerHTML = "";
+    toast("Couldn't list models", err.message, "error");
+  }
+}
+
+function renderFilesTable(files) {
+  $("filesMockNote").classList.toggle("hidden", !filesUsingMock);
+  const table = $("filesTable");
+  if (!files || !files.length) {
+    table.innerHTML = "";
+    $("filesEmpty").classList.remove("hidden");
+    return;
+  }
+  $("filesEmpty").classList.add("hidden");
+  table.innerHTML = `<thead><tr>
+    <th class="txt">Name</th><th class="txt">Modified</th>
+    <th>Stories</th><th>Members</th><th class="txt"></th></tr></thead>
+    <tbody>` + files.map(f => `<tr data-name="${esc(f.name)}">
+      <td class="txt"><b>${esc(f.name)}</b></td>
+      <td class="txt dim">${esc(fmtMtime(f.mtime))}</td>
+      <td>${fmt(f.stories, 0)}</td>
+      <td>${fmt(f.members, 0)}</td>
+      <td class="txt file-open">
+        <button class="btn btn-small file-open-btn">Open</button>
+        <button class="btn btn-small file-del-btn" title="Delete this saved model">Delete</button>
+      </td></tr>`).join("") + `</tbody>`;
+
+  table.querySelectorAll(".file-open-btn").forEach(btn =>
+    btn.addEventListener("click", () => doOpenFile(btn.closest("tr").dataset.name)));
+  table.querySelectorAll(".file-del-btn").forEach(btn =>
+    btn.addEventListener("click", async () => {
+      // two-click inline confirm
+      if (!btn.classList.contains("del-confirm")) {
+        btn.classList.add("del-confirm");
+        btn.textContent = "Confirm?";
+        setTimeout(() => {
+          btn.classList.remove("del-confirm");
+          btn.textContent = "Delete";
+        }, 2600);
+        return;
+      }
+      const name = btn.closest("tr").dataset.name;
+      try {
+        await filesApi.remove(name);
+        if (store.fileName === name) { store.fileName = null; syncDirtyUI(); }
+        toast("Deleted", `Saved model “${name}” removed`, "info", 3500);
+        renderFilesTable(await filesApi.list());
+      } catch (err) {
+        toast("Delete failed", err.message, "error");
+      }
+    }));
+}
+
+async function doOpenFile(name) {
+  if (store.dirty) {
+    const ok = await askConfirm("Open model",
+      `You have unsaved changes — open “${name}” and discard them?`, "Open anyway");
+    if (!ok) return;
+  }
+  try {
+    const m = await filesApi.open(name);
+    $("openModal").classList.add("hidden");
+    adoptModel(m, name);
+    toast("Model opened", `“${name}” is now the working model`, "info", 4000);
+  } catch (err) {
+    toast("Open failed", err.message, "error");
+  }
+}
+
+/* ---- Save / Save As */
+async function saveToFile(name) {
+  // sync the working model to the backend, then persist it under `name`
+  const payload = JSON.parse(JSON.stringify(store.model));
+  delete payload._mock_params;
+  await postModel(payload);
+  await filesApi.save(name);
+  store.fileName = name;
+  clearDirty();
+  toast("Model saved", filesUsingMock
+    ? `“${name}” saved to the mock file store`
+    : `“${name}” saved via POST /api/models`, "info", 4000);
+}
+
+function fileSave() {
+  if (!store.fileName) { openSaveAs(); return; }
+  saveToFile(store.fileName).catch(err => toast("Save failed", err.message, "error", 8000));
+}
+
+function openSaveAs() {
+  $("saveAsName").value = store.fileName || store.model?.name || "";
+  $("saveAsError").classList.add("hidden");
+  $("saveAsModal").classList.remove("hidden");
+  validateSaveAs();
+  $("saveAsName").focus();
+  $("saveAsName").select();
+}
+
+function validateSaveAs() {
+  const v = $("saveAsName").value.trim();
+  const ok = FILE_NAME_RE.test(v);
+  $("saveAsError").classList.toggle("hidden", ok || v === "");
+  $("saveAsOk").disabled = !ok;
+  return ok ? v : null;
+}
+
+async function submitSaveAs() {
+  const name = validateSaveAs();
+  if (!name) { $("saveAsError").classList.remove("hidden"); return; }
+  $("saveAsOk").disabled = true;
+  try {
+    await saveToFile(name);
+    $("saveAsModal").classList.add("hidden");
+  } catch (err) {
+    toast("Save failed", err.message, "error", 8000);
+  } finally {
+    $("saveAsOk").disabled = false;
   }
 }
 
@@ -741,9 +1101,11 @@ function renderMemberPanel() {
   main.textContent = ""; minor.textContent = "";
   $("memberEmpty").classList.toggle("hidden", !!st);
   $("memberMinor").classList.toggle("hidden", !st);
-  $("memberCaseNote").innerHTML = st
-    ? `Station diagrams · case <b>${esc(store.caseName || "")}</b>`
-    : `Case <b>${esc(store.caseName || "")}</b>`;
+  const envBadge = isRsCase(store.caseName)
+    ? ` <span class="env-badge" title="Response-spectrum values are positive envelopes — signs are indeterminate">envelope ±</span>` : "";
+  $("memberCaseNote").innerHTML = (st
+    ? `Station diagrams · case <b>${esc(caseLabel(store.caseName))}</b>`
+    : `Case <b>${esc(caseLabel(store.caseName))}</b>`) + envBadge;
   if (!st) return;
   const vals = k => (st[k] && st[k].length === st.x.length) ? st[k] : st.x.map(() => 0);
   for (const d of DIAG)
@@ -830,6 +1192,8 @@ function renderModalTab() {
   }
   const bar = (v, cls = "") =>
     `<span class="part-bar-wrap"><span class="part-bar"><i class="${cls}" style="width:${Math.min(100, v * 100).toFixed(1)}%"></i></span>${fmt(v * 100, 1)}</span>`;
+  // v0.3: participation factors Γx / Γy, when the backend provides them
+  const hasGamma = modal.participation.some(p => p.gamma_x != null || p.gamma_y != null);
   let cumX = 0, cumY = 0;
   const rows = modal.participation.map((p, i) => {
     cumX += p.ux || 0; cumY += p.uy || 0;
@@ -840,6 +1204,7 @@ function renderModalTab() {
       <td>${bar(p.ux || 0)}</td>
       <td>${bar(p.uy || 0, "py")}</td>
       <td>${bar(p.rz || 0, "pr")}</td>
+      ${hasGamma ? `<td>${fmt(p.gamma_x ?? 0, 2)}</td><td>${fmt(p.gamma_y ?? 0, 2)}</td>` : ""}
       <td class="dim">${fmt(cumX * 100, 1)}</td>
       <td class="dim">${fmt(cumY * 100, 1)}</td>
       <td class="txt"><button class="link-3d" data-mode="${i}">view in 3D →</button></td>
@@ -848,6 +1213,7 @@ function renderModalTab() {
   $("modalTable").innerHTML = `<thead><tr>
     <th class="txt">Mode</th><th>T s</th><th>f Hz</th>
     <th>UX %</th><th>UY %</th><th>RZ %</th>
+    ${hasGamma ? `<th title="Modal participation factor, X">Γx</th><th title="Modal participation factor, Y">Γy</th>` : ""}
     <th>Σ UX %</th><th>Σ UY %</th><th class="txt"></th></tr></thead>
     <tbody>${rows}</tbody>`;
   $("modalTable").querySelectorAll(".link-3d").forEach(btn =>
@@ -944,7 +1310,8 @@ function renderForcesTab() {
     <td class="txt dim">${esc(x.section)}</td>
     <td>${fmt(x.N, 1)}</td><td>${fmt(x.V2, 1)}</td><td>${fmt(x.M3, 1)}</td></tr>`).join("");
   $("forcesTable").innerHTML = head + `<tbody>${body}</tbody>`;
-  $("forcesCount").textContent = `${rows.length} members · ${esc(store.caseName || "")}`;
+  $("forcesCount").textContent = `${rows.length} members · ${caseLabel(store.caseName)}` +
+    (isRsCase(store.caseName) ? " · envelope ±" : "");
   $("forcesTable").querySelectorAll("th.sortable").forEach(th =>
     th.addEventListener("click", () => {
       const k = th.dataset.key;
@@ -962,6 +1329,7 @@ function syncOverlayUI() {
   $("deformedGroup").hidden = !o.deformed;
   $("modeGroup").hidden = !o.modal;
   $("legendDeformed").classList.toggle("hidden", !(o.deformed || o.modal));
+  $("envBadge").classList.toggle("hidden", !(o.deformed && isRsCase(store.caseName)));
   if (o.modal && store.results && store.results.modal) {
     const T = store.results.modal.periods[o.modeIndex];
     const f = store.results.modal.frequencies[o.modeIndex];
@@ -1002,26 +1370,7 @@ async function doGenerate(e) {
   const btn = $("generateBtn");
   btn.disabled = true;
   try {
-    store.model = ME.normalizeModel(await generateModel(params));
-    store.results = null;
-    store.overlay = { deformed: false, modal: false, modeIndex: 0, scaleMult: 1 };
-    store.lastSolveMs = null;
-    store.selection = [];
-    store.selectedMemberUid = null;
-    store.modelEdited = false;
-    clearDirty();
-    closeMemberPanel();
-    viewer.setResults(null);
-    viewer.setModel(store.model);
-    syncShellLegend();
-    rebuildStorySelect();
-    planEditor.refresh();
-    renderProps();
-    syncOverlayUI();
-    rebuildCaseSelect();
-    setResultsAvailable(false);
-    renderSummary();
-    setStatus("ready", "Ready");
+    adoptModel(await generateModel(params), null);
   } catch (err) {
     toast("Model generation failed", err.message, "error");
     setStatus("error", "Error");
@@ -1103,6 +1452,45 @@ function wire() {
   $("saveBtn").addEventListener("click", saveModel);
   $("discardBtn").addEventListener("click", discardModel);
 
+  /* ---- v0.3: File menu + model-file dialogs */
+  $("fileMenuBtn").addEventListener("click", e => { e.stopPropagation(); toggleFileMenu(); });
+  document.addEventListener("click", e => {
+    if (!$("fileMenuWrap").contains(e.target)) toggleFileMenu(false);
+  });
+  $("fileMenu").addEventListener("click", e => {
+    const item = e.target.closest(".menu-item");
+    if (!item) return;
+    toggleFileMenu(false);
+    if (item.dataset.act === "new") fileNew();
+    else if (item.dataset.act === "open") openFileDialog();
+    else if (item.dataset.act === "save") fileSave();
+    else if (item.dataset.act === "saveas") openSaveAs();
+  });
+  const hideModal = id => $(id).classList.add("hidden");
+  $("openModalClose").addEventListener("click", () => hideModal("openModal"));
+  $("openModalCancel").addEventListener("click", () => hideModal("openModal"));
+  $("openModal").addEventListener("click", e => { if (e.target === $("openModal")) hideModal("openModal"); });
+  $("saveAsClose").addEventListener("click", () => hideModal("saveAsModal"));
+  $("saveAsCancel").addEventListener("click", () => hideModal("saveAsModal"));
+  $("saveAsModal").addEventListener("click", e => { if (e.target === $("saveAsModal")) hideModal("saveAsModal"); });
+  $("saveAsName").addEventListener("input", validateSaveAs);
+  $("saveAsName").addEventListener("keydown", e => { if (e.key === "Enter") submitSaveAs(); });
+  $("saveAsOk").addEventListener("click", submitSaveAs);
+  $("confirmOk").addEventListener("click", () => settleConfirm(true));
+  $("confirmCancel").addEventListener("click", () => settleConfirm(false));
+  $("confirmModal").addEventListener("click", e => { if (e.target === $("confirmModal")) settleConfirm(false); });
+
+  /* ---- v0.3: loads sidebar nav + section library search */
+  document.querySelectorAll("#loadsNav button").forEach(b =>
+    b.addEventListener("click", () => {
+      const sec = document.getElementById(b.dataset.target);
+      if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
+    }));
+  $("libSearch").addEventListener("input", e => {
+    store.libSearch = e.target.value;
+    renderSectionLib();
+  });
+
   $("sectionMgrBtn").addEventListener("click", openSectionMgr);
   $("sectionModalClose").addEventListener("click", closeSectionMgr);
   $("sectionModalDone").addEventListener("click", closeSectionMgr);
@@ -1174,6 +1562,13 @@ function wire() {
   const TOOL_KEYS = { v: "select", c: "column", b: "beam", w: "wall", s: "slab", e: "erase" };
   document.addEventListener("keydown", e => {
     const tag = (e.target.tagName || "").toLowerCase();
+    // v0.3 dialogs respond to Escape even while an input has focus
+    if (e.key === "Escape") {
+      if (confirmResolve) { settleConfirm(false); return; }
+      if (!$("saveAsModal").classList.contains("hidden")) { $("saveAsModal").classList.add("hidden"); return; }
+      if (!$("openModal").classList.contains("hidden")) { $("openModal").classList.add("hidden"); return; }
+      if (!$("fileMenu").classList.contains("hidden")) { toggleFileMenu(false); return; }
+    }
     if (["input", "select", "textarea"].includes(tag)) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
 
@@ -1197,6 +1592,8 @@ function wire() {
       return;
     }
 
+    if (store.mode !== "analyze") return;   // loads mode: no analyze shortcuts
+
     if (e.key >= "1" && e.key <= "5") switchTab(TABS[+e.key - 1]);
     else if (e.key === "r" || e.key === "R") doRun();
     else if (e.key === "f" || e.key === "F") viewer.fit();
@@ -1219,6 +1616,11 @@ async function boot() {
     onSelect: handleSelect,
     onReadout: t => { $("planReadout").textContent = t; },
   });
+  loadsEditor = new LoadsEditor($("loadsPane"), {
+    getModel: () => store.model,
+    onChange: markDirty,
+    toast,
+  });
   wire();
   try {
     store.model = ME.normalizeModel(await fetchModel());
@@ -1228,6 +1630,8 @@ async function boot() {
     planEditor.refresh();
     renderSummary();
     setResultsAvailable(false);
+    syncDirtyUI();
+    syncLoadsNav();
     setStatus("ready", "Ready");
   } catch (err) {
     setStatus("error", "Error");
@@ -1236,9 +1640,13 @@ async function boot() {
 
   // dev/test hook — lets automated checks drive the store directly
   window.__sky = {
-    store, planEditor, viewer,
+    store, planEditor, viewer, loadsEditor,
     setMode, setTool, setStory, handleDraw, handleErase, handleSelect,
     saveModel, discardModel, renderProps, ME,
+    // v0.3
+    filesApi, saveToFile, adoptModel, caseLabel, isRsCase, caseData,
+    renderSectionLib, fetchSectionLibrary, doRun, switchTab, syncOverlayUI,
+    renderMemberPanel, closeMemberPanel, openSectionMgr,
   };
 }
 

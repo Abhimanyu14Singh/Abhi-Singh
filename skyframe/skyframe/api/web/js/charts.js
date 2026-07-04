@@ -289,6 +289,100 @@ export function stationDiagram(xs, vs, opts = {}) {
 }
 
 /**
+ * Response-spectrum preview — Sa(g) vs T with a log-ish (sqrt-compressed)
+ * period axis from 0 to max T. Returns a bare SVG element (the caller owns
+ * the surrounding card). points: [[T, Sa], …] in any order.
+ */
+export function spectrumChart(points, opts = {}) {
+  const W = opts.width || 320, H = opts.height || 176;
+  const M = { l: 40, r: 12, t: 18, b: 26 };
+  const pw = W - M.l - M.r, ph = H - M.t - M.b;
+  const color = opts.color || S.xRaw;
+
+  const pts = (points || [])
+    .filter(p => Array.isArray(p) && isFinite(p[0]) && isFinite(p[1]) && p[0] >= 0)
+    .slice().sort((a, b) => a[0] - b[0]);
+
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
+  if (pts.length < 2) {
+    svg.appendChild(txt("text", {
+      x: W / 2, y: H / 2, fill: S.axis, "font-size": 11, "text-anchor": "middle",
+    }, "Add at least 2 spectrum points"));
+    return svg;
+  }
+
+  const maxT = pts[pts.length - 1][0] || 1;
+  const maxSa = Math.max(...pts.map(p => p[1]), 1e-6);
+  const sTicks = niceTicks(maxSa * 1.08, 3);
+  const maxS_ = sTicks[sTicks.length - 1];
+  // sqrt compression: keeps 0 on the axis, spreads the short-period range
+  const xOf = T => M.l + Math.sqrt(T / maxT) * pw;
+  const yOf = v => M.t + ph - (v / maxS_) * ph;
+
+  // Sa gridlines + labels
+  for (const t of sTicks) {
+    svg.appendChild(el("line", {
+      x1: M.l, x2: M.l + pw, y1: yOf(t), y2: yOf(t), stroke: S.grid, "stroke-width": 1,
+    }));
+    svg.appendChild(txt("text", {
+      x: M.l - 6, y: yOf(t) + 3, fill: S.text, "font-size": 9, "text-anchor": "end",
+      style: "font-variant-numeric:tabular-nums",
+    }, fmt(t, maxS_ < 2 ? 1 : 0)));
+  }
+  // period gridlines at nice T values that exist inside the range
+  const tTicks = [0.1, 0.2, 0.5, 1, 2, 3, 4, 6, 8, 10].filter(t => t <= maxT * 1.001);
+  for (const t of [0, ...tTicks, maxT]) {
+    svg.appendChild(el("line", {
+      x1: xOf(t), x2: xOf(t), y1: M.t, y2: M.t + ph,
+      stroke: S.grid, "stroke-width": 1, "stroke-opacity": 0.55,
+    }));
+    svg.appendChild(txt("text", {
+      x: xOf(t), y: M.t + ph + 14, fill: S.text, "font-size": 9, "text-anchor": "middle",
+      style: "font-variant-numeric:tabular-nums",
+    }, fmt(t, t < 1 && t > 0 ? 1 : 0)));
+  }
+  // axes + units
+  svg.appendChild(el("line", { x1: M.l, x2: M.l, y1: M.t, y2: M.t + ph, stroke: S.axis, "stroke-width": 1 }));
+  svg.appendChild(el("line", { x1: M.l, x2: M.l + pw, y1: M.t + ph, y2: M.t + ph, stroke: S.axis, "stroke-width": 1 }));
+  svg.appendChild(txt("text", {
+    x: M.l + pw, y: M.t + ph + 24, fill: S.axis, "font-size": 9, "text-anchor": "end",
+  }, "T  s"));
+  svg.appendChild(txt("text", {
+    x: M.l - 6, y: 9, fill: S.axis, "font-size": 9, "text-anchor": "end",
+  }, "Sa g"));
+
+  // filled area + line + point markers
+  let dArea = `M${xOf(pts[0][0]).toFixed(1)},${yOf(0).toFixed(1)}`;
+  let dLine = "";
+  pts.forEach((p, i) => {
+    const px = xOf(p[0]).toFixed(1), py = yOf(p[1]).toFixed(1);
+    dArea += ` L${px},${py}`;
+    dLine += `${i ? " L" : "M"}${px},${py}`;
+  });
+  dArea += ` L${xOf(maxT).toFixed(1)},${yOf(0).toFixed(1)} Z`;
+  svg.appendChild(el("path", { d: dArea, fill: color, "fill-opacity": 0.14 }));
+  svg.appendChild(el("path", {
+    d: dLine, fill: "none", stroke: color, "stroke-width": 2,
+    "stroke-linejoin": "round", "stroke-linecap": "round", class: "spectrum-line",
+  }));
+  for (const p of pts) {
+    svg.appendChild(el("circle", {
+      cx: xOf(p[0]), cy: yOf(p[1]), r: 3, fill: p[1] === maxSa ? color : S.surface,
+      stroke: color, "stroke-width": 1.5,
+    }));
+  }
+  // peak annotation
+  const peak = pts.find(p => p[1] === maxSa);
+  if (peak) {
+    svg.appendChild(txt("text", {
+      x: Math.min(xOf(peak[0]) + 6, M.l + pw - 30), y: Math.max(yOf(peak[1]) - 6, 9),
+      fill: S.text, "font-size": 9, style: "font-variant-numeric:tabular-nums",
+    }, `${fmt(maxSa, 2)} g`));
+  }
+  return svg;
+}
+
+/**
  * Render the three story charts into `container`.
  * caseData.story: {story: {ux,uy,drift_x,drift_y,shear_x,shear_y}}
  * driftLimitPct: e.g. 0.5 (%)

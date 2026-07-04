@@ -484,6 +484,8 @@ export class Viewer3D {
   _caseData() {
     const r = this.results, name = this.overlay.caseName;
     if (!r || !name) return null;
+    if (name.startsWith("rs:"))                    // v0.3 response-spectrum case
+      return (r.rs_cases && r.rs_cases[name.slice(3)]) || null;
     return (r.cases && r.cases[name]) || (r.combos && r.combos[name]) || null;
   }
 

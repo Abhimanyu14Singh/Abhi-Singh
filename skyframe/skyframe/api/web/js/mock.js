@@ -106,17 +106,42 @@ export function mockModel(p = {}) {
   const beamUdls = w => members.filter(m => m.kind === "beam").map(m => ({
     member_uid: m.uid, kind: "udl", w, w2: 0, a: 0, b: 1, direction: "gravity",
   }));
+  // v0.3: equivalent-lateral story forces on the quake patterns
+  const W_ = Object.values(story_masses).reduce((a, b) => a + b, 0) * G;
+  const wh_ = stories.map(s => story_masses[s.name] * G * s.elevation);
+  const sumWh_ = wh_.reduce((a, b) => a + b, 0) || 1;
+  const storyForces = dir => stories.map((s, i) => ({
+    story: s.name,
+    fx: dir === "x" ? +(o.quake_coeff * W_ * wh_[i] / sumWh_).toFixed(2) : 0,
+    fy: dir === "y" ? +(o.quake_coeff * W_ * wh_[i] / sumWh_).toFixed(2) : 0,
+  }));
   const patterns = {
     DEAD: {
-      name: "DEAD", member_loads: beamUdls(o.dead_udl),
+      name: "DEAD", kind: "dead", member_loads: beamUdls(o.dead_udl),
       area_loads: shells.filter(s => s.kind === "slab").map(s => ({ region_uid: s.uid, q: 2.0 })),
+      story_forces: [],
     },
     LIVE: {
-      name: "LIVE", member_loads: beamUdls(o.live_udl),
+      name: "LIVE", kind: "live", member_loads: beamUdls(o.live_udl),
       area_loads: shells.filter(s => s.kind === "slab").map(s => ({ region_uid: s.uid, q: 3.0 })),
+      story_forces: [],
     },
-    EQX: { name: "EQX", member_loads: [], area_loads: [] },
-    EQY: { name: "EQY", member_loads: [], area_loads: [] },
+    EQX: { name: "EQX", kind: "quake", member_loads: [], area_loads: [], story_forces: storyForces("x") },
+    EQY: { name: "EQY", kind: "quake", member_loads: [], area_loads: [], story_forces: storyForces("y") },
+  };
+
+  // v0.3: response-spectrum cases (UBC-style default shape)
+  const ubc = [[0, 0.4], [0.11, 1.0], [0.56, 1.0], [0.8, 0.7], [1.0, 0.56],
+    [1.5, 0.373], [2.0, 0.28], [3.0, 0.187], [4.0, 0.14]];
+  const rs_cases = {
+    "EQ-RS-X": {
+      name: "EQ-RS-X", direction: "X", spectrum: ubc.map(p => [...p]),
+      combo_method: "CQC", damping: 0.05, scale: 1.0,
+    },
+    "EQ-RS-Y": {
+      name: "EQ-RS-Y", direction: "Y", spectrum: ubc.map(p => [...p]),
+      combo_method: "SRSS", damping: 0.05, scale: 1.0,
+    },
   };
 
   return {
@@ -133,11 +158,12 @@ export function mockModel(p = {}) {
     story_masses,
     patterns,
     cases: {
-      DEAD: { name: "DEAD", patterns: { DEAD: 1 } },
-      LIVE: { name: "LIVE", patterns: { LIVE: 1 } },
-      EQX: { name: "EQX", patterns: { EQX: 1 } },
-      EQY: { name: "EQY", patterns: { EQY: 1 } },
+      DEAD: { name: "DEAD", patterns: { DEAD: 1 }, pdelta: false },
+      LIVE: { name: "LIVE", patterns: { LIVE: 1 }, pdelta: false },
+      EQX: { name: "EQX", patterns: { EQX: 1 }, pdelta: true },
+      EQY: { name: "EQY", patterns: { EQY: 1 }, pdelta: false },
     },
+    rs_cases,
     combos: {
       "1.2D + 1.6L": { name: "1.2D + 1.6L", cases: { DEAD: 1.2, LIVE: 1.6 } },
       "1.2D + 1.0L + 1.0EX": { name: "1.2D + 1.0L + 1.0EX", cases: { DEAD: 1.2, LIVE: 1.0, EQX: 1.0 } },
@@ -388,6 +414,33 @@ export function mockResults(model) {
   const combos = {};
   for (const [name, cb] of Object.entries(model.combos || {})) combos[name] = combine(cb.cases);
 
+  // ---- v0.3: response-spectrum cases — POSITIVE ENVELOPES of a lateral run
+  function envelope(src, f) {
+    const abs6 = a => a.map(v => Math.abs(v) * f);
+    const out = {
+      node_disp: {}, reactions: {}, member_forces: {}, member_stations: {}, story: {},
+      base: Object.fromEntries(Object.entries(src.base).map(([k, v]) => [k, Math.abs(v) * f])),
+    };
+    for (const [t, d] of Object.entries(src.node_disp)) out.node_disp[t] = abs6(d);
+    for (const [t, r] of Object.entries(src.reactions)) out.reactions[t] = abs6(r);
+    for (const [u, mf] of Object.entries(src.member_forces)) out.member_forces[u] = abs6(mf);
+    for (const [u, st] of Object.entries(src.member_stations || {})) {
+      out.member_stations[u] = { x: st.x.slice() };
+      for (const k of ["N", "V2", "V3", "T", "M2", "M3"])
+        out.member_stations[u][k] = st[k].map(v => Math.abs(v) * f);
+    }
+    for (const [s, sr] of Object.entries(src.story)) {
+      out.story[s] = {};
+      for (const k of Object.keys(sr)) out.story[s][k] = Math.abs(sr[k]) * f;
+    }
+    return out;
+  }
+  const rs_cases = {};
+  for (const [name, rc] of Object.entries(model.rs_cases || {})) {
+    const src = lateralCase(rc.direction !== "Y");
+    rs_cases[name] = envelope(src, (rc.scale || 1) * 1.12);   // modal RSA ≳ static ELF
+  }
+
   // ---- modal
   const N = model.num_modes || 6;
   const T1 = 0.075 * Math.pow(H, 0.85) * 1.35;
@@ -400,11 +453,14 @@ export function mockResults(model) {
     const T = T1 / ((2 * order - 1) * (dir === 2 ? 1.35 : 1) * (dir === 1 ? 1.08 : 1));
     periods.push(T); frequencies.push(1 / T);
     const p1 = order === 1 ? 0.82 : order === 2 ? 0.11 : 0.04;
+    const gamma = order === 1 ? 1.28 : order === 2 ? -0.47 : 0.24;  // participation factor Γ
     participation.push({
       mode: m, T,
       ux: dir === 0 ? p1 : 0.0,
       uy: dir === 1 ? p1 : 0.0,
       rz: dir === 2 ? p1 : 0.005,
+      gamma_x: dir === 0 ? gamma : 0.0,
+      gamma_y: dir === 1 ? gamma * 1.03 : 0.0,
     });
     const shape = {};
     for (const [t, p] of Object.entries(nodes)) {
@@ -423,7 +479,68 @@ export function mockResults(model) {
     story_order: storyOrder,
     story_elev: storyElev,
     shell_quads,
-    cases, combos,
+    cases, combos, rs_cases,
     modal: { periods, frequencies, participation, shapes },
   };
 }
+
+/* ================================================================
+   v0.3 — mock section library + mock model-file store
+   ================================================================ */
+
+/** GET /api/sections/library — six AISC W-shapes (SI units: m², m⁴). */
+export function mockSectionLibrary() {
+  return [
+    { name: "W12x26", A: 4.95e-3, I33: 8.49e-5, I22: 7.24e-6, J: 1.24e-7 },
+    { name: "W14x30", A: 5.70e-3, I33: 1.21e-4, I22: 8.13e-6, J: 1.58e-7 },
+    { name: "W16x40", A: 7.61e-3, I33: 2.15e-4, I22: 1.19e-5, J: 3.30e-7 },
+    { name: "W18x50", A: 9.48e-3, I33: 3.33e-4, I22: 1.68e-5, J: 5.20e-7 },
+    { name: "W21x62", A: 1.18e-2, I33: 5.54e-4, I22: 2.40e-5, J: 7.70e-7 },
+    { name: "W24x76", A: 1.45e-2, I33: 8.74e-4, I22: 3.42e-5, J: 1.18e-6 },
+  ];
+}
+
+/** In-memory stand-in for the /api/models file store (used when the backend
+    is unreachable or ?mock=1). Shapes match the v0.3 endpoints. */
+const _files = new Map();   // name -> {model, mtime}
+let _filesSeeded = false;
+function seedFiles() {
+  if (_filesSeeded) return;
+  _filesSeeded = true;
+  const now = Date.now() / 1000;
+  _files.set("Tower A", {
+    model: mockModel({ name: "Tower A", stories: 8, bays_x: 4, bays_y: 3 }),
+    mtime: now - 3 * 86400,
+  });
+  _files.set("Podium_4st", {
+    model: mockModel({ name: "Podium_4st", stories: 4, bays_x: 5, bay_width_x: 7.5 }),
+    mtime: now - 7200,
+  });
+}
+
+export const mockModelFiles = {
+  list() {
+    seedFiles();
+    return [..._files.entries()].map(([name, f]) => ({
+      name, mtime: f.mtime,
+      stories: f.model.stories.length,
+      members: f.model.members.length,
+    })).sort((a, b) => b.mtime - a.mtime);
+  },
+  save(name, model) {
+    seedFiles();
+    _files.set(name, { model: JSON.parse(JSON.stringify(model)), mtime: Date.now() / 1000 });
+    return { saved: name };
+  },
+  open(name) {
+    seedFiles();
+    const f = _files.get(name);
+    if (!f) throw new Error(`No saved model named “${name}”`);
+    return JSON.parse(JSON.stringify(f.model));
+  },
+  remove(name) {
+    seedFiles();
+    if (!_files.delete(name)) throw new Error(`No saved model named “${name}”`);
+    return { deleted: name };
+  },
+};

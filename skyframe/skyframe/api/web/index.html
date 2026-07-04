@@ -20,12 +20,30 @@
       <span class="brand-name">SkyFrame</span>
       <span class="brand-tag">Building Analysis Studio — OpenSees inside</span>
     </div>
+    <div class="file-menu-wrap" id="fileMenuWrap">
+      <button class="btn file-btn" id="fileMenuBtn" aria-haspopup="menu" aria-expanded="false">
+        File
+        <svg viewBox="0 0 8 5" width="8" height="5" aria-hidden="true"><path d="M1 1l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>
+      <div class="menu hidden" id="fileMenu" role="menu">
+        <button class="menu-item" data-act="new" role="menuitem">New <span class="menu-hint">quick defaults</span></button>
+        <button class="menu-item" data-act="open" role="menuitem">Open… <span class="menu-hint">saved models</span></button>
+        <div class="menu-sep"></div>
+        <button class="menu-item" data-act="save" role="menuitem">Save</button>
+        <button class="menu-item" data-act="saveas" role="menuitem">Save As…</button>
+      </div>
+    </div>
     <nav class="mode-switch" id="modeSwitch" aria-label="Workspace mode">
       <button class="mode-btn" data-mode="model">Model</button>
+      <button class="mode-btn" data-mode="loads">Loads</button>
       <button class="mode-btn is-active" data-mode="analyze">Analyze</button>
     </nav>
     <div class="topbar-center">
       <span class="model-name" id="modelName" title="Current model">—</span>
+      <span class="file-chip hidden" id="fileChip" title="Current model file">
+        <svg viewBox="0 0 10 12" width="9" height="11" aria-hidden="true"><path d="M1 1h5l3 3v7H1z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>
+        <span id="fileChipName"></span><i class="file-dot hidden" id="fileDirtyDot" title="Unsaved changes">●</i>
+      </span>
       <span class="dirty-badge hidden" id="dirtyBadge" title="Model has unsaved changes">● unsaved</span>
       <span class="mock-badge hidden" id="mockBadge" title="Backend unreachable — showing built-in mock data">MOCK DATA</span>
     </div>
@@ -92,6 +110,24 @@
           <p><kbd>Esc</kbd> cancels a two-click tool · <kbd>Del</kbd> deletes the selection.</p>
           <p><kbd>↑</kbd>/<kbd>↓</kbd> change story · right-drag pans · wheel zooms · dbl-click fits.</p>
           <p>Slab tool: click inside a grid cell to fill it.</p>
+        </div>
+      </div>
+
+      <div class="sidebar-inner hidden" id="loadsSidebar">
+        <h2 class="panel-title">Loads</h2>
+        <div class="loads-nav" id="loadsNav">
+          <button data-target="ls-patterns">Patterns <span class="nav-count" id="cnt-patterns">0</span></button>
+          <button data-target="ls-cases">Static cases <span class="nav-count" id="cnt-cases">0</span></button>
+          <button data-target="ls-rs">RS cases <span class="nav-count" id="cnt-rs">0</span></button>
+          <button data-target="ls-combos">Combos <span class="nav-count" id="cnt-combos">0</span></button>
+        </div>
+        <div class="draw-help">
+          <h3 class="group-title">How it fits</h3>
+          <p><b>Patterns</b> hold raw loads (assign them in Model mode).</p>
+          <p><b>Cases</b> analyze pattern × factor sums; P-Δ adds second-order effects.</p>
+          <p><b>RS cases</b> run modal response-spectrum analysis — results are positive envelopes (±).</p>
+          <p><b>Combos</b> superpose static case results.</p>
+          <p class="muted">Edits apply to the working model — Save Model to persist.</p>
         </div>
       </div>
 
@@ -211,6 +247,16 @@
       </div>
     </main>
 
+    <!-- ============ LOADS MODE (v0.3) ============ -->
+    <main class="main hidden" id="loadsMain">
+      <div class="draw-toolbar">
+        <span class="loads-title">Load cases &amp; combinations</span>
+        <div class="toolbar-spacer"></div>
+        <span class="hint">edits apply to the working model · Save Model to persist</span>
+      </div>
+      <div class="loads-pane" id="loadsPane"></div>
+    </main>
+
     <!-- ============ ANALYZE MODE ============ -->
     <main class="main" id="analyzeMain">
       <nav class="tabbar" role="tablist">
@@ -242,6 +288,8 @@
             <select id="modeSelect" class="mini-select"></select>
             <span class="badge-period" id="modePeriodBadge"></span>
           </div>
+          <span class="env-badge hidden" id="envBadge"
+            title="Response-spectrum results are positive envelopes — the sign of the plotted shape is indeterminate">envelope&nbsp;±</span>
           <div class="toolbar-spacer"></div>
           <span class="hint">drag orbit · shift-drag pan · wheel zoom · dbl-click fit</span>
         </div>
@@ -383,10 +431,80 @@
           </div>
           <div class="mgr-table" id="materialRows"></div>
         </section>
+        <section class="mgr-group">
+          <div class="mgr-group-head">
+            <h3>Add from library… <span class="muted">steel W-shapes</span></h3>
+            <label class="lib-mat muted">material
+              <select id="libMaterial" class="mini-select"></select>
+            </label>
+          </div>
+          <input type="search" id="libSearch" class="filter-input lib-search" placeholder="Search library… e.g. W16">
+          <div class="mgr-table" id="libRows"></div>
+        </section>
       </div>
       <footer class="modal-foot">
         <span class="muted">Edits apply to the working model — Save Model to persist.</span>
         <button class="btn" id="sectionModalDone">Done</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ============ OPEN MODEL (v0.3) ============ -->
+  <div class="modal-backdrop hidden" id="openModal">
+    <div class="modal" role="dialog" aria-labelledby="openModalTitle">
+      <header class="modal-head">
+        <h2 id="openModalTitle">Open Model</h2>
+        <button class="icon-btn" id="openModalClose" title="Close" aria-label="Close open dialog">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="muted files-note hidden" id="filesMockNote">Backend file store unreachable — using the built-in mock store.</p>
+        <div class="table-scroll">
+          <table class="data-table" id="filesTable"></table>
+        </div>
+        <p class="muted files-empty hidden" id="filesEmpty">No saved models yet — use File → Save As…</p>
+      </div>
+      <footer class="modal-foot">
+        <span class="muted">Opening replaces the working model and clears results.</span>
+        <button class="btn" id="openModalCancel">Cancel</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ============ SAVE AS (v0.3) ============ -->
+  <div class="modal-backdrop hidden" id="saveAsModal">
+    <div class="modal modal-narrow" role="dialog" aria-labelledby="saveAsTitle">
+      <header class="modal-head">
+        <h2 id="saveAsTitle">Save Model As</h2>
+        <button class="icon-btn" id="saveAsClose" title="Close" aria-label="Close save dialog">×</button>
+      </header>
+      <div class="modal-body">
+        <div class="field">
+          <label for="saveAsName">File name</label>
+          <input id="saveAsName" type="text" autocomplete="off" spellcheck="false" placeholder="e.g. Tower B rev2">
+        </div>
+        <p class="field-error hidden" id="saveAsError">Only letters, digits, spaces, “_” and “-” are allowed.</p>
+      </div>
+      <footer class="modal-foot">
+        <span class="muted">Allowed: letters, digits, space, _ -</span>
+        <div class="modal-btns">
+          <button class="btn" id="saveAsCancel">Cancel</button>
+          <button class="btn btn-run" id="saveAsOk">Save</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ============ CONFIRM (v0.3) ============ -->
+  <div class="modal-backdrop hidden" id="confirmModal">
+    <div class="modal modal-narrow" role="dialog" aria-labelledby="confirmTitle">
+      <header class="modal-head"><h2 id="confirmTitle">Confirm</h2></header>
+      <div class="modal-body"><p id="confirmMsg"></p></div>
+      <footer class="modal-foot">
+        <span></span>
+        <div class="modal-btns">
+          <button class="btn" id="confirmCancel">Cancel</button>
+          <button class="btn btn-run" id="confirmOk">OK</button>
+        </div>
       </footer>
     </div>
   </div>
