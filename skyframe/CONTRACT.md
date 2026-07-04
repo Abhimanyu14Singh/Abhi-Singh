@@ -241,3 +241,166 @@ AISC Manual (15th ed.) imperial values to SI (m).  API:
 
 `FrameSection.from_library("W12x26", material)` builds a ready-to-add
 section from the library.
+
+---
+
+# v0.4 additions — envelope combos, mass source, stiffness modifiers, auto wind, linear time history, column orientation, shell forces
+
+## Envelope load combos
+
+```python
+# LoadCombo gains:
+#   combo_type: str = "add"        # "add" | "envelope"
+```
+
+* ``"add"`` — linear result superposition (unchanged v0.1 behavior).
+* ``"envelope"`` — per-quantity **min/max over the LISTED cases**, each
+  case's results multiplied by its factor first.  Envelope combos may
+  reference static load cases ONLY (no RS/TH cases, no other combos).
+* Results shape: ``results["combos"][name]`` keeps the standard case shape
+  holding the **MAX** values, plus a nested ``"min"`` key with the same
+  shape (node_disp / reactions / base / member_forces / story /
+  member_stations) holding the **MINIMA**.  ``shell_forces`` are NOT
+  enveloped in v0.4 (key absent on envelope combos).
+* An envelope that lists a P-Delta case carries a ``"warning"`` string
+  (factored nonlinear results enter the envelope unchanged).
+
+## Mass source
+
+```python
+# BuildingModel gains:
+#   mass_source: Dict[str, float]   # pattern -> factor, e.g. {"DEAD": 1.0, "LIVE": 0.25}
+```
+
+``compute_story_masses`` uses ``mass_source`` when non-empty, else falls
+back to the legacy ``mass_from_patterns`` (which is retained and still
+serialised).  ``quick_building`` sets ``mass_source = {"DEAD": 1.0}``.
+``from_dict`` without a ``"mass_source"`` key (pre-v0.4 files) keeps the
+legacy behavior exactly.  Explicit ``story_masses`` still win per story.
+
+## Stiffness modifiers
+
+```python
+# FrameSection gains (all default 1.0, must be finite and > 0):
+#   mod_A, mod_I33, mod_I22, mod_J
+# ShellSection gains:
+#   mod: float = 1.0     # single modifier, scales the section E
+```
+
+The engine multiplies A/I33/I22/J by their modifiers when creating
+``elasticBeamColumn`` elements (and inside the exact fixed-end-force
+member-load path, so member loads stay exact).  ``ShellSection.mod`` scales
+E of the ``ElasticMembranePlateSection``: membrane AND flexural stiffness
+scale together — ElasticMembranePlateSection has a single modulus, so
+independent membrane/flexural modifiers are NOT offered (a silent
+approximation was rejected).  Full ``to_dict``/``from_dict`` round-trip;
+absent keys default to 1.0.
+
+## Auto wind pattern (ASCE 7-style)
+
+```python
+from skyframe.core.builder import make_wind_pattern, wind_kz, wind_qz
+make_wind_pattern(model, name, direction,        # "X" | "Y"
+                  basic_wind_speed,              # V, m/s
+                  exposure="C",                  # "B" | "C" | "D"
+                  cp_total=1.3, importance=1.0) -> LoadPattern
+```
+
+* ``Kz = 2.01 (z/zg)^(2/alpha)`` with ASCE 7-16 Table 26.10-1 parameters
+  B: alpha=7.0, zg=365.76 m; C: 9.5/274.32; D: 11.5/213.36; z floored at
+  4.6 m (applied to ALL exposures — documented simplification; ASCE uses
+  9.14 m for B).
+* ``qz = 0.613 Kz Kzt Kd V^2 I`` Pa -> kPa, with Kzt = 1.0, Kd = 0.85.
+* Story force at each story level: ``F = qz(story top elev) * cp_total *
+  trib_height * width`` where trib_height = half story below + half story
+  above (top story: half itself), width = plan extent PERPENDICULAR to the
+  wind from ``model.plan_extents()``.
+* Creates/replaces ``model.patterns[name]`` with kind ``"wind"`` carrying
+  only ``story_forces`` (fx for "X", fy for "Y").
+
+| Method | Path                 | Body / Response |
+|--------|----------------------|-----------------|
+| POST   | `/api/pattern/wind`  | `{name?, direction?, V, exposure?, Cp?, importance?}` -> updated model dict; 400 `{"error"}` on bad input.  Defaults: name "WIND", direction "X", exposure "C", Cp 1.3, importance 1.0. |
+
+## Linear time-history analysis
+
+```python
+@dataclass TimeHistoryCase:      # model.th_cases: Dict[str, TimeHistoryCase]
+    name: str
+    direction: str               # "X" | "Y"
+    accel: List[float]           # ground accel, m/s^2, sample k at t = k*dt
+    dt: float                    # s
+    damping: float = 0.05        # Rayleigh target ratio
+    scale: float = 1.0           # multiplies accel
+# BuildingModel.add_th_case(...); serialised under "th_cases"; TH cases may
+# NOT enter load combos.
+```
+
+Engine ``run_time_history(name) -> THResults`` (also run by ``run()``):
+
+* uniform ground excitation (OpenSees ``UniformExcitation`` + ``Path``
+  time series), Newmark constant-average acceleration (gamma=1/2, beta=1/4,
+  unconditionally stable), one step per record sample at the record dt,
+  ``algorithm Linear`` (elastic model);
+* Rayleigh damping ``C = a0 M + a1 K`` fitted to ``damping`` at modes 1 and
+  min(3, n): ``a0 = 2 z w_i w_j/(w_i+w_j)``, ``a1 = 2 z/(w_i+w_j)``;
+* recorded per step (entry k = state at t=(k+1)dt): story ux/uy (diaphragm
+  masters, else story-node average) and total base reactions FX/FY.
+
+``results["th_cases"][name]`` shape:
+
+```jsonc
+{
+  "t": [dt, 2*dt, ...],
+  "story_ux": {"Story1": [...]}, "story_uy": {...},   // m
+  "base_FX": [...], "base_FY": [...],                 // kN (reactions)
+  "peaks": {                                          // peak ABSOLUTE values
+    "story": {"Story1": {"ux":0,"uy":0,"drift_x":0,"drift_y":0,
+                          "shear_x":0,"shear_y":0}},  // drift = ratio
+    "base": {"FX":0,"FY":0}
+  }
+}
+```
+
+Peak story shears come from inertia-force equilibrium (story/nodal masses x
+total accelerations, cumulative from the top; damping forces neglected —
+documented approximation).  **Step cap:** ``engine.run()`` skips ALL TH
+cases when their total step count exceeds 20 000 and sets a top-level
+``"warning"`` string in the results; ``run_time_history`` itself is never
+capped.  RS/combos never include TH cases.
+
+## Column orientation angle
+
+```python
+# FrameMember gains:
+#   angle: float = 0.0    # degrees, right-hand rotation of the local y/z
+#                         # axes about the member axis (local +x)
+```
+
+The engine rotates the default local triad by ``angle`` and feeds the
+rotated local z as the ``geomTransf`` vecxz — for a vertical rectangular
+column, ``angle=90`` exactly swaps the sway stiffness directions.  Applies
+to all members; ``"local_y"`` member loads follow the rotated axes.
+``add_member(..., angle=...)``; round-trips through to_dict/from_dict.
+
+## Shell element forces
+
+``results["cases"][case]["shell_forces"]`` (also on additive combos, by
+superposition; key ABSENT when the model has no meshed shells, on envelope
+combos, and on RS/TH results):
+
+```jsonc
+"shell_forces": {"<quad_index>": [Nxx, Nyy, Nxy, Mxx, Myy, Mxy, Vxz, Vyz]}
+```
+
+``quad_index`` is the index into ``results["shell_quads"]`` (whose entries
+already carry the ``region`` mapping).  Values are the average of the 4
+ShellMITC4 gauss-point stress resultants (= centroid values for a bilinear
+field), in the ELEMENT local system: membrane forces kN/m, moments kN*m/m,
+transverse shears kN/m.  P-Delta two-stage cases report the increment past
+the gravity state, consistent with every other quantity.
+
+## Top-level results additions
+
+* ``"th_cases": {"<name>": <TH shape above>}`` (always present, may be {})
+* ``"warning": "..."`` — present only when set (e.g. TH step cap).

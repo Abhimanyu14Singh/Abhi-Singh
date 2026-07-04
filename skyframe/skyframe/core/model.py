@@ -79,6 +79,11 @@ class FrameSection:
     J: float          # m^4
     b: float = 0.0    # m (optional, drawing only)
     h: float = 0.0    # m (optional, drawing only)
+    # v0.4 stiffness modifiers (ETABS-style property multipliers, all > 0):
+    mod_A: float = 1.0
+    mod_I33: float = 1.0
+    mod_I22: float = 1.0
+    mod_J: float = 1.0
 
     @staticmethod
     def rectangular(name: str, material: str, b: float, h: float) -> "FrameSection":
@@ -107,11 +112,19 @@ class FrameSection:
 
 @dataclass
 class ShellSection:
-    """Shell section (maps to OpenSees ElasticMembranePlateSection)."""
+    """Shell section (maps to OpenSees ElasticMembranePlateSection).
+
+    ``mod`` (v0.4) is a single stiffness modifier (> 0) applied by scaling
+    the section modulus E.  ElasticMembranePlateSection has ONE modulus, so
+    membrane and flexural stiffness scale together; independent
+    membrane/flexural modifiers are deliberately not offered in v0.4 (an
+    exact split is impossible with this section type).
+    """
 
     name: str
     material: str
     thickness: float  # m
+    mod: float = 1.0  # v0.4 stiffness modifier (scales E)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -162,6 +175,10 @@ class FrameMember:
     story: str = ""                 # owning story name (reporting)
     releases: str = ""              # comma-sep tokens "Mi"/"Mj": moment release
     #                                 about BOTH local y & z at that end
+    angle: float = 0.0              # v0.4: local-axis rotation about the
+    #                                 member axis (degrees, right-hand about
+    #                                 local +x); rotates the default local
+    #                                 y/z triad (column orientation angle)
 
     @property
     def length(self) -> float:
@@ -174,7 +191,8 @@ class FrameMember:
     def to_dict(self) -> dict:
         return {"uid": self.uid, "kind": self.kind, "section": self.section,
                 "pi": list(self.pi), "pj": list(self.pj), "story": self.story,
-                "releases": self.releases, "length": self.length}
+                "releases": self.releases, "angle": self.angle,
+                "length": self.length}
 
 
 @dataclass
@@ -384,12 +402,51 @@ class ResponseSpectrumCase:
                 "damping": self.damping, "scale": self.scale}
 
 
+TH_DIRECTIONS = ("X", "Y")
+
+
+@dataclass
+class TimeHistoryCase:
+    """Linear time-history case (v0.4): uniform ground acceleration.
+
+    ``accel`` is the ground-acceleration record in m/s^2 sampled at constant
+    spacing ``dt`` (the sample at index k applies at t = k*dt); ``scale``
+    multiplies the record.  The engine integrates the elastic model with
+    Newmark constant-average acceleration (gamma=1/2, beta=1/4,
+    unconditionally stable) at the record dt, with Rayleigh damping fitted
+    to ratio ``damping`` at modes 1 and min(3, n_modes).
+    """
+
+    name: str
+    direction: str                 # "X" | "Y"
+    accel: List[float]             # m/s^2, sampled at dt
+    dt: float                      # s
+    damping: float = 0.05          # Rayleigh target damping ratio
+    scale: float = 1.0             # multiplies accel
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "direction": self.direction,
+                "accel": [float(a) for a in self.accel],
+                "dt": self.dt, "damping": self.damping, "scale": self.scale}
+
+
+COMBO_TYPES = ("add", "envelope")
+
+
 @dataclass
 class LoadCombo:
-    """Linear combination of load cases (result superposition)."""
+    """Combination of load cases.
+
+    ``combo_type`` (v0.4):
+      * ``"add"``      — linear result superposition (factors applied).
+      * ``"envelope"`` — per-quantity min/max over the LISTED cases, each
+        case scaled by its factor first.  Envelope combos may reference
+        static load cases only (no RS/TH cases, no other combos).
+    """
 
     name: str
     cases: Dict[str, float]  # case name -> factor
+    combo_type: str = "add"  # "add" | "envelope"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -413,11 +470,13 @@ class BuildingModel:
     nodal_masses: List[NodalMass] = field(default_factory=list)
     rigid_diaphragms: bool = True
     story_masses: Dict[str, float] = field(default_factory=dict)   # tonne (explicit)
-    mass_from_patterns: Dict[str, float] = field(default_factory=dict)  # pattern -> factor
+    mass_from_patterns: Dict[str, float] = field(default_factory=dict)  # pattern -> factor (legacy)
+    mass_source: Dict[str, float] = field(default_factory=dict)  # v0.4: pattern -> factor
     patterns: Dict[str, LoadPattern] = field(default_factory=dict)
     cases: Dict[str, LoadCase] = field(default_factory=dict)
     combos: Dict[str, LoadCombo] = field(default_factory=dict)
     rs_cases: Dict[str, ResponseSpectrumCase] = field(default_factory=dict)
+    th_cases: Dict[str, TimeHistoryCase] = field(default_factory=dict)  # v0.4
     num_modes: int = 6
 
     # ---------------- convenience API ----------------
@@ -428,8 +487,18 @@ class BuildingModel:
     def add_section(self, sec: FrameSection) -> FrameSection:
         if sec.material not in self.materials:
             raise ValueError(f"Section {sec.name}: unknown material {sec.material}")
+        self._validate_section_mods(sec)
         self.sections[sec.name] = sec
         return sec
+
+    @staticmethod
+    def _validate_section_mods(sec: FrameSection) -> None:
+        for key in ("mod_A", "mod_I33", "mod_I22", "mod_J"):
+            v = getattr(sec, key)
+            if not (isinstance(v, (int, float)) and math.isfinite(v)
+                    and v > 0.0):
+                raise ValueError(f"Section {sec.name}: {key} must be a "
+                                 f"finite value > 0 (got {v!r})")
 
     def set_stories(self, heights: List[float], names: Optional[List[str]] = None) -> None:
         self.stories = []
@@ -448,14 +517,14 @@ class BuildingModel:
     def add_member(self, kind: str, section: str,
                    pi: Tuple[float, float, float], pj: Tuple[float, float, float],
                    story: str = "", uid: str = "",
-                   releases: str = "") -> FrameMember:
+                   releases: str = "", angle: float = 0.0) -> FrameMember:
         if section not in self.sections:
             raise ValueError(f"Unknown section {section}")
         uid = uid or f"{kind[0].upper()}{len(self.members) + 1}"
         m = FrameMember(uid, kind, section,
                         tuple(float(v) for v in pi),
                         tuple(float(v) for v in pj), story,
-                        releases=releases)
+                        releases=releases, angle=float(angle))
         if m.length < 1e-9:
             raise ValueError(f"Member {uid} has zero length")
         if not m.release_tokens() <= {"Mi", "Mj"}:
@@ -470,6 +539,10 @@ class BuildingModel:
                              f"{sec.material}")
         if sec.thickness <= 0.0:
             raise ValueError(f"Shell section {sec.name}: thickness must be > 0")
+        if not (isinstance(sec.mod, (int, float)) and math.isfinite(sec.mod)
+                and sec.mod > 0.0):
+            raise ValueError(f"Shell section {sec.name}: mod must be a "
+                             f"finite value > 0 (got {sec.mod!r})")
         self.shell_sections[sec.name] = sec
         return sec
 
@@ -538,16 +611,31 @@ class BuildingModel:
         self.cases[name] = c
         return c
 
-    def add_combo(self, name: str, cases: Dict[str, float]) -> LoadCombo:
-        for c in cases:
-            if c not in self.cases:
-                if c in self.rs_cases:
-                    raise ValueError(f"Combo {name}: response-spectrum case "
-                                     f"{c!r} cannot enter a load combo (v0.3)")
-                raise ValueError(f"Combo {name}: unknown case {c}")
-        cb = LoadCombo(name, dict(cases))
+    def add_combo(self, name: str, cases: Dict[str, float],
+                  combo_type: str = "add") -> LoadCombo:
+        cb = LoadCombo(name, dict(cases), combo_type=combo_type)
+        self._validate_combo(cb)
         self.combos[name] = cb
         return cb
+
+    def _validate_combo(self, combo: LoadCombo) -> None:
+        if combo.combo_type not in COMBO_TYPES:
+            raise ValueError(f"Combo {combo.name}: combo_type must be "
+                             f"add|envelope, got {combo.combo_type!r}")
+        if combo.combo_type == "envelope" and not combo.cases:
+            raise ValueError(f"Combo {combo.name}: an envelope combo needs "
+                             "at least one case")
+        for c in combo.cases:
+            if c not in self.cases:
+                if c in self.rs_cases:
+                    raise ValueError(f"Combo {combo.name}: response-spectrum "
+                                     f"case {c!r} cannot enter a load combo "
+                                     "(v0.3)")
+                if c in self.th_cases:
+                    raise ValueError(f"Combo {combo.name}: time-history case "
+                                     f"{c!r} cannot enter a load combo "
+                                     "(v0.4)")
+                raise ValueError(f"Combo {combo.name}: unknown case {c}")
 
     def add_rs_case(self, name: str, direction: str,
                     spectrum: List[List[float]], num_modes: int = 0,
@@ -586,6 +674,34 @@ class BuildingModel:
         if rs.num_modes < 0:
             raise ValueError(f"RS case {rs.name}: num_modes must be >= 0")
 
+    def add_th_case(self, name: str, direction: str, accel: List[float],
+                    dt: float, damping: float = 0.05,
+                    scale: float = 1.0) -> TimeHistoryCase:
+        th = TimeHistoryCase(name, direction,
+                             [float(a) for a in accel], float(dt),
+                             damping=float(damping), scale=float(scale))
+        self._validate_th_case(th)
+        self.th_cases[name] = th
+        return th
+
+    @staticmethod
+    def _validate_th_case(th: TimeHistoryCase) -> None:
+        if th.direction not in TH_DIRECTIONS:
+            raise ValueError(f"TH case {th.name}: direction must be X|Y, "
+                             f"got {th.direction!r}")
+        if not th.accel:
+            raise ValueError(f"TH case {th.name}: accel record is empty")
+        for a in th.accel:
+            if not math.isfinite(float(a)):
+                raise ValueError(f"TH case {th.name}: accel values must be "
+                                 "finite")
+        if not (math.isfinite(th.dt) and th.dt > 0.0):
+            raise ValueError(f"TH case {th.name}: dt must be > 0")
+        if not 0.0 < th.damping < 1.0:
+            raise ValueError(f"TH case {th.name}: damping must be in (0, 1)")
+        if not math.isfinite(th.scale):
+            raise ValueError(f"TH case {th.name}: scale must be finite")
+
     # ---------------- derived data ----------------
     def story_elevations(self) -> Dict[str, float]:
         return {s.name: s.elevation for s in self.stories}
@@ -606,16 +722,25 @@ class BuildingModel:
         ys = [p[1] for m in self.members for p in (m.pi, m.pj)] or [0.0]
         return ((min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0)
 
+    def effective_mass_source(self) -> Dict[str, float]:
+        """Pattern -> factor dict that actually feeds story masses (v0.4).
+
+        ``mass_source`` wins when set; otherwise the legacy
+        ``mass_from_patterns`` applies (backward compatibility)."""
+        return self.mass_source if self.mass_source else self.mass_from_patterns
+
     def compute_story_masses(self) -> Dict[str, float]:
         """Story mass in tonnes: explicit masses win; otherwise derived from
-        gravity load patterns via `mass_from_patterns` (e.g. {"DEAD": 1.0})."""
+        gravity load patterns via the mass source (v0.4 ``mass_source``,
+        falling back to legacy ``mass_from_patterns``)."""
         masses: Dict[str, float] = {}
+        source = self.effective_mass_source()
         for s in self.stories:
             if s.name in self.story_masses:
                 masses[s.name] = self.story_masses[s.name]
                 continue
             total_w = 0.0  # kN of gravity load on this story
-            for pname, fac in self.mass_from_patterns.items():
+            for pname, fac in source.items():
                 pat = self.patterns.get(pname)
                 if pat is None:
                     continue
@@ -674,10 +799,15 @@ class BuildingModel:
             if sec.material not in self.materials:
                 raise ValueError(f"Section {sec.name}: unknown material "
                                  f"{sec.material}")
+            self._validate_section_mods(sec)
         for ssec in self.shell_sections.values():
             if ssec.material not in self.materials:
                 raise ValueError(f"Shell section {ssec.name}: unknown "
                                  f"material {ssec.material}")
+            if not (isinstance(ssec.mod, (int, float))
+                    and math.isfinite(ssec.mod) and ssec.mod > 0.0):
+                raise ValueError(f"Shell section {ssec.name}: mod must be a "
+                                 f"finite value > 0 (got {ssec.mod!r})")
         uids = set()
         for m in self.members:
             if m.uid in uids:
@@ -734,15 +864,11 @@ class BuildingModel:
                     raise ValueError(f"Case {case.name}: pdelta_gravity "
                                      f"references unknown pattern {p}")
         for combo in self.combos.values():
-            for c in combo.cases:
-                if c not in self.cases:
-                    if c in self.rs_cases:
-                        raise ValueError(f"Combo {combo.name}: response-"
-                                         f"spectrum case {c!r} cannot enter "
-                                         "a load combo (v0.3)")
-                    raise ValueError(f"Combo {combo.name}: unknown case {c}")
+            self._validate_combo(combo)
         for rs in self.rs_cases.values():
             self._validate_rs_case(rs)
+        for th in self.th_cases.values():
+            self._validate_th_case(th)
 
     # ---------------- (de)serialisation ----------------
     def to_dict(self) -> dict:
@@ -762,10 +888,12 @@ class BuildingModel:
             "rigid_diaphragms": self.rigid_diaphragms,
             "story_masses": self.compute_story_masses(),
             "mass_from_patterns": dict(self.mass_from_patterns),
+            "mass_source": dict(self.mass_source),
             "patterns": {k: v.to_dict() for k, v in self.patterns.items()},
             "cases": {k: v.to_dict() for k, v in self.cases.items()},
             "combos": {k: v.to_dict() for k, v in self.combos.items()},
             "rs_cases": {k: v.to_dict() for k, v in self.rs_cases.items()},
+            "th_cases": {k: v.to_dict() for k, v in self.th_cases.items()},
             "num_modes": self.num_modes,
         }
 
@@ -791,11 +919,16 @@ class BuildingModel:
                 name=sd.get("name", name), material=sd["material"],
                 A=float(sd["A"]), I33=float(sd["I33"]), I22=float(sd["I22"]),
                 J=float(sd["J"]), b=float(sd.get("b", 0.0)),
-                h=float(sd.get("h", 0.0)))
+                h=float(sd.get("h", 0.0)),
+                mod_A=float(sd.get("mod_A", 1.0)),
+                mod_I33=float(sd.get("mod_I33", 1.0)),
+                mod_I22=float(sd.get("mod_I22", 1.0)),
+                mod_J=float(sd.get("mod_J", 1.0)))
         for name, sd in (d.get("shell_sections") or {}).items():
             mdl.shell_sections[name] = ShellSection(
                 name=sd.get("name", name), material=sd["material"],
-                thickness=float(sd["thickness"]))
+                thickness=float(sd["thickness"]),
+                mod=float(sd.get("mod", 1.0)))
         gd = d.get("grid")
         if gd:
             mdl.grid = GridSystem([float(x) for x in gd["x_lines"]],
@@ -809,7 +942,8 @@ class BuildingModel:
                 pi=tuple(float(v) for v in md["pi"]),
                 pj=tuple(float(v) for v in md["pj"]),
                 story=md.get("story", ""),
-                releases=md.get("releases", "")))
+                releases=md.get("releases", ""),
+                angle=float(md.get("angle", 0.0))))
         for rd in d.get("shells") or []:
             mdl.shells.append(ShellRegion(
                 uid=rd["uid"], kind=rd["kind"], behavior=rd["behavior"],
@@ -837,6 +971,10 @@ class BuildingModel:
                             for k, v in (d.get("story_masses") or {}).items()}
         mdl.mass_from_patterns = {
             k: float(v) for k, v in (d.get("mass_from_patterns") or {}).items()}
+        # v0.4: mass_source; when absent (pre-v0.4 files) it stays empty and
+        # compute_story_masses falls back to mass_from_patterns
+        mdl.mass_source = {
+            k: float(v) for k, v in (d.get("mass_source") or {}).items()}
         for name, pd in (d.get("patterns") or {}).items():
             pat = LoadPattern(pd.get("name", name), pd.get("kind", "other"))
             for u in pd.get("member_udls") or []:
@@ -870,8 +1008,10 @@ class BuildingModel:
                 pdelta_gravity=({p: float(f) for p, f in pg.items()}
                                 if pg else None))
         for name, cd in (d.get("combos") or {}).items():
-            mdl.combos[name] = LoadCombo(cd.get("name", name), {
-                c: float(f) for c, f in (cd.get("cases") or {}).items()})
+            mdl.combos[name] = LoadCombo(
+                cd.get("name", name),
+                {c: float(f) for c, f in (cd.get("cases") or {}).items()},
+                combo_type=cd.get("combo_type", "add"))
         for name, rd in (d.get("rs_cases") or {}).items():
             mdl.rs_cases[name] = ResponseSpectrumCase(
                 name=rd.get("name", name), direction=rd["direction"],
@@ -881,6 +1021,12 @@ class BuildingModel:
                 combo_method=rd.get("combo_method", "CQC"),
                 damping=float(rd.get("damping", 0.05)),
                 scale=float(rd.get("scale", 1.0)))
+        for name, td in (d.get("th_cases") or {}).items():
+            mdl.th_cases[name] = TimeHistoryCase(
+                name=td.get("name", name), direction=td["direction"],
+                accel=[float(a) for a in td["accel"]], dt=float(td["dt"]),
+                damping=float(td.get("damping", 0.05)),
+                scale=float(td.get("scale", 1.0)))
         mdl.num_modes = int(d.get("num_modes", 6))
         mdl.validate()
         return mdl

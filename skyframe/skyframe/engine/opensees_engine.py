@@ -4,10 +4,23 @@ Translates the solver-agnostic :class:`~skyframe.core.model.BuildingModel`
 into an OpenSees domain (ndm=3, ndf=6) and runs:
 
 * linear static load cases (``run_static``),
-* load combos by pure result superposition,
+* load combos by pure result superposition (``combo_type == "add"``) or by
+  per-quantity min/max envelopes over the listed cases (v0.4
+  ``combo_type == "envelope"``),
 * eigenvalue / modal analysis (``run_modal``),
 * response-spectrum analysis (``run_response_spectrum``, v0.3),
-* P-Delta static cases (``LoadCase.pdelta``, v0.3).
+* P-Delta static cases (``LoadCase.pdelta``, v0.3),
+* linear time-history cases (``run_time_history``, v0.4): Newmark
+  constant-average-acceleration direct integration of the elastic model
+  under uniform ground excitation, Rayleigh damping fitted at modes 1 and
+  min(3, n).
+
+v0.4 additions in results: frame stiffness modifiers (``FrameSection.mod_*``)
+and the shell modifier (``ShellSection.mod``, scales E) are applied when the
+elements are created; member local axes honour ``FrameMember.angle``
+(rotation about the member axis, degrees); shell stress resultants
+(gauss-point averages, ``shell_forces``) are reported per static case and
+superposed into additive combos (envelope combos and RS/TH cases skip them).
 
 v0.3 response-spectrum analysis is EXACT modal statics: for each mode i the
 equivalent static force vector ``f_i = Gamma_i * Sa_i * g * M * phi_i`` is
@@ -57,7 +70,13 @@ import openseespy.opensees as ops
 
 from skyframe.core.mesh import MeshedModel, Segment, mesh_model
 from skyframe.core.model import (G_ACCEL, BuildingModel, FrameMember,
-                                 LoadCase, ResponseSpectrumCase)
+                                 FrameSection, LoadCase, LoadCombo,
+                                 ResponseSpectrumCase)
+
+# time-history step cap for engine.run(): if the model's TH cases together
+# exceed this many integration steps they are skipped in run() (a warning is
+# carried in the results); run_time_history() itself is never capped.
+TH_STEP_CAP = 20000
 
 _TOL = 1e-6
 _N_STATIONS = 11
@@ -106,6 +125,10 @@ def _local_axes(member: FrameMember) -> Tuple[Vec3, Vec3, Vec3, Vec3, bool]:
     ``vecxz = (dy, -dx, 0)`` normalised, which puts local y along global +Z
     for horizontal members so gravity bends the member about local z (I33,
     the major axis).  Vertical members use ``vecxz = (1, 0, 0)``.
+
+    v0.4: ``member.angle`` (degrees) rotates the default y/z pair about the
+    member axis (right-hand rule about local +x); the rotated local z serves
+    as vecxz (it lies in the local x-z plane by construction).
     """
     d = (member.pj[0] - member.pi[0],
          member.pj[1] - member.pi[1],
@@ -118,6 +141,16 @@ def _local_axes(member: FrameMember) -> Tuple[Vec3, Vec3, Vec3, Vec3, bool]:
         vecxz = _unit((x[1], -x[0], 0.0))
     y = _unit(_cross(vecxz, x))
     z = _cross(x, y)
+    ang = getattr(member, "angle", 0.0) or 0.0
+    if abs(ang) > 1e-12:
+        a = math.radians(ang)
+        ca, sa = math.cos(a), math.sin(a)
+        y2 = (ca * y[0] + sa * z[0], ca * y[1] + sa * z[1],
+              ca * y[2] + sa * z[2])
+        z2 = (ca * z[0] - sa * y[0], ca * z[1] - sa * y[1],
+              ca * z[2] - sa * y[2])
+        y, z = _unit(y2), _unit(z2)
+        vecxz = z
     return x, y, z, vecxz, vertical
 
 
@@ -311,6 +344,7 @@ class _Assembly:
     seg_ele: Dict[Tuple[str, int], int] = field(default_factory=dict)
     ele_nodes: Dict[str, Tuple[int, int]] = field(default_factory=dict)
     shell_quads: List[dict] = field(default_factory=list)
+    quad_ele: List[int] = field(default_factory=list)   # etag per shell quad
     masters: Dict[str, int] = field(default_factory=dict)         # story -> master
     story_nodes: Dict[str, List[int]] = field(default_factory=dict)
     mass_map: Dict[Tuple[int, int], float] = field(default_factory=dict)  # (tag, dof)
@@ -344,6 +378,10 @@ class CaseResults:
     member_stations: Dict[str, Dict[str, List[float]]] = field(
         default_factory=dict)                   # uid -> x/N/V2/V3/T/M2/M3
     warning: str = ""                           # e.g. P-Delta superposition
+    shell_forces: Dict[int, List[float]] = field(default_factory=dict)
+    #   v0.4: quad index (into shell_quads) -> 8 gauss-averaged stress
+    #   resultants [Nxx, Nyy, Nxy, Mxx, Myy, Mxy, Vxz, Vyz] (kN/m, kN*m/m)
+    minima: Optional["CaseResults"] = None      # v0.4 envelope combos: minima
 
     def to_dict(self) -> dict:
         d = {
@@ -355,6 +393,11 @@ class CaseResults:
             "member_stations": {u: {k: list(v) for k, v in st.items()}
                                 for u, st in self.member_stations.items()},
         }
+        if self.shell_forces:
+            d["shell_forces"] = {str(i): list(v)
+                                 for i, v in self.shell_forces.items()}
+        if self.minima is not None:
+            d["min"] = self.minima.to_dict()
         if self.warning:
             d["warning"] = self.warning
         return d
@@ -380,6 +423,40 @@ class ModalResults:
 
 
 @dataclass
+class THResults:
+    """Results of one linear time-history case (v0.4).
+
+    Time series are sampled AFTER each integration step, i.e. entry k is
+    the state at t = (k+1)*dt.  ``base_FX``/``base_FY`` are total base
+    reactions (element resisting forces at the supports).  Story shears in
+    ``peaks`` come from inertia-force equilibrium (story masses times total
+    accelerations, cumulative from the top; damping forces neglected).
+    """
+
+    name: str
+    t: List[float]
+    story_ux: Dict[str, List[float]]
+    story_uy: Dict[str, List[float]]
+    base_FX: List[float]
+    base_FY: List[float]
+    peaks: dict           # {"story": {story: {ux..shear_y}}, "base": {FX,FY}}
+
+    def to_dict(self) -> dict:
+        return {
+            "t": list(self.t),
+            "story_ux": {s: list(v) for s, v in self.story_ux.items()},
+            "story_uy": {s: list(v) for s, v in self.story_uy.items()},
+            "base_FX": list(self.base_FX),
+            "base_FY": list(self.base_FY),
+            "peaks": {
+                "story": {s: dict(v)
+                          for s, v in self.peaks.get("story", {}).items()},
+                "base": dict(self.peaks.get("base", {})),
+            },
+        }
+
+
+@dataclass
 class AnalysisResults:
     """Full analysis bundle: geometry, all cases, combos, and modal."""
 
@@ -394,9 +471,11 @@ class AnalysisResults:
     modal: ModalResults
     shell_quads: List[dict] = field(default_factory=list)
     rs_cases: Dict[str, CaseResults] = field(default_factory=dict)
+    th_cases: Dict[str, THResults] = field(default_factory=dict)
+    warning: str = ""                    # e.g. TH cases skipped (step cap)
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "model_name": self.model_name,
             "nodes": {str(t): list(c) for t, c in self.nodes.items()},
             "members": [dict(m) for m in self.members],
@@ -407,8 +486,12 @@ class AnalysisResults:
             "cases": {n: c.to_dict() for n, c in self.cases.items()},
             "combos": {n: c.to_dict() for n, c in self.combos.items()},
             "rs_cases": {n: c.to_dict() for n, c in self.rs_cases.items()},
+            "th_cases": {n: c.to_dict() for n, c in self.th_cases.items()},
             "modal": self.modal.to_dict(),
         }
+        if self.warning:
+            d["warning"] = self.warning
+        return d
 
 
 # --------------------------------------------------------------------------- #
@@ -428,6 +511,7 @@ class OpenSeesEngine:
         self.model = model
         self._case_cache: Dict[str, CaseResults] = {}
         self._rs_cache: Dict[str, CaseResults] = {}
+        self._th_cache: Dict[str, THResults] = {}
         self._modal_cache: Dict[int, ModalResults] = {}
         self._members_by_uid: Dict[str, FrameMember] = {m.uid: m for m in model.members}
         self._asm: Optional[_Assembly] = None
@@ -438,14 +522,30 @@ class OpenSeesEngine:
 
     # ------------------------------------------------------------------ API
     def run(self) -> AnalysisResults:
-        """Run every load case, combo, RS case, and modal analysis."""
+        """Run every load case, combo, RS case, TH case, and modal analysis.
+
+        v0.4: time-history cases are skipped (with a top-level results
+        warning) when their total step count exceeds ``TH_STEP_CAP``.
+        """
         model = self.model
         cases = {name: self.run_static(name) for name in model.cases}
-        combos = {name: self._combine(name, combo.cases)
+        combos = {name: self._combine(name, combo)
                   for name, combo in model.combos.items()}
         modal = self.run_modal()
         rs_cases = {name: self.run_response_spectrum(name)
                     for name in model.rs_cases}
+        th_cases: Dict[str, THResults] = {}
+        warning = ""
+        if model.th_cases:
+            total_steps = sum(len(c.accel) for c in model.th_cases.values())
+            if total_steps > TH_STEP_CAP:
+                warning = (f"time-history cases skipped: {total_steps} total "
+                           f"integration steps exceed the {TH_STEP_CAP}-step "
+                           "cap (run them individually with "
+                           "run_time_history)")
+            else:
+                th_cases = {name: self.run_time_history(name)
+                            for name in model.th_cases}
         asm = self._asm if self._asm is not None else self._build()
         members = [{"uid": m.uid, "kind": m.kind, "section": m.section,
                     "ni": asm.ele_nodes[m.uid][0], "nj": asm.ele_nodes[m.uid][1],
@@ -463,6 +563,8 @@ class OpenSeesEngine:
             modal=modal,
             shell_quads=list(asm.shell_quads),
             rs_cases=rs_cases,
+            th_cases=th_cases,
+            warning=warning,
         )
 
     def run_static(self, case_name: str) -> CaseResults:
@@ -496,9 +598,11 @@ class OpenSeesEngine:
         base = self._base_totals(asm, reactions)
         member_forces, member_stations = self._member_outputs(asm)
         story = self._story_results(asm, case, node_disp)
+        shell_forces = self._shell_outputs(asm)
 
         result = CaseResults(case_name, node_disp, reactions, base,
-                             member_forces, story, member_stations)
+                             member_forces, story, member_stations,
+                             shell_forces=shell_forces)
         self._case_cache[case_name] = result
         return result
 
@@ -589,6 +693,7 @@ class OpenSeesEngine:
         for m in model.members:
             sec = model.sections[m.section]
             mat = model.materials[sec.material]
+            A_eff, I22_eff, I33_eff, J_eff = self._eff_props(sec)
             xax, _, _, vecxz, _ = _local_axes(m)
             toks = m.release_tokens()
             segs = mesh.segments[m.uid]
@@ -603,7 +708,7 @@ class OpenSeesEngine:
                 extra = ["-releasez", code, "-releasey", code] if code else []
                 ops.element("elasticBeamColumn", etag,
                             seg.ni + 1, seg.nj + 1,
-                            sec.A, mat.E, mat.G, sec.J, sec.I22, sec.I33,
+                            A_eff, mat.E, mat.G, J_eff, I22_eff, I33_eff,
                             etag, *extra)
                 asm.seg_ele[(m.uid, seg.index)] = etag
                 for node, released in ((seg.ni, rel_i), (seg.nj, rel_j)):
@@ -620,8 +725,9 @@ class OpenSeesEngine:
                 stag += 1
                 mat = model.materials[ssec.material]
                 # rho = 0: shell self-weight/mass ignored in v0.2
+                # v0.4: ssec.mod scales E (membrane AND flexural stiffness)
                 ops.section("ElasticMembranePlateSection", stag,
-                            mat.E, mat.nu, ssec.thickness, 0.0)
+                            mat.E * ssec.mod, mat.nu, ssec.thickness, 0.0)
                 sec_tags[name] = stag
             regions = {r.uid: r for r in model.shells}
             for quad in mesh.quads:
@@ -632,6 +738,7 @@ class OpenSeesEngine:
                             sec_tags[region.section])
                 asm.shell_quads.append({"region": quad.region,
                                         "nodes": node_tags})
+                asm.quad_ele.append(etag)
                 for n in quad.nodes:
                     rot_add(n, eye3)   # shells stiffen all three rotations
 
@@ -762,6 +869,12 @@ class OpenSeesEngine:
             for dof in range(1, 7):
                 if mv[dof - 1] > 0.0:
                     asm.mass_map[(t, dof)] = mv[dof - 1]
+
+    @staticmethod
+    def _eff_props(sec: FrameSection) -> Tuple[float, float, float, float]:
+        """(A, I22, I33, J) with the v0.4 stiffness modifiers applied."""
+        return (sec.A * sec.mod_A, sec.I22 * sec.mod_I22,
+                sec.I33 * sec.mod_I33, sec.J * sec.mod_J)
 
     def _find_node(self, asm: _Assembly, point: Tuple[float, float, float]) -> int:
         """Structural node whose coordinates match `point` within 1e-6."""
@@ -932,8 +1045,9 @@ class OpenSeesEngine:
         model = self.model
         sec = model.sections[member.section]
         mat = model.materials[sec.material]
-        f0 = _condensed_fef(records, seg.length, mat.E, mat.G, sec.A,
-                            sec.I22, sec.I33, sec.J, released)
+        A_eff, I22_eff, I33_eff, J_eff = self._eff_props(sec)
+        f0 = _condensed_fef(records, seg.length, mat.E, mat.G, A_eff,
+                            I22_eff, I33_eff, J_eff, released)
         xax, yax, zax, _, _ = _local_axes(member)
 
         def to_global(lx: float, ly: float, lz: float) -> Vec3:
@@ -1030,6 +1144,37 @@ class OpenSeesEngine:
             member_stations[m.uid] = {"x": xs, **cols}
         return member_forces, member_stations
 
+    # ----------------------------------------------- per-shell-quad results
+    @staticmethod
+    def _shell_outputs(asm: _Assembly,
+                       baseline: Optional[Dict[int, List[float]]] = None
+                       ) -> Dict[int, List[float]]:
+        """Gauss-averaged stress resultants per shell quad (v0.4).
+
+        ShellMITC4 'stresses' returns 8 resultants x 4 gauss points
+        [Nxx, Nyy, Nxy, Mxx, Myy, Mxy, Vxz, Vyz] in the ELEMENT local
+        system (membrane kN/m, moments kN*m/m); the 4 gauss values are
+        averaged (= centroid value for a bilinear field).  ``baseline``
+        (P-Delta two-stage runs) is subtracted so the case reports its own
+        increment.
+
+        openseespy quirk (verified empirically on 3.7.1.2): the 'stresses'
+        response of an element is stale until that element's resisting
+        force has been queried, so 'forces' is requested (and discarded)
+        first for every quad.
+        """
+        out: Dict[int, List[float]] = {}
+        for qi, etag in enumerate(asm.quad_ele):
+            ops.eleResponse(etag, "forces")          # warm-up (see docstring)
+            vals = ops.eleResponse(etag, "stresses")
+            if len(vals) != 32:                      # pragma: no cover
+                continue
+            avg = np.asarray(vals, dtype=float).reshape(4, 8).mean(axis=0)
+            if baseline is not None and qi in baseline:
+                avg = avg - np.asarray(baseline[qi])
+            out[qi] = [float(v) for v in avg]
+        return out
+
     # ------------------------------------------------------------- analysis
     @staticmethod
     def _setup_analysis(asm: _Assembly) -> None:
@@ -1108,7 +1253,13 @@ class OpenSeesEngine:
         return story
 
     # --------------------------------------------------------------- combos
-    def _combine(self, name: str, factors: Dict[str, float]) -> CaseResults:
+    def _combine(self, name: str, combo: LoadCombo) -> CaseResults:
+        """Solve a combo: additive superposition or min/max envelope."""
+        if combo.combo_type == "envelope":
+            return self._envelope(name, combo.cases)
+        return self._superpose(name, combo.cases)
+
+    def _superpose(self, name: str, factors: Dict[str, float]) -> CaseResults:
         """Linear superposition of already-solved case results."""
         parts = [(self.run_static(case_name), f) for case_name, f in factors.items()]
         warning = ""
@@ -1141,6 +1292,12 @@ class OpenSeesEngine:
                         for res, f in parts)
                     for i in range(len(st0[key]))]
             member_stations[uid] = entry
+        # shell stress resultants superpose linearly too (v0.4)
+        shell_forces: Dict[int, List[float]] = {}
+        for qi, v0 in parts[0][0].shell_forces.items():
+            shell_forces[qi] = [
+                sum(f * res.shell_forces[qi][i] for res, f in parts)
+                for i in range(len(v0))]
         return CaseResults(
             name=name,
             node_disp=comb_vecs(lambda r: r.node_disp),
@@ -1150,7 +1307,76 @@ class OpenSeesEngine:
             story=story,
             member_stations=member_stations,
             warning=warning,
+            shell_forces=shell_forces,
         )
+
+    def _envelope(self, name: str, factors: Dict[str, float]) -> CaseResults:
+        """Per-quantity min/max envelope over the listed (factored) cases.
+
+        The returned CaseResults holds the MAXIMA in the standard fields
+        and the MINIMA as a nested CaseResults in ``minima`` (serialised
+        under ``"min"``).  Envelopes cover node_disp / reactions / base /
+        member_forces / story / member_stations; shell stress resultants
+        are NOT enveloped in v0.4 (component-wise min/max of a tensor field
+        is not a meaningful design envelope) and are left empty.
+        """
+        parts = [(self.run_static(case_name), f)
+                 for case_name, f in factors.items()]
+        warning = ""
+        if any(self.model.cases[c].pdelta for c in factors):
+            warning = ("envelope includes a P-Delta (nonlinear) case; its "
+                       "factored results enter the envelope unchanged")
+
+        def env_vecs(get) -> Tuple[dict, dict]:
+            first = get(parts[0][0])
+            mx = {k: [-math.inf] * len(v) for k, v in first.items()}
+            mn = {k: [math.inf] * len(v) for k, v in first.items()}
+            for res, f in parts:
+                for k, v in get(res).items():
+                    hi, lo = mx[k], mn[k]
+                    for i, x in enumerate(v):
+                        fx = f * x
+                        if fx > hi[i]:
+                            hi[i] = fx
+                        if fx < lo[i]:
+                            lo[i] = fx
+            return mx, mn
+
+        disp_mx, disp_mn = env_vecs(lambda r: r.node_disp)
+        reac_mx, reac_mn = env_vecs(lambda r: r.reactions)
+        mf_mx, mf_mn = env_vecs(lambda r: r.member_forces)
+        base_mx = {k: max(f * res.base[k] for res, f in parts)
+                   for k in ("FX", "FY", "FZ", "MX", "MY", "MZ")}
+        base_mn = {k: min(f * res.base[k] for res, f in parts)
+                   for k in ("FX", "FY", "FZ", "MX", "MY", "MZ")}
+        story_mx: Dict[str, Dict[str, float]] = {}
+        story_mn: Dict[str, Dict[str, float]] = {}
+        for s_name, s0 in parts[0][0].story.items():
+            story_mx[s_name] = {k: max(f * res.story[s_name][k]
+                                       for res, f in parts) for k in s0}
+            story_mn[s_name] = {k: min(f * res.story[s_name][k]
+                                       for res, f in parts) for k in s0}
+        st_mx: Dict[str, Dict[str, List[float]]] = {}
+        st_mn: Dict[str, Dict[str, List[float]]] = {}
+        for uid, st0 in parts[0][0].member_stations.items():
+            e_mx: Dict[str, List[float]] = {"x": list(st0["x"])}
+            e_mn: Dict[str, List[float]] = {"x": list(st0["x"])}
+            for key in ("N", "V2", "V3", "T", "M2", "M3"):
+                vals = [[f * res.member_stations[uid][key][i]
+                         for res, f in parts]
+                        for i in range(len(st0[key]))]
+                e_mx[key] = [max(v) for v in vals]
+                e_mn[key] = [min(v) for v in vals]
+            st_mx[uid] = e_mx
+            st_mn[uid] = e_mn
+        minima = CaseResults(
+            name=name + " (min)", node_disp=disp_mn, reactions=reac_mn,
+            base=base_mn, member_forces=mf_mn, story=story_mn,
+            member_stations=st_mn)
+        return CaseResults(
+            name=name, node_disp=disp_mx, reactions=reac_mx, base=base_mx,
+            member_forces=mf_mx, story=story_mx, member_stations=st_mx,
+            warning=warning, minima=minima)
 
     # ----------------------------------------------------- P-Delta statics
     def _run_static_pdelta(self, case: LoadCase) -> CaseResults:
@@ -1171,6 +1397,7 @@ class OpenSeesEngine:
         snap_disp: Dict[int, List[float]] = {}
         snap_reac: Dict[int, List[float]] = {}
         snap_ele: Dict[Tuple[str, int], List[float]] = {}
+        snap_shell: Dict[int, List[float]] = {}
         two_stage = case.pdelta_gravity is not None
 
         if two_stage:
@@ -1192,6 +1419,7 @@ class OpenSeesEngine:
             for key, etag in asm.seg_ele.items():
                 snap_ele[key] = [float(v)
                                  for v in ops.eleResponse(etag, "localForce")]
+            snap_shell = self._shell_outputs(asm)
             # stage-1 span-load bookkeeping must not leak into the case's
             # reported member forces/stations (they belong to gravity)
             self._seg_span_loads = {}
@@ -1220,8 +1448,11 @@ class OpenSeesEngine:
         member_forces, member_stations = self._member_outputs(
             asm, baseline=snap_ele)
         story = self._story_results(asm, case, node_disp)
+        shell_forces = self._shell_outputs(
+            asm, baseline=snap_shell if two_stage else None)
         return CaseResults(case.name, node_disp, reactions, base,
-                           member_forces, story, member_stations)
+                           member_forces, story, member_stations,
+                           shell_forces=shell_forces)
 
     @staticmethod
     def _setup_nonlinear_analysis(asm: _Assembly) -> None:
@@ -1233,6 +1464,139 @@ class OpenSeesEngine:
         ops.algorithm("Newton")
         ops.integrator("LoadControl", 1.0)
         ops.analysis("Static")
+
+    # -------------------------------------------------------- time history
+    def run_time_history(self, name: str) -> THResults:
+        """Run one linear time-history case (cached per engine instance).
+
+        Direct integration of the elastic model under uniform ground
+        excitation (``UniformExcitation`` with a ``Path`` time series whose
+        sample k applies at t = k*dt):
+
+        * Newmark constant-average acceleration (gamma=1/2, beta=1/4,
+          unconditionally stable), one step per record sample at the
+          record dt;
+        * Rayleigh damping ``C = a0*M + a1*K`` with a0/a1 fitted to the
+          case's damping ratio at modes 1 and min(3, n):
+          ``a0 = 2 z wi wj/(wi+wj)``, ``a1 = 2 z/(wi+wj)`` (for a single
+          mode this reduces to ``a0 = z*w``, ``a1 = z/w``);
+        * per step: story displacements (diaphragm masters, else the story
+          node average), base reactions, and massed-node accelerations for
+          the inertia-equilibrium story shears in ``peaks``.
+        """
+        if name in self._th_cache:
+            return self._th_cache[name]
+        model = self.model
+        if name not in model.th_cases:
+            raise ValueError(f"Unknown time-history case {name!r}")
+        th = model.th_cases[name]
+
+        modal = self.run_modal()
+        if not modal.periods:
+            raise RuntimeError(
+                f"TH case {name!r}: the model has no dynamic modes "
+                "(no mass on unrestrained DOFs)")
+        omegas = [2.0 * math.pi / T for T in modal.periods]
+        w_i = omegas[0]
+        w_j = omegas[min(3, len(omegas)) - 1]
+        a0 = 2.0 * th.damping * w_i * w_j / (w_i + w_j)
+        a1 = 2.0 * th.damping / (w_i + w_j)
+
+        asm = self._build()
+        ops.rayleigh(a0, a1, 0.0, 0.0)
+        ops.timeSeries("Path", 1, "-dt", float(th.dt),
+                       "-values", *[float(a) for a in th.accel],
+                       "-factor", float(th.scale))
+        dof = 1 if th.direction == "X" else 2
+        ops.pattern("UniformExcitation", 1, dof, "-accel", 1)
+
+        ops.wipeAnalysis()
+        ops.constraints("Transformation" if asm.use_transformation
+                        else "Plain")
+        ops.numberer("RCM")
+        ops.system("BandGeneral")
+        ops.algorithm("Linear")
+        ops.integrator("Newmark", 0.5, 0.25)
+        ops.analysis("Transient")
+
+        stories = model.stories
+        massed = [(t, d, m) for (t, d), m in asm.mass_map.items()
+                  if d in (1, 2)]
+        massed_tags = sorted({t for t, _, _ in massed})
+        n = len(th.accel)
+        t_out: List[float] = []
+        sux: Dict[str, List[float]] = {s.name: [] for s in stories}
+        suy: Dict[str, List[float]] = {s.name: [] for s in stories}
+        svx: Dict[str, List[float]] = {s.name: [] for s in stories}
+        svy: Dict[str, List[float]] = {s.name: [] for s in stories}
+        bfx: List[float] = []
+        bfy: List[float] = []
+        for k in range(n):
+            if ops.analyze(1, th.dt) != 0:
+                raise RuntimeError(
+                    f"Time-history analysis failed at step {k + 1}/{n} "
+                    f"for case {name!r}")
+            t_out.append((k + 1) * th.dt)
+            # story displacements (masters, else story-node average)
+            for s in stories:
+                if s.name in asm.masters:
+                    d = ops.nodeDisp(asm.masters[s.name])
+                    ux, uy = d[0], d[1]
+                else:
+                    nodes = asm.story_nodes[s.name]
+                    ux = (sum(ops.nodeDisp(t, 1) for t in nodes) / len(nodes)
+                          if nodes else 0.0)
+                    uy = (sum(ops.nodeDisp(t, 2) for t in nodes) / len(nodes)
+                          if nodes else 0.0)
+                sux[s.name].append(ux)
+                suy[s.name].append(uy)
+            # inertia-equilibrium story shears: total accel = relative
+            # (nodeAccel) + ground (Path sample at the current time)
+            ag = th.scale * (th.accel[k + 1] if k + 1 < n else 0.0)
+            agx = ag if dof == 1 else 0.0
+            agy = ag if dof == 2 else 0.0
+            acc = {t: ops.nodeAccel(t) for t in massed_tags}
+            for s in stories:
+                vx = -sum(m * (acc[t][0] + agx) for t, d_, m in massed
+                          if d_ == 1
+                          and asm.node_coords[t][2] >= s.elevation - _TOL)
+                vy = -sum(m * (acc[t][1] + agy) for t, d_, m in massed
+                          if d_ == 2
+                          and asm.node_coords[t][2] >= s.elevation - _TOL)
+                svx[s.name].append(vx)
+                svy[s.name].append(vy)
+            ops.reactions()
+            fx = fy = 0.0
+            for t in asm.support_tags:
+                r = ops.nodeReaction(t)
+                fx += r[0]
+                fy += r[1]
+            bfx.append(fx)
+            bfy.append(fy)
+
+        def peak(vals: Sequence[float]) -> float:
+            return max(abs(v) for v in vals) if len(vals) else 0.0
+
+        peaks_story: Dict[str, Dict[str, float]] = {}
+        prev_ux = [0.0] * n
+        prev_uy = [0.0] * n
+        for s in stories:  # bottom -> top
+            h = s.height if s.height > 0 else 1.0
+            ux_s, uy_s = sux[s.name], suy[s.name]
+            peaks_story[s.name] = {
+                "ux": peak(ux_s), "uy": peak(uy_s),
+                "drift_x": peak([(u - p) / h
+                                 for u, p in zip(ux_s, prev_ux)]),
+                "drift_y": peak([(u - p) / h
+                                 for u, p in zip(uy_s, prev_uy)]),
+                "shear_x": peak(svx[s.name]), "shear_y": peak(svy[s.name]),
+            }
+            prev_ux, prev_uy = ux_s, uy_s
+        peaks = {"story": peaks_story,
+                 "base": {"FX": peak(bfx), "FY": peak(bfy)}}
+        result = THResults(name, t_out, sux, suy, bfx, bfy, peaks)
+        self._th_cache[name] = result
+        return result
 
     # --------------------------------------------------- response spectrum
     def run_response_spectrum(self, name: str) -> CaseResults:

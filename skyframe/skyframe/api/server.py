@@ -18,6 +18,12 @@ v0.3 additions:
 * ``DELETE /api/models/<name>``      — delete a saved model
 * ``GET    /api/sections/library``   — built-in steel section library (SI)
 
+v0.4 additions:
+
+* ``POST /api/pattern/wind`` — add an auto ASCE 7-style wind LoadPattern to
+  the current model (body: ``{name, direction, V, exposure, Cp,
+  importance}``; ``V`` required, m/s) and return the updated model dict.
+
 Saved models live as ``<name>.skyframe.json`` files in ``~/.skyframe/models``
 (override with the ``SKYFRAME_MODELS_DIR`` environment variable; the
 directory is created on demand).  Names must match ``[A-Za-z0-9 _-]{1,60}``.
@@ -36,7 +42,7 @@ from typing import Any, Dict
 
 from flask import Flask, jsonify, request, send_from_directory
 
-from skyframe.core.builder import quick_building
+from skyframe.core.builder import make_wind_pattern, quick_building
 from skyframe.core.model import BuildingModel
 from skyframe.core.sections_library import library_to_dict
 
@@ -236,6 +242,36 @@ def create_app() -> Flask:
     @app.get("/api/sections/library")
     def sections_library():
         return jsonify(library_to_dict())
+
+    # --------------------------------------------- v0.4: auto wind pattern
+    @app.post("/api/pattern/wind")
+    def wind_pattern():
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        name = body.get("name", "WIND")
+        if not isinstance(name, str) or not name.strip() or len(name) > 60:
+            return jsonify({"error": "'name' must be a non-empty string "
+                                     "(max 60 chars)"}), 400
+        try:
+            v = body.get("V")
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                raise ValueError("'V' (basic wind speed, m/s) must be a "
+                                 "number")
+            cp = body.get("Cp", 1.3)
+            imp = body.get("importance", 1.0)
+            for key, val in (("Cp", cp), ("importance", imp)):
+                if isinstance(val, bool) or not isinstance(val, (int, float)):
+                    raise ValueError(f"{key!r} must be a number")
+            make_wind_pattern(
+                _state["model"], name.strip(),
+                direction=body.get("direction", "X"),
+                basic_wind_speed=float(v),
+                exposure=body.get("exposure", "C"),
+                cp_total=float(cp), importance=float(imp))
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(_state["model"].to_dict())
 
     @app.post("/api/analyze")
     def analyze():
