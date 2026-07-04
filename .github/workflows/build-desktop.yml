@@ -6,12 +6,13 @@ name: Build SkyFrame desktop app
 #     on a version tag (v*) or a manual "Run workflow" dispatch.
 # This keeps routine pushes to ~2 runner-minutes instead of ~12.
 
+# Manual-only: the standalone app is built LOCALLY (see packaging/build.sh);
+# this workflow no longer runs on push. Trigger it by hand from the Actions
+# tab ("Run workflow") or by pushing a v* tag, only if you want cloud builds.
 on:
   workflow_dispatch:
   push:
     tags: ["v*"]
-    branches: ["claude/etabs-opensees-ui-rebuild-kt2zwh", "master"]
-    paths: ["skyframe/**", ".github/workflows/build-desktop.yml"]
 
 jobs:
   test:
