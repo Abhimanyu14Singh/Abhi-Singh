@@ -669,3 +669,21 @@ exceeds 20 000, with the same top-level ``"warning"``;
 No new endpoints: ``POST /api/model`` round-trips ``staged_cases`` and
 the nonlinear TimeHistoryCase fields; ``POST /api/analyze`` returns the
 ``"staged"`` results block and the nonlinear TH keys documented above.
+
+---
+
+# v0.6 additions — API for design checks and model importers
+
+## HTTP API
+
+| Method | Path                  | Body / Response |
+|--------|-----------------------|-----------------|
+| POST   | `/api/design/steel`   | `{case, [Fy,kx,ky,Lb]}` → runs analysis, `{preliminary:true, case, checks:[MemberCheck], summary}`. 400 on missing case / no OpenSees |
+| POST   | `/api/design/concrete`| `{case, rebar:{uid:RebarLayout}, [fc]}` → `{preliminary:true, case, checks:[ConcreteCheck], summary}` |
+| POST   | `/api/import/dxf`     | `{text, stories:[h…], [column_section,beam_section,wall_section,unit_scale]}` → `{model, warnings}` (becomes current model) |
+| POST   | `/api/import/e2k`     | `{text}` → `{model, warnings}` |
+| POST   | `/api/import/ifc`     | `{text}` → `{model, warnings}` |
+
+All design/import results carry `preliminary: true` where applicable; every
+importer returns non-fatal parse issues in `warnings` (never 500). Design
+endpoints run a fresh analysis of the current model before checking.

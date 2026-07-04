@@ -295,6 +295,110 @@ def create_app() -> Flask:
             return jsonify({"error": str(exc)}), 400
         return jsonify(results.to_dict())
 
+    # --------------------------------------------- v0.6: preliminary design
+    @app.post("/api/design/steel")
+    def design_steel():
+        """Preliminary AISC 360 checks for a case/combo (runs analysis).
+
+        Body: {"case": "<name>", optional "Fy","kx","ky","Lb"}.
+        """
+        if not _OPENSEES_OK:
+            return jsonify({"error": "OpenSeesPy is not available"}), 400
+        from skyframe.design.steel import check_members, summarize
+        body = request.get_json(silent=True) or {}
+        case = body.get("case")
+        if not isinstance(case, str) or not case:
+            return jsonify({"error": "'case' (name of a case/combo) is "
+                                     "required"}), 400
+        kw = {k: float(body[k]) for k in ("Fy", "kx", "ky", "Lb")
+              if isinstance(body.get(k), (int, float))}
+        try:
+            results = OpenSeesEngine(_state["model"]).run()
+            checks = check_members(_state["model"], results, case, **kw)
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"preliminary": True, "case": case,
+                        "checks": [c.to_dict() for c in checks],
+                        "summary": summarize(checks)})
+
+    @app.post("/api/design/concrete")
+    def design_concrete():
+        """Preliminary ACI 318 checks for a case/combo (runs analysis).
+
+        Body: {"case": "<name>", "rebar": {uid: RebarLayout fields},
+               optional "fc"}.
+        """
+        if not _OPENSEES_OK:
+            return jsonify({"error": "OpenSeesPy is not available"}), 400
+        from skyframe.design.concrete import (RebarLayout,
+                                              check_concrete_members)
+        from skyframe.design.concrete import summarize as summ_c
+        body = request.get_json(silent=True) or {}
+        case = body.get("case")
+        if not isinstance(case, str) or not case:
+            return jsonify({"error": "'case' is required"}), 400
+        raw = body.get("rebar")
+        if not isinstance(raw, dict):
+            return jsonify({"error": "'rebar' must be a {uid: layout} "
+                                     "object"}), 400
+        try:
+            rebar = {uid: RebarLayout(**fields) for uid, fields in raw.items()}
+            kw = {"fc": float(body["fc"])} if isinstance(
+                body.get("fc"), (int, float)) else {}
+            results = OpenSeesEngine(_state["model"]).run()
+            checks = check_concrete_members(
+                _state["model"], results, case, rebar, **kw)
+        except (TypeError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"preliminary": True, "case": case,
+                        "checks": [c.to_dict() for c in checks],
+                        "summary": summ_c(checks)})
+
+    # --------------------------------------------- v0.6: model importers
+    @app.post("/api/import/<fmt>")
+    def import_model(fmt: str):
+        """Import a model from DXF / e2k / IFC text and make it current.
+
+        Body: {"text": "<file contents>", plus DXF needs
+        "stories":[h,...], "column_section","beam_section"}.
+        Response: {"model": <model dict>, "warnings": [...]}.
+        """
+        body = request.get_json(silent=True) or {}
+        text = body.get("text")
+        if not isinstance(text, str) or not text.strip():
+            return jsonify({"error": "'text' (file contents) is "
+                                     "required"}), 400
+        try:
+            if fmt == "dxf":
+                from skyframe.io.dxf import import_dxf
+                stories = body.get("stories")
+                if not isinstance(stories, list) or not stories:
+                    return jsonify({"error": "DXF import needs a non-empty "
+                                             "'stories' height list"}), 400
+                model, warnings = import_dxf(
+                    text, stories=[float(h) for h in stories],
+                    column_section=body.get("column_section", "DXF-COL"),
+                    beam_section=body.get("beam_section", "DXF-BEAM"),
+                    wall_section=body.get("wall_section"),
+                    unit_scale=float(body.get("unit_scale", 1.0)))
+            elif fmt == "e2k":
+                from skyframe.io.e2k import import_e2k
+                model, warnings = import_e2k(text)
+            elif fmt == "ifc":
+                from skyframe.io.ifc import import_ifc
+                model, warnings = import_ifc(text)
+            else:
+                return jsonify({"error": f"unknown format {fmt!r} "
+                                         "(dxf|e2k|ifc)"}), 400
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 400
+        _state["model"] = model
+        return jsonify({"model": model.to_dict(), "warnings": warnings})
+
     return app
 
 
