@@ -61,36 +61,32 @@ scrutinized benchmark tests.
 - [x] Semi-rigid diaphragm option
 - [x] Link elements (linear springs/dampers between points)
 
-## Wave 7 — remaining gaps (scheduled after Wave 6; scoped, not skipped)
-- [ ] Staged construction: sequential story-by-story gravity application
+## Wave 7 — remaining gaps  ✅ done (engine + modules; UI surfacing pending)
+- [x] Staged construction: sequential story-by-story gravity application
       (OpenSees loadConst staging) with comparison to one-shot analysis
-- [ ] Concrete design (preliminary): rebar input on rectangular sections,
+- [x] Concrete design (preliminary): rebar input on rectangular sections,
       ACI 318 flexural + shear capacity checks, demand/capacity table
-- [ ] ETABS .e2k import (text subset: stories, points, line objects,
+- [x] ETABS .e2k import (text subset: stories, points, line objects,
       sections, load patterns) with import warnings
-- [ ] Nonlinear time history (hysteretic Steel01/Concrete hinges on frame
+- [x] Nonlinear time history (hysteretic Steel01/Concrete hinges on frame
       members, Newmark + Newton) — validated on SDOF hysteretic benchmarks
 - IFC import: exploratory only (schema size makes a faithful importer a
   separate project; a geometry-only IfcBeam/IfcColumn reader is the wave
   target)
 
-## Phase 4 — Parity increment 2  ✅ items 1-5 done
+## Phase 4 — Parity increment 2  ✅ done
 - [x] 1. Model save/open (.skyframe JSON files) with File menu + gallery
 - [x] 2. Load pattern / case / combo editor UI (with per-case P-Delta toggle)
 - [x] 3. Response-spectrum analysis (CQC/SRSS, spectrum editor + live preview)
 - [x] 4. P-Delta (OpenSees PDelta transforms, two-stage gravity solve)
 - [x] 5. Steel section library (22 AISC W-shapes + picker UI)
-- [ ] 6. Wall/slab openings; elevation-view drawing
-- [ ] 7. Nonlinear static pushover (OpenSees fiber hinges)
+- [x] 6. Wall/slab openings; elevation-view drawing (Wave 6)
+- [x] 7. Nonlinear static pushover (OpenSees fiber hinges) (Wave 6)
 
-### Original backlog (superseded above)
-1. Model save/open (.skyframe JSON files) + example model gallery
-2. Load pattern / case / combo editor UI
-3. Response-spectrum analysis (modal combination, CQC) — OpenSees-native
-4. P-Delta (OpenSees PDelta/Corotational transforms)
-5. Steel/concrete section libraries (W-shapes, standard rebar sizes)
-6. Wall/slab openings; elevation-view drawing
-7. Nonlinear static pushover (OpenSees fiber hinges) — the feature ETABS
-   charges a premium for, free in OpenSees
-
-Not chasing: RC detailing/design-code checks, DXF import, licensing dongles.
+## Remaining UI surfacing (backend + API done; needs front-end panels)
+The Wave 7 analysis features are fully implemented, tested, and reachable
+over HTTP; they still need dedicated UI panels:
+- [ ] Staged-construction case editor + results view (`run_staged`)
+- [ ] Nonlinear time-history toggle + hysteresis plot (engine done)
+- [ ] Steel / concrete design-check tables (`/api/design/*`)
+- [ ] Import dialogs for DXF / e2k / IFC (`/api/import/*`)

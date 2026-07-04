@@ -90,23 +90,47 @@ print(results["cases"]["EQX"]["story"]["Story1"]["drift_x"])
 
 See `examples/four_story_office.py` for a complete scripted run.
 
-## Analysis capabilities (v0.2)
+## Analysis capabilities
+
+Validated by a **204-test** suite (published OpenSees examples, closed-form
+mechanics, and independent numpy cross-checks). ✅ = full UI; ⚙️ = engine +
+HTTP API done, dedicated UI panel pending.
+
+**Modelling & drawing**
 
 | Feature | Status |
 |---|---|
-| 3D elastic frame analysis (columns / beams / braces) | ✅ |
-| **ETABS-style drawing**: plan-view editor, draw columns/beams/walls/slabs, assign sections/releases/loads | ✅ |
-| Shell walls & slabs (OpenSees ShellMITC4) with auto quad meshing | ✅ |
-| Frame–shell mesh compatibility (members auto-split to match mesh nodes, results re-aggregated) | ✅ |
-| Membrane slabs: two-way 45° tributary load distribution to beams | ✅ |
-| Member end releases; point / partial / trapezoidal member loads (exact fixed-end forces) | ✅ |
-| 11-station member force diagrams (N, V2, V3, T, M2, M3) | ✅ |
-| Rigid floor diaphragms with auto mass (from dead load or explicit) | ✅ |
-| Linear static load cases + linear load combinations | ✅ |
-| Equivalent-static seismic pattern (auto triangular distribution) | ✅ |
-| Eigenvalue / modal analysis with mass-participation ratios | ✅ |
-| Story drifts, story shears, base reactions, area/line/nodal loads | ✅ |
-| Response-spectrum, time-history, P-Delta, nonlinear hinges | 🚧 roadmap (OpenSees supports all of these) |
+| ETABS-style plan **and elevation** drawing (columns, beams, braces, walls, slabs) | ✅ |
+| Grid & story editors; section / material / stiffness-modifier manager | ✅ |
+| Shell walls & slabs (OpenSees ShellMITC4), auto quad meshing, **openings** | ✅ |
+| Frame–shell mesh compatibility (members auto-split, results re-aggregated) | ✅ |
+| Membrane slabs: two-way 45° tributary load distribution | ✅ |
+| Member end releases, column orientation angle, link (spring) elements | ✅ |
+| Point / partial / trapezoidal member loads (exact fixed-end forces); area loads | ✅ |
+| Rigid / semi-rigid (none) diaphragms with per-story override | ✅ |
+| Steel W-shape library; DXF / ETABS `.e2k` / IFC import | ✅ / ⚙️ |
+
+**Analysis**
+
+| Feature | Status |
+|---|---|
+| Linear static cases, additive **and envelope** combinations | ✅ |
+| Eigenvalue / modal analysis with mass-participation and Γ factors | ✅ |
+| Response-spectrum analysis (CQC / SRSS, spectrum editor) | ✅ |
+| Linear **and nonlinear** time-history (Newmark, Rayleigh, Steel01 hinges) | ✅ / ⚙️ |
+| P-Delta; equivalent-static seismic; auto ASCE 7-style wind | ✅ |
+| Nonlinear static **pushover** (displacement-controlled, plastic hinges) | ✅ |
+| Staged (sequential) construction with one-shot comparison | ⚙️ |
+| Mass source (e.g. DEAD + 0.25·LIVE) | ✅ |
+
+**Results & output**
+
+| Feature | Status |
+|---|---|
+| Story drifts / shears, base reactions, 11-station member force diagrams | ✅ |
+| 3D deformed & mode shapes, animated modes, shell force contours | ✅ |
+| Printable report generator; CSV export on every table | ✅ |
+| Preliminary AISC 360 steel & ACI 318 concrete design checks | ⚙️ |
 
 ## Validation
 
