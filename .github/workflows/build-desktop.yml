@@ -54,8 +54,7 @@ jobs:
         run: pip install .[desktop,dev]
 
       - name: Build with PyInstaller
-        run: pyinstaller --noconfirm packaging/skyframe.spec
-        working-directory: skyframe/packaging
+        run: pyinstaller --noconfirm --distpath packaging/dist --workpath packaging/build packaging/skyframe.spec
 
       - name: Smoke test the frozen app (headless)
         shell: bash
