@@ -65,6 +65,31 @@ export function normalizeModel(m) {
     rc.damping = isFinite(rc.damping) ? rc.damping : 0.05;
     rc.scale = isFinite(rc.scale) ? rc.scale : 1.0;
   }
+  // v0.5 — shell openings, pushover cases, diaphragm option, links
+  for (const s of m.shells) {
+    s.openings = (Array.isArray(s.openings) ? s.openings : []).filter(o =>
+      o && isFinite(o.u0) && isFinite(o.v0) && isFinite(o.u1) && isFinite(o.v1));
+  }
+  m.pushover_cases = m.pushover_cases || {};
+  for (const [n, pc] of Object.entries(m.pushover_cases)) {
+    pc.name = pc.name || n;
+    pc.direction = pc.direction === "Y" ? "Y" : "X";
+    pc.gravity = (pc.gravity && typeof pc.gravity === "object") ? pc.gravity : {};
+    pc.target_drift = (isFinite(pc.target_drift) && pc.target_drift > 0) ? pc.target_drift : 0.02;
+    pc.steps = (isFinite(pc.steps) && pc.steps > 1) ? Math.round(pc.steps) : 100;
+    pc.My = (pc.My && typeof pc.My === "object") ? pc.My : {};
+    if (pc.default_My != null && !isFinite(pc.default_My)) delete pc.default_My;
+    pc.hardening = isFinite(pc.hardening) ? pc.hardening : 0.02;
+  }
+  m.diaphragm = m.diaphragm === "none" ? "none" : "rigid";
+  m.story_diaphragm = (m.story_diaphragm && typeof m.story_diaphragm === "object")
+    ? m.story_diaphragm : {};
+  m.links = Array.isArray(m.links) ? m.links : [];
+  for (const l of m.links) {
+    if (!(Array.isArray(l.stiffness) && l.stiffness.length === 6 &&
+          l.stiffness.every(v => isFinite(v))))
+      l.stiffness = [1e5, 1e5, 1e5, 1e4, 1e4, 1e4];
+  }
   return m;
 }
 
@@ -86,6 +111,10 @@ export function nextUid(model, prefix) {
   }
   for (const s of model.shells) {
     const g = re.exec(s.uid);
+    if (g) mx = Math.max(mx, +g[1]);
+  }
+  for (const l of (model.links || [])) {
+    const g = re.exec(l.uid);
     if (g) mx = Math.max(mx, +g[1]);
   }
   return `${prefix}${mx + 1}`;
@@ -179,6 +208,7 @@ export function addWall(model, p1, p2, story) {
   const sh = {
     uid: nextUid(model, "W"), kind: "wall", behavior: "shell",
     section: defaultShellSection(model), corners, mesh_size: 1.0, story,
+    openings: [],
   };
   model.shells.push(sh);
   return sh;
@@ -198,13 +228,147 @@ export function addSlab(model, x0, y0, x1, y1, story) {
   const sh = {
     uid: nextUid(model, "SL"), kind: "slab", behavior: "shell",
     section: defaultShellSection(model), corners, mesh_size: 1.0, story,
+    openings: [],
   };
   model.shells.push(sh);
   return sh;
 }
 
+/* ================================================================
+   v0.5 — elevation drawing, links, shell openings
+   ================================================================ */
+
+/** Story containing elevation z (bottom-exclusive), clamped at the ends. */
+export function storyContainingZ(model, z) {
+  for (const st of model.stories)
+    if (z > st.elevation - st.height + 1e-9 && z <= st.elevation + 1e-9) return st.name;
+  if (model.stories.length && z <= 1e-9) return model.stories[0].name;
+  return model.stories.length ? model.stories[model.stories.length - 1].name : "";
+}
+
+/** Story whose TOP elevation matches z (beams drawn in elevation view). */
+export function storyAtLevel(model, z) {
+  const st = model.stories.find(s => Math.abs(s.elevation - z) < 1e-6);
+  return st ? st.name : storyContainingZ(model, z);
+}
+
+/** Beam between two explicit 3D points (elevation view drawing). */
+export function addBeamAt(model, pi, pj, story) {
+  if (dist(pi, pj) < 1e-6) return null;
+  if (model.members.some(m => m.kind !== "column" &&
+    ((near(m.pi, pi) && near(m.pj, pj)) || (near(m.pi, pj) && near(m.pj, pi))))) return null;
+  const mem = {
+    uid: nextUid(model, "B"), kind: "beam",
+    section: defaultFrameSection(model, "beam"),
+    pi: [...pi], pj: [...pj], story, length: dist(pi, pj), releases: "",
+  };
+  model.members.push(mem);
+  return mem;
+}
+
+/** Brace between two explicit 3D points at DIFFERENT levels (elevation view). */
+export function addBraceAt(model, pi, pj, story) {
+  if (dist(pi, pj) < 1e-6 || Math.abs(pj[2] - pi[2]) < 1e-6) return null;
+  const [a, b] = pi[2] <= pj[2] ? [pi, pj] : [pj, pi];   // store bottom → top
+  if (model.members.some(m => m.kind === "brace" &&
+    ((near(m.pi, a) && near(m.pj, b)) || (near(m.pi, b) && near(m.pj, a))))) return null;
+  const names = Object.keys(model.sections);
+  const mem = {
+    uid: nextUid(model, "BR"), kind: "brace",
+    section: names[0] || defaultFrameSection(model, "beam"),
+    pi: [...a], pj: [...b], story, length: dist(a, b), releases: "", angle: 0,
+  };
+  model.members.push(mem);
+  return mem;
+}
+
+/** Wall region from four explicit 3D corners (elevation view drawing). */
+export function addWallAt(model, corners, story) {
+  if (model.shells.some(s => s.kind === "wall" &&
+    s.corners.length === corners.length &&
+    s.corners.every((c, i) => near(c, corners[i])))) return null;
+  const sh = {
+    uid: nextUid(model, "W"), kind: "wall", behavior: "shell",
+    section: defaultShellSection(model), corners: corners.map(c => [...c]),
+    mesh_size: 1.0, story, openings: [],
+  };
+  model.shells.push(sh);
+  return sh;
+}
+
+/** Two-node link with the default 6-dof stiffness (v0.5 contract). */
+export function addLink(model, pi, pj) {
+  model.links = model.links || [];
+  if (dist(pi, pj) < 1e-6) return null;
+  if (model.links.some(l =>
+    (near(l.pi, pi) && near(l.pj, pj)) || (near(l.pi, pj) && near(l.pj, pi)))) return null;
+  const link = {
+    uid: nextUid(model, "LK"), pi: [...pi], pj: [...pj],
+    stiffness: [1e5, 1e5, 1e5, 1e4, 1e4, 1e4],
+  };
+  model.links.push(link);
+  return link;
+}
+
+/* ---- shell openings (region-parametric fractions 0..1) */
+export function addOpening(shell) {
+  shell.openings = shell.openings || [];
+  const o = { u0: 0.3, v0: 0.3, u1: 0.7, v1: 0.7 };
+  shell.openings.push(o);
+  return o;
+}
+
+/** Set one opening bound; clamps to 0..1 and keeps u0<u1 / v0<v1 ordered. */
+export function setOpeningField(o, key, v) {
+  if (!isFinite(v)) return false;
+  o[key] = Math.max(0, Math.min(1, v));
+  if (o.u1 < o.u0) { const t = o.u0; o.u0 = o.u1; o.u1 = t; }
+  if (o.v1 < o.v0) { const t = o.v0; o.v0 = o.v1; o.v1 = t; }
+  return true;
+}
+
+/** Bilinear point on a quad region at parametric (u along c0→c1, v along c0→c3). */
+export function shellPointAt(corners, u, v) {
+  const [c0, c1, c2, c3] = corners;
+  const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+  return lerp(lerp(c0, c1, u), lerp(c3, c2, u), v);
+}
+
+/** 3D corner quad of an opening rectangle on a shell region. */
+export function openingCorners(shell, o) {
+  return [
+    shellPointAt(shell.corners, o.u0, o.v0),
+    shellPointAt(shell.corners, o.u1, o.v0),
+    shellPointAt(shell.corners, o.u1, o.v1),
+    shellPointAt(shell.corners, o.u0, o.v1),
+  ];
+}
+
+/* ---- pushover cases */
+export function addPushoverCase(model) {
+  const name = uniqueKey(model.pushover_cases, "PUSH");
+  model.pushover_cases[name] = {
+    name, direction: "X", gravity: { DEAD: 1.0 }, target_drift: 0.02,
+    steps: 100, My: {}, default_My: 250, hardening: 0.02,
+  };
+  return name;
+}
+
+export function renamePushoverCase(model, oldName, newName) {
+  if (!newName || newName === oldName || model.pushover_cases[newName]) return false;
+  model.pushover_cases[newName] = { ...model.pushover_cases[oldName], name: newName };
+  delete model.pushover_cases[oldName];
+  return true;
+}
+
+export function deletePushoverCase(model, name) {
+  delete model.pushover_cases[name];
+  return true;
+}
+
 /* ------------------------------------------------ erase */
-/** ref: {type:"member"|"shell", uid}. Also removes loads that reference it. */
+/** ref: {type:"member"|"shell"|"link", uid}. Also removes loads/hinges that
+    reference it. */
 export function eraseElement(model, ref) {
   let removed = false;
   if (ref.type === "member") {
@@ -212,6 +376,11 @@ export function eraseElement(model, ref) {
     if (i >= 0) { model.members.splice(i, 1); removed = true; }
     for (const p of Object.values(model.patterns))
       p.member_loads = (p.member_loads || []).filter(l => l.member_uid !== ref.uid);
+    for (const pc of Object.values(model.pushover_cases || {}))
+      if (pc.My) delete pc.My[ref.uid];
+  } else if (ref.type === "link") {
+    const i = (model.links || []).findIndex(l => l.uid === ref.uid);
+    if (i >= 0) { model.links.splice(i, 1); removed = true; }
   } else {
     const i = model.shells.findIndex(s => s.uid === ref.uid);
     if (i >= 0) { model.shells.splice(i, 1); removed = true; }
@@ -562,6 +731,10 @@ export function renameStory(model, oldName, newName) {
     model.story_masses[newName] = model.story_masses[oldName];
     delete model.story_masses[oldName];
   }
+  if (model.story_diaphragm && model.story_diaphragm[oldName] !== undefined) {
+    model.story_diaphragm[newName] = model.story_diaphragm[oldName];
+    delete model.story_diaphragm[oldName];
+  }
   for (const p of Object.values(model.patterns || {}))
     for (const f of (p.story_forces || []))
       if (f.story === oldName) f.story = newName;
@@ -615,6 +788,7 @@ export function deleteStory(model, name) {
     eraseElement(model, { type: "shell", uid: sh.uid });
   model.stories.splice(i, 1);
   if (model.story_masses) delete model.story_masses[name];
+  if (model.story_diaphragm) delete model.story_diaphragm[name];
   for (const p of Object.values(model.patterns || {}))
     p.story_forces = (p.story_forces || []).filter(f => f.story !== name);
   recomputeElevations(model);

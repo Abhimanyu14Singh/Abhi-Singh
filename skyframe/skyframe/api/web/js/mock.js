@@ -81,6 +81,11 @@ export function mockModel(p = {}) {
       uid: `W${s + 1}`, kind: "wall", behavior: "shell", section: "SH200",
       corners: [[0, 0, zb], [wallLen, 0, zb], [wallLen, 0, zt], [0, 0, zt]],
       mesh_size: 1.0, story: st.name,
+      // v0.5: ground-story wall gets a door + a window opening
+      openings: s === 0
+        ? [{ u0: 0.12, v0: 0, u1: 0.32, v1: 0.72 },
+           { u0: 0.55, v0: 0.35, u1: 0.82, v1: 0.78 }]
+        : [],
     });
   }
   if (xs.length >= 2 && ys.length >= 2) {
@@ -152,6 +157,17 @@ export function mockModel(p = {}) {
     sine.push(+(2.5 * env * Math.sin(2 * Math.PI * 1.2 * t)).toFixed(4));
   }
 
+  // v0.5: a demo pushover case — yield moments on the ground-story columns
+  const pushMy = {};
+  for (const m of members)
+    if (m.kind === "column" && m.story === stories[0].name) pushMy[m.uid] = 250;
+  const pushover_cases = {
+    "PUSH-X": {
+      name: "PUSH-X", direction: "X", gravity: { DEAD: 1.0 },
+      target_drift: 0.02, steps: 100, My: pushMy, default_My: 250, hardening: 0.02,
+    },
+  };
+
   return {
     name: o.name,
     materials: { CONC: { name: "CONC", E: o.E, nu: 0.2, unit_weight: 24 } },
@@ -181,6 +197,10 @@ export function mockModel(p = {}) {
         dt: 0.02, damping: 0.05, scale: 1.0,
       },
     },
+    pushover_cases,
+    diaphragm: "rigid",
+    story_diaphragm: {},
+    links: [],
     combos: {
       "1.2D + 1.6L": { name: "1.2D + 1.6L", combo_type: "add", cases: { DEAD: 1.2, LIVE: 1.6 } },
       "1.2D + 1.0L + 1.0EX": { name: "1.2D + 1.0L + 1.0EX", combo_type: "add", cases: { DEAD: 1.2, LIVE: 1.0, EQX: 1.0 } },
@@ -234,12 +254,17 @@ export function mockResults(model) {
       tag.push([]);
       for (let i = 0; i <= nx; i++) tag[j].push(tagFor(bilin(i / nx, j / ny)));
     }
+    // v0.5: the mesher omits quads whose cell centre falls inside an opening
+    const covered = (u, v) => (sh.openings || []).some(o =>
+      u > o.u0 + 1e-9 && u < o.u1 - 1e-9 && v > o.v0 + 1e-9 && v < o.v1 - 1e-9);
     for (let j = 0; j < ny; j++)
-      for (let i = 0; i < nx; i++)
+      for (let i = 0; i < nx; i++) {
+        if (covered((i + 0.5) / nx, (j + 0.5) / ny)) continue;
         shell_quads.push({
           region: sh.uid,
           nodes: [tag[j][i], tag[j][i + 1], tag[j + 1][i + 1], tag[j + 1][i]],
         });
+      }
   }
 
   const supports = Object.keys(nodes).filter(t => nodes[t][2] < 1e-9);
@@ -646,7 +671,50 @@ export function mockResults(model) {
     th_out[name] = { t, story_ux, story_uy, base_FX, base_FY, peaks };
   }
 
-  return {
+  /* ---- v0.5: pushover cases — bilinear-ish capacity curve with two slope
+     breaks (first yield, mechanism) plus hinge plastic rotations. */
+  const pushover = {};
+  for (const [name, pc] of Object.entries(model.pushover_cases || {})) {
+    const steps = (isFinite(pc.steps) && pc.steps > 1) ? Math.round(pc.steps) : 100;
+    const target = ((isFinite(pc.target_drift) && pc.target_drift > 0)
+      ? pc.target_drift : 0.02) * H;
+    const hard = isFinite(pc.hardening) ? Math.max(pc.hardening, 0.005) : 0.02;
+    const u1 = 0.30 * target, u2 = 0.62 * target;      // slope-break displacements
+    const K0 = 1.6 * V / u1, K1 = 0.45 * K0, K2 = hard * K0;
+    const Vat = u => u <= u1 ? K0 * u
+      : u <= u2 ? K0 * u1 + K1 * (u - u1)
+      : K0 * u1 + K1 * (u2 - u1) + K2 * (u - u2);
+    const roof_disp = [], base_shear = [], roof_drift = [];
+    for (let i = 0; i <= steps; i++) {
+      const u = target * i / steps;
+      roof_disp.push(+u.toFixed(6));
+      base_shear.push(+Vat(u).toFixed(3));
+      roof_drift.push(+(u / H).toFixed(8));
+    }
+    // hinge rotations: explicit My members, else all columns via default_My
+    const uids = Object.keys(pc.My || {}).length
+      ? Object.keys(pc.My)
+      : (pc.default_My != null
+        ? model.members.filter(mm => mm.kind === "column").map(mm => mm.uid) : []);
+    const byUid = {};
+    for (const mm of model.members) byUid[mm.uid] = mm;
+    const hinge_rotations = {};
+    for (const uid of uids) {
+      const mm = byUid[uid];
+      if (!mm) continue;
+      const si = Math.max(storyOrder.indexOf(mm.story), 0);
+      const rot = (target / H) * 0.65 * (1 - si / Math.max(storyOrder.length, 1)) * jit(0.18);
+      if (rot > 5e-4) hinge_rotations[uid] = +rot.toFixed(6);
+    }
+    const warnings = [];
+    const over = Object.values(hinge_rotations).filter(r => r > 0.01).length;
+    if (over) warnings.push(
+      `${over} hinge${over > 1 ? "s" : ""} exceed${over > 1 ? "" : "s"} 0.010 rad plastic rotation at target drift`);
+    if (!uids.length) warnings.push("no hinges defined — curve is elastic only");
+    pushover[name] = { roof_disp, base_shear, roof_drift, hinge_rotations, warnings };
+  }
+
+  const out = {
     model_name: model.name,
     nodes, members, supports,
     story_order: storyOrder,
@@ -656,6 +724,8 @@ export function mockResults(model) {
     th_cases: th_out,
     modal: { periods, frequencies, participation, shapes },
   };
+  if (Object.keys(pushover).length) out.pushover = pushover;
+  return out;
 }
 
 /* ================================================================

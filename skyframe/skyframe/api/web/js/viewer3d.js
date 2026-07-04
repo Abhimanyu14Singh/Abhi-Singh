@@ -35,6 +35,7 @@ const COLORS = {
   column: "#5f8fc9",
   beam: "#77879b",
   brace: "#c98500",
+  link: "#34c384",                             // v0.5 two-node links (springs)
   grid: "rgba(120, 140, 165, 0.16)",
   gridLabel: "rgba(140, 160, 185, 0.55)",
   slabFill: "rgba(53, 181, 229, 0.045)",
@@ -176,16 +177,31 @@ export class Viewer3D {
       section: mm.section, story: mm.story,
     }));
 
-    // v0.2 shell regions (walls / slabs) as filled quads
+    // v0.2 shell regions (walls / slabs) as filled quads.
+    // v0.5: opening cutouts pre-computed as 3D quads (bilinear on corners).
+    const bilin = (cs, u, v) => {
+      const [c0, c1, c2, c3] = cs;
+      const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+      return lerp(lerp(c0, c1, u), lerp(c3, c2, u), v);
+    };
     this.shellPolys = (m.shells || []).map(s => ({
       corners: s.corners, kind: s.kind, uid: s.uid, behavior: s.behavior,
+      openings: (s.openings || []).map(o =>
+        [[o.u0, o.v0], [o.u1, o.v0], [o.u1, o.v1], [o.u0, o.v1]]
+          .map(([u, v]) => bilin(s.corners, u, v))),
     }));
+
+    // v0.5: two-node links (green spring glyphs)
+    this.linkSegs = (m.links || []).map(l => ({ p1: l.pi, p2: l.pj, uid: l.uid }));
 
     let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
     for (const s of this.segs) for (const p of [s.p1, s.p2]) {
       for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], p[i]); hi[i] = Math.max(hi[i], p[i]); }
     }
     for (const sh of this.shellPolys) for (const p of sh.corners) {
+      for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], p[i]); hi[i] = Math.max(hi[i], p[i]); }
+    }
+    for (const lk of this.linkSegs) for (const p of [lk.p1, lk.p2]) {
       for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], p[i]); hi[i] = Math.max(hi[i], p[i]); }
     }
     if (!this.segs.length && !this.shellPolys.length) { lo = [0, 0, 0]; hi = [10, 10, 10]; }
@@ -441,7 +457,26 @@ export class Viewer3D {
         if (pc[2] < P.near) { ok = false; break; }
         zsum += pc[2]; pts.push(P.proj(pc));
       }
-      if (ok) items.push({ type: "shell", pts, z: zsum / sh.corners.length, kind: sh.kind });
+      if (!ok) continue;
+      // v0.5: project opening cutouts (skipped if any point clips the near plane)
+      const holes = [];
+      for (const q of (sh.openings || [])) {
+        const hp = [];
+        let hok = true;
+        for (const p of q) {
+          const pc = P.toCam(p);
+          if (pc[2] < P.near) { hok = false; break; }
+          hp.push(P.proj(pc));
+        }
+        if (hok) holes.push(hp);
+      }
+      items.push({ type: "shell", pts, holes, z: zsum / sh.corners.length, kind: sh.kind });
+    }
+    // v0.5: links — green zigzag springs, depth-sorted with everything else
+    for (const lk of (this.linkSegs || [])) {
+      const s = this._projSeg(P, lk.p1, lk.p2);
+      if (!s) continue;
+      items.push({ type: "link", s, z: (s.a.z + s.b.z) / 2 });
     }
     // v0.4 — shell-force contour quads (colored by component value)
     if (contour && this.results && this._nodeXYZ) {
@@ -493,11 +528,16 @@ export class Viewer3D {
         ctx.lineWidth = 0.7;
         ctx.stroke();
       } else if (it.type === "shell") {
-        // translucent shell region; ghosted outline only under overlays
+        // translucent shell region with even-odd opening cutouts (v0.5);
+        // ghosted outline only under overlays
         const wall = it.kind === "wall";
         ctx.beginPath();
         it.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
         ctx.closePath();
+        for (const hp of (it.holes || [])) {
+          hp.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+          ctx.closePath();
+        }
         if (overlayActive) {
           ctx.globalAlpha = COLORS.ghost;
           ctx.strokeStyle = wall ? COLORS.wallShellEdge : COLORS.slabShellEdge;
@@ -508,8 +548,18 @@ export class Viewer3D {
           ctx.fillStyle = wall ? COLORS.wallShell : COLORS.slabShell;
           ctx.strokeStyle = wall ? COLORS.wallShellEdge : COLORS.slabShellEdge;
           ctx.lineWidth = 1.2;
-          ctx.fill(); ctx.stroke();
+          ctx.fill("evenodd"); ctx.stroke();
         }
+      } else if (it.type === "link") {
+        const { s } = it;
+        ctx.globalAlpha = overlayActive ? COLORS.ghost : 1;
+        ctx.strokeStyle = COLORS.link;
+        ctx.lineWidth = 1.6;
+        ctx.lineJoin = "round"; ctx.lineCap = "round";
+        ctx.beginPath();
+        drawZigzag(ctx, s.a.x, s.a.y, s.b.x, s.b.y);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
       } else {
         const { s, seg } = it;
         const hovered = this._hover && this._hover.uid === seg.uid;
@@ -789,4 +839,20 @@ function distToSeg(px, py, x1, y1, x2, y2) {
   let t = l2 ? ((px - x1) * dx + (py - y1) * dy) / l2 : 0;
   t = Math.max(0, Math.min(1, t));
   return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+
+/** v0.5 — screen-space zigzag path between two points (link/spring glyph). */
+function drawZigzag(ctx, x1, y1, x2, y2, ampPx = 4, cycles = 5) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const L = Math.hypot(dx, dy) || 1;
+  const amp = Math.min(ampPx, L / 6);
+  const nx = -dy / L, ny = dx / L;
+  const n = cycles * 2 + 2;
+  ctx.moveTo(x1, y1);
+  for (let k = 1; k < n; k++) {
+    const t = k / n;
+    const off = (k % 2 ? 1 : -1) * amp * (k === 1 || k === n - 1 ? 0.5 : 1);
+    ctx.lineTo(x1 + dx * t + nx * off, y1 + dy * t + ny * off);
+  }
+  ctx.lineTo(x2, y2);
 }

@@ -586,6 +586,154 @@ export function timeSeriesChart(t, series, opts = {}) {
   return card;
 }
 
+/* ================================================================
+   v0.5 — pushover capacity curve
+   ================================================================ */
+
+/** Indices (1-based segment ends) where the curve slope drops by more than
+    20% vs the previous segment — the "yield points" of a capacity curve. */
+export function yieldPointIndices(disp, shear, drop = 0.2) {
+  const out = [];
+  let prev = null;
+  for (let i = 1; i < disp.length; i++) {
+    const du = disp[i] - disp[i - 1];
+    if (du <= 1e-12) continue;
+    const s = (shear[i] - shear[i - 1]) / du;
+    if (prev != null && prev > 1e-9 && s < prev * (1 - drop))
+      if (!out.length || i - 1 - out[out.length - 1] > 1) out.push(i - 1);
+    prev = s;
+  }
+  return out;
+}
+
+/**
+ * Pushover capacity curve — base shear (kN) vs roof displacement (mm), with
+ * a secondary roof-drift % axis along the top and amber yield-point markers
+ * where the slope drops by >20%. disp in m, shear in kN; opts {title, H (m)}.
+ * Returns a .chart-card div.
+ */
+export function pushoverChart(disp, shear, opts = {}) {
+  const W = 640, H_ = 260;
+  const M = { l: 60, r: 16, t: 30, b: 34 };
+  const pw = W - M.l - M.r, ph = H_ - M.t - M.b;
+  const Hm = opts.H || 1;                       // building height, m
+  const dm = disp.map(v => v * 1000);           // m → mm
+  const dMax = Math.max(...dm, 1e-9);
+  const vTicks = niceTicks(Math.max(...shear, 1e-9) * 1.06);
+  const vMax = vTicks[vTicks.length - 1];
+  const xOf = v => M.l + (v / dMax) * pw;
+  const yOf = v => M.t + ph - (v / vMax) * ph;
+
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H_}`, role: "img" });
+
+  // shear gridlines + labels
+  for (const t of vTicks) {
+    svg.appendChild(el("line", {
+      x1: M.l, x2: M.l + pw, y1: yOf(t), y2: yOf(t), stroke: S.grid, "stroke-width": 1,
+    }));
+    svg.appendChild(txt("text", {
+      x: M.l - 6, y: yOf(t) + 3, fill: S.text, "font-size": 9, "text-anchor": "end",
+      style: "font-variant-numeric:tabular-nums",
+    }, fmt(t, vMax < 10 ? 1 : 0)));
+  }
+  // displacement gridlines (bottom labels mm, top labels drift %)
+  for (const t of niceTicks(dMax, 6)) {
+    if (t > dMax * 1.001) continue;
+    svg.appendChild(el("line", {
+      x1: xOf(t), x2: xOf(t), y1: M.t, y2: M.t + ph,
+      stroke: S.grid, "stroke-width": 1, "stroke-opacity": 0.6,
+    }));
+    svg.appendChild(txt("text", {
+      x: xOf(t), y: M.t + ph + 14, fill: S.text, "font-size": 9, "text-anchor": "middle",
+      style: "font-variant-numeric:tabular-nums",
+    }, fmt(t, dMax < 20 ? 1 : 0)));
+    svg.appendChild(txt("text", {
+      x: xOf(t), y: M.t - 6, fill: S.text, "font-size": 9, "text-anchor": "middle",
+      style: "font-variant-numeric:tabular-nums",
+    }, fmt(t / 1000 / Hm * 100, 2)));
+  }
+  // axes + units
+  svg.appendChild(el("line", { x1: M.l, x2: M.l, y1: M.t, y2: M.t + ph, stroke: S.axis, "stroke-width": 1 }));
+  svg.appendChild(el("line", { x1: M.l, x2: M.l + pw, y1: M.t + ph, y2: M.t + ph, stroke: S.axis, "stroke-width": 1 }));
+  svg.appendChild(el("line", { x1: M.l, x2: M.l + pw, y1: M.t, y2: M.t, stroke: S.axis, "stroke-width": 1, "stroke-opacity": 0.5 }));
+  svg.appendChild(txt("text", {
+    x: M.l + pw, y: M.t + ph + 26, fill: S.axis, "font-size": 9, "text-anchor": "end",
+  }, "roof displacement  mm"));
+  svg.appendChild(txt("text", {
+    x: M.l + pw, y: M.t - 18, fill: S.axis, "font-size": 9, "text-anchor": "end",
+  }, "roof drift  %"));
+  svg.appendChild(txt("text", {
+    x: M.l - 6, y: 10, fill: S.axis, "font-size": 9, "text-anchor": "end",
+  }, "V  kN"));
+
+  // capacity curve (filled)
+  let dArea = `M${xOf(dm[0]).toFixed(1)},${yOf(0).toFixed(1)}`;
+  let dLine = "";
+  dm.forEach((x, i) => {
+    const px = xOf(x).toFixed(1), py = yOf(shear[i]).toFixed(1);
+    dArea += ` L${px},${py}`;
+    dLine += `${i ? " L" : "M"}${px},${py}`;
+  });
+  dArea += ` L${xOf(dm[dm.length - 1]).toFixed(1)},${yOf(0).toFixed(1)} Z`;
+  svg.appendChild(el("path", { d: dArea, fill: S.xRaw, "fill-opacity": 0.12 }));
+  svg.appendChild(el("path", {
+    d: dLine, fill: "none", stroke: S.xRaw, "stroke-width": 2.2,
+    "stroke-linejoin": "round", "stroke-linecap": "round",
+  }));
+
+  // yield-point markers (slope drop > 20%)
+  for (const i of yieldPointIndices(disp, shear)) {
+    svg.appendChild(el("circle", {
+      cx: xOf(dm[i]), cy: yOf(shear[i]), r: 4.5,
+      fill: S.amber, stroke: S.surface, "stroke-width": 2, class: "po-yield",
+    }));
+    svg.appendChild(txt("text", {
+      x: Math.min(xOf(dm[i]) + 7, M.l + pw - 30), y: Math.max(yOf(shear[i]) - 8, M.t + 10),
+      fill: S.amber, "font-size": 9, "font-weight": 650,
+      style: "font-variant-numeric:tabular-nums",
+    }, `yield · ${fmt(shear[i], 0)} kN`));
+  }
+
+  // crosshair + tooltip
+  const cross = el("line", {
+    x1: 0, x2: 0, y1: M.t, y2: M.t + ph, stroke: S.axis,
+    "stroke-width": 1, "stroke-dasharray": "3 3", visibility: "hidden",
+  });
+  svg.appendChild(cross);
+  const hot = el("rect", { x: M.l, y: M.t, width: pw, height: ph, fill: "transparent" });
+  hot.addEventListener("mousemove", e => {
+    const rect = svg.getBoundingClientRect();
+    const sx = (e.clientX - rect.left) * (W / rect.width);
+    const dv = (sx - M.l) / pw * dMax;
+    let i = 0, bd = Infinity;
+    for (let k = 0; k < dm.length; k++) {
+      const d = Math.abs(dm[k] - dv);
+      if (d < bd) { bd = d; i = k; }
+    }
+    cross.setAttribute("x1", xOf(dm[i]));
+    cross.setAttribute("x2", xOf(dm[i]));
+    cross.setAttribute("visibility", "visible");
+    showTip(
+      `<b>u = ${fmt(dm[i], 1)} mm</b> · drift ${fmt(dm[i] / 1000 / Hm * 100, 3)} %<br>` +
+      `<span style="color:${S.xRaw}">●</span> base shear ${fmt(shear[i], 1)} kN`,
+      e.clientX, e.clientY);
+  });
+  hot.addEventListener("mouseleave", () => {
+    cross.setAttribute("visibility", "hidden");
+    hideTip();
+  });
+  svg.appendChild(hot);
+
+  const card = document.createElement("div");
+  card.className = "chart-card";
+  const title = document.createElement("div");
+  title.className = "chart-title";
+  title.innerHTML = `${opts.title || "Capacity curve"} <span class="unit">base shear kN vs roof displacement mm</span>`;
+  card.appendChild(title);
+  card.appendChild(svg);
+  return card;
+}
+
 /**
  * Compact acceleration-record sparkline (TH case card preview).
  * Bare SVG: zero line, trace, peak annotation. accel in m/s², dt in s.

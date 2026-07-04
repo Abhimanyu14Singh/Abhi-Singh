@@ -3,7 +3,7 @@
    Inlines the story-drift charts and RS spectrum charts as SVG markup by
    temporarily switching charts.js to its light theme. No frameworks. */
 
-import { renderStoryCharts, spectrumChart, setChartTheme } from "./charts.js";
+import { renderStoryCharts, spectrumChart, pushoverChart, setChartTheme } from "./charts.js";
 
 const esc = s => String(s).replace(/[&<>"]/g, c =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -82,7 +82,7 @@ export function buildReportHtml(model, results, opts = {}) {
 
   /* ---- charts (light theme) rendered off-DOM, serialized to markup */
   setChartTheme("light");
-  let chartsHtml = "", spectraHtml = "";
+  let chartsHtml = "", spectraHtml = "", pushoverHtml = "";
   try {
     const allCd = name =>
       (r.cases && r.cases[name]) || (r.combos && r.combos[name]) || null;
@@ -110,6 +110,37 @@ export function buildReportHtml(model, results, opts = {}) {
           <span class="unit">Sa g vs T s · ${esc(rc.direction)} · ${esc(rc.combo_method)}</span></div>${svg.outerHTML}</div>`;
       }).join("") + `</div>`;
     }
+    /* ---- v0.5: pushover — capacity curve + hinge rotation table per case */
+    const Hbld = model.stories.length ? model.stories[model.stories.length - 1].elevation : 1;
+    for (const [pn, po] of Object.entries(r.pushover || {})) {
+      const pc = (model.pushover_cases || {})[pn] || {};
+      const card = pushoverChart(po.roof_disp || [], po.base_shear || [],
+        { title: esc(pn), H: Hbld });
+      const memBy = {};
+      for (const mm of model.members || []) memBy[mm.uid] = mm;
+      const hinges = Object.entries(po.hinge_rotations || {})
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 15)
+        .map(([uid, rot]) => {
+          const mm = memBy[uid] || {};
+          return [T(uid), D(mm.kind || "—"), D(mm.story || "—"),
+            fmt(rot * 1000, 2),
+            (pc.My && pc.My[uid] != null) ? fmt(pc.My[uid], 0) : D("default").v];
+        });
+      const hingeTable = hinges.length
+        ? table([{ label: "Member", txt: true }, { label: "Kind", txt: true },
+                 { label: "Story", txt: true }, "θ (mrad)", "My (kN·m)"], hinges)
+        : `<p class="note">No hinge rotations reported.</p>`;
+      const warn = (po.warnings || []).length
+        ? `<p class="note po-warn">⚠ ${(po.warnings || []).map(esc).join(" · ")}</p>` : "";
+      pushoverHtml += `<div class="case-block">
+        <h3>${esc(pn)} <span class="tag">pushover · ${esc(pc.direction || "X")} ·
+          target ${fmt((pc.target_drift || 0.02) * 100, 1)} % drift</span></h3>
+        ${warn}
+        <div class="chart-grid"><div style="flex:1 1 480px;max-width:640px" class="chart-card">
+          ${card.innerHTML}</div></div>
+        ${hingeTable}</div>`;
+    }
   } finally {
     setChartTheme("dark");
   }
@@ -118,13 +149,20 @@ export function buildReportHtml(model, results, opts = {}) {
   const kinds = {};
   for (const m of model.members) kinds[m.kind] = (kinds[m.kind] || 0) + 1;
   const kindStr = Object.entries(kinds).map(([k, n]) => `${n} ${k}${n > 1 ? "s" : ""}`).join(" · ") || "—";
+  // v0.5: opening + link counts surface in the summary when present
+  const nOpenings = (model.shells || [])
+    .reduce((a, s) => a + ((s.openings || []).length), 0);
+  const nLinks = (model.links || []).length;
+  const shellStr = String((model.shells || []).length) +
+    (nOpenings ? `  (${nOpenings} opening${nOpenings > 1 ? "s" : ""})` : "") +
+    (nLinks ? ` · ${nLinks} link${nLinks > 1 ? "s" : ""}` : "");
   const summaryTable = table(
     [{ label: "Stories" }, { label: "Members" }, { label: "Shell regions" },
      { label: "Footprint" }, { label: "Height" }, { label: "Base fixity" }],
     [[
       String(model.stories.length),
       `${model.members.length}  (${kindStr})`,
-      String((model.shells || []).length),
+      shellStr,
       model.grid ? `${fmt(model.grid.x_lines[model.grid.x_lines.length - 1] - model.grid.x_lines[0], 1)} × ${fmt(model.grid.y_lines[model.grid.y_lines.length - 1] - model.grid.y_lines[0], 1)} m` : "—",
       `${fmt(model.stories.length ? model.stories[model.stories.length - 1].elevation : 0, 1)} m`,
       model.base_fixity || "fixed",
@@ -302,6 +340,8 @@ export function buildReportHtml(model, results, opts = {}) {
     text-transform: uppercase; letter-spacing: .5px; margin: 8px 0 3px; }
   .note { color: #5c6672; font-size: 11.5px; margin-bottom: 8px; }
   .note b { color: #1c232c; }
+  .po-warn { color: #8a5a00; background: #fdf4e3; border: 1px solid #ecd9ad;
+    border-radius: 6px; padding: 6px 10px; }
   table.rt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums;
     margin-bottom: 10px; page-break-inside: avoid; break-inside: avoid; }
   table.rt th { font-size: 10px; font-weight: 700; text-transform: uppercase;
@@ -352,8 +392,10 @@ ${section("4 · Story results by case", storyBlocks)}
 ${section("5 · Base reactions", baseTable)}
 ${section("6 · Member force envelope", envTable,
   `Top ${envRows.length} members by |M3| — absolute envelope across all static cases and combinations.`)}
-${chartsHtml ? section("7 · Story drift & response charts", chartsHtml) : ""}
-${spectraHtml ? section("8 · Response spectra", spectraHtml) : ""}
+${pushoverHtml ? section("7 · Pushover analysis", pushoverHtml,
+  "Displacement-controlled nonlinear static — base shear vs roof displacement; amber markers = slope drop > 20 % (yield). Hinge table: top plastic rotations at target drift.") : ""}
+${chartsHtml ? section(`${pushoverHtml ? 8 : 7} · Story drift & response charts`, chartsHtml) : ""}
+${spectraHtml ? section(`${pushoverHtml ? 9 : 8} · Response spectra`, spectraHtml) : ""}
 
 <footer class="rfoot">
   Analysis: OpenSees 3.7 · SkyFrame validation suite: 60+ benchmarks ·

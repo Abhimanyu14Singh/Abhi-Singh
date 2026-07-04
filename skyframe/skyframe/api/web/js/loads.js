@@ -45,6 +45,7 @@ export class LoadsEditor {
     this.root.appendChild(this._casesSection(m));
     this.root.appendChild(this._rsSection(m));
     this.root.appendChild(this._thSection(m));
+    this.root.appendChild(this._poSection(m));
     this.root.appendChild(this._combosSection(m));
     this.root.appendChild(this._massSection(m));
     this.root.scrollTop = scroll;
@@ -596,6 +597,205 @@ export class LoadsEditor {
     dtIn.addEventListener("change", drawSpark);
 
     body.append(left, right);
+    card.appendChild(body);
+    return card;
+  }
+
+  /* ============================================================ pushover (v0.5) */
+  _poSection(m) {
+    const sec = this._section("ls-pushover", "Pushover cases",
+      "Displacement-controlled nonlinear static analysis — assign hinge yield " +
+      "moments M<sub>y</sub>; the capacity curve lands in the <b>Pushover</b> tab after a solve.",
+      "+ Add pushover", () => { ME.addPushoverCase(m); this._mutated(); });
+
+    const list = document.createElement("div");
+    list.className = "loads-rows";
+    const names = Object.keys(m.pushover_cases || {});
+    if (!names.length) list.innerHTML = `<p class="muted loads-empty">No pushover cases yet.</p>`;
+    for (const name of names) list.appendChild(this._poCard(m, name));
+    sec.appendChild(list);
+    return sec;
+  }
+
+  _poCard(m, name) {
+    const pc = m.pushover_cases[name];
+    const card = document.createElement("div");
+    card.className = "rs-card po-card";
+
+    /* header: name · direction · target drift % · steps · hardening · delete */
+    const head = document.createElement("div");
+    head.className = "rs-head";
+    head.appendChild(this._nameInput(name, "rs-name",
+      nu => ME.renamePushoverCase(m, name, nu)));
+
+    const mkField = (label, node) => {
+      const w = document.createElement("label");
+      w.className = "rs-field";
+      const s = document.createElement("span");
+      s.textContent = label;
+      w.append(s, node);
+      return w;
+    };
+    const mkNum = (value, step, min, set) => {
+      const i = document.createElement("input");
+      i.type = "number"; i.step = step; i.min = String(min);
+      i.value = String(value);
+      i.addEventListener("change", () => {
+        const v = parseFloat(i.value);
+        if (isFinite(v) && v >= min && set(v) !== false) this._mutated(false);
+        else i.value = String(value);
+      });
+      return i;
+    };
+
+    const dir = document.createElement("select");
+    dir.innerHTML = `<option value="X">X</option><option value="Y">Y</option>`;
+    dir.value = pc.direction;
+    dir.addEventListener("change", () => { pc.direction = dir.value; this._mutated(false); });
+    head.appendChild(mkField("direction", dir));
+    head.appendChild(mkField("target drift %",
+      mkNum(+(pc.target_drift * 100).toFixed(3), "0.25", 0.05,
+        v => { pc.target_drift = v / 100; })));
+    head.appendChild(mkField("steps", mkNum(pc.steps, "10", 2,
+      v => { pc.steps = Math.round(v); })));
+    head.appendChild(mkField("hardening", mkNum(pc.hardening, "0.01", 0,
+      v => { if (v >= 1) return false; pc.hardening = v; })));
+    head.appendChild(this._delBtn(null, `pushover case ${name}`, () => {
+      if (ME.deletePushoverCase(m, name)) this._mutated();
+    }));
+    card.appendChild(head);
+
+    /* gravity pattern factors */
+    const grav = document.createElement("div");
+    grav.className = "lc-row po-grav";
+    const tag = document.createElement("span");
+    tag.className = "mass-tag";
+    tag.textContent = "gravity =";
+    tag.title = "Gravity state held constant during the lateral push (pattern × factor)";
+    grav.appendChild(tag);
+    grav.appendChild(this._factorChips(pc.gravity, ME.patternNames(m),
+      "Add a gravity pattern to this pushover"));
+    card.appendChild(grav);
+
+    /* hinges: default My + apply-to-columns + per-member table */
+    const body = document.createElement("div");
+    body.className = "po-hinges";
+
+    const defRow = document.createElement("div");
+    defRow.className = "po-defrow";
+    const defIn = document.createElement("input");
+    defIn.type = "number"; defIn.step = "25"; defIn.min = "0";
+    defIn.id = "poDefaultMy";
+    defIn.value = pc.default_My != null ? String(pc.default_My) : "";
+    defIn.placeholder = "—";
+    defIn.addEventListener("change", () => {
+      const v = parseFloat(defIn.value);
+      if (isFinite(v) && v > 0) { pc.default_My = v; this._mutated(false); }
+      else if (defIn.value.trim() === "") { delete pc.default_My; this._mutated(false); }
+      else defIn.value = pc.default_My != null ? String(pc.default_My) : "";
+    });
+    const defLbl = document.createElement("label");
+    defLbl.className = "rs-field";
+    defLbl.innerHTML = `<span>default M<sub>y</sub> kN·m</span>`;
+    defLbl.appendChild(defIn);
+    const applyBtn = document.createElement("button");
+    applyBtn.className = "btn btn-small";
+    applyBtn.textContent = "Apply to all columns";
+    applyBtn.title = "Assign the default My as a hinge on every column";
+    applyBtn.addEventListener("click", () => {
+      const v = parseFloat(defIn.value);
+      if (!isFinite(v) || v <= 0) {
+        this.toast("No default My", "Enter a positive default My first", "error", 4000);
+        return;
+      }
+      pc.default_My = v;
+      let n = 0;
+      for (const mm of m.members) if (mm.kind === "column") { pc.My[mm.uid] = v; n++; }
+      this._mutated();
+      this.toast("Hinges assigned", `My = ${v} kN·m on ${n} columns`, "info", 3500);
+    });
+    const count = document.createElement("span");
+    count.className = "muted po-count";
+    count.textContent = `${Object.keys(pc.My).length} hinge${Object.keys(pc.My).length === 1 ? "" : "s"}`;
+    defRow.append(defLbl, applyBtn, count);
+    body.appendChild(defRow);
+
+    /* member picker: story + kind filters → member select + My + add */
+    const pick = document.createElement("div");
+    pick.className = "po-pick";
+    const storySel = document.createElement("select");
+    storySel.innerHTML = `<option value="">all stories</option>` +
+      m.stories.map(s => `<option>${esc(s.name)}</option>`).join("");
+    const kindSel = document.createElement("select");
+    kindSel.innerHTML = `<option value="column">columns</option>
+      <option value="beam">beams</option><option value="">all kinds</option>`;
+    const memSel = document.createElement("select");
+    memSel.className = "po-mem";
+    const myIn = document.createElement("input");
+    myIn.type = "number"; myIn.step = "25"; myIn.min = "1"; myIn.value = "250";
+    myIn.title = "Hinge yield moment My (kN·m)";
+    const rebuildMemSel = () => {
+      const st = storySel.value, kd = kindSel.value;
+      const cands = m.members.filter(mm =>
+        (!st || mm.story === st) &&
+        (!kd || mm.kind === kd || (kd === "beam" && mm.kind === "brace")) &&
+        pc.My[mm.uid] === undefined);
+      memSel.innerHTML = cands.length
+        ? cands.map(mm => `<option value="${esc(mm.uid)}">${esc(mm.uid)} · ${esc(mm.kind)}</option>`).join("")
+        : `<option value="">— none left —</option>`;
+    };
+    rebuildMemSel();
+    storySel.addEventListener("change", rebuildMemSel);
+    kindSel.addEventListener("change", rebuildMemSel);
+    const addBtn = document.createElement("button");
+    addBtn.className = "btn btn-small";
+    addBtn.textContent = "+ Hinge";
+    addBtn.addEventListener("click", () => {
+      const uid = memSel.value;
+      const v = parseFloat(myIn.value);
+      if (!uid || !isFinite(v) || v <= 0) return;
+      pc.My[uid] = v;
+      this._mutated();
+    });
+    pick.append(storySel, kindSel, memSel, myIn, addBtn);
+    body.appendChild(pick);
+
+    /* existing hinge rows */
+    const rows = document.createElement("div");
+    rows.className = "po-rows";
+    const memBy = {};
+    for (const mm of m.members) memBy[mm.uid] = mm;
+    const entries = Object.entries(pc.My);
+    if (entries.length) {
+      const headRow = document.createElement("div");
+      headRow.className = "po-row head";
+      headRow.innerHTML = `<span>Member</span><span>Kind · story</span><span>M<sub>y</sub> kN·m</span><span></span>`;
+      rows.appendChild(headRow);
+    }
+    for (const [uid, my] of entries) {
+      const row = document.createElement("div");
+      row.className = "po-row";
+      const u = document.createElement("b");
+      u.textContent = uid;
+      const meta = document.createElement("span");
+      meta.className = "muted";
+      const mm = memBy[uid];
+      meta.textContent = mm ? `${mm.kind} · ${mm.story}` : "missing member";
+      const inp = document.createElement("input");
+      inp.type = "number"; inp.step = "25"; inp.min = "1";
+      inp.value = String(my);
+      inp.addEventListener("change", () => {
+        const v = parseFloat(inp.value);
+        if (isFinite(v) && v > 0) { pc.My[uid] = v; this._mutated(false); }
+        else inp.value = String(pc.My[uid]);
+      });
+      const x = document.createElement("button");
+      x.className = "chip-x"; x.textContent = "✕"; x.title = "Remove hinge";
+      x.addEventListener("click", () => { delete pc.My[uid]; this._mutated(); });
+      row.append(u, meta, inp, x);
+      rows.appendChild(row);
+    }
+    body.appendChild(rows);
     card.appendChild(body);
     return card;
   }

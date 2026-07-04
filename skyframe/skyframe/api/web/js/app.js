@@ -2,9 +2,10 @@
    tables, overlay controls, model/draw mode. No frameworks. */
 
 import { Viewer3D, SHELL_COMPONENTS } from "./viewer3d.js";
-import { renderStoryCharts, stationDiagram, timeSeriesChart } from "./charts.js";
+import { renderStoryCharts, stationDiagram, timeSeriesChart, pushoverChart } from "./charts.js";
 import { mockModel, mockResults, mockSectionLibrary, mockModelFiles, mockWindPattern } from "./mock.js";
 import { PlanEditor } from "./draw.js";
+import { ElevEditor } from "./elev.js";
 import { LoadsEditor } from "./loads.js";
 import { openReport, buildReportHtml } from "./report.js";
 import * as ME from "./modeledit.js";
@@ -42,6 +43,10 @@ const store = {
   envSide: "max",        // envelope-combo tables: "max" | "min"
   thCase: null,          // selected time-history case
   thStory: null,         // selected story for the TH displacement trace
+  // v0.5 — elevation view, pushover
+  view: "plan",          // model-mode editor: "plan" | "elev"
+  elevLine: null,        // elevation grid line, e.g. "x:0" | "y:2"
+  poCase: null,          // selected pushover case (results tab)
 };
 
 const $ = id => document.getElementById(id);
@@ -291,7 +296,21 @@ function switchTab(tab) {
    v0.2 — MODEL (draw) MODE
    ================================================================ */
 let planEditor = null;
+let elevEditor = null;    // v0.5 elevation (section) editor
 let loadsEditor = null;   // v0.3 loads/cases/combos editor
+
+/* v0.5 — both draw views share model + selection; keep them in sync. */
+function activeEditor() {
+  return store.view === "elev" ? elevEditor : planEditor;
+}
+function refreshDrawViews() {
+  if (planEditor) planEditor.refresh();
+  if (elevEditor) elevEditor.refresh();
+}
+function renderStaticViews() {
+  if (planEditor) planEditor.renderStatic();
+  if (elevEditor) elevEditor.renderStatic();
+}
 
 function syncLoadsNav() {
   const m = store.model;
@@ -300,6 +319,7 @@ function syncLoadsNav() {
   $("cnt-cases").textContent = Object.keys(m.cases || {}).length;
   $("cnt-rs").textContent = Object.keys(m.rs_cases || {}).length;
   $("cnt-th").textContent = Object.keys(m.th_cases || {}).length;
+  $("cnt-pushover").textContent = Object.keys(m.pushover_cases || {}).length;
   $("cnt-combos").textContent = Object.keys(m.combos || {}).length;
 }
 
@@ -319,7 +339,9 @@ function setMode(mode) {
   $("reportBtn").classList.toggle("hidden", editing);
   if (model) {
     rebuildStorySelect();
-    planEditor.refresh();
+    rebuildElevSelect();
+    syncDiaphragmUI();
+    refreshDrawViews();
   } else if (loads) {
     loadsEditor.render();
     syncLoadsNav();
@@ -360,6 +382,72 @@ function syncShellLegend() {
   const shells = (store.model && store.model.shells) || [];
   $("legendWall").classList.toggle("hidden", !shells.some(s => s.kind === "wall"));
   $("legendSlab").classList.toggle("hidden", !shells.some(s => s.kind === "slab"));
+  $("legendLink").classList.toggle("hidden",
+    !((store.model && store.model.links) || []).length);
+}
+
+/* ================================================================
+   v0.5 — PLAN | ELEVATION view toggle + diaphragm select
+   ================================================================ */
+function elevPlane() {
+  if (!store.elevLine) return null;
+  const [axis, idx] = store.elevLine.split(":");
+  return { axis, index: parseInt(idx, 10) };
+}
+
+function rebuildElevSelect() {
+  const sel = $("elevLineSelect");
+  sel.textContent = "";
+  const g = store.model && store.model.grid;
+  if (!g) return;
+  const mk = (label, axis, lines, labels) => {
+    const grp = document.createElement("optgroup");
+    grp.label = label;
+    lines.forEach((v, i) => {
+      const o = document.createElement("option");
+      o.value = `${axis}:${i}`;
+      o.textContent = `${(labels && labels[i]) || i + 1}  ·  ${axis} = ${v} m`;
+      grp.appendChild(o);
+    });
+    sel.appendChild(grp);
+  };
+  mk("X lines", "x", g.x_lines, g.x_labels);
+  mk("Y lines", "y", g.y_lines, g.y_labels);
+  const all = [...sel.querySelectorAll("option")].map(o => o.value);
+  if (!store.elevLine || !all.includes(store.elevLine)) store.elevLine = all[0] || null;
+  if (store.elevLine) sel.value = store.elevLine;
+}
+
+function setView(view) {
+  store.view = view === "elev" ? "elev" : "plan";
+  const elev = store.view === "elev";
+  document.querySelectorAll("#viewToggle .seg-btn").forEach(b =>
+    b.classList.toggle("is-active", b.dataset.view === store.view));
+  $("planSvg").classList.toggle("hidden", elev);
+  $("elevSvg").classList.toggle("hidden", !elev);
+  $("storyWrap").classList.toggle("hidden", elev);
+  $("storySteps").classList.toggle("hidden", elev);
+  $("storyElev").classList.toggle("hidden", elev);
+  $("elevLineWrap").classList.toggle("hidden", !elev);
+  $("drawHint").textContent = elev
+    ? "brace: click two snapped points at different levels · right-drag pan · wheel zoom · dbl-click fit"
+    : "click draws with active tool · right-drag pan · wheel zoom · dbl-click fit";
+  // the slab tool has no meaning in a section — fall back to Select
+  const slabBtn = document.querySelector('[data-tool="slab"]');
+  if (slabBtn) slabBtn.disabled = elev;
+  if (elev && store.tool === "slab") setTool("select");
+  if (elev) {
+    rebuildElevSelect();
+    elevEditor._resize();
+    elevEditor.fit();
+  } else {
+    planEditor.refresh();
+  }
+  syncStoryBadges();
+}
+
+function syncDiaphragmUI() {
+  if (store.model) $("diaphragmSelect").value = store.model.diaphragm || "rigid";
 }
 
 /* ---- story selection */
@@ -388,6 +476,13 @@ function setStory(name) {
   renderProps();
 }
 
+function setElevLine(value) {
+  store.elevLine = value;
+  $("elevLineSelect").value = value;
+  syncStoryBadges();
+  elevEditor.fit();
+}
+
 function stepStory(dir) {
   const names = store.model.stories.map(s => s.name);
   const i = names.indexOf(store.story) + dir;
@@ -395,6 +490,13 @@ function stepStory(dir) {
 }
 
 function syncStoryBadges() {
+  if (store.view === "elev") {                     // v0.5 elevation badge
+    const pl = elevEditor && elevEditor.plane();
+    $("planStoryBadge").innerHTML = pl
+      ? `<b>${pl.axis === "x" ? "X" : "Y"}-line ${esc(pl.label)}</b> · elevation @ ${esc(pl.axis)} = ${fmt(pl.coord, 1)} m`
+      : "";
+    return;
+  }
   const st = ME.storyByName(store.model, store.story);
   if (!st) { $("storyElev").textContent = ""; $("planStoryBadge").textContent = ""; return; }
   const zb = st.elevation - st.height;
@@ -424,11 +526,60 @@ function handleDraw(tool, payload) {
     }
     else if (tool === "wall") el = ME.addWall(m, payload.p1, payload.p2, st);
     else if (tool === "slab") el = ME.addSlab(m, payload.x0, payload.y0, payload.x1, payload.y1, st);
+    else if (tool === "link") {
+      // v0.5: plan-view links live at the story's top (diaphragm) elevation
+      const { zt } = ME.storyZ(m, st);
+      el = ME.addLink(m,
+        [payload.p1.x, payload.p1.y, zt], [payload.p2.x, payload.p2.y, zt]);
+    }
     if (el) made++;
   }
   if (made) {
     markDirty();
-    planEditor.renderStatic();
+    renderStaticViews();
+  }
+}
+
+/* v0.5 — elevation-view drawing: payloads carry resolved 3D points. */
+function handleElevDraw(tool, payload) {
+  const m = store.model;
+  let made = 0;
+  if (tool === "column") {
+    const st = ME.storyContainingZ(m, payload.z);
+    if (st && ME.addColumn(m, payload.x, payload.y, st)) made++;
+  } else if (tool === "beam") {
+    const st = ME.storyAtLevel(m, payload.z);
+    if (st && ME.addBeamAt(m, payload.p1, payload.p2, st)) made++;
+  } else if (tool === "brace") {
+    const zTop = Math.max(payload.p1[2], payload.p2[2]);
+    const st = ME.storyContainingZ(m, zTop);
+    if (ME.addBraceAt(m, payload.p1, payload.p2, st)) made++;
+    if (store.braceXPair) {
+      // mirrored diagonal: same two levels, plan ends swapped
+      const r1 = [payload.p2[0], payload.p2[1], payload.p1[2]];
+      const r2 = [payload.p1[0], payload.p1[1], payload.p2[2]];
+      if (ME.addBraceAt(m, r1, r2, st)) made++;
+    }
+  } else if (tool === "wall") {
+    let z0 = Math.min(payload.z1, payload.z2), z1 = Math.max(payload.z1, payload.z2);
+    if (z1 - z0 < 1e-6) {
+      // both clicks on one level: the wall fills that story's height
+      const ref = z1 > 1e-9 ? z1 : (m.stories[0] ? m.stories[0].elevation : 3);
+      const { zb, zt } = ME.storyZ(m, ME.storyContainingZ(m, ref));
+      z0 = zb; z1 = zt;
+    }
+    const w3 = (s, z) => elevEditor.world3(s, z);
+    const corners = [
+      w3(payload.s1, z0), w3(payload.s2, z0),
+      w3(payload.s2, z1), w3(payload.s1, z1),
+    ];
+    if (ME.addWallAt(m, corners, ME.storyContainingZ(m, z1))) made++;
+  } else if (tool === "link") {
+    if (ME.addLink(m, payload.p1, payload.p2)) made++;
+  }
+  if (made) {
+    markDirty();
+    renderStaticViews();
   }
 }
 
@@ -436,7 +587,7 @@ function handleErase(ref) {
   if (ME.eraseElement(store.model, ref)) {
     store.selection = store.selection.filter(r => !(r.type === ref.type && r.uid === ref.uid));
     markDirty();
-    planEditor.refresh();
+    refreshDrawViews();
     renderProps();
   }
 }
@@ -447,7 +598,7 @@ function deleteSelection() {
   for (const ref of [...store.selection]) ME.eraseElement(store.model, ref);
   store.selection = [];
   markDirty();
-  planEditor.refresh();
+  refreshDrawViews();
   renderProps();
   toast("Deleted", `${n} element${n > 1 ? "s" : ""} removed`, "info", 3000);
 }
@@ -462,32 +613,37 @@ function handleSelect(refs, additive) {
   } else {
     store.selection = refs;
   }
-  planEditor.renderStatic();
+  renderStaticViews();
   renderProps();
 }
 
 function setTool(tool) {
+  if (store.view === "elev" && tool === "slab") tool = "select";   // v0.5
   store.tool = tool;
   document.querySelectorAll(".tool-btn").forEach(b =>
     b.classList.toggle("is-active", b.dataset.tool === tool));
   $("braceOpts").classList.toggle("hidden", tool !== "brace");
   planEditor.setTool(tool);
+  if (elevEditor) elevEditor.setTool(tool);
 }
 
 /* ---- properties / assignment panel */
 function selObjects() {
   const m = store.model;
-  const members = [], shells = [];
+  const members = [], shells = [], links = [];
   for (const ref of store.selection) {
     if (ref.type === "member") {
       const mm = m.members.find(x => x.uid === ref.uid);
       if (mm) members.push(mm);
+    } else if (ref.type === "link") {
+      const l = (m.links || []).find(x => x.uid === ref.uid);
+      if (l) links.push(l);
     } else {
       const s = m.shells.find(x => x.uid === ref.uid);
       if (s) shells.push(s);
     }
   }
-  return { members, shells };
+  return { members, shells, links };
 }
 
 const commonVal = (arr, f) => {
@@ -505,8 +661,8 @@ function optionList(names, selected, mixed) {
 
 function renderProps() {
   const box = $("propsContent");
-  const { members, shells } = selObjects();
-  const total = members.length + shells.length;
+  const { members, shells, links } = selObjects();
+  const total = members.length + shells.length + links.length;
   if (!total) {
     box.innerHTML = `<div class="props-empty">
       <p>Nothing selected.</p>
@@ -523,7 +679,7 @@ function renderProps() {
   const slabs = shells.filter(x => x.kind === "slab");
   const kinds = [
     [columns.length, "column"], [beams.length, "beam"], [braces.length, "brace"],
-    [walls.length, "wall"], [slabs.length, "slab"],
+    [walls.length, "wall"], [slabs.length, "slab"], [links.length, "link"],
   ].filter(([n]) => n).map(([n, k]) => `${n} ${k}${n > 1 ? "s" : ""}`).join(" · ");
 
   const pats = ME.patternNames(m);
@@ -606,6 +762,40 @@ function renderProps() {
             value="${q === undefined ? "" : q}" placeholder="${q === undefined ? "mixed" : ""}"></div>
       </div>`;
     }
+    /* v0.5 — openings editor (single region selected) */
+    if (shells.length === 1) {
+      const sh = shells[0];
+      const ops = sh.openings || (sh.openings = []);
+      html += `
+      <h3 class="group-title">Openings <span class="unit">u, v fractions 0–1</span></h3>
+      <div class="open-rows" id="openRows">` +
+        (ops.length
+          ? `<div class="open-row head"><span>u0</span><span>v0</span><span>u1</span><span>v1</span><span></span></div>` +
+            ops.map((o, i) => `<div class="open-row" data-i="${i}">` +
+              ["u0", "v0", "u1", "v1"].map(k =>
+                `<input type="number" min="0" max="1" step="0.05" data-k="${k}" value="${o[k]}" title="${k} — fraction of the region edge">`).join("") +
+              `<button class="chip-x open-del" data-del="${i}" title="Remove opening">✕</button></div>`).join("")
+          : `<p class="muted open-empty">No openings — cutouts (doors / windows) removed from the mesh.</p>`) +
+      `</div>
+      <button class="btn btn-small btn-block" id="openAdd">+ Add opening</button>
+      <svg class="open-preview" id="openPreview" aria-label="Region preview with opening cutouts"></svg>`;
+    } else if (shells.length > 1) {
+      html += `<p class="muted" style="font-size:11px;margin-top:8px">Select a single wall/slab to edit its openings.</p>`;
+    }
+  }
+
+  /* v0.5 — link stiffness (6 dof) */
+  if (links.length) {
+    const K_LABELS = ["kx", "ky", "kz", "krx", "kry", "krz"];
+    html += `
+      <h3 class="group-title">Link stiffness <span class="unit">kN/m · kN·m/rad</span></h3>
+      <div class="link-stiff">` +
+      K_LABELS.map((lbl, i) => {
+        const v = commonVal(links, l => l.stiffness[i]);
+        return `<label><span>${lbl}</span>
+          <input type="number" class="linkK" data-si="${i}" step="1000" min="0"
+            value="${v === undefined ? "" : v}" placeholder="${v === undefined ? "mixed" : ""}"></label>`;
+      }).join("") + `</div>`;
   }
 
   html += `<h3 class="group-title"></h3>
@@ -665,6 +855,85 @@ function renderProps() {
     for (const s of slabs) ME.setAreaLoad(m, $("propAreaPat").value, s.uid, q);
     markDirty();
   });
+
+  /* v0.5 — openings wiring (single shell) */
+  if (shells.length === 1) {
+    const sh = shells[0];
+    renderOpeningPreview(sh);
+    on("openAdd", "click", () => {
+      ME.addOpening(sh);
+      markDirty();
+      renderStaticViews();
+      renderProps();
+    });
+    box.querySelectorAll("#openRows .open-row:not(.head)").forEach(row => {
+      const i = parseInt(row.dataset.i, 10);
+      const o = sh.openings[i];
+      if (!o) return;
+      row.querySelectorAll("input").forEach(inp => {
+        inp.addEventListener("change", () => {
+          const v = parseFloat(inp.value);
+          if (!ME.setOpeningField(o, inp.dataset.k, v)) {
+            inp.value = String(o[inp.dataset.k]);
+            return;
+          }
+          // re-sync all four inputs — setOpeningField may swap bounds
+          row.querySelectorAll("input").forEach(x => { x.value = String(o[x.dataset.k]); });
+          markDirty();
+          renderStaticViews();
+          renderOpeningPreview(sh);
+        });
+      });
+    });
+    box.querySelectorAll(".open-del").forEach(btn =>
+      btn.addEventListener("click", () => {
+        sh.openings.splice(parseInt(btn.dataset.del, 10), 1);
+        markDirty();
+        renderStaticViews();
+        renderProps();
+      }));
+  }
+
+  /* v0.5 — link stiffness wiring */
+  box.querySelectorAll(".linkK").forEach(inp =>
+    inp.addEventListener("change", () => {
+      const v = parseFloat(inp.value);
+      if (!isFinite(v) || v < 0) return;
+      const i = parseInt(inp.dataset.si, 10);
+      for (const l of links) l.stiffness[i] = v;
+      markDirty();
+    }));
+}
+
+/** v0.5 — mini SVG preview of a shell region with opening cutouts. */
+function renderOpeningPreview(sh) {
+  const svg = $("openPreview");
+  if (!svg) return;
+  const du = Math.hypot(
+    sh.corners[1][0] - sh.corners[0][0],
+    sh.corners[1][1] - sh.corners[0][1],
+    sh.corners[1][2] - sh.corners[0][2]) || 1;
+  const dv = Math.hypot(
+    sh.corners[3][0] - sh.corners[0][0],
+    sh.corners[3][1] - sh.corners[0][1],
+    sh.corners[3][2] - sh.corners[0][2]) || 1;
+  const W = 236, H = Math.max(48, Math.min(236, W * dv / du));
+  const P = 6;                                    // padding
+  svg.setAttribute("viewBox", `0 0 ${W + 2 * P} ${H + 2 * P}`);
+  const x = u => P + u * W;
+  const y = v => P + (1 - v) * H;                 // v = 0 at the bottom
+  let d = `M${x(0)},${y(0)} L${x(1)},${y(0)} L${x(1)},${y(1)} L${x(0)},${y(1)} Z`;
+  let holes = "";
+  for (const o of (sh.openings || [])) {
+    const sub = `M${x(o.u0)},${y(o.v0)} L${x(o.u1)},${y(o.v0)} L${x(o.u1)},${y(o.v1)} L${x(o.u0)},${y(o.v1)} Z`;
+    d += " " + sub;
+    holes += `<path d="${sub}" fill="none" stroke="rgba(53,181,229,0.75)" stroke-width="1" stroke-dasharray="4 3"/>`;
+  }
+  svg.innerHTML =
+    `<path d="${d}" fill-rule="evenodd" fill="rgba(95,143,201,0.28)"
+       stroke="rgba(125,168,216,0.9)" stroke-width="1.2"/>` + holes +
+    `<text x="${P + 3}" y="${P + H - 4}" fill="rgba(140,160,185,0.75)" font-size="8"
+       font-family="inherit">${esc(sh.uid)} · ${(sh.openings || []).length} opening${(sh.openings || []).length === 1 ? "" : "s"}</text>`;
 }
 
 /* ---- section manager modal */
@@ -727,7 +996,7 @@ function renderSectionLib() {
 }
 function closeSectionMgr() {
   $("sectionModal").classList.add("hidden");
-  planEditor.renderStatic();   // column plan sizes may have changed
+  renderStaticViews();         // column plan sizes may have changed
   renderProps();               // dropdown option lists may have changed
 }
 
@@ -918,7 +1187,8 @@ function openGridEditor() {
 function closeGridEditor() {
   $("gridModal").classList.add("hidden");
   rebuildStorySelect();
-  planEditor.refresh();
+  rebuildElevSelect();
+  refreshDrawViews();
   renderProps();
   renderSummary();
 }
@@ -927,7 +1197,8 @@ function closeGridEditor() {
 function afterGeometryEdit() {
   markDirty();
   rebuildStorySelect();
-  planEditor.refresh();
+  rebuildElevSelect();
+  refreshDrawViews();
   renderSummary();
   renderGridEditor();
 }
@@ -982,7 +1253,7 @@ function renderGridEditor() {
   const head = document.createElement("div");
   head.className = "ge-story head";
   head.innerHTML = `<span>Name</span><span>Height m</span>
-    <span style="text-align:right">Elev m</span><span>Insert</span><span></span>`;
+    <span style="text-align:right">Elev m</span><span>Diaphragm</span><span>Insert</span><span></span>`;
   box.appendChild(head);
 
   for (const st of [...m.stories].reverse()) {
@@ -1014,6 +1285,20 @@ function renderGridEditor() {
     const elev = document.createElement("span");
     elev.className = "ge-elev";
     elev.textContent = `${fmt(st.elevation - st.height, 1)} – ${fmt(st.elevation, 1)}`;
+
+    // v0.5 — per-story diaphragm override (blank = model default)
+    const dsel = document.createElement("select");
+    dsel.className = "ge-diaph";
+    dsel.title = `Diaphragm override for ${st.name} — default follows the model-wide setting (${m.diaphragm || "rigid"})`;
+    dsel.innerHTML = `<option value="">default</option>
+      <option value="rigid">rigid</option><option value="none">none</option>`;
+    dsel.value = (m.story_diaphragm || {})[st.name] || "";
+    dsel.addEventListener("change", () => {
+      m.story_diaphragm = m.story_diaphragm || {};
+      if (!dsel.value) delete m.story_diaphragm[st.name];
+      else m.story_diaphragm[st.name] = dsel.value;
+      markDirty();
+    });
 
     const ins = document.createElement("span");
     ins.className = "ge-ins";
@@ -1057,7 +1342,7 @@ function renderGridEditor() {
       });
     }
 
-    row.append(nameIn, hIn, elev, ins, del);
+    row.append(nameIn, hIn, elev, dsel, ins, del);
     box.appendChild(row);
   }
 }
@@ -1081,7 +1366,8 @@ async function saveModel() {
     store.modelEdited = false;
     syncShellLegend();
     rebuildStorySelect();
-    planEditor.refresh();
+    rebuildElevSelect();
+    refreshDrawViews();
     renderProps();
     renderSummary();
     if (store.mode === "loads") { loadsEditor.render(); syncLoadsNav(); }
@@ -1104,7 +1390,9 @@ async function discardModel() {
     viewer.setModel(store.model);
     syncShellLegend();
     rebuildStorySelect();
-    planEditor.refresh();
+    rebuildElevSelect();
+    syncDiaphragmUI();
+    refreshDrawViews();
     renderProps();
     renderSummary();
     if (store.mode === "loads") { loadsEditor.render(); syncLoadsNav(); }
@@ -1135,13 +1423,16 @@ function adoptModel(modelDict, fileName) {
   store.envSide = "max";
   store.thCase = null;
   store.thStory = null;
+  store.poCase = null;                            // v0.5
   clearDirty();
   closeMemberPanel();
   viewer.setResults(null);
   viewer.setModel(store.model);
   syncShellLegend();
   rebuildStorySelect();
-  planEditor.refresh();
+  rebuildElevSelect();
+  syncDiaphragmUI();
+  refreshDrawViews();
   renderProps();
   syncOverlayUI();
   rebuildCaseSelect();
@@ -1426,6 +1717,12 @@ function setResultsAvailable(on) {
   $("empty-th").classList.toggle("hidden", hasTh);
   $("content-th").classList.toggle("hidden", !hasTh);
   if (!hasTh && store.tab === "th") switchTab("view3d");
+  // v0.5: pushover tab appears only when results carry pushover curves
+  const hasPo = on && !!Object.keys(store.results?.pushover || {}).length;
+  $("poTabBtn").classList.toggle("hidden", !hasPo);
+  $("empty-pushover").classList.toggle("hidden", hasPo);
+  $("content-pushover").classList.toggle("hidden", !hasPo);
+  if (!hasPo && store.tab === "pushover") switchTab("view3d");
   if (!on) {
     store.contour.on = false;
     syncContoursUI();
@@ -1441,6 +1738,7 @@ function renderResultsTabs() {
   renderReactionsTab();
   renderForcesTab();
   renderThTab();
+  renderPoTab();
 }
 
 /* ---- story tab */
@@ -1695,6 +1993,82 @@ function renderThTab() {
 }
 
 /* ================================================================
+   v0.5 — PUSHOVER TAB
+   ================================================================ */
+function poData() {
+  const po = store.results && store.results.pushover;
+  if (!po || !Object.keys(po).length) return null;
+  if (!store.poCase || !po[store.poCase]) store.poCase = Object.keys(po)[0];
+  return po[store.poCase];
+}
+
+function rebuildPoSelect() {
+  const po = (store.results && store.results.pushover) || {};
+  const names = Object.keys(po);
+  const sel = $("poCaseSelect");
+  sel.textContent = "";
+  for (const n of names) {
+    const o = document.createElement("option");
+    o.value = n; o.textContent = n;
+    sel.appendChild(o);
+  }
+  if (!store.poCase || !names.includes(store.poCase)) store.poCase = names[0] || null;
+  if (store.poCase) sel.value = store.poCase;
+}
+
+function renderPoTab() {
+  const pd = poData();
+  if (!pd) return;
+  const m = store.model;
+  const pc = (m.pushover_cases || {})[store.poCase] || {};
+  const H = m.stories.length ? m.stories[m.stories.length - 1].elevation : 1;
+
+  $("poMeta").textContent =
+    `dir ${pc.direction || "X"} · target ${fmt((pc.target_drift ?? 0.02) * 100, 1)} % drift · ` +
+    `${(pd.roof_disp || []).length} steps · hardening ${fmt(pc.hardening ?? 0.02, 2)}`;
+
+  const wbox = $("poWarnings");
+  wbox.textContent = "";
+  const warns = pd.warnings || [];
+  wbox.classList.toggle("hidden", !warns.length);
+  for (const w of warns) {
+    const div = document.createElement("div");
+    div.className = "po-warn-item";
+    div.textContent = `⚠ ${w}`;
+    wbox.appendChild(div);
+  }
+
+  const box = $("poChart");
+  box.textContent = "";
+  box.appendChild(pushoverChart(pd.roof_disp || [], pd.base_shear || [], {
+    title: `Capacity curve — ${store.poCase}`, H,
+  }));
+
+  /* hinge rotations, sorted descending */
+  const memBy = {};
+  for (const mm of (store.results.members || [])) memBy[mm.uid] = mm;
+  const rows = Object.entries(pd.hinge_rotations || {}).sort((a, b) => b[1] - a[1]);
+  const head = `<thead><tr>
+    <th class="txt">Member</th><th class="txt">Kind</th><th class="txt">Story</th>
+    <th>θ mrad</th><th>My kN·m</th></tr></thead>`;
+  const body = rows.map(([uid, rot]) => {
+    const mm = memBy[uid] || {};
+    const my = (pc.My && pc.My[uid] != null) ? fmt(pc.My[uid], 0)
+      : (pc.default_My != null ? `${fmt(pc.default_My, 0)} (default)` : "—");
+    return `<tr>
+      <td class="txt">${esc(uid)}</td>
+      <td class="txt dim">${esc(mm.kind || "—")}</td>
+      <td class="txt dim">${esc(mm.story || "—")}</td>
+      <td>${fmt(rot * 1000, 2)}</td>
+      <td class="dim">${my}</td></tr>`;
+  }).join("");
+  $("poHingeTable").innerHTML = head +
+    `<tbody>${body || `<tr><td class="txt dim">No hinge rotations reported</td></tr>`}</tbody>`;
+  $("poHingeNote").textContent =
+    `${rows.length} hinges · ${store.poCase} — plastic rotations at target drift, sorted descending`;
+}
+
+/* ================================================================
    v0.4 — SHELL FORCE CONTOURS
    ================================================================ */
 function contourAvailability() {
@@ -1817,6 +2191,16 @@ function csvRows(kind) {
       ...forcesRows().map(x => [x.uid, x.kind, x.story, x.section, x.N, x.V2, x.M3]),
     ];
   }
+  if (kind === "pushover") {
+    const pd = poData();
+    if (!pd) return null;
+    return [
+      ["step", "roof_disp_m", "roof_drift", "base_shear_kN"],
+      ...(pd.roof_disp || []).map((u, i) => [
+        i, u, (pd.roof_drift || [])[i] ?? "", (pd.base_shear || [])[i] ?? 0,
+      ]),
+    ];
+  }
   if (kind === "th") {
     const td = thData();
     if (!td) return null;
@@ -1835,8 +2219,9 @@ function csvRows(kind) {
 
 function csvFileName(kind) {
   const caseless = kind === "modal";
-  const caseTag = kind === "th" ? store.thCase : caseLabel(store.caseName) +
-    (caseData()?.min ? `-${store.envSide}` : "");
+  const caseTag = kind === "th" ? store.thCase
+    : kind === "pushover" ? store.poCase
+    : caseLabel(store.caseName) + (caseData()?.min ? `-${store.envSide}` : "");
   return `skyframe-${slug(store.model?.name)}-${kind}` +
     (caseless ? "" : `-${slug(caseTag)}`) + ".csv";
 }
@@ -1945,6 +2330,7 @@ async function doRun() {
     rebuildCaseSelect();
     rebuildModeSelect();
     rebuildThSelects();                            // v0.4
+    rebuildPoSelect();                             // v0.5
     viewer.setResults(results);
     setResultsAvailable(true);
     renderResultsTabs();
@@ -1999,6 +2385,7 @@ function wire() {
   $("csvReactions").addEventListener("click", () => downloadCsv("reactions"));
   $("csvForces").addEventListener("click", () => downloadCsv("forces"));
   $("csvTh").addEventListener("click", () => downloadCsv("th"));
+  $("csvPo").addEventListener("click", () => downloadCsv("pushover"));   // v0.5
 
   /* ---- v0.4: time-history tab controls */
   $("thCaseSelect").addEventListener("change", e => {
@@ -2008,6 +2395,19 @@ function wire() {
   $("thStorySelect").addEventListener("change", e => {
     store.thStory = e.target.value;
     renderThTab();
+  });
+
+  /* ---- v0.5: pushover tab, view toggle, elevation line, diaphragm */
+  $("poCaseSelect").addEventListener("change", e => {
+    store.poCase = e.target.value;
+    renderPoTab();
+  });
+  document.querySelectorAll("#viewToggle .seg-btn").forEach(b =>
+    b.addEventListener("click", () => setView(b.dataset.view)));
+  $("elevLineSelect").addEventListener("change", e => setElevLine(e.target.value));
+  $("diaphragmSelect").addEventListener("change", e => {
+    store.model.diaphragm = e.target.value === "none" ? "none" : "rigid";
+    markDirty();
   });
 
   /* ---- v0.4: brace layout toggle */
@@ -2177,8 +2577,8 @@ function wire() {
   });
 
   // keyboard
-  const TABS = ["view3d", "story", "modal", "reactions", "forces", "th"];
-  const TOOL_KEYS = { v: "select", c: "column", b: "beam", x: "brace", w: "wall", s: "slab", e: "erase" };
+  const TABS = ["view3d", "story", "modal", "reactions", "forces", "th", "pushover"];
+  const TOOL_KEYS = { v: "select", c: "column", b: "beam", x: "brace", w: "wall", s: "slab", l: "link", e: "erase" };
   document.addEventListener("keydown", e => {
     const tag = (e.target.tagName || "").toLowerCase();
     // v0.3 dialogs respond to Escape even while an input has focus
@@ -2195,7 +2595,8 @@ function wire() {
     if (e.key === "Escape") {
       if (!$("sectionModal").classList.contains("hidden")) closeSectionMgr();
       else if (store.mode === "model") {
-        if (planEditor.pending || planEditor.box) planEditor.cancel();
+        const ed = activeEditor();
+        if (ed.pending || ed.box) ed.cancel();
         else if (store.selection.length) handleSelect([], false);
       } else if (store.selectedMemberUid) closeMemberPanel();
       return;
@@ -2208,15 +2609,17 @@ function wire() {
       else if (e.key === "ArrowUp") { e.preventDefault(); stepStory(1); }
       else if (e.key === "ArrowDown") { e.preventDefault(); stepStory(-1); }
       else if (e.key === "Delete" || e.key === "Backspace") deleteSelection();
-      else if (e.key === "f" || e.key === "F") planEditor.fit();
+      else if (e.key === "f" || e.key === "F") activeEditor().fit();
       return;
     }
 
     if (store.mode !== "analyze") return;   // loads mode: no analyze shortcuts
 
-    if (e.key >= "1" && e.key <= "6") {
+    if (e.key >= "1" && e.key <= "7") {
       const t = TABS[+e.key - 1];
-      if (t && !(t === "th" && $("thTabBtn").classList.contains("hidden"))) switchTab(t);
+      const hidden = (t === "th" && $("thTabBtn").classList.contains("hidden")) ||
+        (t === "pushover" && $("poTabBtn").classList.contains("hidden"));
+      if (t && !hidden) switchTab(t);
     }
     else if (e.key === "r" || e.key === "R") doRun();
     else if (e.key === "f" || e.key === "F") viewer.fit();
@@ -2239,6 +2642,15 @@ async function boot() {
     onSelect: handleSelect,
     onReadout: t => { $("planReadout").textContent = t; },
   });
+  elevEditor = new ElevEditor($("elevSvg"), {          // v0.5
+    getModel: () => store.model,
+    getPlane: () => elevPlane(),
+    getSelection: () => new Set(store.selection.map(r => `${r.type}:${r.uid}`)),
+    onDraw: handleElevDraw,
+    onErase: handleErase,
+    onSelect: handleSelect,
+    onReadout: t => { $("planReadout").textContent = t; },
+  });
   loadsEditor = new LoadsEditor($("loadsPane"), {
     getModel: () => store.model,
     onChange: markDirty,
@@ -2251,7 +2663,9 @@ async function boot() {
     viewer.setModel(store.model);
     syncShellLegend();
     rebuildStorySelect();
-    planEditor.refresh();
+    rebuildElevSelect();
+    syncDiaphragmUI();
+    refreshDrawViews();
     renderSummary();
     setResultsAvailable(false);
     syncDirtyUI();
@@ -2276,6 +2690,10 @@ async function boot() {
     syncContoursUI, syncEnvToggle, renderThTab, rebuildThSelects,
     csvRows, csvFileName, downloadCsv, doReport, buildReportHtml,
     generateWindPattern, renderSectionMgr, contourAvailability,
+    // v0.5
+    elevEditor, setView, setElevLine, elevPlane, rebuildElevSelect,
+    handleElevDraw, renderPoTab, rebuildPoSelect, poData,
+    renderOpeningPreview, syncDiaphragmUI,
   };
 }
 

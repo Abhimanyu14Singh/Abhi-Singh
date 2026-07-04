@@ -97,6 +97,10 @@
             <svg viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" fill="currentColor" opacity=".35"/><rect x="2.5" y="3.5" width="11" height="9" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
             <span>Slab</span><kbd>S</kbd>
           </button>
+          <button class="tool-btn" data-tool="link" title="Draw link — click two points; plan: at the story top elevation, elevation view: any two snapped points (L)">
+            <svg viewBox="0 0 16 16"><path d="M1.5 8h2l1.5-3 2 6 2-6 2 6 1.5-3h2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>
+            <span>Link</span><kbd>L</kbd>
+          </button>
           <button class="tool-btn" data-tool="erase" title="Erase — click an element (E)">
             <svg viewBox="0 0 16 16"><path d="M6.5 3.5 13 10l-3 3H7l-4.5-4.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M13.5 13H8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
             <span>Erase</span><kbd>E</kbd>
@@ -117,6 +121,15 @@
           <button class="seg-btn" data-apply="all">All stories</button>
         </div>
 
+        <h3 class="group-title">Diaphragm</h3>
+        <div class="field">
+          <select id="diaphragmSelect" title="Floor diaphragm model — rigid ties each story plan together; none leaves floors semi-rigid (via meshed slabs)">
+            <option value="rigid">Rigid</option>
+            <option value="none">None (semi-rigid via slabs)</option>
+          </select>
+        </div>
+        <p class="muted diaph-note">Per-story overrides live in <b>Edit Grid/Stories…</b></p>
+
         <h3 class="group-title">Properties</h3>
         <button class="btn btn-block" id="sectionMgrBtn" title="Manage frame sections, shell sections and materials">Section Manager…</button>
         <button class="btn btn-block" id="gridEditBtn" style="margin-top:8px" title="Edit grid line positions, story heights and names">Edit Grid/Stories…</button>
@@ -128,6 +141,7 @@
           <p><kbd>↑</kbd>/<kbd>↓</kbd> change story · right-drag pans · wheel zooms · dbl-click fits.</p>
           <p>Slab tool: click inside a grid cell to fill it.</p>
           <p>Brace tool: point A takes the story bottom, point B the top; X-pair adds the mirror.</p>
+          <p>Elevation view: pick a grid line, then draw braces across story levels; walls show door/window openings.</p>
         </div>
       </div>
 
@@ -138,6 +152,7 @@
           <button data-target="ls-cases">Static cases <span class="nav-count" id="cnt-cases">0</span></button>
           <button data-target="ls-rs">RS cases <span class="nav-count" id="cnt-rs">0</span></button>
           <button data-target="ls-th">TH cases <span class="nav-count" id="cnt-th">0</span></button>
+          <button data-target="ls-pushover">Pushover <span class="nav-count" id="cnt-pushover">0</span></button>
           <button data-target="ls-combos">Combos <span class="nav-count" id="cnt-combos">0</span></button>
           <button data-target="ls-mass">Mass source</button>
         </div>
@@ -237,21 +252,30 @@
     <!-- ============ DRAW MODE ============ -->
     <main class="main hidden" id="drawMain">
       <div class="draw-toolbar">
-        <label class="story-wrap">
+        <div class="seg-toggle view-toggle" id="viewToggle" title="Plan editor or a grid-line elevation (section) editor">
+          <button class="seg-btn is-active" data-view="plan">Plan</button>
+          <button class="seg-btn" data-view="elev">Elevation</button>
+        </div>
+        <label class="story-wrap" id="storyWrap">
           <span>Story</span>
           <select id="storySelect" class="mini-select"></select>
         </label>
-        <div class="story-steps">
+        <div class="story-steps" id="storySteps">
           <button class="chip" id="storyUp" title="Story above (↑)">▲</button>
           <button class="chip" id="storyDown" title="Story below (↓)">▼</button>
         </div>
         <span class="story-elev muted" id="storyElev"></span>
+        <label class="story-wrap hidden" id="elevLineWrap">
+          <span>Grid line</span>
+          <select id="elevLineSelect" class="mini-select" title="Frame line to section — X lines (letters) or Y lines (numbers)"></select>
+        </label>
         <div class="toolbar-spacer"></div>
-        <span class="hint">click draws with active tool · right-drag pan · wheel zoom · dbl-click fit</span>
+        <span class="hint" id="drawHint">click draws with active tool · right-drag pan · wheel zoom · dbl-click fit</span>
       </div>
       <div class="draw-body">
         <div class="plan-wrap" id="planWrap">
           <svg id="planSvg"></svg>
+          <svg id="elevSvg" class="hidden"></svg>
           <div class="plan-readout" id="planReadout"></div>
           <div class="plan-story-badge" id="planStoryBadge"></div>
         </div>
@@ -286,6 +310,7 @@
         <button class="tab" data-tab="reactions" role="tab">Reactions</button>
         <button class="tab" data-tab="forces" role="tab">Member Forces</button>
         <button class="tab hidden" data-tab="th" role="tab" id="thTabBtn">Time History</button>
+        <button class="tab hidden" data-tab="pushover" role="tab" id="poTabBtn">Pushover</button>
         <div class="tabbar-spacer"></div>
         <div class="seg-toggle env-toggle hidden" id="envToggle" title="Envelope combo — switch tables between the max and min envelope">
           <button class="seg-btn is-active" data-env="max">max</button>
@@ -340,6 +365,7 @@
               <span><i style="background:var(--c-brace)"></i>brace</span>
               <span class="hidden" id="legendWall"><i class="area" style="background:rgba(95,143,201,.35);border-color:rgba(125,168,216,.8)"></i>wall</span>
               <span class="hidden" id="legendSlab"><i class="area" style="background:rgba(154,167,180,.28);border-color:rgba(154,167,180,.7)"></i>slab</span>
+              <span class="hidden" id="legendLink"><i style="background:var(--green)"></i>link</span>
               <span class="hidden" id="legendDeformed"><i style="background:var(--accent)"></i>deformed</span>
             </div>
             <div class="contour-legend hidden" id="contourLegend">
@@ -468,6 +494,32 @@
           <div class="th-charts" id="thCharts"></div>
           <div class="table-scroll">
             <table class="data-table" id="thPeaksTable"></table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ PUSHOVER (v0.5) ============ -->
+      <section class="tabpane" id="pane-pushover" role="tabpanel">
+        <div class="empty-state" id="empty-pushover">
+          <div class="empty-art">⤴</div>
+          <p>Run analysis with a pushover case to see the capacity curve</p>
+        </div>
+        <div class="pane-content hidden" id="content-pushover">
+          <div class="charts-controls">
+            <div class="th-controls">
+              <label class="case-select-wrap"><span>Pushover case</span>
+                <select id="poCaseSelect" class="case-select"></select></label>
+              <span class="muted" id="poMeta"></span>
+            </div>
+            <button class="chip csv-btn" id="csvPo" title="Download the capacity curve as CSV (unrounded)">⬇ CSV</button>
+          </div>
+          <div class="po-warnings hidden" id="poWarnings"></div>
+          <div class="th-charts" id="poChart"></div>
+          <div class="pane-tools">
+            <span class="muted" id="poHingeNote">Hinge plastic rotations at target drift — sorted descending</span>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table" id="poHingeTable"></table>
           </div>
         </div>
       </section>

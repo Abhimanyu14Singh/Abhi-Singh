@@ -1063,6 +1063,93 @@ details.mgr-mods[open] summary { color: var(--text-2); }
 }
 .mods-row input { width: 74px; padding: 3px 7px; font-size: 12px; }
 
+/* ============================================================
+   v0.5 — elevation view, openings, pushover, diaphragm, links
+   ============================================================ */
+
+/* ---- Plan | Elevation view toggle + elevation SVG */
+.view-toggle { flex: none; }
+.view-toggle .seg-btn { padding: 3px 12px; }
+#elevSvg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+#elevSvg[data-tool="select"] { cursor: default; }
+#elevSvg[data-tool="erase"] { cursor: pointer; }
+#elevSvg.panning { cursor: grabbing; }
+#elevSvg text { font-family: var(--font); }
+.diaph-note { font-size: 11px; line-height: 1.5; }
+.diaph-note b { color: var(--text-2); }
+.tool-btn:disabled { opacity: .4; cursor: default; }
+.tool-btn:disabled:hover { color: var(--text-2); border-color: var(--border-soft); }
+
+/* ---- grid & stories modal: per-story diaphragm override column */
+.modal-wide { width: 880px; }
+.ge-story { grid-template-columns: 1fr 56px 66px 72px auto 22px; }
+.ge-story select { padding: 3px 4px; font-size: 11px; }
+
+/* ---- properties: openings editor */
+.open-rows { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.open-row {
+  display: grid; grid-template-columns: repeat(4, 1fr) 20px; gap: 4px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--border-soft);
+  border-radius: 6px; padding: 3px 4px;
+}
+.open-row.head {
+  background: none; border-color: transparent; padding: 0 4px;
+  font-size: 9.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .4px;
+  text-align: center;
+}
+.open-row input { padding: 3px 5px; font-size: 11.5px; }
+.open-preview {
+  display: block; width: 100%; margin: 8px 0;
+  background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 6px;
+}
+.open-empty { font-size: 11px; }
+
+/* ---- properties: link stiffness grid */
+.link-stiff { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+.link-stiff label {
+  display: flex; flex-direction: column; gap: 2px;
+  font-size: 9.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .4px;
+}
+.link-stiff input { padding: 3px 6px; font-size: 11.5px; }
+
+/* ---- pushover editor card */
+.po-grav { margin-top: 10px; background: var(--surface-1); }
+.po-hinges { margin-top: 10px; }
+.po-defrow { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.po-defrow .rs-field input { width: 110px; }
+.po-count { font-size: 11px; margin-bottom: 4px; }
+.po-pick {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: 8px; padding: 7px 8px;
+  background: var(--surface-1); border: 1px dashed var(--border); border-radius: 6px;
+}
+.po-pick select, .po-pick input { width: auto; font-size: 11.5px; padding: 3px 6px; }
+.po-pick select.po-mem { min-width: 150px; }
+.po-pick input { width: 78px; }
+.po-rows { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; max-height: 220px; overflow-y: auto; }
+.po-row {
+  display: grid; grid-template-columns: 110px 1fr 96px 22px; gap: 8px; align-items: center;
+  background: var(--surface-1); border: 1px solid var(--border-soft);
+  border-radius: 6px; padding: 3px 8px; font-size: 11.5px;
+}
+.po-row.head {
+  background: none; border-color: transparent; position: sticky; top: 0;
+  font-size: 9.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .4px;
+}
+.po-row b { font-weight: 600; color: var(--text-1); }
+.po-row input { padding: 2px 6px; font-size: 11.5px; text-align: right; }
+
+/* ---- pushover results tab */
+.po-warnings {
+  display: flex; flex-direction: column; gap: 6px; flex: none;
+}
+.po-warnings .po-warn-item {
+  font-size: 12px; color: var(--amber); background: var(--amber-ghost);
+  border: 1px solid rgba(229, 165, 10, 0.35); border-radius: 6px;
+  padding: 7px 12px;
+}
+#poChart { grid-template-columns: minmax(420px, 720px); }
+
 /* ------------------------------------------------ scrollbars */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }

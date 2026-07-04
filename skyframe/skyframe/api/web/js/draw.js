@@ -1,7 +1,9 @@
 /* SkyFrame plan editor — 2D story-plan SVG editor with grid snapping,
-   pan/zoom, draw tools (column/beam/wall/slab), select & erase.
+   pan/zoom, draw tools (column/beam/wall/slab/link), select & erase.
    Owns only view + interaction; model mutations happen in app.js via
    the onDraw / onErase / onSelect callbacks. */
+
+import { zigzagPoints } from "./elev.js";
 
 const NS = "http://www.w3.org/2000/svg";
 const el = (tag, attrs = {}) => {
@@ -20,6 +22,8 @@ const C = {
   wall: "rgba(95, 143, 201, 0.85)",
   slabFill: "rgba(154, 167, 180, 0.14)",
   slabEdge: "rgba(154, 167, 180, 0.45)",
+  link: "#34c384",                        // green — link/spring glyph (v0.5)
+  linkRubber: "rgba(52, 195, 132, 0.9)",
   sel: "#35b5e5",
   snap: "#35b5e5",
   rubber: "rgba(53, 181, 229, 0.9)",
@@ -170,9 +174,15 @@ export class PlanEditor {
     for (const s of (m.shells || [])) {
       if (s.story !== story || s.kind !== "slab") continue;
       const seld = isSel("shell", s.uid);
-      const pts = s.corners.map(c => `${c[0]},${c[1]}`).join(" ");
-      this.gElems.appendChild(el("polygon", {
-        points: pts, fill: seld ? "rgba(53,181,229,0.18)" : C.slabFill,
+      // v0.5: slab openings render as even-odd cutouts in plan
+      let d = s.corners.map((c, i) => `${i ? "L" : "M"}${c[0]},${c[1]}`).join(" ") + " Z";
+      for (const o of (s.openings || [])) {
+        const q = openingPlanQuad(s.corners, o);
+        d += " " + q.map((p, i) => `${i ? "L" : "M"}${p[0]},${p[1]}`).join(" ") + " Z";
+      }
+      this.gElems.appendChild(el("path", {
+        d, "fill-rule": "evenodd",
+        fill: seld ? "rgba(53,181,229,0.18)" : C.slabFill,
         stroke: seld ? C.sel : C.slabEdge,
         "stroke-width": seld ? 2 : 1.25, "vector-effect": "non-scaling-stroke",
         "data-ref": `shell:${s.uid}`,
@@ -224,6 +234,29 @@ export class PlanEditor {
         "data-ref": `member:${mm.uid}`,
       }));
     }
+    // v0.5: links whose endpoints lie within the current story's z-span —
+    // green zigzag spring glyphs on top of everything
+    for (const lk of this._storyLinks()) {
+      const seld = isSel("link", lk.uid);
+      this.gElems.appendChild(el("polyline", {
+        points: zigzagPoints(lk.pi[0], lk.pi[1], lk.pj[0], lk.pj[1], 0.16),
+        fill: "none",
+        stroke: seld ? C.sel : C.link, "stroke-width": seld ? 2.5 : 1.8,
+        "stroke-linejoin": "round", "vector-effect": "non-scaling-stroke",
+        "data-ref": `link:${lk.uid}`,
+      }));
+    }
+  }
+
+  /** Links visible on the current story plan (both endpoint z within span). */
+  _storyLinks() {
+    const m = this.opts.getModel();
+    if (!m || !m.links || !m.links.length) return [];
+    const st = m.stories.find(s => s.name === this.opts.getStory());
+    if (!st) return [];
+    const zb = st.elevation - st.height - 1e-6, zt = st.elevation + 1e-6;
+    return m.links.filter(l =>
+      l.pi[2] > zb && l.pi[2] <= zt && l.pj[2] > zb && l.pj[2] <= zt);
   }
 
   _renderLabels() {
@@ -307,6 +340,10 @@ export class PlanEditor {
       if (distToSeg(w.x, w.y, mm.pi[0], mm.pi[1], mm.pj[0], mm.pj[1]) <= tol)
         out.push({ type: "member", uid: mm.uid });
     }
+    for (const lk of this._storyLinks()) {
+      if (distToSeg(w.x, w.y, lk.pi[0], lk.pi[1], lk.pj[0], lk.pj[1]) <= Math.max(tol, 0.2))
+        out.push({ type: "link", uid: lk.uid });
+    }
     for (const s of (m.shells || [])) {
       if (s.story !== story || s.kind !== "wall") continue;
       const [a, b] = [s.corners[0], s.corners[1]];
@@ -359,6 +396,11 @@ export class PlanEditor {
       const cy = s.corners.reduce((a, c) => a + c[1], 0) / 4;
       if (s.corners.some(c => inBox(c[0], c[1])) || inBox(cx, cy))
         refs.push({ type: "shell", uid: s.uid });
+    }
+    for (const lk of this._storyLinks()) {
+      if (inBox(lk.pi[0], lk.pi[1]) || inBox(lk.pj[0], lk.pj[1]) ||
+          inBox((lk.pi[0] + lk.pj[0]) / 2, (lk.pi[1] + lk.pj[1]) / 2))
+        refs.push({ type: "link", uid: lk.uid });
     }
     return refs;
   }
@@ -460,10 +502,11 @@ export class PlanEditor {
       case "beam":
       case "wall":
       case "brace":
+      case "link":
         if (!this.pending) this.pending = pt;
         else if (Math.hypot(pt.x - this.pending.x, pt.y - this.pending.y) > 1e-9) {
           this.opts.onDraw(this.tool, { p1: this.pending, p2: pt });
-          this.pending = pt;          // chain drawing, Esc to stop
+          this.pending = this.tool === "link" ? null : pt;   // chain, Esc stops
         }
         break;
       case "slab": {
@@ -546,7 +589,8 @@ export class PlanEditor {
       } else {
         g.appendChild(el("line", {
           x1, y1, x2, y2,
-          stroke: this.tool === "brace" ? C.braceRubber : C.rubber,
+          stroke: this.tool === "brace" ? C.braceRubber
+            : this.tool === "link" ? C.linkRubber : C.rubber,
           "stroke-width": this.tool === "wall" ? 5 : 2, "stroke-dasharray": "7 5",
           "stroke-linecap": "round", opacity: 0.9,
         }));
@@ -579,6 +623,14 @@ export class PlanEditor {
 }
 
 /* ------------------------------------------------ geometry helpers */
+/** Plan-space (x, y) quad of a slab opening via bilinear mapping. */
+function openingPlanQuad(corners, o) {
+  const [c0, c1, c2, c3] = corners;
+  const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  const at = (u, v) => lerp(lerp(c0, c1, u), lerp(c3, c2, u), v);
+  return [[o.u0, o.v0], [o.u1, o.v0], [o.u1, o.v1], [o.u0, o.v1]].map(([u, v]) => at(u, v));
+}
+
 function distToSeg(px, py, x1, y1, x2, y2) {
   const dx = x2 - x1, dy = y2 - y1;
   const l2 = dx * dx + dy * dy;
