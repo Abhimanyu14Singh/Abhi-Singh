@@ -26,7 +26,8 @@
         <svg viewBox="0 0 8 5" width="8" height="5" aria-hidden="true"><path d="M1 1l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
       </button>
       <div class="menu hidden" id="fileMenu" role="menu">
-        <button class="menu-item" data-act="new" role="menuitem">New <span class="menu-hint">quick defaults</span></button>
+        <button class="menu-item" data-act="new" role="menuitem">New… <span class="menu-hint">template gallery</span></button>
+        <button class="menu-item" data-act="import" role="menuitem">Import… <span class="menu-hint">DXF / e2k / IFC</span></button>
         <button class="menu-item" data-act="open" role="menuitem">Open… <span class="menu-hint">saved models</span></button>
         <div class="menu-sep"></div>
         <button class="menu-item" data-act="save" role="menuitem">Save</button>
@@ -153,6 +154,7 @@
           <button data-target="ls-rs">RS cases <span class="nav-count" id="cnt-rs">0</span></button>
           <button data-target="ls-th">TH cases <span class="nav-count" id="cnt-th">0</span></button>
           <button data-target="ls-pushover">Pushover <span class="nav-count" id="cnt-pushover">0</span></button>
+          <button data-target="ls-staged">Staged <span class="nav-count" id="cnt-staged">0</span></button>
           <button data-target="ls-combos">Combos <span class="nav-count" id="cnt-combos">0</span></button>
           <button data-target="ls-mass">Mass source</button>
         </div>
@@ -309,9 +311,11 @@
         <button class="tab" data-tab="modal" role="tab">Modal</button>
         <button class="tab" data-tab="reactions" role="tab">Reactions</button>
         <button class="tab" data-tab="forces" role="tab">Member Forces</button>
+        <button class="tab" data-tab="design" role="tab" id="designTabBtn">Design</button>
         <button class="tab hidden" data-tab="th" role="tab" id="thTabBtn">Time History</button>
         <button class="tab hidden" data-tab="pushover" role="tab" id="poTabBtn">Pushover</button>
         <div class="tabbar-spacer"></div>
+        <span class="staged-badge hidden" id="stagedBadge" title="Staged construction vs one-shot analysis — max column-axial difference"></span>
         <div class="seg-toggle env-toggle hidden" id="envToggle" title="Envelope combo — switch tables between the max and min envelope">
           <button class="seg-btn is-active" data-env="max">max</button>
           <button class="seg-btn" data-env="min">min</button>
@@ -474,6 +478,34 @@
         </div>
       </section>
 
+      <!-- ============ DESIGN (v0.6) ============ -->
+      <section class="tabpane" id="pane-design" role="tabpanel">
+        <div class="empty-state" id="empty-design">
+          <div class="empty-art">☑</div>
+          <p>Run analysis to enable preliminary design checks</p>
+        </div>
+        <div class="pane-content hidden" id="content-design">
+          <div class="design-head">
+            <div class="seg-toggle" id="designKindToggle" title="Steel (AISC-style) or concrete (P-M / flexure) screening">
+              <button class="seg-btn is-active" data-dk="steel">Steel</button>
+              <button class="seg-btn" data-dk="concrete">Concrete</button>
+            </div>
+            <span class="prelim-badge" title="These checks are screening-level only — not a substitute for a full code design">PRELIMINARY — screening only</span>
+            <span class="toolbar-spacer"></span>
+            <button class="chip csv-btn" id="csvDesign" title="Download the check table as CSV (unrounded)">⬇ CSV</button>
+          </div>
+          <div class="design-form" id="designForm"></div>
+          <div class="design-summary hidden" id="designSummary"></div>
+          <div class="forces-controls design-table-controls hidden" id="designTableControls">
+            <input type="search" id="designFilter" class="filter-input" placeholder="Filter by uid / kind / status…">
+            <span class="muted" id="designCount"></span>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table design-table" id="designTable"></table>
+          </div>
+        </div>
+      </section>
+
       <!-- ============ TIME HISTORY (v0.4) ============ -->
       <section class="tabpane" id="pane-th" role="tabpanel">
         <div class="empty-state" id="empty-th">
@@ -494,6 +526,17 @@
           <div class="th-charts" id="thCharts"></div>
           <div class="table-scroll">
             <table class="data-table" id="thPeaksTable"></table>
+          </div>
+          <!-- v0.6: nonlinear plastic-hinge run — yielded members + rotations -->
+          <div class="th-nl hidden" id="thNlBlock">
+            <div class="pane-tools th-nl-head">
+              <span class="prelim-badge nl-badge" title="This case ran with Steel01 plastic hinges">NONLINEAR · plastic hinges</span>
+              <span class="muted" id="thYieldNote"></span>
+            </div>
+            <div class="yielded-list" id="thYieldedList"></div>
+            <div class="table-scroll">
+              <table class="data-table" id="thHingeTable"></table>
+            </div>
           </div>
         </div>
       </section>
@@ -658,6 +701,89 @@
       <footer class="modal-foot">
         <span class="muted">Edits apply to the working model — Save Model to persist.</span>
         <button class="btn" id="gridModalDone">Done</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ============ TEMPLATE GALLERY (v0.6) ============ -->
+  <div class="modal-backdrop hidden" id="galleryModal">
+    <div class="modal modal-wide" role="dialog" aria-labelledby="galleryTitle">
+      <header class="modal-head">
+        <h2 id="galleryTitle">New Model</h2>
+        <button class="icon-btn" id="galleryClose" title="Close" aria-label="Close template gallery">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="muted">Start from a template — one click generates the model via the quick-building engine.</p>
+        <div class="gallery-grid" id="galleryGrid"></div>
+      </div>
+      <footer class="modal-foot">
+        <span class="muted">Creating a new model replaces the working model and clears results.</span>
+        <button class="btn" id="galleryCancel">Cancel</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ============ IMPORT (v0.6) ============ -->
+  <div class="modal-backdrop hidden" id="importModal">
+    <div class="modal modal-wide" role="dialog" aria-labelledby="importTitle">
+      <header class="modal-head">
+        <h2 id="importTitle">Import Model</h2>
+        <button class="icon-btn" id="importClose" title="Close" aria-label="Close import dialog">×</button>
+      </header>
+      <div class="modal-body import-body">
+        <div class="seg-toggle import-tabs" id="importFmtTabs" title="Source file format">
+          <button class="seg-btn is-active" data-fmt="dxf">DXF</button>
+          <button class="seg-btn" data-fmt="e2k">e2k</button>
+          <button class="seg-btn" data-fmt="ifc">IFC</button>
+        </div>
+
+        <div class="import-drop" id="importDrop">
+          <input type="file" id="importFile" hidden>
+          <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M12 3v11M7 9l5-5 5 5M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <p>Drop a file here, or <button class="link-3d" id="importBrowse">browse…</button></p>
+          <p class="muted import-fname" id="importFileName">No file selected — a small demo fixture is used if left empty.</p>
+        </div>
+
+        <div class="import-opts hidden" id="importDxfOpts">
+          <h3 class="group-title">DXF options</h3>
+          <div class="import-opt-row">
+            <label class="rs-field"><span>column section</span>
+              <input id="importColSec" type="text" value="COL" spellcheck="false"></label>
+            <label class="rs-field"><span>beam section</span>
+              <input id="importBeamSec" type="text" value="BEAM" spellcheck="false"></label>
+            <label class="rs-field"><span>wall section</span>
+              <input id="importWallSec" type="text" value="SH200" spellcheck="false"></label>
+            <label class="rs-field"><span>unit scale</span>
+              <select id="importUnitScale" class="mini-select">
+                <option value="m">m (1:1)</option>
+                <option value="mm">mm → m</option>
+              </select></label>
+          </div>
+          <div class="import-stories">
+            <div class="import-stories-head">
+              <b>Story heights <span class="unit">m · bottom → top</span></b>
+              <button class="btn btn-small" id="importAddStory">+ Story</button>
+            </div>
+            <div class="import-story-rows" id="importStoryRows"></div>
+          </div>
+        </div>
+
+        <div class="import-preview-wrap">
+          <div class="th-label">File preview <span class="unit">read as text</span></div>
+          <textarea id="importPreview" class="import-preview" readonly spellcheck="false" placeholder="(file contents appear here)"></textarea>
+        </div>
+
+        <div class="import-warnings hidden" id="importWarnings"></div>
+      </div>
+      <footer class="modal-foot">
+        <span class="muted" id="importHint">Import adopts the returned model and clears results.</span>
+        <div class="modal-btns">
+          <button class="btn" id="importCancel">Cancel</button>
+          <button class="btn btn-run" id="importDo">
+            <span class="spinner hidden" id="importSpinner"></span>
+            <span>Import</span>
+          </button>
+        </div>
       </footer>
     </div>
   </div>

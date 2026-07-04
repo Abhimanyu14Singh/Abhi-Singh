@@ -3,7 +3,8 @@
 
 import { Viewer3D, SHELL_COMPONENTS } from "./viewer3d.js";
 import { renderStoryCharts, stationDiagram, timeSeriesChart, pushoverChart } from "./charts.js";
-import { mockModel, mockResults, mockSectionLibrary, mockModelFiles, mockWindPattern } from "./mock.js";
+import { mockModel, mockResults, mockSectionLibrary, mockModelFiles, mockWindPattern,
+  mockDesignSteel, mockDesignConcrete, mockImport } from "./mock.js";
 import { PlanEditor } from "./draw.js";
 import { ElevEditor } from "./elev.js";
 import { LoadsEditor } from "./loads.js";
@@ -47,6 +48,22 @@ const store = {
   view: "plan",          // model-mode editor: "plan" | "elev"
   elevLine: null,        // elevation grid line, e.g. "x:0" | "y:2"
   poCase: null,          // selected pushover case (results tab)
+  // v0.6 — design checks, import, template gallery, staged, nonlinear TH
+  designKind: "steel",   // "steel" | "concrete"
+  designCase: null,      // case/combo checked
+  steelResult: null,     // last steel design response
+  concreteResult: null,  // last concrete design response
+  designSort: { key: "ratio", dir: -1 },
+  designFilter: "",
+  steelFy: 345000,       // kPa
+  concreteFc: 30000,     // kPa
+  rebar: {},             // per-uid rebar overrides (uid -> layout)
+  rebarDefault: { n_top: 2, n_bot: 3, bar_dia: 20, cover: 40, fy: 420000,
+    stirrup_dia: 10, stirrup_spacing: 150, stirrup_legs: 2 },
+  importFmt: "dxf",
+  importText: "",
+  importFileName: "",
+  importStories: [3.2, 3.2],
 };
 
 const $ = id => document.getElementById(id);
@@ -117,6 +134,36 @@ async function postModel(payload) {
     return payload;                                // mock backend accepts locally
   }
   return api("/api/model", payload);
+}
+
+/* ---- v0.6: design checks. Live path syncs the working model first (the
+   backend runs a fresh analysis of the CURRENT model), then POSTs.
+   Mock (or a missing endpoint) synthesizes checks from the mock results. */
+async function designCheck(kind, body) {
+  if (!store.mock) {
+    try {
+      const payload = JSON.parse(JSON.stringify(store.model));
+      delete payload._mock_params;
+      await postModel(payload);
+      return await api(`/api/design/${kind}`, body);
+    } catch (e) {
+      console.warn(`Design ${kind} endpoint unavailable, using mock:`, e.message);
+    }
+  }
+  await new Promise(r => setTimeout(r, 250));
+  return kind === "steel" ? mockDesignSteel(store.model, body)
+    : mockDesignConcrete(store.model, body);
+}
+
+/* ---- v0.6: model importers. Reads the returned {model, warnings}; the
+   live backend also makes it the current model. */
+async function importModelFile(fmt, body) {
+  if (!store.mock) {
+    try { return await api(`/api/import/${fmt}`, body); }
+    catch (e) { console.warn(`Import ${fmt} endpoint unavailable, using mock:`, e.message); }
+  }
+  await new Promise(r => setTimeout(r, 250));
+  return mockImport(fmt, body);
 }
 
 /* ---- v0.4: wind pattern generation.
@@ -213,7 +260,9 @@ function memberTooltip(seg) {
    never collide with a static case/combo name; caseLabel() renders them
    as "RS: <name>". RS values are POSITIVE ENVELOPES. */
 const isRsCase = name => typeof name === "string" && name.startsWith("rs:");
-const caseLabel = name => isRsCase(name) ? `RS: ${name.slice(3)}` : (name || "");
+const isStagedCase = name => typeof name === "string" && name.startsWith("staged:");
+const caseLabel = name => isRsCase(name) ? `RS: ${name.slice(3)}`
+  : isStagedCase(name) ? `Staged: ${name.slice(7)}` : (name || "");
 
 function caseNames() {
   if (!store.results) return [];
@@ -221,6 +270,7 @@ function caseNames() {
     ...Object.keys(store.results.cases || {}),
     ...Object.keys(store.results.combos || {}),
     ...Object.keys(store.results.rs_cases || {}).map(n => `rs:${n}`),
+    ...Object.keys(store.results.staged || {}).map(n => `staged:${n}`),
   ];
 }
 
@@ -229,7 +279,22 @@ function caseData() {
   if (!r || !store.caseName) return null;
   if (isRsCase(store.caseName))
     return (r.rs_cases && r.rs_cases[store.caseName.slice(3)]) || null;
+  if (isStagedCase(store.caseName))
+    return (r.staged && r.staged[store.caseName.slice(7)]) || null;
   return (r.cases && r.cases[store.caseName]) || (r.combos && r.combos[store.caseName]) || null;
+}
+
+/** v0.6 — staged comparison badge (max column-axial vs one-shot). */
+function syncStagedBadge() {
+  const badge = $("stagedBadge");
+  const cd = caseData();
+  const cmp = cd && cd.comparison;
+  const show = isStagedCase(store.caseName) && cmp;
+  badge.classList.toggle("hidden", !show);
+  if (show) {
+    const pct = cmp.column_axial_max_diff_pct || 0;
+    badge.textContent = `vs one-shot · Δ col-axial ${fmt(pct, 2)} %`;
+  }
 }
 
 /* ---- v0.4: envelope combos — tables honour the max/min toggle.
@@ -268,6 +333,8 @@ function rebuildCaseSelect() {
   mkGroup("Combos", Object.keys(r.combos || {}).map(n => [n, n]));
   mkGroup("Response spectrum — envelopes",
     Object.keys(r.rs_cases || {}).map(n => [`rs:${n}`, `RS: ${n}`]));
+  mkGroup("Staged construction",
+    Object.keys(r.staged || {}).map(n => [`staged:${n}`, `Staged: ${n}`]));
   if (!store.caseName || !caseNames().includes(store.caseName)) {
     // prefer a lateral case (non-trivial story results) for the first look
     const names = caseNames();
@@ -320,6 +387,7 @@ function syncLoadsNav() {
   $("cnt-rs").textContent = Object.keys(m.rs_cases || {}).length;
   $("cnt-th").textContent = Object.keys(m.th_cases || {}).length;
   $("cnt-pushover").textContent = Object.keys(m.pushover_cases || {}).length;
+  $("cnt-staged").textContent = Object.keys(m.staged_cases || {}).length;
   $("cnt-combos").textContent = Object.keys(m.combos || {}).length;
 }
 
@@ -1424,6 +1492,9 @@ function adoptModel(modelDict, fileName) {
   store.thCase = null;
   store.thStory = null;
   store.poCase = null;                            // v0.5
+  store.steelResult = null;                       // v0.6
+  store.concreteResult = null;
+  store.designCase = null;
   clearDirty();
   closeMemberPanel();
   viewer.setResults(null);
@@ -1467,17 +1538,187 @@ function toggleFileMenu(open) {
   $("fileMenuBtn").setAttribute("aria-expanded", String(want));
 }
 
-async function fileNew() {
-  const ok = await askConfirm("New model",
-    (store.dirty ? "You have unsaved changes. " : "") +
-    "Start a new model with quick-building defaults?", "New model");
-  if (!ok) return;
+/* ---- v0.6: template gallery (File → New) */
+const TEMPLATES = [
+  { id: "defaults", name: "Quick defaults", sub: "3×2 bays · 4 stories", stories: 4, bays: 3,
+    params: {} },
+  { id: "office4", name: "Low-rise office", sub: "4 stories · 4×3 bays", stories: 4, bays: 4,
+    params: { name: "Office 4-story", stories: 4, bays_x: 4, bays_y: 3,
+      bay_width_x: 7.5, bay_width_y: 6, story_height: 3.6 } },
+  { id: "mid12", name: "Mid-rise tower", sub: "12 stories · 4×4 bays", stories: 12, bays: 4,
+    params: { name: "Mid-rise 12-story", stories: 12, bays_x: 4, bays_y: 4,
+      bay_width_x: 6.5, bay_width_y: 6.5, column_size: 0.65 } },
+  { id: "tall20", name: "Tall core tower", sub: "20 stories · 3×3 bays", stories: 20, bays: 3,
+    params: { name: "Tall core 20-story", stories: 20, bays_x: 3, bays_y: 3,
+      bay_width_x: 6, bay_width_y: 6, column_size: 0.8, story_height: 3.4 } },
+  { id: "portal", name: "Single-bay portal", sub: "1 story · 1×1 bay", stories: 1, bays: 1,
+    params: { name: "Portal frame", stories: 1, bays_x: 1, bays_y: 1,
+      bay_width_x: 8, bay_width_y: 6, story_height: 4 } },
+];
+
+/** Tiny elevation-style SVG thumbnail: stacked floors × bays. */
+function templateThumb(stories, bays) {
+  const W = 132, H = 92, P = 10;
+  const gw = W - 2 * P, gh = H - 2 * P;
+  const ns = Math.min(stories, 12), nb = Math.min(bays, 5);
+  const dy = gh / ns, dx = gw / nb;
+  let s = `<svg viewBox="0 0 ${W} ${H}" class="tpl-thumb" aria-hidden="true">`;
+  s += `<rect x="0" y="0" width="${W}" height="${H}" rx="6" fill="rgba(53,181,229,0.05)"/>`;
+  for (let i = 0; i <= nb; i++) {
+    const x = P + i * dx;
+    s += `<line x1="${x}" y1="${P}" x2="${x}" y2="${H - P}" stroke="rgba(125,168,216,0.7)" stroke-width="1.3"/>`;
+  }
+  for (let j = 0; j <= ns; j++) {
+    const y = P + j * dy;
+    s += `<line x1="${P}" y1="${y}" x2="${W - P}" y2="${y}" stroke="rgba(154,167,180,0.55)" stroke-width="1.1"/>`;
+  }
+  return s + `</svg>`;
+}
+
+function openGallery() {
+  const grid = $("galleryGrid");
+  grid.innerHTML = TEMPLATES.map(t => `
+    <button class="gallery-card" data-id="${t.id}" title="Generate ${esc(t.name)}">
+      ${templateThumb(t.stories, t.bays)}
+      <div class="gallery-meta"><b>${esc(t.name)}</b><span class="muted">${esc(t.sub)}</span></div>
+    </button>`).join("");
+  grid.querySelectorAll(".gallery-card").forEach(btn =>
+    btn.addEventListener("click", () => pickTemplate(btn.dataset.id)));
+  $("galleryModal").classList.remove("hidden");
+}
+
+async function pickTemplate(id) {
+  const tpl = TEMPLATES.find(t => t.id === id);
+  if (!tpl) return;
+  if (store.dirty) {
+    const ok = await askConfirm("New model",
+      "You have unsaved changes — start a new model and discard them?", "New model");
+    if (!ok) return;
+  }
   try {
-    adoptModel(await generateModel({}), null);
-    toast("New model", "Quick-building defaults loaded", "info", 4000);
+    adoptModel(await generateModel(tpl.params), null);
+    $("galleryModal").classList.add("hidden");
+    toast("New model", `${tpl.name} generated`, "info", 4000);
   } catch (err) {
     toast("New model failed", err.message, "error");
   }
+}
+
+function fileNew() { openGallery(); }
+
+/* ================================================================
+   v0.6 — IMPORT DIALOG (DXF / e2k / IFC)
+   ================================================================ */
+function openImportDialog() {
+  store.importText = "";
+  store.importFileName = "";
+  setImportFmt(store.importFmt || "dxf");
+  $("importPreview").value = "";
+  $("importFileName").textContent = "No file selected — a small demo fixture is used if left empty.";
+  $("importWarnings").classList.add("hidden");
+  $("importWarnings").innerHTML = "";
+  $("importModal").classList.remove("hidden");
+}
+
+function setImportFmt(fmt) {
+  store.importFmt = ["dxf", "e2k", "ifc"].includes(fmt) ? fmt : "dxf";
+  document.querySelectorAll("#importFmtTabs .seg-btn").forEach(b =>
+    b.classList.toggle("is-active", b.dataset.fmt === store.importFmt));
+  $("importDxfOpts").classList.toggle("hidden", store.importFmt !== "dxf");
+  if (store.importFmt === "dxf") renderImportStories();
+  $("importHint").textContent = store.importFmt === "dxf"
+    ? "DXF import maps LINE/POLYLINE entities to frames using the story heights & sections below."
+    : `${store.importFmt.toUpperCase()} import reads the model geometry directly — no extra options.`;
+}
+
+function renderImportStories() {
+  const box = $("importStoryRows");
+  box.innerHTML = store.importStories.map((h, i) => `
+    <div class="import-story-row" data-i="${i}">
+      <span class="isr-label">Story ${i + 1}</span>
+      <input type="number" step="0.1" min="0.5" value="${h}" data-i="${i}">
+      <button class="chip-x" data-del="${i}" title="Remove story"${store.importStories.length <= 1 ? " disabled" : ""}>✕</button>
+    </div>`).join("");
+  box.querySelectorAll("input").forEach(inp =>
+    inp.addEventListener("change", () => {
+      const v = parseFloat(inp.value);
+      const i = parseInt(inp.dataset.i, 10);
+      if (isFinite(v) && v > 0) store.importStories[i] = v;
+      else inp.value = String(store.importStories[i]);
+    }));
+  box.querySelectorAll("[data-del]").forEach(btn =>
+    btn.addEventListener("click", () => {
+      if (store.importStories.length <= 1) return;
+      store.importStories.splice(parseInt(btn.dataset.del, 10), 1);
+      renderImportStories();
+    }));
+}
+
+function readImportFile(file) {
+  if (!file) return;
+  store.importFileName = file.name;
+  $("importFileName").textContent = `${file.name} · ${file.size} bytes`;
+  const reader = new FileReader();
+  reader.onload = () => {
+    store.importText = String(reader.result || "");
+    $("importPreview").value = store.importText.slice(0, 4000) +
+      (store.importText.length > 4000 ? "\n… (truncated)" : "");
+  };
+  reader.onerror = () => toast("File read failed", file.name, "error");
+  reader.readAsText(file);
+}
+
+async function doImport() {
+  const btn = $("importDo");
+  if (btn.disabled) return;
+  const fmt = store.importFmt;
+  const body = { text: store.importText || "SKYFRAME-DEMO-FIXTURE" };
+  if (fmt === "dxf") {
+    body.stories = store.importStories.slice();
+    body.column_section = $("importColSec").value.trim() || "COL";
+    body.beam_section = $("importBeamSec").value.trim() || "BEAM";
+    body.wall_section = $("importWallSec").value.trim() || "SH200";
+    body.unit_scale = $("importUnitScale").value;
+  }
+  if (store.dirty) {
+    const ok = await askConfirm("Import model",
+      "You have unsaved changes — import and discard them?", "Import");
+    if (!ok) return;
+  }
+  btn.disabled = true;
+  $("importSpinner").classList.remove("hidden");
+  try {
+    const res = await importModelFile(fmt, body);
+    if (!res || !res.model) throw new Error("importer returned no model");
+    adoptModel(res.model, null);
+    const warnings = res.warnings || [];
+    // model adopted; keep the dialog up to display the warnings expandable list
+    toast("Model imported",
+      `${fmt.toUpperCase()} · ${warnings.length} warning${warnings.length === 1 ? "" : "s"} · adopted as the working model`,
+      "info", 5000);
+    showImportWarnings(warnings, true);
+  } catch (err) {
+    // 400 / parse errors → error toast, keep the dialog open
+    showImportWarnings([], false);
+    toast("Import failed", err.message, "error", 8000);
+  } finally {
+    $("importSpinner").classList.add("hidden");
+    btn.disabled = false;
+  }
+}
+
+/** Render the warnings expandable list inside the import dialog. */
+function showImportWarnings(warnings, ok) {
+  const box = $("importWarnings");
+  if (!warnings || !warnings.length) {
+    box.classList.toggle("hidden", !ok);
+    box.innerHTML = ok ? `<p class="import-ok">✓ Imported with no warnings.</p>` : "";
+    return;
+  }
+  box.classList.remove("hidden");
+  box.innerHTML =
+    `<details open class="warn-details"><summary>${ok ? "✓ Imported — " : ""}${warnings.length} warning${warnings.length === 1 ? "" : "s"}</summary>` +
+    `<ul>${warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul></details>`;
 }
 
 /* ---- Open dialog */
@@ -1705,10 +1946,12 @@ function renderSummary() {
 }
 
 function setResultsAvailable(on) {
-  for (const t of ["story", "modal", "reactions", "forces"]) {
+  for (const t of ["story", "modal", "reactions", "forces", "design"]) {
     $(`empty-${t}`).classList.toggle("hidden", on);
     $(`content-${t}`).classList.toggle("hidden", !on);
   }
+  if (on) { renderDesignForm(); renderDesignTable(); }
+  else if (store.tab === "design") switchTab("view3d");
   $("chipDeformed").disabled = !on;
   $("chipMode").disabled = !on;
   $("reportBtn").disabled = !on;                                  // v0.4
@@ -1733,6 +1976,7 @@ function setResultsAvailable(on) {
 function renderResultsTabs() {
   if (!store.results || !caseData()) return;
   syncEnvToggle();
+  syncStagedBadge();
   renderStoryTab();
   renderModalTab();
   renderReactionsTab();
@@ -1990,6 +2234,44 @@ function renderThTab() {
     <td class="txt">peak base shear</td><td></td>
     <td>${fmt(pb.FX || 0, 1)} kN</td><td>${fmt(pb.FY || 0, 1)} kN</td></tr>`;
   $("thPeaksTable").innerHTML = head + `<tbody>${rows}${totals}</tbody>`;
+
+  /* v0.6 — nonlinear (plastic-hinge) run: yielded list + hinge-rotation table */
+  const isNL = !!tc.nonlinear && (td.hinge_rotations || td.yielded);
+  const nlBlock = $("thNlBlock");
+  nlBlock.classList.toggle("hidden", !isNL);
+  if (isNL) {
+    const yielded = td.yielded || [];
+    viewer.setHighlight(yielded, "#e0a020");        // amber yielded in 3D
+    const memBy = {};
+    for (const mm of (r.members || [])) memBy[mm.uid] = mm;
+    const yl = $("thYieldedList");
+    yl.innerHTML = yielded.length
+      ? yielded.map(uid => `<button class="yield-chip" data-uid="${esc(uid)}" title="Show ${esc(uid)} in 3D">${esc(uid)}</button>`).join("")
+      : `<span class="muted">No hinges reached yield in this record.</span>`;
+    yl.querySelectorAll(".yield-chip").forEach(b =>
+      b.addEventListener("click", () => selectMemberFrom3D(b.dataset.uid)));
+    const yset = new Set(yielded);
+    const hrows = Object.entries(td.hinge_rotations || {}).sort((a, b) => b[1] - a[1]);
+    const hhead = `<thead><tr><th class="txt">Member</th><th class="txt">Kind</th>
+      <th class="txt">Story</th><th>peak θ mrad</th><th class="txt">State</th></tr></thead>`;
+    const hbody = hrows.map(([uid, rot]) => {
+      const mm = memBy[uid] || {};
+      const y = yset.has(uid);
+      return `<tr class="${y ? "over" : ""}">
+        <td class="txt">${esc(uid)}</td>
+        <td class="txt dim">${esc(mm.kind || "—")}</td>
+        <td class="txt dim">${esc(mm.story || "—")}</td>
+        <td>${fmt(rot * 1000, 2)}</td>
+        <td class="txt">${y ? `<span class="status-chip st-ng">yielded</span>` : `<span class="status-chip st-ok">elastic</span>`}</td></tr>`;
+    }).join("");
+    $("thHingeTable").innerHTML = hhead +
+      `<tbody>${hbody || `<tr><td class="txt dim">No hinge rotations reported</td></tr>`}</tbody>`;
+    $("thYieldNote").textContent =
+      `${yielded.length} of ${hrows.length} hinges yielded · amber in 3D · ${store.thCase}`;
+  } else {
+    // clear a stale amber highlight when the active case is linear
+    if (viewer.highlight.uids) viewer.setHighlight(null);
+  }
 }
 
 /* ================================================================
@@ -2066,6 +2348,228 @@ function renderPoTab() {
     `<tbody>${body || `<tr><td class="txt dim">No hinge rotations reported</td></tr>`}</tbody>`;
   $("poHingeNote").textContent =
     `${rows.length} hinges · ${store.poCase} — plastic rotations at target drift, sorted descending`;
+}
+
+/* ================================================================
+   v0.6 — DESIGN CHECKS (steel / concrete)
+   ================================================================ */
+function designResult() {
+  return store.designKind === "concrete" ? store.concreteResult : store.steelResult;
+}
+
+/** Case options for the design "Check" selectors (cases + combos only). */
+function designCaseOptions() {
+  const r = store.results;
+  if (!r) return [];
+  return [
+    ...Object.keys(r.cases || {}),
+    ...Object.keys(r.combos || {}),
+  ];
+}
+
+function setDesignKind(kind) {
+  store.designKind = kind === "concrete" ? "concrete" : "steel";
+  document.querySelectorAll("#designKindToggle .seg-btn").forEach(b =>
+    b.classList.toggle("is-active", b.dataset.dk === store.designKind));
+  renderDesignForm();
+  renderDesignTable();
+}
+
+/** The check control form: case selector, params (Fy or rebar), Check button. */
+function renderDesignForm() {
+  const form = $("designForm");
+  if (!store.results) { form.innerHTML = ""; return; }
+  const opts = designCaseOptions();
+  if (!store.designCase || !opts.includes(store.designCase)) store.designCase = opts[0] || null;
+  const caseSel = `<label class="rs-field"><span>case / combo</span>
+    <select id="designCaseSelect">${opts.map(n =>
+      `<option value="${esc(n)}"${n === store.designCase ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label>`;
+
+  if (store.designKind === "steel") {
+    form.innerHTML = `<div class="design-form-row">
+      ${caseSel}
+      <label class="rs-field"><span>Fy <span class="unit">kPa</span></span>
+        <input id="designFy" type="number" min="1" step="5000" value="${store.steelFy}"></label>
+      <button class="btn btn-run design-check" id="designCheckBtn">
+        <span class="spinner hidden" id="designSpinner"></span><span>Check steel</span></button>
+    </div>
+    <p class="muted design-note">AISC-H1 axial-flexure interaction screening — φPn, φMn from section properties.</p>`;
+    $("designFy").addEventListener("change", e => {
+      const v = parseFloat(e.target.value);
+      if (isFinite(v) && v > 0) store.steelFy = v;
+    });
+  } else {
+    const d = store.rebarDefault;
+    const numField = (key, label, unit, step) =>
+      `<label class="rs-field rebar-field"><span>${label}${unit ? ` <span class="unit">${unit}</span>` : ""}</span>
+        <input data-rb="${key}" type="number" step="${step}" min="0" value="${d[key]}"></label>`;
+    form.innerHTML = `<div class="design-form-row">
+      ${caseSel}
+      <label class="rs-field"><span>f'c <span class="unit">kPa</span></span>
+        <input id="designFc" type="number" min="1" step="5000" value="${store.concreteFc}"></label>
+    </div>
+    <div class="rebar-panel">
+      <div class="rebar-panel-head"><b>Default rebar</b>
+        <span class="muted">applied to all beams &amp; columns for this screening</span></div>
+      <div class="rebar-grid">
+        ${numField("n_top", "n top", "", "1")}
+        ${numField("n_bot", "n bot", "", "1")}
+        ${numField("bar_dia", "bar ⌀", "mm", "2")}
+        ${numField("cover", "cover", "mm", "5")}
+        ${numField("fy", "fy", "kPa", "5000")}
+        ${numField("stirrup_dia", "stirrup ⌀", "mm", "2")}
+        ${numField("stirrup_spacing", "stirrup s", "mm", "25")}
+        ${numField("stirrup_legs", "legs", "", "1")}
+      </div>
+    </div>
+    <div class="design-form-row">
+      <button class="btn btn-run design-check" id="designCheckBtn">
+        <span class="spinner hidden" id="designSpinner"></span><span>Check concrete</span></button>
+      <p class="muted design-note">P-M / flexure screening from the rebar layout — not a full column-design check.</p>
+    </div>`;
+    form.querySelectorAll("input[data-rb]").forEach(inp =>
+      inp.addEventListener("change", () => {
+        const v = parseFloat(inp.value);
+        if (isFinite(v) && v >= 0) store.rebarDefault[inp.dataset.rb] = v;
+      }));
+    $("designFc").addEventListener("change", e => {
+      const v = parseFloat(e.target.value);
+      if (isFinite(v) && v > 0) store.concreteFc = v;
+    });
+  }
+  $("designCaseSelect").addEventListener("change", e => { store.designCase = e.target.value; });
+  $("designCheckBtn").addEventListener("click", runDesignCheck);
+}
+
+async function runDesignCheck() {
+  const btn = $("designCheckBtn");
+  if (btn.disabled) return;
+  btn.disabled = true;
+  $("designSpinner").classList.remove("hidden");
+  try {
+    if (store.designKind === "steel") {
+      store.steelResult = await designCheck("steel",
+        { case: store.designCase, Fy: store.steelFy });
+    } else {
+      // apply the default rebar to every beam & column
+      const rebar = {};
+      for (const mm of store.model.members) {
+        if (mm.kind === "column" || mm.kind === "beam")
+          rebar[mm.uid] = { ...store.rebarDefault };
+      }
+      store.rebar = rebar;
+      store.concreteResult = await designCheck("concrete",
+        { case: store.designCase, fc: store.concreteFc, rebar });
+    }
+    renderDesignTable();
+    const res = designResult();
+    toast("Design check complete",
+      `${store.designKind} · ${res.summary.ok} OK / ${res.summary.ng} NG · max ratio ${fmt(res.summary.max_ratio, 2)}`,
+      res.summary.ng ? "error" : "info", 5000);
+  } catch (err) {
+    toast("Design check failed", err.message, "error", 8000);
+  } finally {
+    btn.disabled = false;
+    $("designSpinner").classList.add("hidden");
+  }
+}
+
+const DESIGN_COLS = [
+  { key: "uid", label: "Member", txt: true },
+  { key: "kind", label: "Kind", txt: true },
+  { key: "section", label: "Section", txt: true },
+  { key: "Pu", label: "Pu kN" },
+  { key: "Mu33", label: "M33 kN·m" },
+  { key: "Mu22", label: "M22 kN·m" },
+  { key: "phiPn", label: "φPn kN" },
+  { key: "phiMn33", label: "φMn33" },
+  { key: "ratio", label: "Ratio" },
+  { key: "equation", label: "Eqn", txt: true },
+  { key: "status", label: "Status", txt: true },
+];
+
+function designRows() {
+  const res = designResult();
+  if (!res) return [];
+  const q = store.designFilter.trim().toLowerCase();
+  let rows = res.checks;
+  if (q) rows = rows.filter(c =>
+    c.uid.toLowerCase().includes(q) || (c.kind || "").toLowerCase().includes(q) ||
+    (c.status || "").toLowerCase().includes(q));
+  const { key, dir } = store.designSort;
+  rows = [...rows].sort((a, b) => {
+    const va = a[key], vb = b[key];
+    if (typeof va === "string") return String(va).localeCompare(String(vb), undefined, { numeric: true }) * dir;
+    return ((va || 0) - (vb || 0)) * dir;
+  });
+  return rows;
+}
+
+function renderDesignTable() {
+  const res = designResult();
+  const summary = $("designSummary");
+  const ctrls = $("designTableControls");
+  const table = $("designTable");
+  if (!res) {
+    summary.classList.add("hidden");
+    ctrls.classList.add("hidden");
+    table.innerHTML = `<tbody><tr><td class="txt dim">No ${store.designKind} check yet — set parameters and press “Check”.</td></tr></tbody>`;
+    return;
+  }
+  const s = res.summary;
+  summary.classList.remove("hidden");
+  summary.innerHTML =
+    `<span class="ds-item"><b>${s.n}</b> checked</span>` +
+    `<span class="ds-item ds-ok"><b>${s.ok}</b> OK</span>` +
+    `<span class="ds-item ds-ng"><b>${s.ng}</b> NG</span>` +
+    `<span class="ds-item ds-na"><b>${s.na}</b> N/A</span>` +
+    `<span class="ds-item">max ratio <b class="${s.max_ratio > 1 ? "ds-over" : ""}">${fmt(s.max_ratio, 3)}</b></span>` +
+    `<span class="ds-item">governing <b>${esc(s.governing || "—")}</b></span>` +
+    `<span class="ds-item ds-prelim">PRELIMINARY · ${esc(res.case)}</span>`;
+
+  ctrls.classList.remove("hidden");
+  const rows = designRows();
+  const { key: sk, dir } = store.designSort;
+  const head = `<thead><tr>` + DESIGN_COLS.map(c =>
+    `<th class="sortable ${c.txt ? "txt" : ""}" data-key="${c.key}">${c.label}` +
+    (c.key === sk ? `<span class="sort-arrow">${dir > 0 ? "▲" : "▼"}</span>` : "") +
+    `</th>`).join("") + `</tr></thead>`;
+  const chip = st => `<span class="status-chip st-${st === "N/A" ? "na" : st.toLowerCase()}">${esc(st)}</span>`;
+  const body = rows.map(x => `<tr data-uid="${esc(x.uid)}" class="design-row${x.ratio > 1 ? " over" : ""}" title="${esc(x.notes || "")}">
+    <td class="txt">${esc(x.uid)}</td>
+    <td class="txt dim">${esc(x.kind)}</td>
+    <td class="txt dim">${esc(x.section)}</td>
+    <td>${fmt(x.Pu, 1)}</td>
+    <td>${fmt(x.Mu33, 1)}</td>
+    <td>${fmt(x.Mu22, 1)}</td>
+    <td class="dim">${fmt(x.phiPn, 1)}</td>
+    <td class="dim">${fmt(x.phiMn33, 1)}</td>
+    <td class="${x.ratio > 1 ? "exceed" : ""}"><b>${fmt(x.ratio, 3)}</b></td>
+    <td class="txt dim">${esc(x.equation)}</td>
+    <td class="txt">${chip(x.status)}</td></tr>`).join("");
+  table.innerHTML = head + `<tbody>${body || `<tr><td class="txt dim">No members match the filter</td></tr>`}</tbody>`;
+  $("designCount").textContent =
+    `${rows.length} of ${res.checks.length} members · ${store.designKind} · ${caseLabel(res.case)}`;
+
+  table.querySelectorAll("th.sortable").forEach(th =>
+    th.addEventListener("click", () => {
+      const k = th.dataset.key;
+      if (store.designSort.key === k) store.designSort.dir *= -1;
+      else store.designSort = { key: k, dir: (k === "uid" || k === "kind" || k === "section" || k === "status" || k === "equation") ? 1 : -1 };
+      renderDesignTable();
+    }));
+  // row click → select the member in 3D
+  table.querySelectorAll("tr.design-row").forEach(tr =>
+    tr.addEventListener("click", () => selectMemberFrom3D(tr.dataset.uid)));
+}
+
+/** Jump to the 3D view, highlight a member and open its detail panel. */
+function selectMemberFrom3D(uid) {
+  if (!uid || !store.results) return;
+  store.selectedMemberUid = uid;
+  viewer.setHighlight([uid], "#35b5e5");
+  switchTab("view3d");
+  renderMemberPanel();
 }
 
 /* ================================================================
@@ -2201,6 +2705,16 @@ function csvRows(kind) {
       ]),
     ];
   }
+  if (kind === "design") {
+    const res = designResult();
+    if (!res) return null;
+    return [
+      ["member", "kind", "section", "Pu_kN", "Mu33_kNm", "Mu22_kNm",
+        "phiPn_kN", "phiMn33_kNm", "phiMn22_kNm", "ratio", "equation", "status", "notes"],
+      ...designRows().map(x => [x.uid, x.kind, x.section, x.Pu, x.Mu33, x.Mu22,
+        x.phiPn, x.phiMn33, x.phiMn22, x.ratio, x.equation, x.status, x.notes]),
+    ];
+  }
   if (kind === "th") {
     const td = thData();
     if (!td) return null;
@@ -2221,6 +2735,7 @@ function csvFileName(kind) {
   const caseless = kind === "modal";
   const caseTag = kind === "th" ? store.thCase
     : kind === "pushover" ? store.poCase
+    : kind === "design" ? `${store.designKind}-${designResult()?.case || ""}`
     : caseLabel(store.caseName) + (caseData()?.min ? `-${store.envSide}` : "");
   return `skyframe-${slug(store.model?.name)}-${kind}` +
     (caseless ? "" : `-${slug(caseTag)}`) + ".csv";
@@ -2326,6 +2841,8 @@ async function doRun() {
     const results = await analyze();
     store.results = results;
     store.lastSolveMs = performance.now() - t0;
+    store.steelResult = null;                       // v0.6 — forces changed
+    store.concreteResult = null;
     if (!caseNames().includes(store.caseName)) store.caseName = null;
     rebuildCaseSelect();
     rebuildModeSelect();
@@ -2466,10 +2983,53 @@ function wire() {
     if (!item) return;
     toggleFileMenu(false);
     if (item.dataset.act === "new") fileNew();
+    else if (item.dataset.act === "import") openImportDialog();
     else if (item.dataset.act === "open") openFileDialog();
     else if (item.dataset.act === "save") fileSave();
     else if (item.dataset.act === "saveas") openSaveAs();
   });
+
+  /* ---- v0.6: template gallery */
+  $("galleryClose").addEventListener("click", () => hideModal("galleryModal"));
+  $("galleryCancel").addEventListener("click", () => hideModal("galleryModal"));
+  $("galleryModal").addEventListener("click", e => { if (e.target === $("galleryModal")) hideModal("galleryModal"); });
+
+  /* ---- v0.6: import dialog */
+  document.querySelectorAll("#importFmtTabs .seg-btn").forEach(b =>
+    b.addEventListener("click", () => setImportFmt(b.dataset.fmt)));
+  $("importBrowse").addEventListener("click", () => $("importFile").click());
+  $("importDrop").addEventListener("click", e => {
+    if (e.target.closest("button")) return;
+    $("importFile").click();
+  });
+  $("importFile").addEventListener("change", e => readImportFile(e.target.files[0]));
+  const drop = $("importDrop");
+  ["dragover", "dragenter"].forEach(ev => drop.addEventListener(ev, e => {
+    e.preventDefault(); drop.classList.add("dragging");
+  }));
+  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => {
+    e.preventDefault(); drop.classList.remove("dragging");
+  }));
+  drop.addEventListener("drop", e => {
+    if (e.dataTransfer && e.dataTransfer.files[0]) readImportFile(e.dataTransfer.files[0]);
+  });
+  $("importAddStory").addEventListener("click", () => {
+    store.importStories.push(3.2);
+    renderImportStories();
+  });
+  $("importDo").addEventListener("click", doImport);
+  $("importClose").addEventListener("click", () => hideModal("importModal"));
+  $("importCancel").addEventListener("click", () => hideModal("importModal"));
+  $("importModal").addEventListener("click", e => { if (e.target === $("importModal")) hideModal("importModal"); });
+
+  /* ---- v0.6: design tab controls */
+  document.querySelectorAll("#designKindToggle .seg-btn").forEach(b =>
+    b.addEventListener("click", () => setDesignKind(b.dataset.dk)));
+  $("designFilter").addEventListener("input", e => {
+    store.designFilter = e.target.value;
+    renderDesignTable();
+  });
+  $("csvDesign").addEventListener("click", () => downloadCsv("design"));
   const hideModal = id => $(id).classList.add("hidden");
   $("openModalClose").addEventListener("click", () => hideModal("openModal"));
   $("openModalCancel").addEventListener("click", () => hideModal("openModal"));
@@ -2577,13 +3137,15 @@ function wire() {
   });
 
   // keyboard
-  const TABS = ["view3d", "story", "modal", "reactions", "forces", "th", "pushover"];
+  const TABS = ["view3d", "story", "modal", "reactions", "forces", "design", "th", "pushover"];
   const TOOL_KEYS = { v: "select", c: "column", b: "beam", x: "brace", w: "wall", s: "slab", l: "link", e: "erase" };
   document.addEventListener("keydown", e => {
     const tag = (e.target.tagName || "").toLowerCase();
     // v0.3 dialogs respond to Escape even while an input has focus
     if (e.key === "Escape") {
       if (confirmResolve) { settleConfirm(false); return; }
+      if (!$("importModal").classList.contains("hidden")) { $("importModal").classList.add("hidden"); return; }
+      if (!$("galleryModal").classList.contains("hidden")) { $("galleryModal").classList.add("hidden"); return; }
       if (!$("saveAsModal").classList.contains("hidden")) { $("saveAsModal").classList.add("hidden"); return; }
       if (!$("openModal").classList.contains("hidden")) { $("openModal").classList.add("hidden"); return; }
       if (!$("gridModal").classList.contains("hidden")) { closeGridEditor(); return; }
@@ -2615,7 +3177,7 @@ function wire() {
 
     if (store.mode !== "analyze") return;   // loads mode: no analyze shortcuts
 
-    if (e.key >= "1" && e.key <= "7") {
+    if (e.key >= "1" && e.key <= "8") {
       const t = TABS[+e.key - 1];
       const hidden = (t === "th" && $("thTabBtn").classList.contains("hidden")) ||
         (t === "pushover" && $("poTabBtn").classList.contains("hidden"));
@@ -2694,6 +3256,12 @@ async function boot() {
     elevEditor, setView, setElevLine, elevPlane, rebuildElevSelect,
     handleElevDraw, renderPoTab, rebuildPoSelect, poData,
     renderOpeningPreview, syncDiaphragmUI,
+    // v0.6
+    setDesignKind, runDesignCheck, renderDesignForm, renderDesignTable,
+    designResult, designRows, designCheck, isStagedCase, syncStagedBadge,
+    openImportDialog, doImport, setImportFmt, readImportFile, importModelFile,
+    renderImportStories, openGallery, pickTemplate, TEMPLATES,
+    selectMemberFrom3D, renderThTab,
   };
 }
 

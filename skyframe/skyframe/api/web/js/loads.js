@@ -46,6 +46,7 @@ export class LoadsEditor {
     this.root.appendChild(this._rsSection(m));
     this.root.appendChild(this._thSection(m));
     this.root.appendChild(this._poSection(m));
+    this.root.appendChild(this._stagedSection(m));
     this.root.appendChild(this._combosSection(m));
     this.root.appendChild(this._massSection(m));
     this.root.scrollTop = scroll;
@@ -531,6 +532,9 @@ export class LoadsEditor {
     }));
     card.appendChild(head);
 
+    /* v0.6: nonlinear (plastic-hinge) controls */
+    card.appendChild(this._thNonlinear(m, tc));
+
     /* body: accel textarea + sparkline preview */
     const body = document.createElement("div");
     body.className = "th-body";
@@ -599,6 +603,172 @@ export class LoadsEditor {
     body.append(left, right);
     card.appendChild(body);
     return card;
+  }
+
+  /* ---- v0.6: nonlinear plastic-hinge block for a TH case (reuses the
+     pushover hinge-picker pattern). */
+  _thNonlinear(m, tc) {
+    const wrap = document.createElement("div");
+    wrap.className = "th-nl-controls";
+
+    const toggle = document.createElement("label");
+    toggle.className = "pd-toggle th-nl-toggle" + (tc.nonlinear ? " is-on" : "");
+    toggle.title = "Run this case with Steel01 plastic hinges (gravity applied first)";
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = !!tc.nonlinear;
+    cb.className = "th-nl-cb";
+    toggle.append(cb, document.createTextNode("Nonlinear (plastic hinges)"));
+    wrap.appendChild(toggle);
+
+    const panel = document.createElement("div");
+    panel.className = "th-nl-panel" + (tc.nonlinear ? "" : " hidden");
+    wrap.appendChild(panel);
+
+    cb.addEventListener("change", () => {
+      tc.nonlinear = cb.checked;
+      toggle.classList.toggle("is-on", cb.checked);
+      panel.classList.toggle("hidden", !cb.checked);
+      this._mutated(false);
+    });
+
+    const mkNum = (value, step, min, set) => {
+      const i = document.createElement("input");
+      i.type = "number"; i.step = step; i.min = String(min);
+      i.value = value != null ? String(value) : "";
+      i.addEventListener("change", () => {
+        const v = parseFloat(i.value);
+        if (i.value.trim() === "") { set(null); this._mutated(false); return; }
+        if (isFinite(v) && v >= min && set(v) !== false) this._mutated(false);
+        else i.value = value != null ? String(value) : "";
+      });
+      return i;
+    };
+    const mkField = (label, node) => {
+      const w = document.createElement("label");
+      w.className = "rs-field";
+      const s = document.createElement("span");
+      s.innerHTML = label;
+      w.append(s, node);
+      return w;
+    };
+
+    /* row: gravity factors + default My + hardening + hinges */
+    const row = document.createElement("div");
+    row.className = "th-nl-row";
+
+    const grav = document.createElement("div");
+    grav.className = "lc-row po-grav th-nl-grav";
+    const gtag = document.createElement("span");
+    gtag.className = "mass-tag"; gtag.textContent = "gravity =";
+    gtag.title = "Static gravity state applied and held before the record runs";
+    grav.append(gtag, this._factorChips(tc.gravity, ME.patternNames(m),
+      "Add a gravity pattern held during the record"));
+    row.appendChild(grav);
+
+    row.appendChild(mkField("default M<sub>y</sub> <span class='unit'>kN·m</span>",
+      mkNum(tc.default_My, "25", 0, v => {
+        if (v == null) { delete tc.default_My; return; }
+        if (v <= 0) return false; tc.default_My = v;
+      })));
+    row.appendChild(mkField("hardening",
+      mkNum(tc.hardening, "0.01", 0, v => { if (v >= 1) return false; tc.hardening = v; })));
+
+    const hingesSel = document.createElement("select");
+    hingesSel.innerHTML =
+      `<option value="column_base">column base</option><option value="all_ends">all ends</option>`;
+    hingesSel.value = tc.hinges || "column_base";
+    hingesSel.addEventListener("change", () => { tc.hinges = hingesSel.value; this._mutated(false); });
+    row.appendChild(mkField("hinges", hingesSel));
+    panel.appendChild(row);
+
+    /* per-member My override picker + table (reuse pushover pattern) */
+    const pick = document.createElement("div");
+    pick.className = "po-pick";
+    const storySel = document.createElement("select");
+    storySel.innerHTML = `<option value="">all stories</option>` +
+      m.stories.map(s => `<option>${esc(s.name)}</option>`).join("");
+    const kindSel = document.createElement("select");
+    kindSel.innerHTML = `<option value="column">columns</option>
+      <option value="beam">beams</option><option value="">all kinds</option>`;
+    const memSel = document.createElement("select");
+    memSel.className = "po-mem";
+    const myIn = document.createElement("input");
+    myIn.type = "number"; myIn.step = "25"; myIn.min = "1"; myIn.value = "250";
+    myIn.title = "Hinge yield moment My (kN·m)";
+    const rebuildMemSel = () => {
+      const st = storySel.value, kd = kindSel.value;
+      const cands = m.members.filter(mm =>
+        (!st || mm.story === st) &&
+        (!kd || mm.kind === kd) &&
+        tc.My[mm.uid] === undefined);
+      memSel.innerHTML = cands.length
+        ? cands.map(mm => `<option value="${esc(mm.uid)}">${esc(mm.uid)} · ${esc(mm.kind)}</option>`).join("")
+        : `<option value="">— none left —</option>`;
+    };
+    rebuildMemSel();
+    storySel.addEventListener("change", rebuildMemSel);
+    kindSel.addEventListener("change", rebuildMemSel);
+    const addBtn = document.createElement("button");
+    addBtn.className = "btn btn-small"; addBtn.textContent = "+ My override";
+    addBtn.addEventListener("click", () => {
+      const uid = memSel.value, v = parseFloat(myIn.value);
+      if (!uid || !isFinite(v) || v <= 0) return;
+      tc.My[uid] = v; this._mutated();
+    });
+    const applyCols = document.createElement("button");
+    applyCols.className = "btn btn-small"; applyCols.textContent = "Apply default to columns";
+    applyCols.title = "Assign the default My as a hinge override on every column";
+    applyCols.addEventListener("click", () => {
+      const v = tc.default_My;
+      if (!isFinite(v) || v <= 0) {
+        this.toast("No default My", "Enter a positive default My first", "error", 4000); return;
+      }
+      let n = 0;
+      for (const mm of m.members) if (mm.kind === "column") { tc.My[mm.uid] = v; n++; }
+      this._mutated();
+      this.toast("My overrides set", `My = ${v} kN·m on ${n} columns`, "info", 3500);
+    });
+    pick.append(storySel, kindSel, memSel, myIn, addBtn, applyCols);
+    panel.appendChild(pick);
+
+    const rows = document.createElement("div");
+    rows.className = "po-rows";
+    const memBy = {};
+    for (const mm of m.members) memBy[mm.uid] = mm;
+    const entries = Object.entries(tc.My);
+    if (entries.length) {
+      const headRow = document.createElement("div");
+      headRow.className = "po-row head";
+      headRow.innerHTML = `<span>Member</span><span>Kind · story</span><span>M<sub>y</sub> kN·m</span><span></span>`;
+      rows.appendChild(headRow);
+    } else {
+      const empty = document.createElement("p");
+      empty.className = "muted po-count";
+      empty.textContent = "No per-member overrides — the default My covers eligible members.";
+      rows.appendChild(empty);
+    }
+    for (const [uid, my] of entries) {
+      const r = document.createElement("div");
+      r.className = "po-row";
+      const u = document.createElement("b"); u.textContent = uid;
+      const meta = document.createElement("span"); meta.className = "muted";
+      const mm = memBy[uid];
+      meta.textContent = mm ? `${mm.kind} · ${mm.story}` : "missing member";
+      const inp = document.createElement("input");
+      inp.type = "number"; inp.step = "25"; inp.min = "1"; inp.value = String(my);
+      inp.addEventListener("change", () => {
+        const v = parseFloat(inp.value);
+        if (isFinite(v) && v > 0) { tc.My[uid] = v; this._mutated(false); }
+        else inp.value = String(tc.My[uid]);
+      });
+      const x = document.createElement("button");
+      x.className = "chip-x"; x.textContent = "✕"; x.title = "Remove override";
+      x.addEventListener("click", () => { delete tc.My[uid]; this._mutated(); });
+      r.append(u, meta, inp, x);
+      rows.appendChild(r);
+    }
+    panel.appendChild(rows);
+    return wrap;
   }
 
   /* ============================================================ pushover (v0.5) */
@@ -797,6 +967,76 @@ export class LoadsEditor {
     }
     body.appendChild(rows);
     card.appendChild(body);
+    return card;
+  }
+
+  /* ============================================================ staged (v0.6) */
+  _stagedSection(m) {
+    const sec = this._section("ls-staged", "Staged construction",
+      "Sequential story-by-story build — each story's gravity is applied on the " +
+      "partial structure built so far, then results accumulate. Live load is " +
+      "applied at the end on the full structure. Results appear as " +
+      "<b>Staged: &lt;name&gt;</b> in the case selector, with a <b>vs one-shot</b> badge.",
+      "+ Add staged", () => { ME.addStagedCase(m); this._mutated(); });
+
+    const list = document.createElement("div");
+    list.className = "loads-rows";
+    const names = Object.keys(m.staged_cases || {});
+    if (!names.length) list.innerHTML = `<p class="muted loads-empty">No staged cases yet.</p>`;
+    for (const name of names) list.appendChild(this._stagedCard(m, name));
+    sec.appendChild(list);
+    return sec;
+  }
+
+  _stagedCard(m, name) {
+    const sc = m.staged_cases[name];
+    const card = document.createElement("div");
+    card.className = "rs-card staged-card";
+
+    const head = document.createElement("div");
+    head.className = "rs-head";
+    head.appendChild(this._nameInput(name, "rs-name",
+      nu => ME.renameStagedCase(m, name, nu)));
+
+    const mkField = (label, node) => {
+      const w = document.createElement("label");
+      w.className = "rs-field";
+      const s = document.createElement("span");
+      s.textContent = label;
+      w.append(s, node);
+      return w;
+    };
+
+    // gravity pattern to stage (dead-like patterns)
+    const patSel = document.createElement("select");
+    const pats = ME.patternNames(m);
+    patSel.innerHTML = pats.map(p =>
+      `<option value="${esc(p)}"${p === sc.pattern ? " selected" : ""}>${esc(p)}</option>`).join("");
+    patSel.addEventListener("change", () => { sc.pattern = patSel.value; this._mutated(false); });
+    head.appendChild(mkField("gravity pattern", patSel));
+
+    head.appendChild(this._delBtn(null, `staged case ${name}`, () => {
+      if (ME.deleteStagedCase(m, name)) this._mutated();
+    }));
+    card.appendChild(head);
+
+    // include-live factors (applied unstaged at the end)
+    const live = document.createElement("div");
+    live.className = "lc-row po-grav";
+    const tag = document.createElement("span");
+    tag.className = "mass-tag";
+    tag.textContent = "include live =";
+    tag.title = "Live/other patterns applied on the FULL structure at the end, unstaged";
+    live.appendChild(tag);
+    live.appendChild(this._factorChips(sc.include_live, ME.patternNames(m),
+      "Add a live pattern applied at the end"));
+    card.appendChild(live);
+
+    const note = document.createElement("p");
+    note.className = "muted staged-note";
+    note.innerHTML = `Stages <b>per story</b> (bottom → top). Upper stories settle less than a ` +
+      `one-shot run — the “slab built level” effect. Every partial structure must be stable on its own.`;
+    card.appendChild(note);
     return card;
   }
 

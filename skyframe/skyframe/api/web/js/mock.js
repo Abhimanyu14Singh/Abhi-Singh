@@ -911,3 +911,191 @@ export const mockModelFiles = {
     return { deleted: name };
   },
 };
+
+/* ================================================================
+   v0.6 — mock design checks (steel / concrete) + model importers
+   ================================================================ */
+
+/** Resolve the member-forces map for a requested case/combo from a mock
+    results run (design endpoints run a fresh analysis first). */
+function _caseForcesFor(model, caseName) {
+  const r = mockResults(model);
+  const cd = (r.cases && r.cases[caseName]) ||
+    (r.combos && r.combos[caseName]) ||
+    (r.cases && r.cases[Object.keys(r.cases)[0]]);
+  return { forces: (cd && cd.member_forces) || {}, resolved: caseName };
+}
+
+function _summary(checks, governKey = "ratio") {
+  const ok = checks.filter(c => c.status === "OK").length;
+  const ng = checks.filter(c => c.status === "NG").length;
+  const na = checks.filter(c => c.status === "N/A").length;
+  let max_ratio = 0, governing = null;
+  for (const c of checks) {
+    if (c.status === "N/A") continue;
+    if (c.ratio > max_ratio) { max_ratio = c.ratio; governing = c.uid; }
+  }
+  return { n: checks.length, ok, ng, na, max_ratio: +max_ratio.toFixed(3), governing };
+}
+
+/** POST /api/design/steel — AISC-H1-style interaction screening (mock). */
+export function mockDesignSteel(model, body = {}) {
+  const caseName = body.case || Object.keys(model.cases || {})[0];
+  const Fy = isFinite(body.Fy) && body.Fy > 0 ? body.Fy : 345000;   // kPa (≈345 MPa)
+  const { forces } = _caseForcesFor(model, caseName);
+  const checks = [];
+  for (const mm of model.members) {
+    if (mm.kind === "brace") continue;
+    const f = forces[mm.uid];
+    const sec = (model.sections || {})[mm.section];
+    if (!f || !sec) {
+      checks.push({
+        uid: mm.uid, section: mm.section, kind: mm.kind, Pu: 0, Mu33: 0, Mu22: 0,
+        phiPn: 0, phiMn33: 0, phiMn22: 0, ratio: 0, equation: "—",
+        status: "N/A", notes: "no forces / section", preliminary: true,
+      });
+      continue;
+    }
+    const b = sec.b || 0.3, h = sec.h || 0.5;
+    const A = isFinite(sec.A) && sec.A > 0 ? sec.A : b * h;
+    const Z33 = isFinite(sec.I33) ? sec.I33 / (h / 2) * 1.12 : b * h * h / 4;
+    const Z22 = isFinite(sec.I22) ? sec.I22 / (b / 2) * 1.12 : h * b * b / 4;
+    const Pu = Math.max(Math.abs(f[0]), Math.abs(f[6]));
+    const Mu33 = Math.max(Math.abs(f[5]), Math.abs(f[11]));
+    const Mu22 = Math.max(Math.abs(f[4]), Math.abs(f[10]));
+    const phiPn = +(0.9 * Fy * A).toFixed(1);
+    const phiMn33 = +(0.9 * Fy * Z33).toFixed(1);
+    const phiMn22 = +(0.9 * Fy * Z22).toFixed(1);
+    const pr = phiPn ? Pu / phiPn : 0;
+    let ratio, equation;
+    if (pr >= 0.2) {
+      ratio = pr + (8 / 9) * (Mu33 / (phiMn33 || 1) + Mu22 / (phiMn22 || 1));
+      equation = "H1-1a";
+    } else {
+      ratio = pr / 2 + (Mu33 / (phiMn33 || 1) + Mu22 / (phiMn22 || 1));
+      equation = "H1-1b";
+    }
+    ratio = +ratio.toFixed(3);
+    checks.push({
+      uid: mm.uid, section: mm.section, kind: mm.kind,
+      Pu: +Pu.toFixed(1), Mu33: +Mu33.toFixed(1), Mu22: +Mu22.toFixed(1),
+      phiPn, phiMn33, phiMn22, ratio, equation,
+      status: ratio <= 1.0 ? "OK" : "NG",
+      notes: ratio > 1.0 ? "interaction > 1.0" : "", preliminary: true,
+    });
+  }
+  return { preliminary: true, case: caseName, checks, summary: _summary(checks) };
+}
+
+/** POST /api/design/concrete — flexure/axial screening from a rebar layout. */
+export function mockDesignConcrete(model, body = {}) {
+  const caseName = body.case || Object.keys(model.cases || {})[0];
+  const fc = isFinite(body.fc) && body.fc > 0 ? body.fc : 30000;   // kPa (≈30 MPa)
+  const rebar = body.rebar || {};
+  const { forces } = _caseForcesFor(model, caseName);
+  const checks = [];
+  for (const mm of model.members) {
+    if (mm.kind === "brace") continue;
+    const f = forces[mm.uid];
+    const sec = (model.sections || {})[mm.section];
+    const rb = rebar[mm.uid];
+    if (!f || !sec || !rb) {
+      checks.push({
+        uid: mm.uid, section: mm.section, kind: mm.kind, Pu: 0, Mu33: 0, Mu22: 0,
+        phiPn: 0, phiMn33: 0, phiMn22: 0, ratio: 0, equation: "—",
+        status: "N/A", notes: rb ? "no forces/section" : "no rebar assigned",
+        preliminary: true,
+      });
+      continue;
+    }
+    const b = sec.b || 0.3, h = sec.h || 0.5;
+    const fy = isFinite(rb.fy) && rb.fy > 0 ? rb.fy : 420000;       // kPa
+    const cover = (isFinite(rb.cover) ? rb.cover : 40) / 1000;      // mm→m
+    const dia = (isFinite(rb.bar_dia) ? rb.bar_dia : 20) / 1000;    // mm→m
+    const nBot = isFinite(rb.n_bot) ? rb.n_bot : 3;
+    const nTop = isFinite(rb.n_top) ? rb.n_top : 2;
+    const Abar = Math.PI / 4 * dia * dia;
+    const d = h - cover - dia / 2;
+    const AsBot = nBot * Abar, AsTop = nTop * Abar;
+    // simple singly-reinforced Mn (whitney block), both faces available
+    const As = Math.max(AsBot, AsTop);
+    const a = As * fy / (0.85 * fc * b);
+    const phiMn33 = +(0.9 * As * fy * (d - a / 2)).toFixed(1);
+    const phiMn22 = +(phiMn33 * (b / h) * 0.6).toFixed(1);
+    const Ag = b * h;
+    const phiPn = +(0.65 * 0.80 * (0.85 * fc * (Ag - (AsBot + AsTop)) +
+      fy * (AsBot + AsTop))).toFixed(1);
+    const Pu = Math.max(Math.abs(f[0]), Math.abs(f[6]));
+    const Mu33 = Math.max(Math.abs(f[5]), Math.abs(f[11]));
+    const Mu22 = Math.max(Math.abs(f[4]), Math.abs(f[10]));
+    let ratio, equation;
+    if (mm.kind === "column") {
+      ratio = Pu / (phiPn || 1) + Mu33 / (phiMn33 || 1) + Mu22 / (phiMn22 || 1);
+      equation = "P-M (screen)";
+    } else {
+      ratio = Mu33 / (phiMn33 || 1);
+      equation = "Mn (flexure)";
+    }
+    ratio = +ratio.toFixed(3);
+    checks.push({
+      uid: mm.uid, section: mm.section, kind: mm.kind,
+      Pu: +Pu.toFixed(1), Mu33: +Mu33.toFixed(1), Mu22: +Mu22.toFixed(1),
+      phiPn, phiMn33, phiMn22, ratio, equation,
+      status: ratio <= 1.0 ? "OK" : "NG",
+      notes: `${nTop}T/${nBot}B ⌀${rb.bar_dia || 20}` + (ratio > 1.0 ? " · over" : ""),
+      preliminary: true,
+    });
+  }
+  return { preliminary: true, case: caseName, checks, summary: _summary(checks) };
+}
+
+/* ---- mock model importers: parse a tiny built-in fixture → small model. */
+
+/** Build a small quick-model and tag warnings, echoing importer behavior. */
+function _importModel(name, opts = {}) {
+  const m = mockModel({
+    name, stories: opts.stories || 2, bays_x: opts.bays_x || 2,
+    bays_y: opts.bays_y || 1, bay_width_x: 6, bay_width_y: 5,
+  });
+  // importers deliver bare geometry — strip demo analysis extras
+  m.rs_cases = {}; m.th_cases = {}; m.pushover_cases = {};
+  m.staged_cases = {}; m.shells = [];
+  for (const p of Object.values(m.patterns)) p.area_loads = [];
+  return m;
+}
+
+export function mockImport(fmt, body = {}) {
+  const text = String(body.text || "");
+  const warnings = [];
+  if (!text.trim()) warnings.push("empty file — nothing to import");
+  if (fmt === "dxf") {
+    const stories = Array.isArray(body.stories) && body.stories.length
+      ? body.stories : [3.2, 3.2];
+    const nLines = text.split(/\r?\n/).length;
+    const model = _importModel("Imported DXF", { stories: stories.length });
+    // apply requested story heights
+    let elev = 0;
+    model.stories = stories.map((h, i) => {
+      elev += (isFinite(h) && h > 0) ? h : 3.2;
+      return { name: `Story${i + 1}`, height: (isFinite(h) && h > 0) ? h : 3.2, elevation: elev };
+    });
+    if (body.column_section) warnings.push(`columns mapped to section “${body.column_section}”`);
+    if (body.beam_section) warnings.push(`beams mapped to section “${body.beam_section}”`);
+    warnings.push(`${nLines} DXF entities scanned; 2 unsupported entity types skipped`);
+    warnings.push(`unit scale ${body.unit_scale === "mm" ? "1 mm → 0.001 m" : "1:1 (m)"}`);
+    return { model, warnings };
+  }
+  if (fmt === "e2k") {
+    const model = _importModel("Imported E2K", { stories: 3, bays_x: 3, bays_y: 2 });
+    warnings.push("3 stories, section list mapped to defaults");
+    warnings.push("SPRINGPROP lines ignored (unsupported)");
+    return { model, warnings };
+  }
+  if (fmt === "ifc") {
+    const model = _importModel("Imported IFC", { stories: 2, bays_x: 2, bays_y: 2 });
+    warnings.push("IfcBeam / IfcColumn extracted; IfcSlab meshing skipped");
+    warnings.push("2 IfcWallStandardCase converted to shell placeholders");
+    return { model, warnings };
+  }
+  throw new Error(`unknown import format “${fmt}”`);
+}

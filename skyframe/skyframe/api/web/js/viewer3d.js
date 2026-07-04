@@ -78,6 +78,7 @@ export class Viewer3D {
     this.overlay = { deformed: false, modal: false, caseName: null, modeIndex: 0, scaleMult: 1 };
     this.contours = { on: false, comp: "M11", caseName: null };   // v0.4
     this.labelsOn = true;
+    this.highlight = { uids: null, color: "#e0a020" };            // v0.6
 
     // camera
     this.yaw = 0.7; this.pitch = 0.42; this.dist = 40;
@@ -150,6 +151,16 @@ export class Viewer3D {
   }
 
   setLabels(on) { this.labelsOn = on; if (!on) this._setHover(null); }
+
+  /** v0.6 — highlight a set of member uids (amber yielded / selected member).
+      Pass a falsy list to clear. */
+  setHighlight(uids, color) {
+    this.highlight = {
+      uids: (uids && uids.length) ? new Set(uids) : null,
+      color: color || "#e0a020",
+    };
+    this._dirty = true;
+  }
 
   fit() {
     if (!this._bbox) return;
@@ -563,10 +574,12 @@ export class Viewer3D {
       } else {
         const { s, seg } = it;
         const hovered = this._hover && this._hover.uid === seg.uid;
+        const hl = this.highlight.uids && this.highlight.uids.has(seg.uid);
         const alpha = overlayActive ? COLORS.ghost : depthAlpha(it.z);
-        ctx.globalAlpha = hovered ? 1 : alpha;
-        ctx.strokeStyle = hovered ? "#ffffff" : COLORS[seg.kind] || COLORS.beam;
-        ctx.lineWidth = hovered ? 2.5 : (seg.kind === "column" ? 1.8 : 1.3);
+        ctx.globalAlpha = (hovered || hl) ? 1 : alpha;
+        ctx.strokeStyle = hovered ? "#ffffff"
+          : hl ? this.highlight.color : (COLORS[seg.kind] || COLORS.beam);
+        ctx.lineWidth = (hovered || hl) ? 2.6 : (seg.kind === "column" ? 1.8 : 1.3);
         ctx.lineCap = "round";
         ctx.beginPath();
         ctx.moveTo(s.a.x, s.a.y); ctx.lineTo(s.b.x, s.b.y);
