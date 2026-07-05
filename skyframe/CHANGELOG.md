@@ -1,5 +1,17 @@
 # SkyFrame changelog
 
+## 1.2.0
+
+### Wave 17 — serviceability & design depth
+- **Beam deflection recovery**: exact per-member deflection lines from
+  the statics moment field, a deflection diagram in the member panel,
+  and a Serviceability tab with L/limit checks (editable limit).
+- **ASCE 7-16 §4.7 live-load reduction**: per-column tributary factors,
+  applied as a design-stage demand reduction with an on/off toggle.
+- **Biaxial concrete columns**: Bresler reciprocal-load method with a
+  load-contour fallback, method chips in the design table.
+- 378 tests (22 new).
+
 ## 1.1.0
 
 ### Wave 16 — seismic protection devices & wall piers

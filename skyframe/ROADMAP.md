@@ -125,6 +125,11 @@ scrutinized benchmark tests.
 - [x] Viscous damper / gap / hook / isolator link types (device glyph UI)
 - [x] Wall pier labels with per-story P/V/M design forces + results tab
 
+## Wave 17 — serviceability & design depth  ✅ done (v1.2)
+- [x] Exact beam deflection recovery + L/limit serviceability checks
+- [x] ASCE 7-16 §4.7 live-load reduction (design-stage, per-column)
+- [x] Biaxial concrete columns (Bresler / load contour)
+
 ## Phase 4 — Parity increment 2  ✅ done
 - [x] 1. Model save/open (.skyframe JSON files) with File menu + gallery
 - [x] 2. Load pattern / case / combo editor UI (with per-case P-Delta toggle)
@@ -134,9 +139,9 @@ scrutinized benchmark tests.
 - [x] 6. Wall/slab openings; elevation-view drawing (Wave 6)
 - [x] 7. Nonlinear static pushover (OpenSees fiber hinges) (Wave 6)
 
-## Status — v1.1 released 🎉
+## Status — v1.2 released 🎉
 All waves above are complete with engine + REST API + UI, pinned by a
-356-test suite. The app builds standalone locally (`packaging/build.sh`).
+378-test suite. The app builds standalone locally (`packaging/build.sh`).
 
 ## Possible future waves (not yet scheduled)
 - Native Windows local build (same build.sh on a Windows host)
