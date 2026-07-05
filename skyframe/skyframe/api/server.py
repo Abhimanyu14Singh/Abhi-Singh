@@ -58,7 +58,7 @@ from skyframe.core.builder import (add_self_weight, make_wind_pattern,
                                    quick_building)
 from skyframe.core.codes import (apply_asce7_combinations, asce7_elf,
                                  make_rs_case_from_code)
-from skyframe.core.model import BuildingModel
+from skyframe.core.model import BuildingModel, make_notional_pattern
 from skyframe.core.sections_library import library_to_dict
 
 try:
@@ -423,6 +423,48 @@ def create_app() -> Flask:
                 Ie=_num(body, "Ie", default=1.0),
                 direction=body.get("direction", "X"),
                 name=name.strip())
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(_state["model"].to_dict())
+
+    # ---------------------------------------- v0.10: RS directional + notional
+    @app.post("/api/case/rs-directional")
+    def case_rs_directional():
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        name = body.get("name")
+        name_x = body.get("name_x")
+        name_y = body.get("name_y")
+        method = body.get("method", "100_30")
+        if not isinstance(name, str) or not name.strip():
+            return jsonify({"error": "'name' is required"}), 400
+        if not isinstance(name_x, str) or not isinstance(name_y, str):
+            return jsonify({"error": "'name_x' and 'name_y' (RS case names) "
+                                     "are required"}), 400
+        try:
+            _state["model"].add_rs_combo(name.strip(), name_x, name_y,
+                                         method=method)
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(_state["model"].to_dict())
+
+    @app.post("/api/pattern/notional")
+    def pattern_notional():
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        name = body.get("name", "NOTIONAL")
+        if not isinstance(name, str) or not name.strip() or len(name) > 60:
+            return jsonify({"error": "'name' must be a non-empty string "
+                                     "(max 60 chars)"}), 400
+        try:
+            coeff = _num(body, "coeff", default=0.002)
+            make_notional_pattern(
+                _state["model"], name.strip(),
+                direction=body.get("direction", "X"),
+                coeff=coeff,
+                gravity_pattern=body.get("gravity_pattern", "DEAD"))
         except (ValueError, TypeError) as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify(_state["model"].to_dict())

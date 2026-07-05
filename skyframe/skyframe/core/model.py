@@ -670,6 +670,31 @@ class StagedCase:
 
 
 @dataclass
+class BucklingCase:
+    """Linear (eigenvalue) buckling case (v0.10).
+
+    ``gravity`` maps load-pattern name -> factor: the reference gravity load
+    whose critical multiplier is sought.  The engine's self-contained numpy
+    buckling solver (:mod:`skyframe.core.buckling`) assembles the elastic and
+    geometric stiffness of the frame, extracts member axial forces under this
+    reference load, and returns the ``num_modes`` smallest positive load
+    factors ``lambda`` (the critical multipliers) and their mode shapes.
+    """
+
+    name: str
+    gravity: Dict[str, float] = field(default_factory=dict)
+    num_modes: int = 6
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "gravity": dict(self.gravity),
+                "num_modes": self.num_modes}
+
+
+# v0.10 response-spectrum directional combination methods (ASCE 7 §12.5)
+RS_DIRECTIONAL_METHODS = ("100_30", "SRSS")
+
+
+@dataclass
 class LinkMember:
     """Linear link (spring) element between two points (v0.5).
 
@@ -754,6 +779,10 @@ class BuildingModel:
     th_cases: Dict[str, TimeHistoryCase] = field(default_factory=dict)  # v0.4
     pushover_cases: Dict[str, PushoverCase] = field(default_factory=dict)  # v0.5
     staged_cases: Dict[str, StagedCase] = field(default_factory=dict)  # v0.6
+    buckling_cases: Dict[str, BucklingCase] = field(default_factory=dict)  # v0.10
+    # v0.10 response-spectrum directional combinations (ASCE 7 §12.5):
+    #   name -> {"name_x": <RS case>, "name_y": <RS case>, "method": ...}
+    rs_combos: Dict[str, Dict[str, str]] = field(default_factory=dict)
     num_modes: int = 6
 
     # ---------------- convenience API ----------------
@@ -1085,6 +1114,48 @@ class BuildingModel:
             if not math.isfinite(float(f)):
                 raise ValueError(f"Staged case {sc.name}: include_live "
                                  f"factor for {p} must be finite")
+
+    def add_buckling_case(self, name: str, gravity: Dict[str, float],
+                          num_modes: int = 6) -> BucklingCase:
+        bc = BucklingCase(name, gravity={k: float(v)
+                                         for k, v in gravity.items()},
+                          num_modes=int(num_modes))
+        self._validate_buckling_case(bc)
+        self.buckling_cases[name] = bc
+        return bc
+
+    def _validate_buckling_case(self, bc: BucklingCase) -> None:
+        if not bc.gravity:
+            raise ValueError(f"Buckling case {bc.name}: gravity must name at "
+                             "least one load pattern")
+        for p, f in bc.gravity.items():
+            if p not in self.patterns:
+                raise ValueError(f"Buckling case {bc.name}: gravity references "
+                                 f"unknown pattern {p}")
+            if not math.isfinite(float(f)):
+                raise ValueError(f"Buckling case {bc.name}: gravity factor for "
+                                 f"{p} must be finite")
+        if bc.num_modes < 1:
+            raise ValueError(f"Buckling case {bc.name}: num_modes must be >= 1")
+
+    def add_rs_combo(self, name: str, name_x: str, name_y: str,
+                     method: str = "100_30") -> Dict[str, str]:
+        combo = {"name_x": str(name_x), "name_y": str(name_y),
+                 "method": str(method)}
+        self._validate_rs_combo(name, combo)
+        self.rs_combos[name] = combo
+        return combo
+
+    def _validate_rs_combo(self, name: str, combo: Dict[str, str]) -> None:
+        if combo.get("method") not in RS_DIRECTIONAL_METHODS:
+            raise ValueError(f"RS combo {name}: method must be one of "
+                             f"{RS_DIRECTIONAL_METHODS}, got "
+                             f"{combo.get('method')!r}")
+        for key in ("name_x", "name_y"):
+            rc = combo.get(key)
+            if rc not in self.rs_cases:
+                raise ValueError(f"RS combo {name}: {key} references unknown "
+                                 f"response-spectrum case {rc!r}")
 
     def add_pushover_case(self, name: str, direction: str,
                           gravity: Optional[Dict[str, float]] = None,
@@ -1423,6 +1494,10 @@ class BuildingModel:
             self._validate_pushover_case(po)
         for sc in self.staged_cases.values():
             self._validate_staged_case(sc)
+        for bc in self.buckling_cases.values():
+            self._validate_buckling_case(bc)
+        for cname, cb in self.rs_combos.items():
+            self._validate_rs_combo(cname, cb)
         link_uids = set()
         for lk in self.links:
             if lk.uid in link_uids:
@@ -1470,6 +1545,9 @@ class BuildingModel:
                                for k, v in self.pushover_cases.items()},
             "staged_cases": {k: v.to_dict()
                              for k, v in self.staged_cases.items()},
+            "buckling_cases": {k: v.to_dict()
+                               for k, v in self.buckling_cases.items()},
+            "rs_combos": {k: dict(v) for k, v in self.rs_combos.items()},
             "num_modes": self.num_modes,
         }
 
@@ -1660,6 +1738,112 @@ class BuildingModel:
                 stages=sd.get("stages", "per_story"),
                 include_live={p: float(f) for p, f in
                               (sd.get("include_live") or {}).items()})
+        for name, bd in (d.get("buckling_cases") or {}).items():
+            mdl.buckling_cases[name] = BucklingCase(
+                name=bd.get("name", name),
+                gravity={p: float(f)
+                         for p, f in (bd.get("gravity") or {}).items()},
+                num_modes=int(bd.get("num_modes", 6)))
+        for name, cd in (d.get("rs_combos") or {}).items():
+            mdl.rs_combos[name] = {"name_x": str(cd["name_x"]),
+                                   "name_y": str(cd["name_y"]),
+                                   "method": str(cd.get("method", "100_30"))}
         mdl.num_modes = int(d.get("num_modes", 6))
         mdl.validate()
         return mdl
+
+
+# --------------------------------------------------------------------------- #
+# v0.10 notional loads (AISC 360 direct-analysis stability)
+# --------------------------------------------------------------------------- #
+NOTIONAL_DIRECTIONS = ("X", "Y")
+
+
+def story_gravity_loads(model: "BuildingModel",
+                        pattern_name: str) -> Dict[str, float]:
+    """Total vertical gravity load (kN, downward positive) per story from one
+    load pattern.
+
+    Uses the SAME contributions as :meth:`BuildingModel.compute_story_masses`
+    (beams/area/nodal loads + beam & shell self-weight on the story; columns
+    are excluded, matching the member-UDL rule), but for a SINGLE pattern at
+    unit factor and returned in kN (not converted to mass).
+    """
+    out: Dict[str, float] = {s.name: 0.0 for s in model.stories}
+    pat = model.patterns.get(pattern_name)
+    if pat is None:
+        return out
+    for s in model.stories:
+        total = 0.0
+        for udl in pat.member_udls:
+            m = model._member(udl.member_uid)
+            if m is not None and m.story == s.name and m.kind != "column":
+                total += udl.w * m.length
+        for ml in pat.member_loads:
+            if ml.direction not in ("gravity", "global_z"):
+                continue
+            m = model._member(ml.member_uid)
+            if m is None or m.story != s.name or m.kind == "column":
+                continue
+            if ml.kind == "point":
+                total += ml.w
+            elif ml.kind == "udl":
+                total += ml.w * (ml.b - ml.a) * m.length
+            else:  # trapezoid
+                total += 0.5 * (ml.w + ml.w2) * (ml.b - ml.a) * m.length
+        for al in pat.area_loads:
+            region = model._shell(al.region_uid)
+            if region is not None and model._region_on_story(region, s):
+                total += al.q * region.net_area
+        for nl in pat.nodal_loads:
+            if abs(nl.point[2] - s.elevation) < 1e-6:
+                total += -nl.fz                       # downward = -fz
+        swf = getattr(pat, "self_weight_factor", 0.0)
+        if swf:
+            for m in model.members:
+                if m.story != s.name or m.kind == "column":
+                    continue
+                sec = model.sections.get(m.section)
+                mat = model.materials.get(sec.material) if sec else None
+                if sec is not None and mat is not None:
+                    total += swf * sec.A * mat.unit_weight * m.length
+            for region in model.shells:
+                if not model._region_on_story(region, s):
+                    continue
+                ssec = model.shell_sections.get(region.section)
+                mat = model.materials.get(ssec.material) if ssec else None
+                if ssec is not None and mat is not None:
+                    total += swf * ssec.thickness * mat.unit_weight \
+                        * region.net_area
+        out[s.name] = total
+    return out
+
+
+def make_notional_pattern(model: "BuildingModel", name: str,
+                          direction: str = "X", coeff: float = 0.002,
+                          gravity_pattern: str = "DEAD") -> LoadPattern:
+    """AISC 360 notional-load pattern (direct-analysis / stability).
+
+    Applies a lateral story force ``Ni = coeff * W_story`` at each story,
+    where ``W_story`` is the vertical gravity load tributary to that level
+    from ``gravity_pattern`` (see :func:`story_gravity_loads`).  The result
+    is a kind-``"notional"`` story-force :class:`LoadPattern` (``fx`` for
+    direction ``"X"``, ``fy`` for ``"Y"``) stored under ``name`` (replacing
+    an existing pattern) and returned.  ``sum(Ni) == coeff * W_total``.
+    """
+    if direction not in NOTIONAL_DIRECTIONS:
+        raise ValueError(f"direction must be X|Y, got {direction!r}")
+    if not (isinstance(coeff, (int, float)) and math.isfinite(coeff)):
+        raise ValueError("coeff must be a finite number")
+    if gravity_pattern not in model.patterns:
+        raise ValueError(f"unknown gravity pattern {gravity_pattern!r}")
+    loads = story_gravity_loads(model, gravity_pattern)
+    pat = LoadPattern(name, "notional")
+    for s in model.stories:
+        Ni = coeff * loads[s.name]
+        pat.story_forces.append(StoryForce(
+            s.name,
+            fx=Ni if direction == "X" else 0.0,
+            fy=Ni if direction == "Y" else 0.0))
+    model.patterns[name] = pat
+    return pat

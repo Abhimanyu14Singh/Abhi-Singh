@@ -973,3 +973,130 @@ Response items carry `governing_combo`; the response echoes `"combos"`.
 `rigid_factor` fields; `POST /api/analyze` returns the `story_stiffness` and
 `irregularity` blocks automatically (present when the model has a lateral case
 with story shear).
+
+---
+
+# v0.10 additions — linear buckling, RS directional combination, notional loads
+
+## Linear (eigenvalue) buckling analysis (`skyframe/core/buckling.py`, NEW)
+
+A SELF-CONTAINED numpy implementation, deliberately independent of OpenSees.
+
+```python
+from skyframe.core.buckling import buckling_analysis, BucklingResult
+buckling_analysis(model, gravity: Dict[pattern, factor], num_modes=6)
+    -> BucklingResult
+```
+
+Method: assemble the global elastic stiffness `K` and the consistent 12x12
+geometric stiffness `Kg` of the 3D frame (`elasticBeamColumn` members only),
+using the SAME local-axis convention and 12x12 elastic beam stiffness as the
+OpenSees engine (so K matches `elasticBeamColumn` to machine precision).
+Member axial forces `N` under the reference gravity come from a linear static
+solve (gravity reduced to equivalent nodal loads; axial extracted per member).
+`Kg` is formed from those `N` (tension-positive; consistent geometric
+sub-matrices in both bending planes, axial/torsional geometric terms omitted —
+the standard beam-column form). The generalized eigenproblem
+
+    K phi = lambda (-Kg) phi
+
+is solved with numpy ONLY (no scipy dependency): Cholesky `K = L L^T` reduces
+the pair to the symmetric standard problem `C psi = mu psi`,
+`C = L^-1 (-Kg) L^-T`, `mu = 1/lambda`, via `numpy.linalg.eigh`; the largest
+positive `mu` give the smallest positive `lambda` (critical multipliers on the
+reference gravity). The `num_modes` smallest positive `lambda` and their
+per-node 6-dof mode shapes are returned.
+
+Modelling scope (v0.10, documented):
+* only frame members enter K/Kg; shell regions and links are SKIPPED with a
+  warning;
+* rigid diaphragm constraints are IGNORED — the frame is analysed bare
+  (standard "no rigid floor" buckling assumption);
+* member end releases are IGNORED (member treated continuous) with a warning
+  (release condensation is not applied in v0.10);
+* gravity reduction: nodal loads act directly; member distributed/point
+  gravity loads and self-weight are lumped to their end nodes (exact for
+  column axial by vertical equilibrium); area/story/thermal loads are skipped
+  with a warning.
+
+```jsonc
+BucklingResult.to_dict() = {
+  "factors": [lambda1, lambda2, ...],       // sorted ascending, positive
+  "modes":   {"1": {"<node>": [6 dof]}},    // per mode, per node
+  "gravity": {"<pattern>": factor},
+  "warnings": [ ... ]
+}
+```
+
+Model:
+```python
+@dataclass BucklingCase:                    # model.buckling_cases: Dict[str, ..]
+    name: str
+    gravity: Dict[str, float] = {}          # pattern -> factor (>= 1 pattern)
+    num_modes: int = 6                       # >= 1
+# BuildingModel.add_buckling_case(name, gravity, num_modes=6); round-trips
+#   through to_dict/from_dict as "buckling_cases" (absent key = none).
+```
+
+Engine: `engine.run_buckling(name) -> BucklingResult` (never capped);
+`engine.run()` includes `results["buckling"][name] = BucklingResult.to_dict()`
+for every buckling case (top-level `"buckling"` key ALWAYS present, may be
+`{}`), solving at most `BUCKLING_CASE_CAP = 25` systems in `run()` (extras
+skipped with a top-level `"warning"`).
+
+Hand-checked closed forms (Euler, meshing the column into segments): a
+pinned-pinned column -> `Pcr = pi^2 E I / L^2` (< 1% at >= 8 segments,
+converging from above); fixed-free cantilever -> `pi^2 E I / (2L)^2` (< 2%);
+fixed-fixed -> `pi^2 E I / (0.5L)^2` (< 2%); the first pinned-pinned mode is a
+half-sine.
+
+## Response-spectrum directional combination (ASCE 7-16 §12.5)
+
+```python
+engine.run_rs_directional(name_x, name_y, method="100_30"|"SRSS", name="")
+    -> CaseResults
+```
+
+Combines two EXISTING RS cases (X and Y) into a directional envelope, per
+response quantity `q`:
+* `"100_30"` -> `max(|qx| + 0.3|qy|, 0.3|qx| + |qy|)`;
+* `"SRSS"`   -> `sqrt(qx^2 + qy^2)`.
+The base RS results are positive envelopes, so the combination is positive.
+Applied to every quantity (node_disp / reactions / base / member_forces /
+story / member_stations).
+
+```python
+# BuildingModel.rs_combos: {name: {"name_x", "name_y", "method"}}
+# BuildingModel.add_rs_combo(name, name_x, name_y, method="100_30"); both RS
+#   cases must exist; method in ("100_30","SRSS"). Round-trips as "rs_combos".
+```
+
+Engine `run()` includes each directional combo under `results["rs_cases"][name]`
+(same case shape) ALONGSIDE the base RS cases.
+
+## Notional loads (AISC 360 direct-analysis / stability)
+
+```python
+from skyframe.core.model import make_notional_pattern, story_gravity_loads
+make_notional_pattern(model, name, direction="X"|"Y", coeff=0.002,
+                      gravity_pattern="DEAD") -> LoadPattern
+```
+
+Applies a lateral story force `Ni = coeff * W_story` at each story, where
+`W_story` is the vertical gravity load tributary to that level from
+`gravity_pattern` (`story_gravity_loads(model, pattern)`: beams/area/nodal
+loads + beam & shell self-weight on the story, columns excluded — the same
+contributions `compute_story_masses` uses, returned in kN). The result is a
+kind-`"notional"` story-force `LoadPattern` (`fx` for "X", `fy` for "Y") stored
+under `name` (replacing an existing pattern). `sum(Ni) == coeff * W_total`.
+
+## API additions
+
+| Method | Path                        | Body / Response |
+|--------|-----------------------------|-----------------|
+| POST   | `/api/case/rs-directional`  | `{name, name_x, name_y, method?}` -> adds an rs_combo, returns model dict; 400 on bad method / unknown RS case |
+| POST   | `/api/pattern/notional`     | `{name?, direction?, coeff?, gravity_pattern?}` (defaults "NOTIONAL"/"X"/0.002/"DEAD") -> adds the pattern, returns model dict; 400 on bad input |
+
+`POST /api/model` round-trips `buckling_cases` and `rs_combos`;
+`POST /api/analyze` returns the `"buckling"` block automatically and the
+directional RS combos inside `"rs_cases"`.

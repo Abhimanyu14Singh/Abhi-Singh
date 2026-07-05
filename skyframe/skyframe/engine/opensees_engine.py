@@ -90,6 +90,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import openseespy.opensees as ops
 
+from skyframe.core.buckling import BucklingResult, buckling_analysis
 from skyframe.core.mesh import MeshedModel, Segment, mesh_model
 from skyframe.core.model import (G_ACCEL, BuildingModel, FrameMember,
                                  FrameSection, LoadCase, LoadCombo,
@@ -105,6 +106,11 @@ TH_STEP_CAP = 20000
 # when their combined step count exceeds this cap; run_pushover() itself is
 # never capped.
 PUSHOVER_STEP_CAP = 2000
+
+# v0.10 linear buckling: run() solves at most this many buckling systems (each
+# is a cheap self-contained numpy eigen-solve); extra cases are skipped in
+# run() with a results warning (run_buckling() itself is never capped).
+BUCKLING_CASE_CAP = 25
 
 # v0.5 stiff-hinge idealization factor n: the zeroLength hinge spring's
 # elastic rotational stiffness is k_theta = n * 6EI/L about each bending
@@ -614,6 +620,8 @@ class AnalysisResults:
     irregularity: Dict[str, Dict[str, Dict[str, object]]] = field(
         default_factory=dict)
     #   v0.9: per lateral case/story ASCE 7 torsional + soft-story flags
+    buckling: Dict[str, dict] = field(default_factory=dict)
+    #   v0.10: per buckling-case BucklingResult.to_dict()
     warning: str = ""                    # e.g. TH cases skipped (step cap)
 
     def to_dict(self) -> dict:
@@ -631,6 +639,7 @@ class AnalysisResults:
             "th_cases": {n: c.to_dict() for n, c in self.th_cases.items()},
             "pushover": {n: p.to_dict() for n, p in self.pushover.items()},
             "staged": {n: s.to_dict() for n, s in self.staged.items()},
+            "buckling": {n: dict(b) for n, b in self.buckling.items()},
             "modal": self.modal.to_dict(),
         }
         if self.story_props:
@@ -691,6 +700,13 @@ class OpenSeesEngine:
         modal = self.run_modal()
         rs_cases = {name: self.run_response_spectrum(name)
                     for name in model.rs_cases}
+        # v0.10 response-spectrum directional combinations (ASCE 7 §12.5):
+        # combine two existing RS cases into a directional envelope, reported
+        # alongside the base RS cases in results["rs_cases"].
+        for cname, spec in model.rs_combos.items():
+            rs_cases[cname] = self.run_rs_directional(
+                spec["name_x"], spec["name_y"],
+                method=spec.get("method", "100_30"), name=cname)
         th_cases: Dict[str, THResults] = {}
         warning = ""
         if model.th_cases:
@@ -716,6 +732,17 @@ class OpenSeesEngine:
                             for name in model.pushover_cases}
         staged = {name: self.run_staged(name)
                   for name in model.staged_cases}
+        # v0.10 linear buckling: self-contained numpy solve per case (cheap);
+        # cap the number of systems run in run() for safety.
+        buckling: Dict[str, dict] = {}
+        if model.buckling_cases:
+            for i, name in enumerate(model.buckling_cases):
+                if i >= BUCKLING_CASE_CAP:
+                    bwarn = (f"buckling cases beyond {BUCKLING_CASE_CAP} "
+                             "skipped in run() (call run_buckling per case)")
+                    warning = f"{warning}; {bwarn}" if warning else bwarn
+                    break
+                buckling[name] = self.run_buckling(name).to_dict()
         story_props = self._compute_story_props()
         asm = self._asm if self._asm is not None else self._build()
         # v0.9 seismic diagnostics over static cases + additive combos
@@ -746,6 +773,7 @@ class OpenSeesEngine:
             story_props=story_props,
             story_stiffness=story_stiffness,
             irregularity=irregularity,
+            buckling=buckling,
             warning=warning,
         )
 
@@ -2870,6 +2898,74 @@ class OpenSeesEngine:
         result = self._combine_rsa(name, per_mode, rho)
         self._rs_cache[name] = result
         return result
+
+    def run_rs_directional(self, name_x: str, name_y: str,
+                           method: str = "100_30",
+                           name: str = "") -> CaseResults:
+        """Directional combination of two RS cases (ASCE 7-16 §12.5, v0.10).
+
+        Combines the X-direction RS case ``name_x`` and the Y-direction case
+        ``name_y`` per response quantity ``q``:
+
+        * ``"100_30"`` → ``max(|qx| + 0.3|qy|, 0.3|qx| + |qy|)``;
+        * ``"SRSS"``   → ``sqrt(qx^2 + qy^2)``.
+
+        The base RS results are already positive envelopes, so the result is
+        positive.  Returns a :class:`CaseResults` with the standard case
+        shape (node_disp / reactions / base / member_forces / story /
+        member_stations).
+        """
+        if method not in ("100_30", "SRSS"):
+            raise ValueError(f"RS directional method must be 100_30|SRSS, "
+                             f"got {method!r}")
+        rx = self.run_response_spectrum(name_x)
+        ry = self.run_response_spectrum(name_y)
+
+        def comb(a: float, b: float) -> float:
+            aa, ab = abs(a), abs(b)
+            if method == "SRSS":
+                return math.sqrt(aa * aa + ab * ab)
+            return max(aa + 0.3 * ab, 0.3 * aa + ab)
+
+        def comb_vecs(gx: dict, gy: dict) -> dict:
+            return {k: [comb(gx[k][i], gy[k][i]) for i in range(len(v))]
+                    for k, v in gx.items()}
+
+        base = {k: comb(rx.base[k], ry.base[k])
+                for k in ("FX", "FY", "FZ", "MX", "MY", "MZ")}
+        story = {s: {k: comb(rx.story[s][k], ry.story[s][k]) for k in s0}
+                 for s, s0 in rx.story.items()}
+        member_stations: Dict[str, Dict[str, List[float]]] = {}
+        for uid, st0 in rx.member_stations.items():
+            entry: Dict[str, List[float]] = {"x": list(st0["x"])}
+            for key in ("N", "V2", "V3", "T", "M2", "M3"):
+                entry[key] = [comb(rx.member_stations[uid][key][i],
+                                   ry.member_stations[uid][key][i])
+                              for i in range(len(st0[key]))]
+            member_stations[uid] = entry
+        return CaseResults(
+            name=name or f"{name_x}+{name_y}",
+            node_disp=comb_vecs(rx.node_disp, ry.node_disp),
+            reactions=comb_vecs(rx.reactions, ry.reactions),
+            base=base,
+            member_forces=comb_vecs(rx.member_forces, ry.member_forces),
+            story=story,
+            member_stations=member_stations,
+        )
+
+    def run_buckling(self, name: str) -> BucklingResult:
+        """Run one linear buckling case (self-contained numpy; never capped).
+
+        Delegates to :func:`skyframe.core.buckling.buckling_analysis`, which
+        assembles the elastic and geometric stiffness of the frame, extracts
+        member axial forces under the case's reference gravity, and returns
+        the smallest positive load factors and mode shapes.
+        """
+        model = self.model
+        if name not in model.buckling_cases:
+            raise ValueError(f"Unknown buckling case {name!r}")
+        bc = model.buckling_cases[name]
+        return buckling_analysis(model, bc.gravity, num_modes=bc.num_modes)
 
     def _modal_static(self, loads: Dict[Tuple[int, int], float]) -> CaseResults:
         """Linear static solve under explicit (node, dof) -> value loads."""
