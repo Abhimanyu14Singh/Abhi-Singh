@@ -787,6 +787,11 @@ input.lp-name, input.lc-name, input.rs-name { padding: 4px 8px; font-size: 12.5p
 .kind-chip.is-on.k-live  { color: var(--green); background: rgba(52,195,132,.12); border-color: rgba(52,195,132,.4); }
 .kind-chip.is-on.k-quake { color: var(--amber); background: var(--amber-ghost); border-color: rgba(229,165,10,.45); }
 .kind-chip.is-on.k-other { color: var(--text-1); background: var(--surface-3); border-color: var(--border); }
+/* v0.10 — notional / wind read-only kind badge */
+.kind-chip.is-on.k-notional { color: #b79be0; background: rgba(155,124,224,.16); border-color: rgba(155,124,224,.45); }
+.kind-chip.is-on.k-wind { color: var(--accent); background: var(--accent-ghost); border-color: rgba(53,181,229,.4); }
+.kind-chip.is-locked { cursor: default; }
+.kind-chip.is-locked:hover { color: inherit; }
 .lp-counts { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
 .lp-counts b { color: var(--text-2); font-weight: 650; }
 
@@ -1189,6 +1194,27 @@ details.mgr-mods[open] summary { color: var(--text-2); }
   padding: 7px 12px;
 }
 #poChart { grid-template-columns: minmax(420px, 720px); }
+
+/* ------------------------------------------------ v0.10 buckling / RS-dir / notional */
+.badge-buckling {
+  color: #b79be0; background: rgba(155,124,224,.14); border-color: rgba(155,124,224,.35);
+}
+.data-table tr.buck-unsafe td { background: rgba(230,103,103,.08); }
+.data-table td.buck-unsafe { color: var(--red); font-weight: 650; }
+.link-3d.is-on {
+  color: var(--accent); font-weight: 650;
+}
+#buckNote { font-size: 12px; }
+/* RS directional combination card */
+.rs-dir-card .wind-fields { align-items: flex-end; }
+.rs-dir-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.rs-dir-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px; background: var(--surface-1);
+  border: 1px solid var(--border-soft); border-radius: 6px;
+}
+.rs-dir-label { flex: 1; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.rs-dir-label b { color: var(--text-1); }
 
 /* ------------------------------------------------ scrollbars */
 ::-webkit-scrollbar { width: 10px; height: 10px; }

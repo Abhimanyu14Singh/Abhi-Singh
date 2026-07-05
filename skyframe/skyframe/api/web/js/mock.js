@@ -148,6 +148,19 @@ export function mockModel(p = {}) {
       accidental_torsion: true, ecc: 0.05 },
     EQY: { name: "EQY", kind: "quake", member_loads: [], area_loads: [], story_forces: storyForces("y") },
   };
+  // v0.10: a demo notional load pattern (AISC direct-analysis stability):
+  // 0.002 × gravity at each level applied laterally, kind "notional".
+  {
+    const coeff = 0.002;
+    patterns["NOTIONAL-X"] = {
+      name: "NOTIONAL-X", kind: "notional", member_loads: [], area_loads: [],
+      story_forces: stories.map(s => ({
+        story: s.name,
+        fx: +(coeff * (story_masses[s.name] || 0) * G).toFixed(3), fy: 0,
+      })),
+      notional: { direction: "X", coeff, gravity_pattern: "DEAD" },
+    };
+  }
 
   // v0.3: response-spectrum cases (UBC-style default shape)
   const ubc = [[0, 0.4], [0.11, 1.0], [0.56, 1.0], [0.8, 0.7], [1.0, 0.56],
@@ -227,6 +240,14 @@ export function mockModel(p = {}) {
       },
     },
     pushover_cases,
+    // v0.10: a demo buckling case (gravity DEAD, 3 modes) + an RS directional
+    // combination (100/30) of the two response-spectrum cases.
+    buckling_cases: {
+      "BUCK-G": { name: "BUCK-G", gravity: { DEAD: 1.0, LIVE: 0.5 }, num_modes: 3 },
+    },
+    rs_combos: {
+      "RS-100/30": { name: "RS-100/30", name_x: "EQ-RS-X", name_y: "EQ-RS-Y", method: "100_30" },
+    },
     diaphragm: "rigid",
     story_diaphragm: {},
     links: [],
@@ -631,6 +652,47 @@ export function mockResults(model) {
     rs_cases[name] = envelope(src, (rc.scale || 1) * 1.12);   // modal RSA ≳ static ELF
   }
 
+  /* ---- v0.10: RS directional combinations (ASCE 7 §12.5). The combined
+     directional case is a POSITIVE envelope, added into rs_cases so it
+     surfaces as an "RS: <name>" entry in every results selector.
+     100/30: max(1.0·X + 0.3·Y, 0.3·X + 1.0·Y); SRSS: √(X² + Y²). */
+  function combineDirectional(cx, cy, method) {
+    const src = cx || cy;
+    if (!src) return null;
+    const comb = (a, b) => method === "SRSS"
+      ? Math.hypot(a, b) : Math.max(a + 0.3 * b, 0.3 * a + b);
+    const pair = (arr, k) => (arr || []).map((v, i) => comb(v, (k && k[i]) || 0));
+    const out = { node_disp: {}, reactions: {}, member_forces: {}, member_stations: {}, story: {},
+      base: {} };
+    for (const k of Object.keys(src.base || {}))
+      out.base[k] = comb(Math.abs((cx?.base || {})[k] || 0), Math.abs((cy?.base || {})[k] || 0));
+    for (const t of Object.keys(src.node_disp || {}))
+      out.node_disp[t] = pair((cx?.node_disp || {})[t], (cy?.node_disp || {})[t]);
+    for (const t of Object.keys(src.reactions || {}))
+      out.reactions[t] = pair((cx?.reactions || {})[t], (cy?.reactions || {})[t]);
+    for (const u of Object.keys(src.member_forces || {}))
+      out.member_forces[u] = pair((cx?.member_forces || {})[u], (cy?.member_forces || {})[u]);
+    for (const [u, st] of Object.entries(src.member_stations || {})) {
+      const sx = (cx?.member_stations || {})[u] || {}, sy = (cy?.member_stations || {})[u] || {};
+      out.member_stations[u] = { x: st.x.slice() };
+      for (const kk of ["N", "V2", "V3", "T", "M2", "M3"])
+        out.member_stations[u][kk] = st[kk].map((_, i) => comb(sx[kk]?.[i] || 0, sy[kk]?.[i] || 0));
+    }
+    for (const s of Object.keys(src.story || {})) {
+      out.story[s] = {};
+      const a = (cx?.story || {})[s] || {}, b = (cy?.story || {})[s] || {};
+      for (const kk of Object.keys(src.story[s]))
+        out.story[s][kk] = comb(Math.abs(a[kk] || 0), Math.abs(b[kk] || 0));
+    }
+    return out;
+  }
+  for (const [name, rcmb] of Object.entries(model.rs_combos || {})) {
+    const combined = combineDirectional(
+      rs_cases[rcmb.name_x], rs_cases[rcmb.name_y],
+      rcmb.method === "SRSS" ? "SRSS" : "100_30");
+    if (combined) rs_cases[name] = combined;
+  }
+
   // ---- modal
   const N = model.num_modes || 6;
   const T1 = 0.075 * Math.pow(H, 0.85) * 1.35;
@@ -817,6 +879,29 @@ export function mockResults(model) {
     pushover[name] = { roof_disp, base_shear, roof_drift, hinge_rotations, warnings };
   }
 
+  /* ---- v0.10: linearized buckling — critical load factors λ per mode and
+     buckling mode shapes (same shape as modal shapes). λ multiplies the
+     applied gravity state; λ < 1 means buckling below the applied load. */
+  const buckling = {};
+  for (const [name, bc] of Object.entries(model.buckling_cases || {})) {
+    const nModes = (isFinite(bc.num_modes) && bc.num_modes >= 1) ? Math.round(bc.num_modes) : 3;
+    const seed = [3.2, 5.1, 8.7, 12.4, 16.9, 22.1, 28.0];
+    const factors = [];
+    for (let i = 0; i < nModes; i++)
+      factors.push(+((seed[i] != null ? seed[i] : seed[seed.length - 1] + (i - seed.length + 1) * 5.7) * jit(0.02)).toFixed(3));
+    const modes = {};
+    for (let i = 1; i <= nModes; i++) {
+      const src = shapes[String(i)] || shapes["1"] || {};
+      const mm = {};
+      for (const [t, d] of Object.entries(src)) mm[t] = d.slice();
+      modes[String(i)] = mm;
+    }
+    const warnings = [];
+    if (factors.length && factors[0] < 1)
+      warnings.push(`critical load factor λ₁ = ${factors[0]} < 1 — the structure buckles below the applied gravity load`);
+    buckling[name] = { factors, modes, gravity: { ...(bc.gravity || {}) }, warnings };
+  }
+
   /* ---- v0.8: center of mass / center of rigidity per story. Present only
      when diaphragms exist (rigid globally or per story). CM drifts with
      height (mass irregularity); CR sits eccentric from CM — the two markers
@@ -897,6 +982,7 @@ export function mockResults(model) {
     modal: { periods, frequencies, participation, shapes },
   };
   if (Object.keys(pushover).length) out.pushover = pushover;
+  if (Object.keys(buckling).length) out.buckling = buckling;      // v0.10
   if (Object.keys(story_props).length) out.story_props = story_props;
   if (Object.keys(story_stiffness).length) out.story_stiffness = story_stiffness;
   if (Object.keys(irregularity).length) out.irregularity = irregularity;
@@ -938,6 +1024,60 @@ export function mockWindPattern(model, p = {}) {
   model.patterns[name] = {
     name, kind: "other", member_loads: [], area_loads: [], story_forces,
     wind: { direction: dirX ? "X" : "Y", V, exposure: exp_, Cp },
+  };
+  return model;
+}
+
+/* ================================================================
+   v0.10 — mock POST /api/case/rs-directional and /api/pattern/notional
+   ================================================================ */
+
+/** POST /api/case/rs-directional — add an RS directional combination (ASCE 7
+    §12.5) of two response-spectrum cases. p: {name, name_x, name_y, method}.
+    The combined directional case is produced (positive envelope) by
+    mockResults into results.rs_cases[name] at solve time. */
+export function mockRsDirectional(model, p = {}) {
+  const name = (p.name || "RS-DIR").trim() || "RS-DIR";
+  model.rs_combos = model.rs_combos || {};
+  model.rs_combos[name] = {
+    name,
+    name_x: p.name_x || "",
+    name_y: p.name_y || "",
+    method: p.method === "SRSS" ? "SRSS" : "100_30",
+  };
+  return model;
+}
+
+/** POST /api/pattern/notional — add a notional lateral load pattern (AISC
+    direct-analysis stability): F_i = coeff × gravity at each level applied
+    laterally. p: {name, direction "X"|"Y", coeff, gravity_pattern}. Kind
+    "notional" — renders like other lateral patterns (story_forces). */
+export function mockNotionalPattern(model, p = {}) {
+  const name = (p.name || "NOTIONAL").trim() || "NOTIONAL";
+  const dirX = p.direction !== "Y";
+  const coeff = isFinite(p.coeff) && p.coeff > 0 ? p.coeff : 0.002;
+  const gravPat = p.gravity_pattern || "DEAD";
+  const stories = model.stories || [];
+  const sm = model.story_masses || {};
+  // gravity at each level: prefer story mass; if the chosen pattern carries
+  // per-member gravity UDLs, fold their tributary weight into the story.
+  const gp = (model.patterns || {})[gravPat];
+  const beamW = {};
+  for (const l of (gp && gp.member_loads) || [])
+    if ((l.kind || "udl") === "udl") beamW[l.member_uid] = (beamW[l.member_uid] || 0) + (l.w || 0);
+  const storyGrav = {};
+  for (const s of stories) storyGrav[s.name] = (sm[s.name] || 0) * G;   // kN
+  for (const mm of model.members || [])
+    if (mm.kind === "beam" && beamW[mm.uid])
+      storyGrav[mm.story] = (storyGrav[mm.story] || 0) + beamW[mm.uid] * (mm.length || 0);
+  const story_forces = stories.map(s => {
+    const F = +(coeff * (storyGrav[s.name] || 0)).toFixed(3);
+    return { story: s.name, fx: dirX ? F : 0, fy: dirX ? 0 : F };
+  });
+  model.patterns = model.patterns || {};
+  model.patterns[name] = {
+    name, kind: "notional", member_loads: [], area_loads: [], story_forces,
+    notional: { direction: dirX ? "X" : "Y", coeff, gravity_pattern: gravPat },
   };
   return model;
 }

@@ -5,7 +5,8 @@ import { Viewer3D, SHELL_COMPONENTS } from "./viewer3d.js";
 import { renderStoryCharts, stationDiagram, timeSeriesChart, pushoverChart } from "./charts.js";
 import { mockModel, mockResults, mockSectionLibrary, mockModelFiles, mockWindPattern,
   mockDesignSteel, mockDesignConcrete, mockImport,
-  mockSelfWeightPattern, mockAsce7Combos, mockCodeRsCase, mockElfPattern } from "./mock.js";
+  mockSelfWeightPattern, mockAsce7Combos, mockCodeRsCase, mockElfPattern,
+  mockRsDirectional, mockNotionalPattern } from "./mock.js";
 import { PlanEditor } from "./draw.js";
 import { ElevEditor } from "./elev.js";
 import { LoadsEditor } from "./loads.js";
@@ -22,7 +23,7 @@ const store = {
   firstSolveDone: false,
   driftLimitPct: 0.5,    // % — 1/200
   cmStory: null,         // v0.8 — story shown in the CM/CR plan diagram
-  overlay: { deformed: false, modal: false, modeIndex: 0, scaleMult: 1 },
+  overlay: { deformed: false, modal: false, buckling: false, bucklingCase: null, modeIndex: 0, scaleMult: 1 },
   forcesSort: { key: "M3", dir: -1 },
   forcesFilter: "",
   lastSolveMs: null,
@@ -50,6 +51,7 @@ const store = {
   view: "plan",          // model-mode editor: "plan" | "elev"
   elevLine: null,        // elevation grid line, e.g. "x:0" | "y:2"
   poCase: null,          // selected pushover case (results tab)
+  buckCase: null,        // v0.10 — selected buckling case (results tab)
   // v0.6 — design checks, import, template gallery, staged, nonlinear TH
   designKind: "steel",   // "steel" | "concrete"
   designCase: null,      // case/combo checked
@@ -288,6 +290,44 @@ async function createElfPattern(params) {
   return store.model;
 }
 
+/* ---- v0.10: RS directional combination + notional loads.
+   Both mirror generateWindPattern: the live path syncs the working model,
+   POSTs the endpoint and adopts the echoed model; ?mock=1 / a missing
+   endpoint mutates the client model locally. */
+async function createRsDirectional(params) {
+  if (!store.mock) {
+    try {
+      await codeToolLive("/api/case/rs-directional", params);
+      toast("Directional RS combination created",
+        `“${params.name}” · ${params.method === "SRSS" ? "SRSS" : "100/30"} via POST /api/case/rs-directional`, "info", 5000);
+      return store.model;
+    } catch (e) { console.warn("RS-directional endpoint unavailable, computing locally:", e.message); }
+  }
+  mockRsDirectional(store.model, params);
+  ME.normalizeModel(store.model);
+  markDirty();
+  toast("Directional RS combination created",
+    `“${params.name}” computed locally (${store.mock ? "mock mode" : "backend lacks endpoint"})`, "info", 5000);
+  return store.model;
+}
+
+async function createNotionalPattern(params) {
+  if (!store.mock) {
+    try {
+      await codeToolLive("/api/pattern/notional", params);
+      toast("Notional pattern created",
+        `“${params.name}” · ${params.direction} · ${fmt(params.coeff, 3)}×gravity via POST /api/pattern/notional`, "info", 5000);
+      return store.model;
+    } catch (e) { console.warn("Notional endpoint unavailable, computing locally:", e.message); }
+  }
+  mockNotionalPattern(store.model, params);
+  ME.normalizeModel(store.model);
+  markDirty();
+  toast("Notional pattern created",
+    `“${params.name}” computed locally (${store.mock ? "mock mode" : "backend lacks endpoint"})`, "info", 5000);
+  return store.model;
+}
+
 /* ---- v0.3: model files + section library.
    Each call tries the real endpoint, then falls back to the built-in mock
    store so the UI stays usable while the backend catches up. */
@@ -478,6 +518,7 @@ function syncLoadsNav() {
   $("cnt-rs").textContent = Object.keys(m.rs_cases || {}).length;
   $("cnt-th").textContent = Object.keys(m.th_cases || {}).length;
   $("cnt-pushover").textContent = Object.keys(m.pushover_cases || {}).length;
+  $("cnt-buckling").textContent = Object.keys(m.buckling_cases || {}).length;
   $("cnt-staged").textContent = Object.keys(m.staged_cases || {}).length;
   $("cnt-combos").textContent = Object.keys(m.combos || {}).length;
 }
@@ -2173,6 +2214,12 @@ function setResultsAvailable(on) {
   $("empty-pushover").classList.toggle("hidden", hasPo);
   $("content-pushover").classList.toggle("hidden", !hasPo);
   if (!hasPo && store.tab === "pushover") switchTab("view3d");
+  // v0.10: buckling tab appears only when results carry buckling factors
+  const hasBuck = on && !!Object.keys(store.results?.buckling || {}).length;
+  $("buckTabBtn").classList.toggle("hidden", !hasBuck);
+  $("empty-buckling").classList.toggle("hidden", hasBuck);
+  $("content-buckling").classList.toggle("hidden", !hasBuck);
+  if (!hasBuck && store.tab === "buckling") switchTab("view3d");
   if (!on) {
     store.contour.on = false;
     syncContoursUI();
@@ -2190,6 +2237,7 @@ function renderResultsTabs() {
   renderForcesTab();
   renderThTab();
   renderPoTab();
+  renderBucklingTab();
 }
 
 /* ---- story tab */
@@ -2709,6 +2757,106 @@ function renderPoTab() {
 }
 
 /* ================================================================
+   v0.10 — BUCKLING TAB
+   Critical load factors λ per mode; clicking a mode animates the buckling
+   mode shape in the 3D view (reusing the modal mode-shape animation).
+   ================================================================ */
+function buckData() {
+  const bk = store.results && store.results.buckling;
+  if (!bk || !Object.keys(bk).length) return null;
+  if (!store.buckCase || !bk[store.buckCase]) store.buckCase = Object.keys(bk)[0];
+  return bk[store.buckCase];
+}
+
+function rebuildBuckSelect() {
+  const bk = (store.results && store.results.buckling) || {};
+  const names = Object.keys(bk);
+  const sel = $("buckCaseSelect");
+  sel.textContent = "";
+  for (const n of names) {
+    const o = document.createElement("option");
+    o.value = n; o.textContent = n;
+    sel.appendChild(o);
+  }
+  if (!store.buckCase || !names.includes(store.buckCase)) store.buckCase = names[0] || null;
+  if (store.buckCase) sel.value = store.buckCase;
+}
+
+function renderBucklingTab() {
+  const bd = buckData();
+  if (!bd) return;
+  const factors = bd.factors || [];
+  const gravStr = Object.entries(bd.gravity || {})
+    .map(([p, f]) => `${fmt(f, 2)}×${p}`).join(" + ") || "—";
+  $("buckMeta").textContent =
+    `gravity ${gravStr} · ${factors.length} mode${factors.length === 1 ? "" : "s"}` +
+    (factors.length ? ` · λ₁ = ${fmt(factors[0], 3)}` : "");
+
+  // warnings (e.g. λ < 1)
+  const wbox = $("buckWarnings");
+  wbox.textContent = "";
+  const warns = bd.warnings || [];
+  const belowOne = factors.some(l => l < 1);
+  wbox.classList.toggle("hidden", !(warns.length || belowOne));
+  for (const w of warns) {
+    const div = document.createElement("div");
+    div.className = "po-warn-item";
+    div.textContent = `⚠ ${w}`;
+    wbox.appendChild(div);
+  }
+
+  const active = store.overlay.buckling && store.overlay.bucklingCase === store.buckCase;
+  const head = `<thead><tr>
+    <th class="txt">Mode</th><th>λ (critical factor)</th><th class="txt">scaled gravity</th>
+    <th class="txt"></th></tr></thead>`;
+  const body = factors.map((lam, i) => {
+    const cls = lam < 1 ? "buck-unsafe" : "";
+    const on = active && store.overlay.modeIndex === i;
+    return `<tr class="${cls}">
+      <td class="txt">${i + 1}</td>
+      <td class="${cls}">${fmt(lam, 3)}</td>
+      <td class="txt dim">λ × gravity = ${fmt(lam, 2)} × gravity</td>
+      <td class="txt"><button class="link-3d${on ? " is-on" : ""}" data-mode="${i}">animate mode →</button></td>
+    </tr>`;
+  }).join("");
+  $("buckTable").innerHTML = head +
+    `<tbody>${body || `<tr><td class="txt dim">No buckling factors reported</td></tr>`}</tbody>`;
+  $("buckTable").querySelectorAll(".link-3d").forEach(btn =>
+    btn.addEventListener("click", () =>
+      viewBucklingModeIn3D(store.buckCase, parseInt(btn.dataset.mode, 10))));
+
+  $("buckNote").textContent =
+    "Critical load factor λ scales the applied gravity state to the buckling load. " +
+    "λ < 1 means the structure buckles below the applied gravity.";
+}
+
+function viewBucklingModeIn3D(caseName, idx) {
+  store.overlay.buckling = true;
+  store.overlay.modal = false;
+  store.overlay.deformed = false;
+  store.overlay.bucklingCase = caseName;
+  store.overlay.modeIndex = idx;
+  rebuildBuckModeSelect();
+  $("buckModeSelect").value = String(idx);
+  syncOverlayUI();
+  switchTab("view3d");
+}
+
+function rebuildBuckModeSelect() {
+  const sel = $("buckModeSelect");
+  sel.textContent = "";
+  const bd = buckData();
+  if (!bd) return;
+  (bd.factors || []).forEach((lam, i) => {
+    const o = document.createElement("option");
+    o.value = String(i);
+    o.textContent = `Mode ${i + 1} — λ ${fmt(lam, 3)}`;
+    sel.appendChild(o);
+  });
+  if (store.overlay.buckling) sel.value = String(store.overlay.modeIndex);
+}
+
+/* ================================================================
    v0.6 — DESIGN CHECKS (steel / concrete)
    ================================================================ */
 function designResult() {
@@ -3132,6 +3280,16 @@ function csvRows(kind) {
         ...(env ? [x.governing_combo || ""] : []), x.status, x.notes]),
     ];
   }
+  if (kind === "buckling") {
+    const bd = buckData();
+    if (!bd) return null;
+    return [
+      ["mode", "lambda_critical_factor", "note"],
+      ...(bd.factors || []).map((lam, i) => [
+        i + 1, lam, lam < 1 ? "buckles below applied gravity" : "",
+      ]),
+    ];
+  }
   if (kind === "th") {
     const td = thData();
     if (!td) return null;
@@ -3152,6 +3310,7 @@ function csvFileName(kind) {
   const caseless = kind === "modal";
   const caseTag = kind === "th" ? store.thCase
     : kind === "pushover" ? store.poCase
+    : kind === "buckling" ? store.buckCase
     : kind === "design" ? `${store.designKind}-${designResult()?.case || ""}`
     : caseLabel(store.caseName) + (caseData()?.min ? `-${store.envSide}` : "");
   return `skyframe-${slug(store.model?.name)}-${kind}` +
@@ -3195,15 +3354,24 @@ function syncOverlayUI() {
   $("chipMode").classList.toggle("is-on", o.modal);
   $("deformedGroup").hidden = !o.deformed;
   $("modeGroup").hidden = !o.modal;
-  $("legendDeformed").classList.toggle("hidden", !(o.deformed || o.modal));
+  // v0.10 — buckling mode-shape animation controls
+  $("buckModeGroup").hidden = !o.buckling;
+  $("legendDeformed").classList.toggle("hidden", !(o.deformed || o.modal || o.buckling));
   $("envBadge").classList.toggle("hidden", !(o.deformed && isRsCase(store.caseName)));
   if (o.modal && store.results && store.results.modal) {
     const T = store.results.modal.periods[o.modeIndex];
     const f = store.results.modal.frequencies[o.modeIndex];
     $("modePeriodBadge").textContent = `T = ${fmt(T, 3)} s · ${fmt(f, 2)} Hz`;
   }
+  if (o.buckling) {
+    const bk = store.results && store.results.buckling && store.results.buckling[o.bucklingCase];
+    const lam = bk && bk.factors ? bk.factors[o.modeIndex] : null;
+    $("buckFactorBadge").textContent =
+      `${esc(o.bucklingCase || "")} · λ = ${lam != null ? fmt(lam, 3) : "—"}`;
+  }
   viewer.setOverlay({
     deformed: o.deformed, modal: o.modal,
+    buckling: o.buckling, bucklingCase: o.bucklingCase,
     caseName: store.caseName, modeIndex: o.modeIndex, scaleMult: o.scaleMult,
   });
 }
@@ -3265,6 +3433,7 @@ async function doRun() {
     rebuildModeSelect();
     rebuildThSelects();                            // v0.4
     rebuildPoSelect();                             // v0.5
+    rebuildBuckSelect();                           // v0.10
     viewer.setResults(results);
     setResultsAvailable(true);
     renderResultsTabs();
@@ -3502,13 +3671,13 @@ function wire() {
   // overlay chips (deformed / mode / contours are mutually exclusive)
   $("chipDeformed").addEventListener("click", () => {
     store.overlay.deformed = !store.overlay.deformed;
-    if (store.overlay.deformed) { store.overlay.modal = false; store.contour.on = false; }
+    if (store.overlay.deformed) { store.overlay.modal = false; store.overlay.buckling = false; store.contour.on = false; }
     syncOverlayUI();
     syncContoursUI();
   });
   $("chipMode").addEventListener("click", () => {
     store.overlay.modal = !store.overlay.modal;
-    if (store.overlay.modal) { store.overlay.deformed = false; store.contour.on = false; }
+    if (store.overlay.modal) { store.overlay.deformed = false; store.overlay.buckling = false; store.contour.on = false; }
     syncOverlayUI();
     syncContoursUI();
   });
@@ -3517,6 +3686,7 @@ function wire() {
     if (store.contour.on) {
       store.overlay.deformed = false;
       store.overlay.modal = false;
+      store.overlay.buckling = false;
       syncOverlayUI();
     }
     syncContoursUI();
@@ -3540,6 +3710,23 @@ function wire() {
     store.overlay.modeIndex = parseInt(e.target.value, 10);
     syncOverlayUI();
   });
+  // v0.10 — buckling case + mode-shape animation selectors
+  $("buckCaseSelect").addEventListener("change", e => {
+    store.buckCase = e.target.value;
+    if (store.overlay.buckling) {
+      store.overlay.bucklingCase = store.buckCase;
+      store.overlay.modeIndex = 0;
+      rebuildBuckModeSelect();
+    }
+    renderBucklingTab();
+    syncOverlayUI();
+  });
+  $("buckModeSelect").addEventListener("change", e => {
+    store.overlay.modeIndex = parseInt(e.target.value, 10);
+    renderBucklingTab();
+    syncOverlayUI();
+  });
+  $("csvBuck").addEventListener("click", () => downloadCsv("buckling"));
 
   // drift limit
   $("driftLimitInput").addEventListener("change", e => {
@@ -3566,7 +3753,7 @@ function wire() {
   });
 
   // keyboard
-  const TABS = ["view3d", "story", "modal", "reactions", "forces", "design", "th", "pushover"];
+  const TABS = ["view3d", "story", "modal", "reactions", "forces", "design", "th", "pushover", "buckling"];
   const TOOL_KEYS = { v: "select", c: "column", b: "beam", x: "brace", w: "wall", s: "slab", l: "link", g: "spring", e: "erase" };
   document.addEventListener("keydown", e => {
     const tag = (e.target.tagName || "").toLowerCase();
@@ -3606,10 +3793,11 @@ function wire() {
 
     if (store.mode !== "analyze") return;   // loads mode: no analyze shortcuts
 
-    if (e.key >= "1" && e.key <= "8") {
+    if (e.key >= "1" && e.key <= "9") {
       const t = TABS[+e.key - 1];
       const hidden = (t === "th" && $("thTabBtn").classList.contains("hidden")) ||
-        (t === "pushover" && $("poTabBtn").classList.contains("hidden"));
+        (t === "pushover" && $("poTabBtn").classList.contains("hidden")) ||
+        (t === "buckling" && $("buckTabBtn").classList.contains("hidden"));
       if (t && !hidden) switchTab(t);
     }
     else if (e.key === "r" || e.key === "R") doRun();
@@ -3652,6 +3840,9 @@ async function boot() {
     onAutoCombos: generateAsce7Combos,
     onCodeRs: createCodeRsCase,
     onElf: createElfPattern,
+    // v0.10 — RS directional combination + notional loads
+    onRsDirectional: createRsDirectional,
+    onNotional: createNotionalPattern,
   });
   wire();
   try {
@@ -3702,6 +3893,9 @@ async function boot() {
     renderStoryTab, renderCmCrBlock, storyCmCr, hasCmCr, renderStoryCharts,
     // v0.9
     renderDiagBlock, diagCaseNames, hasDiagnostics,
+    // v0.10 — buckling, RS directional, notional
+    renderBucklingTab, rebuildBuckSelect, buckData, viewBucklingModeIn3D,
+    createRsDirectional, createNotionalPattern, mockRsDirectional, mockNotionalPattern,
   };
 }
 

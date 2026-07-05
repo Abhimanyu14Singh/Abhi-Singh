@@ -13,7 +13,8 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;",
 const fmt = (v, d = 2) => (v == null || !isFinite(v)) ? "—" :
   v.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: d });
 
-const KIND_LABEL = { dead: "dead", live: "live", quake: "quake", other: "other" };
+const KIND_LABEL = { dead: "dead", live: "live", quake: "quake", other: "other",
+  notional: "notional", wind: "wind" };
 
 export class LoadsEditor {
   /**
@@ -36,12 +37,18 @@ export class LoadsEditor {
     this.onAutoCombos = opts.onAutoCombos || null;
     this.onCodeRs = opts.onCodeRs || null;
     this.onElf = opts.onElf || null;
+    // v0.10 — RS directional combination + notional loads
+    this.onRsDirectional = opts.onRsDirectional || null;
+    this.onNotional = opts.onNotional || null;
     this._wind = { name: "WX", direction: "X", V: 40, exposure: "C", Cp: 0.8 };
     // v0.7 code-tool card state (persisted across re-renders)
     this._sw = { name: "SW", factor: 1.0 };
     this._combos = { standard: "LRFD" };
     this._codeRs = { name: "RS-Code", Ss: 1.0, S1: 0.6, site_class: "D", R: 8, Ie: 1.0, direction: "X" };
     this._elf = { name: "EQ-ELF", SDS: 1.0, SD1: 0.6, R: 8, Ie: 1.0, direction: "X" };
+    // v0.10 card state (persisted across re-renders)
+    this._rsDir = { name: "RS-Dir", name_x: "", name_y: "", method: "100_30" };
+    this._notional = { name: "NOTIONAL", direction: "X", coeff: 0.002, gravity_pattern: "DEAD" };
   }
 
   /** mutation helpers — structural edits re-render, value edits don't */
@@ -61,6 +68,7 @@ export class LoadsEditor {
     this.root.appendChild(this._rsSection(m));
     this.root.appendChild(this._thSection(m));
     this.root.appendChild(this._poSection(m));
+    this.root.appendChild(this._bucklingSection(m));
     this.root.appendChild(this._stagedSection(m));
     this.root.appendChild(this._combosSection(m));
     this.root.appendChild(this._massSection(m));
@@ -140,6 +148,14 @@ export class LoadsEditor {
 
       const chips = document.createElement("div");
       chips.className = "kind-chips";
+      // v0.10 — a special kind (e.g. "notional") shows a read-only badge chip
+      if (p.kind && !ME.PATTERN_KINDS.includes(p.kind)) {
+        const c = document.createElement("span");
+        c.className = `kind-chip k-${p.kind} is-on is-locked`;
+        c.textContent = KIND_LABEL[p.kind] || p.kind;
+        c.title = `Pattern kind: ${p.kind} (auto-generated)`;
+        chips.appendChild(c);
+      }
       for (const k of ME.PATTERN_KINDS) {
         const c = document.createElement("button");
         c.className = `kind-chip k-${k}` + (p.kind === k ? " is-on" : "");
@@ -176,8 +192,56 @@ export class LoadsEditor {
     }
     sec.appendChild(list);
     sec.appendChild(this._windCard(m));
+    sec.appendChild(this._notionalCard(m));
     sec.appendChild(this._thermalCard(m));
     return sec;
+  }
+
+  /* ---- v0.10: notional loads (AISC stability) generator.
+     POST /api/pattern/notional, mock local. Creates a lateral pattern that
+     shows up like wind/EQ patterns (story_forces). */
+  _notionalCard(m) {
+    const card = document.createElement("div");
+    card.className = "wind-card notional-card";
+    card.id = "notionalCard";
+    const s = this._notional;
+    const pats = ME.patternNames(m);
+    card.innerHTML = `
+      <div class="wind-head">
+        <b>Notional loads (AISC stability)</b>
+        <span class="muted">coeff × gravity applied laterally — direct analysis method</span>
+      </div>
+      <div class="wind-fields">
+        <label class="rs-field"><span>name</span>
+          <input id="ntName" type="text" value="${esc(s.name)}" spellcheck="false"></label>
+        <label class="rs-field"><span>direction</span>
+          <select id="ntDir">
+            <option value="X"${s.direction === "X" ? " selected" : ""}>X</option>
+            <option value="Y"${s.direction === "Y" ? " selected" : ""}>Y</option>
+          </select></label>
+        <label class="rs-field"><span>coefficient</span>
+          <input id="ntCoeff" type="number" min="0" step="0.001" value="${s.coeff}"></label>
+        <label class="rs-field"><span>gravity pattern</span>
+          <select id="ntGrav">${pats.map(p =>
+            `<option value="${esc(p)}"${p === s.gravity_pattern ? " selected" : ""}>${esc(p)}</option>`).join("")}</select></label>
+        <button class="btn btn-small" id="ntCreate">Create</button>
+      </div>
+      <p class="code-note muted">Applies a notional lateral force <b>Ni = coeff × Yi</b>
+        (default <b>0.002</b>, AISC 360 §C2.2b) at each level, where Yi is the gravity load from
+        the chosen pattern — accounts for initial out-of-plumbness in the
+        <b>direct analysis method</b>. Creates a lateral pattern like wind / EQ.</p>`;
+    const $ = id => card.querySelector("#" + id);
+    $("ntName").addEventListener("change", e => { s.name = e.target.value.trim() || "NOTIONAL"; e.target.value = s.name; });
+    $("ntDir").addEventListener("change", e => { s.direction = e.target.value; });
+    $("ntCoeff").addEventListener("change", e => {
+      const v = parseFloat(e.target.value);
+      if (isFinite(v) && v > 0) s.coeff = v; else e.target.value = String(s.coeff);
+    });
+    $("ntGrav").addEventListener("change", e => { s.gravity_pattern = e.target.value; });
+    $("ntCreate").addEventListener("click", () =>
+      this._runTool($("ntCreate"), this.onNotional, { ...s }, "Notional pattern creation failed"));
+    if (!this.onNotional) $("ntCreate").disabled = true;
+    return card;
   }
 
   /* ---- v0.8: accidental-torsion row (ASCE 7 §12.8.4) for a lateral pattern */
@@ -694,7 +758,101 @@ export class LoadsEditor {
 
     for (const name of names) list.appendChild(this._rsCard(m, name));
     sec.appendChild(list);
+    sec.appendChild(this._rsDirectionalCard(m));
     return sec;
+  }
+
+  /* ---- v0.10: RS directional combination (ASCE 7 §12.5).
+     Combine an RS-X case and an RS-Y case by 100/30 or SRSS; POST
+     /api/case/rs-directional. The combined case appears as "RS: <name>" in
+     all results selectors (it lands in rs_cases at solve time). */
+  _rsDirectionalCard(m) {
+    const card = document.createElement("div");
+    card.className = "wind-card rs-dir-card";
+    card.id = "rsDirCard";
+    const s = this._rsDir;
+    const rsNames = Object.keys(m.rs_cases || {});
+    // default the X / Y selects to the first sensible RS cases
+    if (!s.name_x || !rsNames.includes(s.name_x))
+      s.name_x = rsNames.find(n => (m.rs_cases[n].direction || "X") === "X") || rsNames[0] || "";
+    if (!s.name_y || !rsNames.includes(s.name_y))
+      s.name_y = rsNames.find(n => (m.rs_cases[n].direction || "X") === "Y") || rsNames[0] || "";
+
+    const opt = (sel) => rsNames.length
+      ? rsNames.map(n => `<option value="${esc(n)}"${n === sel ? " selected" : ""}>${esc(n)}</option>`).join("")
+      : `<option value="">— no RS cases —</option>`;
+
+    const head = document.createElement("div");
+    head.className = "wind-head";
+    head.innerHTML = `<b>Directional combination (ASCE 7 §12.5)</b>
+      <span class="muted">combine RS-X &amp; RS-Y → a single directional case</span>`;
+    card.appendChild(head);
+
+    const fields = document.createElement("div");
+    fields.className = "wind-fields";
+    fields.innerHTML = `
+      <label class="rs-field"><span>name</span>
+        <input id="rsDirName" type="text" value="${esc(s.name)}" spellcheck="false"></label>
+      <label class="rs-field"><span>RS-X case</span>
+        <select id="rsDirX">${opt(s.name_x)}</select></label>
+      <label class="rs-field"><span>RS-Y case</span>
+        <select id="rsDirY">${opt(s.name_y)}</select></label>
+      <label class="rs-field"><span>method</span>
+        <select id="rsDirMethod">
+          <option value="100_30"${s.method === "100_30" ? " selected" : ""}>100/30</option>
+          <option value="SRSS"${s.method === "SRSS" ? " selected" : ""}>SRSS</option>
+        </select></label>
+      <button class="btn btn-small" id="rsDirCreate">Create</button>`;
+    card.appendChild(fields);
+
+    const note = document.createElement("p");
+    note.className = "code-note muted";
+    note.innerHTML = `<b>100/30</b> takes 100 % of one direction with 30 % of the orthogonal
+      (max of the two orderings); <b>SRSS</b> takes the square root of the sum of the squares.
+      The result is a positive envelope that appears as <b>RS: ${esc(s.name)}</b> in every
+      results selector.`;
+    card.appendChild(note);
+
+    const $ = id => card.querySelector("#" + id);
+    $("rsDirName").addEventListener("change", e => {
+      s.name = e.target.value.trim() || "RS-Dir"; e.target.value = s.name;
+      note.innerHTML = note.innerHTML.replace(/RS: [^<]*/, `RS: ${esc(s.name)}`);
+    });
+    $("rsDirX").addEventListener("change", e => { s.name_x = e.target.value; });
+    $("rsDirY").addEventListener("change", e => { s.name_y = e.target.value; });
+    $("rsDirMethod").addEventListener("change", e => { s.method = e.target.value; });
+    const btn = $("rsDirCreate");
+    btn.addEventListener("click", () => {
+      if (!s.name_x || !s.name_y) {
+        this.toast("Pick RS cases", "Select both an RS-X and an RS-Y case first", "error", 4000);
+        return;
+      }
+      this._runTool(btn, this.onRsDirectional, { ...s }, "Directional combination failed");
+    });
+    if (!this.onRsDirectional || rsNames.length < 1) btn.disabled = true;
+
+    // existing directional combos (list + delete)
+    const combos = Object.keys(m.rs_combos || {});
+    if (combos.length) {
+      const list = document.createElement("div");
+      list.className = "rs-dir-list";
+      for (const name of combos) {
+        const rc = m.rs_combos[name];
+        const row = document.createElement("div");
+        row.className = "rs-dir-row";
+        const label = document.createElement("span");
+        label.className = "rs-dir-label";
+        label.innerHTML = `<b>${esc(name)}</b> <span class="muted">` +
+          `${esc(rc.name_x || "—")} + ${esc(rc.name_y || "—")} · ${esc(rc.method === "SRSS" ? "SRSS" : "100/30")}</span>`;
+        row.appendChild(label);
+        row.appendChild(this._delBtn(null, `RS combo ${name}`, () => {
+          if (ME.deleteRsCombo(m, name)) this._mutated();
+        }));
+        list.appendChild(row);
+      }
+      card.appendChild(list);
+    }
+    return card;
   }
 
   _rsCard(m, name) {
@@ -1343,6 +1501,79 @@ export class LoadsEditor {
     }
     body.appendChild(rows);
     card.appendChild(body);
+    return card;
+  }
+
+  /* ============================================================ buckling (v0.10) */
+  _bucklingSection(m) {
+    const sec = this._section("ls-buckling", "Buckling cases",
+      "Linearized (eigenvalue) buckling — the gravity state below is scaled " +
+      "until the structure buckles. Critical load factors λ land in the " +
+      "<b>Buckling</b> tab after a solve; λ &lt; 1 means buckling below the applied gravity.",
+      "+ Add buckling", () => { ME.addBucklingCase(m); this._mutated(); });
+
+    const list = document.createElement("div");
+    list.className = "loads-rows";
+    const names = Object.keys(m.buckling_cases || {});
+    if (!names.length) list.innerHTML = `<p class="muted loads-empty">No buckling cases yet.</p>`;
+    for (const name of names) list.appendChild(this._bucklingCard(m, name));
+    sec.appendChild(list);
+    return sec;
+  }
+
+  _bucklingCard(m, name) {
+    const bc = m.buckling_cases[name];
+    const card = document.createElement("div");
+    card.className = "rs-card buckling-card";
+
+    const head = document.createElement("div");
+    head.className = "rs-head";
+    head.appendChild(this._nameInput(name, "rs-name",
+      nu => ME.renameBucklingCase(m, name, nu)));
+
+    const mkField = (label, node) => {
+      const w = document.createElement("label");
+      w.className = "rs-field";
+      const s = document.createElement("span");
+      s.textContent = label;
+      w.append(s, node);
+      return w;
+    };
+    const modesIn = document.createElement("input");
+    modesIn.type = "number"; modesIn.step = "1"; modesIn.min = "1"; modesIn.max = "20";
+    modesIn.value = String(bc.num_modes);
+    modesIn.addEventListener("change", () => {
+      const v = parseInt(modesIn.value, 10);
+      if (isFinite(v) && v >= 1) { bc.num_modes = v; this._mutated(false); syncNote(); }
+      else modesIn.value = String(bc.num_modes);
+    });
+    head.appendChild(mkField("modes", modesIn));
+
+    head.appendChild(this._delBtn(null, `buckling case ${name}`, () => {
+      if (ME.deleteBucklingCase(m, name)) this._mutated();
+    }));
+    card.appendChild(head);
+
+    // gravity pattern factors (the buckled gravity state)
+    const grav = document.createElement("div");
+    grav.className = "lc-row po-grav";
+    const tag = document.createElement("span");
+    tag.className = "mass-tag";
+    tag.textContent = "gravity =";
+    tag.title = "Gravity state (pattern × factor) that is scaled to buckling";
+    grav.appendChild(tag);
+    grav.appendChild(this._factorChips(bc.gravity, ME.patternNames(m),
+      "Add a gravity pattern to this buckling case"));
+    card.appendChild(grav);
+
+    const note = document.createElement("p");
+    note.className = "muted staged-note";
+    const syncNote = () => {
+      note.innerHTML = `Reports the first <b>${bc.num_modes}</b> critical load factor${bc.num_modes === 1 ? "" : "s"} λ. ` +
+        `The applied gravity buckles the structure when scaled by λ — <b>λ &lt; 1 is unsafe</b>.`;
+    };
+    syncNote();
+    card.appendChild(note);
     return card;
   }
 

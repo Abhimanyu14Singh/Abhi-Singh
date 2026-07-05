@@ -130,6 +130,20 @@ export function normalizeModel(m) {
     sc.include_live = (sc.include_live && typeof sc.include_live === "object")
       ? sc.include_live : {};
   }
+  // v0.10 — buckling cases (linearized eigenvalue) + RS directional combos
+  m.buckling_cases = m.buckling_cases || {};
+  for (const [n, bc] of Object.entries(m.buckling_cases)) {
+    bc.name = bc.name || n;
+    bc.gravity = (bc.gravity && typeof bc.gravity === "object") ? bc.gravity : {};
+    bc.num_modes = (isFinite(bc.num_modes) && bc.num_modes >= 1) ? Math.round(bc.num_modes) : 3;
+  }
+  m.rs_combos = m.rs_combos || {};
+  for (const [n, rcmb] of Object.entries(m.rs_combos)) {
+    rcmb.name = rcmb.name || n;
+    rcmb.name_x = rcmb.name_x || "";
+    rcmb.name_y = rcmb.name_y || "";
+    rcmb.method = rcmb.method === "SRSS" ? "SRSS" : "100_30";
+  }
   return m;
 }
 
@@ -728,6 +742,36 @@ export function renameRsCase(model, oldName, newName) {
 
 export function deleteRsCase(model, name) {
   delete model.rs_cases[name];
+  return true;
+}
+
+/* ================================================================
+   v0.10 — buckling cases (linearized eigenvalue) + RS directional combos
+   ================================================================ */
+export function addBucklingCase(model, base = "BUCK") {
+  model.buckling_cases = model.buckling_cases || {};
+  const name = uniqueKey(model.buckling_cases, base);
+  const grav = (model.patterns && model.patterns.DEAD) ? { DEAD: 1.0 } : {};
+  model.buckling_cases[name] = { name, gravity: grav, num_modes: 3 };
+  return name;
+}
+
+export function renameBucklingCase(model, oldName, newName) {
+  if (!newName || newName === oldName || model.buckling_cases[newName]) return false;
+  model.buckling_cases[newName] = { ...model.buckling_cases[oldName], name: newName };
+  delete model.buckling_cases[oldName];
+  return true;
+}
+
+export function deleteBucklingCase(model, name) {
+  delete model.buckling_cases[name];
+  return true;
+}
+
+/** Delete an RS directional combination (created via /api/case/rs-directional).
+    The combined result only reappears in rs_cases after the next solve. */
+export function deleteRsCombo(model, name) {
+  if (model.rs_combos) delete model.rs_combos[name];
   return true;
 }
 

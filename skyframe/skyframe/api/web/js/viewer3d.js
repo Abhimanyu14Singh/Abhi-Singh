@@ -78,7 +78,7 @@ export class Viewer3D {
 
     this.model = null;
     this.results = null;
-    this.overlay = { deformed: false, modal: false, caseName: null, modeIndex: 0, scaleMult: 1 };
+    this.overlay = { deformed: false, modal: false, buckling: false, bucklingCase: null, caseName: null, modeIndex: 0, scaleMult: 1 };
     this.contours = { on: false, comp: "M11", caseName: null };   // v0.4
     this.labelsOn = true;
     this.highlight = { uids: null, color: "#e0a020" };            // v0.6
@@ -405,12 +405,13 @@ export class Viewer3D {
   _loop() {
     this._raf = requestAnimationFrame(() => this._loop());
     // inertia decay
-    if (!this.overlay.modal && (Math.abs(this.vyaw) > 0.0004 || Math.abs(this.vpitch) > 0.0004)) {
+    const animating = this.overlay.modal || this.overlay.buckling;
+    if (!animating && (Math.abs(this.vyaw) > 0.0004 || Math.abs(this.vpitch) > 0.0004)) {
       this.yaw += this.vyaw; this.pitch = Math.min(1.52, Math.max(-1.52, this.pitch + this.vpitch));
       this.vyaw *= 0.90; this.vpitch *= 0.90;
       this._dirty = true;
     }
-    if (this.overlay.modal) this._dirty = true;  // continuous animation
+    if (animating) this._dirty = true;  // continuous animation
     if (this._dirty) { this._dirty = false; this._render(); }
   }
 
@@ -462,7 +463,7 @@ export class Viewer3D {
     }
 
     // ---- depth-sorted drawables: slabs + shell regions + members
-    const overlayActive = this.overlay.deformed || this.overlay.modal;
+    const overlayActive = this.overlay.deformed || this.overlay.modal || this.overlay.buckling;
     const contour = overlayActive ? null : this._contourData();   // v0.4
     const items = [];
     for (const poly of this.slabs) {
@@ -731,7 +732,16 @@ export class Viewer3D {
     const r = this.results;
     let dispMap = null, factor = 1;
 
-    if (this.overlay.modal && r.modal && r.modal.shapes) {
+    if (this.overlay.buckling && r.buckling) {
+      // v0.10 — animate a buckling mode shape (same shape as modal shapes)
+      const bc = r.buckling[this.overlay.bucklingCase];
+      const modes = bc && bc.modes;
+      const k = String(this.overlay.modeIndex + 1);
+      dispMap = modes && modes[k];
+      if (!dispMap) return;
+      const t = (performance.now() - this._animT0) / 1000;
+      factor = this.autoScale(dispMap) * Math.sin(2 * Math.PI * t / 1.8);
+    } else if (this.overlay.modal && r.modal && r.modal.shapes) {
       const k = String(this.overlay.modeIndex + 1);
       dispMap = r.modal.shapes[k];
       if (!dispMap) return;

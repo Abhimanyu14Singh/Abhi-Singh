@@ -159,6 +159,7 @@
           <button data-target="ls-rs">RS cases <span class="nav-count" id="cnt-rs">0</span></button>
           <button data-target="ls-th">TH cases <span class="nav-count" id="cnt-th">0</span></button>
           <button data-target="ls-pushover">Pushover <span class="nav-count" id="cnt-pushover">0</span></button>
+          <button data-target="ls-buckling">Buckling <span class="nav-count" id="cnt-buckling">0</span></button>
           <button data-target="ls-staged">Staged <span class="nav-count" id="cnt-staged">0</span></button>
           <button data-target="ls-combos">Combos <span class="nav-count" id="cnt-combos">0</span></button>
           <button data-target="ls-mass">Mass source</button>
@@ -319,6 +320,7 @@
         <button class="tab" data-tab="design" role="tab" id="designTabBtn">Design</button>
         <button class="tab hidden" data-tab="th" role="tab" id="thTabBtn">Time History</button>
         <button class="tab hidden" data-tab="pushover" role="tab" id="poTabBtn">Pushover</button>
+        <button class="tab hidden" data-tab="buckling" role="tab" id="buckTabBtn">Buckling</button>
         <div class="tabbar-spacer"></div>
         <span class="staged-badge hidden" id="stagedBadge" title="Staged construction vs one-shot analysis — max column-axial difference"></span>
         <div class="seg-toggle env-toggle hidden" id="envToggle" title="Envelope combo — switch tables between the max and min envelope">
@@ -358,6 +360,10 @@
           <div class="toolbar-group" id="modeGroup" hidden>
             <select id="modeSelect" class="mini-select"></select>
             <span class="badge-period" id="modePeriodBadge"></span>
+          </div>
+          <div class="toolbar-group" id="buckModeGroup" hidden>
+            <select id="buckModeSelect" class="mini-select" title="Buckling mode shape"></select>
+            <span class="badge-period badge-buckling" id="buckFactorBadge"></span>
           </div>
           <span class="env-badge hidden" id="envBadge"
             title="Response-spectrum results are positive envelopes — the sign of the plotted shape is indeterminate">envelope&nbsp;±</span>
@@ -611,6 +617,31 @@
           </div>
           <div class="table-scroll">
             <table class="data-table" id="poHingeTable"></table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ BUCKLING (v0.10) ============ -->
+      <section class="tabpane" id="pane-buckling" role="tabpanel">
+        <div class="empty-state" id="empty-buckling">
+          <div class="empty-art">⌇</div>
+          <p>Run analysis with a buckling case to see critical load factors</p>
+        </div>
+        <div class="pane-content hidden" id="content-buckling">
+          <div class="charts-controls">
+            <div class="th-controls">
+              <label class="case-select-wrap"><span>Buckling case</span>
+                <select id="buckCaseSelect" class="case-select"></select></label>
+              <span class="muted" id="buckMeta"></span>
+            </div>
+            <button class="chip csv-btn" id="csvBuck" title="Download the critical load factors as CSV (unrounded)">⬇ CSV</button>
+          </div>
+          <div class="po-warnings hidden" id="buckWarnings"></div>
+          <div class="table-scroll">
+            <table class="data-table" id="buckTable"></table>
+          </div>
+          <div class="pane-tools">
+            <span class="muted" id="buckNote"></span>
           </div>
         </div>
       </section>
