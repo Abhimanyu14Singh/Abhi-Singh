@@ -192,6 +192,9 @@ export function normalizeModel(m) {
     tf.values = (Array.isArray(tf.values) ? tf.values : []).filter(isFinite);
     tf.dt = isFinite(tf.dt) && tf.dt > 0 ? tf.dt : 0.02;
   }
+  // v0.14 — multiple grid systems (orthogonal + radial, origin + rotation).
+  // The legacy single grid stays the primary system (grid_systems[0]).
+  ensureGridSystems(m);
   return m;
 }
 
@@ -1037,6 +1040,289 @@ export function removeGridLine(model, axis, idx) {
   lines.splice(idx, 1);
   relabelGrid(model.grid);
   return true;
+}
+
+/* ================================================================
+   v0.14 — MULTIPLE GRID SYSTEMS (orthogonal + radial, origin + rotation)
+
+   Each GridSystem's drawable lines and snap intersections are defined in
+   LOCAL coordinates, then transformed to GLOBAL by rotating (lx,ly) about
+   the origin (rotation° CCW) and translating by the origin — the exact
+   transform the backend replicates.  The legacy single grid (`model.grid`)
+   stays the primary system, exposed as `grid_systems[0]`.
+   ================================================================ */
+
+/** Normalise one grid system in place (fills defaults, sorts, relabels). */
+export function normalizeGridSystem(s, i = 0) {
+  if (!s || typeof s !== "object") return s;
+  s.kind = s.kind === "radial" ? "radial" : "orthogonal";
+  s.name = (typeof s.name === "string" && s.name.trim())
+    ? s.name : (s.kind === "radial" ? `R${i + 1}` : `G${i + 1}`);
+  if (!(Array.isArray(s.origin) && s.origin.length === 2 && s.origin.every(isFinite)))
+    s.origin = [0, 0];
+  if (!isFinite(s.rotation)) s.rotation = 0;
+  if (s.kind === "orthogonal") {
+    let xs = Array.isArray(s.x_lines) ? s.x_lines.filter(isFinite) : [];
+    let ys = Array.isArray(s.y_lines) ? s.y_lines.filter(isFinite) : [];
+    if (xs.length < 2) xs = [0, 6];
+    if (ys.length < 2) ys = [0, 6];
+    xs.sort((a, b) => a - b); ys.sort((a, b) => a - b);
+    s.x_lines = xs; s.y_lines = ys;
+    if (!(Array.isArray(s.x_labels) && s.x_labels.length === xs.length))
+      s.x_labels = xs.map((_, k) => alphaLabel(k));
+    if (!(Array.isArray(s.y_labels) && s.y_labels.length === ys.length))
+      s.y_labels = ys.map((_, k) => String(k + 1));
+    delete s.radii; delete s.theta_deg;
+  } else {
+    let rr = Array.isArray(s.radii) ? s.radii.filter(v => isFinite(v) && v > 0) : [];
+    if (!rr.length) rr = [4, 8];
+    rr.sort((a, b) => a - b);
+    s.radii = rr;
+    let th = Array.isArray(s.theta_deg) ? s.theta_deg.filter(isFinite) : [];
+    if (!th.length) th = [0, 45, 90, 135, 180, 225, 270, 315];
+    s.theta_deg = th;
+    delete s.x_lines; delete s.y_lines; delete s.x_labels; delete s.y_labels;
+  }
+  return s;
+}
+
+/** Ensure model.grid_systems exists and the legacy grid is grid_systems[0].
+    Idempotent — safe to call on every normalise / edit. */
+export function ensureGridSystems(m) {
+  if (!m) return;
+  if (m.grid) {
+    // the legacy grid is always the primary ORTHOGONAL system
+    if (m.grid.kind === "radial") m.grid.kind = "orthogonal";
+    if (!(Array.isArray(m.grid.origin) && m.grid.origin.length === 2 &&
+          m.grid.origin.every(isFinite))) m.grid.origin = [0, 0];
+    if (!isFinite(m.grid.rotation)) m.grid.rotation = 0;
+    if (!m.grid.name) m.grid.name = "G1";
+  }
+  if (Array.isArray(m.grid_systems) && m.grid_systems.length) {
+    m.grid_systems.forEach((s, i) => normalizeGridSystem(s, i));
+    // keep the legacy grid identity-shared with the primary system when it is
+    // orthogonal (so legacy grid edits and the manager stay in sync)
+    if (m.grid && m.grid_systems[0] !== m.grid &&
+        m.grid_systems[0].kind === "orthogonal") {
+      m.grid = m.grid_systems[0];
+    } else if (m.grid) {
+      m.grid_systems[0] = m.grid;
+      normalizeGridSystem(m.grid, 0);
+    }
+  } else {
+    normalizeGridSystem(m.grid || (m.grid = { kind: "orthogonal" }), 0);
+    m.grid_systems = [m.grid];
+  }
+}
+
+/** The list of grid systems (falls back to the single legacy grid). */
+export function gridSystems(model) {
+  if (!model) return [];
+  if (Array.isArray(model.grid_systems) && model.grid_systems.length)
+    return model.grid_systems;
+  return model.grid ? [model.grid] : [];
+}
+
+/** local (lx,ly) → global [gx,gy]: rotate about origin (CCW), then translate. */
+export function gridTransform(sys) {
+  const rot = (sys.rotation || 0) * Math.PI / 180;
+  const c = Math.cos(rot), s = Math.sin(rot);
+  const ox = sys.origin ? sys.origin[0] : 0, oy = sys.origin ? sys.origin[1] : 0;
+  return (lx, ly) => [ox + lx * c - ly * s, oy + lx * s + ly * c];
+}
+
+/** global (gx,gy) → local [lx,ly] (inverse of gridTransform). */
+export function gridInvTransform(sys) {
+  const rot = (sys.rotation || 0) * Math.PI / 180;
+  const c = Math.cos(rot), s = Math.sin(rot);
+  const ox = sys.origin ? sys.origin[0] : 0, oy = sys.origin ? sys.origin[1] : 0;
+  return (gx, gy) => { const dx = gx - ox, dy = gy - oy;
+    return [dx * c + dy * s, -dx * s + dy * c]; };
+}
+
+const _num = v => (Math.round(v * 100) / 100).toString();
+
+/** Drawable geometry of a grid system in GLOBAL coords:
+    { kind, name, segments:[[ax,ay,bx,by]], circles:[[cx,cy,r]],
+      intersections:[[x,y]], labels:[{x,y,text}], center?:[x,y] }. */
+export function gridSystemGeometry(sys) {
+  const T = gridTransform(sys);
+  const g = { kind: sys.kind, name: sys.name, segments: [], circles: [],
+    intersections: [], labels: [] };
+  if (sys.kind === "radial") {
+    const ox = sys.origin[0], oy = sys.origin[1];
+    const rot = sys.rotation || 0;
+    const rMax = sys.radii[sys.radii.length - 1] || 1;
+    g.center = [ox, oy];
+    for (const r of sys.radii) g.circles.push([ox, oy, r]);
+    for (const th of sys.theta_deg) {
+      const a = (th + rot) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+      g.segments.push([ox, oy, ox + rMax * ca, oy + rMax * sa]);
+      g.labels.push({ x: ox + rMax * 1.06 * ca, y: oy + rMax * 1.06 * sa,
+        text: `${_num(th)}°` });
+      for (const r of sys.radii) g.intersections.push([ox + r * ca, oy + r * sa]);
+    }
+    const a0 = rot * Math.PI / 180;
+    for (const r of sys.radii)
+      g.labels.push({ x: ox + r * Math.cos(a0), y: oy + r * Math.sin(a0),
+        text: `R${_num(r)}` });
+  } else {
+    const xs = sys.x_lines, ys = sys.y_lines;
+    const x0 = xs[0], x1 = xs[xs.length - 1], y0 = ys[0], y1 = ys[ys.length - 1];
+    const mX = Math.max((x1 - x0) * 0.06, 0.8), mY = Math.max((y1 - y0) * 0.06, 0.8);
+    for (let i = 0; i < xs.length; i++) {
+      const a = T(xs[i], y0 - mY), b = T(xs[i], y1 + mY);
+      g.segments.push([a[0], a[1], b[0], b[1]]);
+    }
+    for (let j = 0; j < ys.length; j++) {
+      const a = T(x0 - mX, ys[j]), b = T(x1 + mX, ys[j]);
+      g.segments.push([a[0], a[1], b[0], b[1]]);
+    }
+    for (let i = 0; i < xs.length; i++)
+      for (let j = 0; j < ys.length; j++) g.intersections.push(T(xs[i], ys[j]));
+    for (let i = 0; i < xs.length; i++) {
+      const p = T(xs[i], y1 + mY + 0.5);
+      g.labels.push({ x: p[0], y: p[1], text: (sys.x_labels && sys.x_labels[i]) || String(i + 1) });
+    }
+    for (let j = 0; j < ys.length; j++) {
+      const p = T(x0 - mX - 0.5, ys[j]);
+      g.labels.push({ x: p[0], y: p[1], text: (sys.y_labels && sys.y_labels[j]) || String(j + 1) });
+    }
+  }
+  return g;
+}
+
+/** Snap a world point to the nearest grid feature ACROSS ALL systems:
+    intersections of every system + 0.5 m increments on orthogonal grid lines
+    (evaluated in each system's own local frame, so rotated grids snap too) +
+    radial centres.  Returns { x, y, d } (d = world distance to the raw point). */
+export function snapGrids(model, w) {
+  const systems = gridSystems(model);
+  if (!systems.length) return { x: w.x, y: w.y, d: 0 };
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const nearVal = (arr, v) => arr.reduce((b, a) => Math.abs(a - v) < Math.abs(b - v) ? a : b);
+  let best = null, bd = Infinity;
+  const consider = (x, y) => {
+    const d = Math.hypot(x - w.x, y - w.y);
+    if (d < bd) { bd = d; best = [x, y]; }
+  };
+  for (const sys of systems) {
+    if (sys.kind === "radial") {
+      consider(sys.origin[0], sys.origin[1]);          // centre
+      const geo = gridSystemGeometry(sys);
+      for (const p of geo.intersections) consider(p[0], p[1]);
+    } else {
+      const T = gridTransform(sys), Ti = gridInvTransform(sys);
+      const l = Ti(w.x, w.y);
+      const xs = sys.x_lines, ys = sys.y_lines;
+      const gx = nearVal(xs, l[0]), gy = nearVal(ys, l[1]);
+      const hx = clamp(Math.round(l[0] * 2) / 2, xs[0], xs[xs.length - 1]);
+      const hy = clamp(Math.round(l[1] * 2) / 2, ys[0], ys[ys.length - 1]);
+      for (const [lx, ly] of [[gx, gy], [gx, hy], [hx, gy]]) {
+        const p = T(lx, ly); consider(p[0], p[1]);
+      }
+    }
+  }
+  return best ? { x: best[0], y: best[1], d: bd } : { x: w.x, y: w.y, d: 0 };
+}
+
+/* ---- grid-system CRUD (all pure local mutations; persisted via POST /api/model,
+        which round-trips grid_systems exactly like the legacy grid). ---- */
+
+/** A sensible origin for a new system: just past the primary grid's +X edge. */
+function defaultGridOrigin(model) {
+  const g = model && model.grid;
+  if (g && Array.isArray(g.x_lines) && g.x_lines.length)
+    return [+(g.x_lines[g.x_lines.length - 1] + 2).toFixed(3), g.y_lines[0] || 0];
+  return [0, 0];
+}
+
+/** Append a new grid system. `kind` = "orthogonal" | "radial". Returns it. */
+export function addGridSystem(model, kind = "orthogonal", params = {}) {
+  ensureGridSystems(model);
+  const i = model.grid_systems.length;
+  const origin = Array.isArray(params.origin) ? params.origin : defaultGridOrigin(model);
+  let sys;
+  if (kind === "radial") {
+    sys = { kind: "radial", name: params.name || `R${i + 1}`,
+      origin, rotation: isFinite(params.rotation) ? params.rotation : 0,
+      radii: params.radii || [3, 6, 9],
+      theta_deg: params.theta_deg || [0, 45, 90, 135, 180, 225, 270, 315] };
+  } else {
+    sys = { kind: "orthogonal", name: params.name || `G${i + 1}`,
+      origin, rotation: isFinite(params.rotation) ? params.rotation : 0,
+      x_lines: params.x_lines || [0, 6, 12], y_lines: params.y_lines || [0, 6] };
+  }
+  normalizeGridSystem(sys, i);
+  model.grid_systems.push(sys);
+  return sys;
+}
+
+/** Remove a grid system by index. The primary (0) legacy grid is protected. */
+export function removeGridSystem(model, idx) {
+  ensureGridSystems(model);
+  if (idx <= 0 || idx >= model.grid_systems.length) return false;
+  model.grid_systems.splice(idx, 1);
+  return true;
+}
+
+/** Set an orthogonal system's grid-line position (keeps sorted + relabels). */
+export function setSysLine(sys, axis, idx, value) {
+  const lines = axis === "x" ? sys.x_lines : sys.y_lines;
+  if (!lines || !isFinite(value) || idx < 0 || idx >= lines.length) return false;
+  if (lines.some((v, i) => i !== idx && Math.abs(v - value) < 1e-6)) return false;
+  lines[idx] = value;
+  lines.sort((a, b) => a - b);
+  relabelGrid(sys);
+  return true;
+}
+export function addSysLine(sys, axis) {
+  const lines = axis === "x" ? sys.x_lines : sys.y_lines;
+  const n = lines.length;
+  const spacing = n >= 2 ? lines[n - 1] - lines[n - 2] : 6;
+  const v = +((n ? lines[n - 1] : 0) + (spacing || 6)).toFixed(3);
+  lines.push(v);
+  lines.sort((a, b) => a - b);
+  relabelGrid(sys);
+  return v;
+}
+export function removeSysLine(sys, axis, idx) {
+  const lines = axis === "x" ? sys.x_lines : sys.y_lines;
+  if (lines.length <= 2 || idx < 0 || idx >= lines.length) return false;
+  lines.splice(idx, 1);
+  relabelGrid(sys);
+  return true;
+}
+
+/** Radial system radii / spoke-angle edits. */
+export function setSysRadius(sys, idx, value) {
+  if (!isFinite(value) || value <= 0 || idx < 0 || idx >= sys.radii.length) return false;
+  if (sys.radii.some((r, i) => i !== idx && Math.abs(r - value) < 1e-6)) return false;
+  sys.radii[idx] = value; sys.radii.sort((a, b) => a - b); return true;
+}
+export function addSysRadius(sys) {
+  const n = sys.radii.length;
+  const step = n >= 2 ? sys.radii[n - 1] - sys.radii[n - 2] : 3;
+  const v = +((n ? sys.radii[n - 1] : 0) + (step || 3)).toFixed(3);
+  sys.radii.push(v); sys.radii.sort((a, b) => a - b); return v;
+}
+export function removeSysRadius(sys, idx) {
+  if (sys.radii.length <= 1 || idx < 0 || idx >= sys.radii.length) return false;
+  sys.radii.splice(idx, 1); return true;
+}
+export function setSysTheta(sys, idx, value) {
+  if (!isFinite(value) || idx < 0 || idx >= sys.theta_deg.length) return false;
+  sys.theta_deg[idx] = value; return true;
+}
+export function addSysTheta(sys) {
+  const n = sys.theta_deg.length;
+  const last = n ? sys.theta_deg[n - 1] : 0;
+  const v = +(last + 45).toFixed(2);
+  sys.theta_deg.push(v); return v;
+}
+export function removeSysTheta(sys, idx) {
+  if (sys.theta_deg.length <= 1 || idx < 0 || idx >= sys.theta_deg.length) return false;
+  sys.theta_deg.splice(idx, 1); return true;
 }
 
 /* ---- stories.

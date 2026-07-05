@@ -4,7 +4,8 @@
    the onDraw / onErase / onSelect callbacks. */
 
 import { zigzagPoints } from "./elev.js";
-import { springKey, anyThermalMember, onFoundation, axialLimit, axialLimitBadge } from "./modeledit.js";
+import { springKey, anyThermalMember, onFoundation, axialLimit, axialLimitBadge,
+  gridSystems, gridSystemGeometry, snapGrids } from "./modeledit.js";
 
 const NS = "http://www.w3.org/2000/svg";
 const el = (tag, attrs = {}) => {
@@ -37,6 +38,23 @@ const C = {
   boxEdge: "rgba(53, 181, 229, 0.55)",
   hoverErase: "#e66767",
 };
+
+// v0.14 — per-grid-system tints. System 0 (legacy/primary) is the neutral,
+// brightest grid; extra systems get a subtle hue so they read apart.
+const GRID_TINTS = [
+  "rgba(120, 140, 165, 0.24)",
+  "rgba(201, 133, 0, 0.30)",
+  "rgba(52, 195, 132, 0.28)",
+  "rgba(167, 139, 250, 0.30)",
+  "rgba(53, 181, 229, 0.26)",
+];
+const GRID_LABEL_TINTS = [
+  "rgba(140, 160, 185, 0.75)",
+  "rgba(201, 133, 0, 0.9)",
+  "rgba(52, 195, 132, 0.9)",
+  "rgba(167, 139, 250, 0.95)",
+  "rgba(53, 181, 229, 0.9)",
+];
 
 const SNAP_PX = 16;       // px threshold for slab corner-vs-cell decision
 const HIT_PX = 9;         // px hit-test tolerance
@@ -156,21 +174,28 @@ export class PlanEditor {
     this.gGrid.textContent = "";
     this.gElems.textContent = "";
     if (!m || !m.grid) return;
-    const g = m.grid;
-    const x0 = g.x_lines[0], x1 = g.x_lines[g.x_lines.length - 1];
-    const y0 = g.y_lines[0], y1 = g.y_lines[g.y_lines.length - 1];
-    const mX = Math.max((x1 - x0) * 0.06, 0.8), mY = Math.max((y1 - y0) * 0.06, 0.8);
 
-    for (const x of g.x_lines)
-      this.gGrid.appendChild(el("line", {
-        x1: x, y1: y0 - mY, x2: x, y2: y1 + mY,
-        stroke: C.gridLine, "stroke-width": 1, "vector-effect": "non-scaling-stroke",
-      }));
-    for (const y of g.y_lines)
-      this.gGrid.appendChild(el("line", {
-        x1: x0 - mX, y1: y, x2: x1 + mX, y2: y,
-        stroke: C.gridLine, "stroke-width": 1, "vector-effect": "non-scaling-stroke",
-      }));
+    // v0.14 — draw every grid system in GLOBAL coords (rotated grids drawn
+    // rotated, radial grids as concentric circles + spokes). System 0 is the
+    // primary/legacy grid; extra systems carry a subtle per-system tint.
+    for (const [si, sys] of gridSystems(m).entries()) {
+      const tint = GRID_TINTS[si % GRID_TINTS.length];
+      const geo = gridSystemGeometry(sys);
+      for (const [ax, ay, bx, by] of geo.segments)
+        this.gGrid.appendChild(el("line", {
+          x1: ax, y1: ay, x2: bx, y2: by,
+          stroke: tint, "stroke-width": 1, "vector-effect": "non-scaling-stroke",
+        }));
+      for (const [cx, cy, r] of geo.circles)
+        this.gGrid.appendChild(el("circle", {
+          cx, cy, r, fill: "none",
+          stroke: tint, "stroke-width": 1, "vector-effect": "non-scaling-stroke",
+        }));
+      if (geo.center)
+        this.gGrid.appendChild(el("circle", {
+          cx: geo.center[0], cy: geo.center[1], r: 0.12, fill: tint,
+        }));
+    }
 
     // elements of the current story — draw order: slabs, walls, beams, columns
     const story = this.opts.getStory();
@@ -319,22 +344,21 @@ export class PlanEditor {
     const m = this.opts.getModel();
     this.gLabels.textContent = "";
     if (!m || !m.grid) return;
-    const g = m.grid;
-    const x0 = g.x_lines[0], x1 = g.x_lines[g.x_lines.length - 1];
-    const y0 = g.y_lines[0], y1 = g.y_lines[g.y_lines.length - 1];
-    const mX = Math.max((x1 - x0) * 0.06, 0.8), mY = Math.max((y1 - y0) * 0.06, 0.8);
-    const mk = (x, y, text) => {
+    const mk = (x, y, text, fill) => {
       const [px, py] = this.toScreen(x, y);
       const t = el("text", {
-        x: px, y: py, fill: C.gridLabel, "font-size": 11, "font-weight": 600,
+        x: px, y: py, fill, "font-size": 11, "font-weight": 600,
         "text-anchor": "middle", "dominant-baseline": "middle",
         "font-family": "inherit",
       });
       t.textContent = text;
       this.gLabels.appendChild(t);
     };
-    g.x_lines.forEach((x, i) => mk(x, y1 + mY + 10 / this.scale, g.x_labels[i]));
-    g.y_lines.forEach((y, i) => mk(x0 - mX - 10 / this.scale, y, g.y_labels[i]));
+    // v0.14 — labels for every grid system (in global coords)
+    for (const [si, sys] of gridSystems(m).entries()) {
+      const fill = GRID_LABEL_TINTS[si % GRID_LABEL_TINTS.length];
+      for (const lb of gridSystemGeometry(sys).labels) mk(lb.x, lb.y, lb.text, fill);
+    }
 
     // v0.8: ΔT badges on current-story members carrying a thermal load
     const story = this.opts.getStory();
@@ -378,29 +402,14 @@ export class PlanEditor {
   }
 
   /* ------------------------------------------------ snapping */
-  /** Snap a world point to grid intersections and 0.5 m points on grid
-      lines. Returns {x, y, dPx} (dPx = screen distance to the raw point). */
+  /** Snap a world point to the nearest grid feature ACROSS ALL grid systems
+      (intersections of every system + 0.5 m increments on grid lines, each
+      evaluated in its own local frame so rotated/radial grids snap too).
+      Returns {x, y, dPx} (dPx = screen distance to the raw point). */
   snap(w) {
     const m = this.opts.getModel();
-    const g = m && m.grid;
-    if (!g) return { x: w.x, y: w.y, dPx: 0 };
-    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-    const nearVal = (arr, v) => arr.reduce((b, a) => Math.abs(a - v) < Math.abs(b - v) ? a : b);
-    const gx = nearVal(g.x_lines, w.x);
-    const gy = nearVal(g.y_lines, w.y);
-    const x0 = g.x_lines[0], x1 = g.x_lines[g.x_lines.length - 1];
-    const y0 = g.y_lines[0], y1 = g.y_lines[g.y_lines.length - 1];
-    const cands = [
-      { x: gx, y: gy },                                              // intersection
-      { x: gx, y: clamp(Math.round(w.y * 2) / 2, y0, y1) },          // on vertical line
-      { x: clamp(Math.round(w.x * 2) / 2, x0, x1), y: gy },          // on horizontal line
-    ];
-    let best = null, bd = Infinity;
-    for (const c of cands) {
-      const d = Math.hypot(c.x - w.x, c.y - w.y);
-      if (d < bd) { bd = d; best = c; }
-    }
-    return { x: best.x, y: best.y, dPx: bd * this.scale };
+    const r = snapGrids(m, w);
+    return { x: r.x, y: r.y, dPx: r.d * this.scale };
   }
 
   /** Grid cell containing a world point, or null. */

@@ -45,6 +45,7 @@ const COLORS = {
   cutEdge: "rgba(245, 190, 60, 0.95)",
   grid: "rgba(120, 140, 165, 0.16)",
   gridLabel: "rgba(140, 160, 185, 0.55)",
+  // v0.14 — per-grid-system tints on the ground plane (index 0 = primary)
   slabFill: "rgba(53, 181, 229, 0.045)",
   slabEdge: "rgba(53, 181, 229, 0.10)",
   wallShell: "rgba(95, 143, 201, 0.22)",       // ShellRegion walls — steel blue tint
@@ -274,23 +275,59 @@ export class Viewer3D {
       return { name: cut.name, axis, corners, centroid };
     });
 
-    // ground grid from model grid
+    // ground grid from ALL grid systems (v0.14) — each system's lines are
+    // built in LOCAL coords then transformed to GLOBAL (origin + rotation);
+    // radial systems draw as tessellated circles + spokes. Each line carries a
+    // per-system colour so distinct grids read apart on the ground plane.
     const g = m.grid;
     this.gridLines = []; this.gridLabels = [];
-    if (g && g.x_lines.length && g.y_lines.length) {
-      const mX = Math.max((g.x_lines[g.x_lines.length - 1] - g.x_lines[0]) * 0.12, 1.8);
-      const mY = Math.max((g.y_lines[g.y_lines.length - 1] - g.y_lines[0]) * 0.12, 1.8);
-      const x0 = g.x_lines[0] - mX, x1 = g.x_lines[g.x_lines.length - 1] + mX;
-      const y0 = g.y_lines[0] - mY, y1 = g.y_lines[g.y_lines.length - 1] + mY;
-      g.x_lines.forEach((x, i) => {
-        this.gridLines.push([[x, y0, 0], [x, y1, 0]]);
-        this.gridLabels.push({ p: [x, y1 + mY * 0.35, 0], text: g.x_labels[i] });
-      });
-      g.y_lines.forEach((y, i) => {
-        this.gridLines.push([[x0, y, 0], [x1, y, 0]]);
-        this.gridLabels.push({ p: [x0 - mX * 0.35, y, 0], text: g.y_labels[i] });
-      });
-    }
+    const systems = (Array.isArray(m.grid_systems) && m.grid_systems.length)
+      ? m.grid_systems : (g ? [g] : []);
+    const gtf = (sys) => {
+      const rot = (sys.rotation || 0) * Math.PI / 180;
+      const c = Math.cos(rot), s = Math.sin(rot);
+      const ox = sys.origin ? sys.origin[0] : 0, oy = sys.origin ? sys.origin[1] : 0;
+      return (lx, ly) => [ox + lx * c - ly * s, oy + lx * s + ly * c, 0];
+    };
+    systems.forEach((sys, si) => {
+      const col = GRID3D_TINTS[si % GRID3D_TINTS.length];
+      const lbl = GRID3D_LABEL_TINTS[si % GRID3D_LABEL_TINTS.length];
+      if (sys.kind === "radial") {
+        const ox = sys.origin[0], oy = sys.origin[1], rot = sys.rotation || 0;
+        const rMax = sys.radii[sys.radii.length - 1] || 1;
+        const NSEG = 56;
+        for (const r of sys.radii) {
+          let prev = null;
+          for (let k = 0; k <= NSEG; k++) {
+            const a = (k / NSEG) * 2 * Math.PI;
+            const p = [ox + r * Math.cos(a), oy + r * Math.sin(a), 0];
+            if (prev) this.gridLines.push({ a: prev, b: p, color: col });
+            prev = p;
+          }
+        }
+        for (const th of sys.theta_deg) {
+          const a = (th + rot) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+          this.gridLines.push({ a: [ox, oy, 0], b: [ox + rMax * ca, oy + rMax * sa, 0], color: col });
+          this.gridLabels.push({ p: [ox + rMax * 1.08 * ca, oy + rMax * 1.08 * sa, 0], text: `${th}°`, color: lbl });
+        }
+      } else if (Array.isArray(sys.x_lines) && sys.x_lines.length &&
+                 Array.isArray(sys.y_lines) && sys.y_lines.length) {
+        const T = gtf(sys);
+        const xs = sys.x_lines, ys = sys.y_lines;
+        const mX = Math.max((xs[xs.length - 1] - xs[0]) * 0.12, 1.8);
+        const mY = Math.max((ys[ys.length - 1] - ys[0]) * 0.12, 1.8);
+        const y0 = ys[0] - mY, y1 = ys[ys.length - 1] + mY;
+        const x0 = xs[0] - mX, x1 = xs[xs.length - 1] + mX;
+        xs.forEach((x, i) => {
+          this.gridLines.push({ a: T(x, y0), b: T(x, y1), color: col });
+          this.gridLabels.push({ p: T(x, y1 + mY * 0.35), text: (sys.x_labels && sys.x_labels[i]) || String(i + 1), color: lbl });
+        });
+        ys.forEach((y, i) => {
+          this.gridLines.push({ a: T(x0, y), b: T(x1, y), color: col });
+          this.gridLabels.push({ p: T(x0 - mX * 0.35, y), text: (sys.y_labels && sys.y_labels[i]) || String(i + 1), color: lbl });
+        });
+      }
+    });
 
     // diaphragm slabs: plan hull (grid rectangle) at each story elevation
     this.slabs = [];
