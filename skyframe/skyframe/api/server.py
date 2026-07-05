@@ -503,6 +503,39 @@ def create_app() -> Flask:
             return jsonify({"error": str(exc)}), 400
         return jsonify(model.to_dict())
 
+    # ---------------------------------------- v0.13: section-cut convenience
+    @app.post("/api/section-cut")
+    def add_section_cut():
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        name = body.get("name")
+        if not isinstance(name, str) or not name.strip():
+            return jsonify({"error": "'name' is required"}), 400
+        axis = body.get("axis")
+        if axis not in ("x", "y", "z"):
+            return jsonify({"error": "'axis' must be one of x|y|z"}), 400
+
+        def _rng(key):
+            r = body.get(key)
+            if r is None:
+                return None
+            if (not isinstance(r, list) or len(r) != 2
+                    or not all(isinstance(v, (int, float))
+                               and not isinstance(v, bool) for v in r)):
+                raise ValueError(f"{key!r} must be a [lo, hi] pair of numbers")
+            return [float(r[0]), float(r[1])]
+
+        try:
+            coord = _num(body, "coord", required=True)
+            _state["model"].add_section_cut(
+                name.strip(), axis, coord,
+                x_range=_rng("x_range"), y_range=_rng("y_range"),
+                z_range=_rng("z_range"))
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(_state["model"].to_dict())
+
     @app.post("/api/analyze")
     def analyze():
         if not _OPENSEES_OK:

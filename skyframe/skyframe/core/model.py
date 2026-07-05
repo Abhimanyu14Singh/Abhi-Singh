@@ -549,6 +549,12 @@ class ResponseSpectrumCase:
     modes the modal analysis computes".  Modal responses are combined with
     CQC (constant damping ratio ``damping``) or SRSS; all combined results
     are positive envelopes.  ``scale`` multiplies Sa.
+
+    v0.13: when ``function`` names a :class:`SpectrumFunction` in
+    ``model.spectrum_functions``, that function's ``points`` REPLACE the
+    inline ``spectrum`` (the engine resolves it; a missing name is an
+    error).  With ``function == ""`` the inline ``spectrum`` is used exactly
+    as before (backward compatible).
     """
 
     name: str
@@ -558,13 +564,15 @@ class ResponseSpectrumCase:
     combo_method: str = "CQC"            # "CQC" | "SRSS"
     damping: float = 0.05
     scale: float = 1.0
+    function: str = ""                   # v0.13: named spectrum_functions entry
 
     def to_dict(self) -> dict:
         return {"name": self.name, "direction": self.direction,
                 "spectrum": [[float(t), float(sa)] for t, sa in self.spectrum],
                 "num_modes": self.num_modes,
                 "combo_method": self.combo_method,
-                "damping": self.damping, "scale": self.scale}
+                "damping": self.damping, "scale": self.scale,
+                "function": self.function}
 
 
 TH_DIRECTIONS = ("X", "Y")
@@ -607,6 +615,7 @@ class TimeHistoryCase:
     My: Dict[str, float] = field(default_factory=dict)       # v0.6, kN*m
     default_My: Optional[float] = None                       # v0.6
     hardening: float = 0.02                                  # v0.6
+    function: str = ""              # v0.13: named th_functions entry
 
     def to_dict(self) -> dict:
         return {"name": self.name, "direction": self.direction,
@@ -614,7 +623,8 @@ class TimeHistoryCase:
                 "dt": self.dt, "damping": self.damping, "scale": self.scale,
                 "nonlinear": self.nonlinear, "gravity": dict(self.gravity),
                 "hinges": self.hinges, "My": dict(self.My),
-                "default_My": self.default_My, "hardening": self.hardening}
+                "default_My": self.default_My, "hardening": self.hardening,
+                "function": self.function}
 
 
 PUSHOVER_DIRECTIONS = ("X", "Y")
@@ -772,6 +782,88 @@ class LoadCombo:
 
 
 # --------------------------------------------------------------------------- #
+# v0.13 section cuts + named function library
+# --------------------------------------------------------------------------- #
+SECTION_CUT_AXES = ("x", "y", "z")
+
+
+@dataclass
+class SectionCut:
+    """A force-integration plane across the structure (v0.13).
+
+    The cut is the plane ``axis == coord`` (``axis`` one of "x"/"y"/"z").
+    The engine sums the internal forces of every FRAME member that crosses
+    the plane (member spans ``coord`` along ``axis``) into a single resultant
+    {FX, FY, FZ, MX, MY, MZ} in GLOBAL axes, moments taken about the cut
+    centroid.  The optional ``x_range``/``y_range``/``z_range`` bounding-box
+    limits restrict the cut extent: a crossing is counted only when its
+    crossing point falls inside every provided ``[lo, hi]`` range.
+
+    Sign convention (documented, ETABS-style): the resultant is the internal
+    force that the material on the NEGATIVE-coordinate side of the plane
+    exerts on the material on the POSITIVE-coordinate side (for a horizontal
+    ``z`` cut this is the force from below supporting everything above, so a
+    gravity cut reports a POSITIVE ``FZ`` equal to the weight carried).
+    """
+
+    name: str
+    axis: str                                    # "x" | "y" | "z"
+    coord: float
+    x_range: Optional[List[float]] = None        # [lo, hi] or None
+    y_range: Optional[List[float]] = None
+    z_range: Optional[List[float]] = None
+
+    def to_dict(self) -> dict:
+        def rng(r):
+            return None if r is None else [float(r[0]), float(r[1])]
+        return {"name": self.name, "axis": self.axis,
+                "coord": float(self.coord),
+                "x_range": rng(self.x_range), "y_range": rng(self.y_range),
+                "z_range": rng(self.z_range)}
+
+
+@dataclass
+class SpectrumFunction:
+    """A named, reusable response-spectrum function (v0.13).
+
+    ``points`` is a list of ``[T, Sa(g)]`` pairs (same meaning as a
+    :class:`ResponseSpectrumCase` ``spectrum``); a case that names this
+    function uses these points in place of its own inline spectrum.
+    ``damping`` records the spectrum's associated damping ratio (metadata;
+    the CQC combination uses the CASE's own ``damping``).
+    """
+
+    name: str
+    points: List[List[float]]
+    damping: float = 0.05
+
+    def to_dict(self) -> dict:
+        return {"name": self.name,
+                "points": [[float(t), float(sa)] for t, sa in self.points],
+                "damping": float(self.damping)}
+
+
+@dataclass
+class TimeHistoryFunction:
+    """A named, reusable ground-acceleration record (v0.13).
+
+    ``values`` is the acceleration series (m/s^2) sampled at spacing ``dt``
+    (sample k at t = k*dt); a :class:`TimeHistoryCase` that names this
+    function uses these values/dt in place of its own inline ``accel``/``dt``
+    (the case ``scale`` still multiplies the record).
+    """
+
+    name: str
+    values: List[float]
+    dt: float
+
+    def to_dict(self) -> dict:
+        return {"name": self.name,
+                "values": [float(v) for v in self.values],
+                "dt": float(self.dt)}
+
+
+# --------------------------------------------------------------------------- #
 # The building
 # --------------------------------------------------------------------------- #
 @dataclass
@@ -813,6 +905,11 @@ class BuildingModel:
     # v0.10 response-spectrum directional combinations (ASCE 7 §12.5):
     #   name -> {"name_x": <RS case>, "name_y": <RS case>, "method": ...}
     rs_combos: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    # v0.13 force-integration section cuts + named RS/TH function library
+    section_cuts: List[SectionCut] = field(default_factory=list)
+    spectrum_functions: Dict[str, SpectrumFunction] = field(
+        default_factory=dict)
+    th_functions: Dict[str, TimeHistoryFunction] = field(default_factory=dict)
     num_modes: int = 6
 
     # ---------------- convenience API ----------------
@@ -1045,29 +1142,38 @@ class BuildingModel:
                 raise ValueError(f"Combo {combo.name}: unknown case {c}")
 
     def add_rs_case(self, name: str, direction: str,
-                    spectrum: List[List[float]], num_modes: int = 0,
+                    spectrum: Optional[List[List[float]]] = None,
+                    num_modes: int = 0,
                     combo_method: str = "CQC", damping: float = 0.05,
-                    scale: float = 1.0) -> ResponseSpectrumCase:
+                    scale: float = 1.0, function: str = ""
+                    ) -> ResponseSpectrumCase:
         rs = ResponseSpectrumCase(
             name, direction,
-            [[float(t), float(sa)] for t, sa in spectrum],
+            [[float(t), float(sa)] for t, sa in (spectrum or [])],
             num_modes=int(num_modes), combo_method=combo_method,
-            damping=float(damping), scale=float(scale))
+            damping=float(damping), scale=float(scale),
+            function=str(function))
         self._validate_rs_case(rs)
         self.rs_cases[name] = rs
         return rs
 
-    @staticmethod
-    def _validate_rs_case(rs: ResponseSpectrumCase) -> None:
+    def _validate_rs_case(self, rs: ResponseSpectrumCase) -> None:
         if rs.direction not in RS_DIRECTIONS:
             raise ValueError(f"RS case {rs.name}: direction must be X|Y, "
                              f"got {rs.direction!r}")
         if rs.combo_method not in RS_COMBO_METHODS:
             raise ValueError(f"RS case {rs.name}: combo_method must be "
                              f"CQC|SRSS, got {rs.combo_method!r}")
-        if not rs.spectrum:
+        # v0.13: a case may EITHER name a spectrum_function OR carry an inline
+        # spectrum; the inline spectrum is optional only when a function is set.
+        if rs.function:
+            if rs.function not in self.spectrum_functions:
+                raise ValueError(f"RS case {rs.name}: function "
+                                 f"{rs.function!r} is not a defined "
+                                 "spectrum_function")
+        elif not rs.spectrum:
             raise ValueError(f"RS case {rs.name}: spectrum must have at "
-                             "least one [T, Sa] point")
+                             "least one [T, Sa] point (or name a function)")
         for pt in rs.spectrum:
             if len(pt) != 2:
                 raise ValueError(f"RS case {rs.name}: spectrum points must "
@@ -1081,22 +1187,24 @@ class BuildingModel:
         if rs.num_modes < 0:
             raise ValueError(f"RS case {rs.name}: num_modes must be >= 0")
 
-    def add_th_case(self, name: str, direction: str, accel: List[float],
-                    dt: float, damping: float = 0.05,
+    def add_th_case(self, name: str, direction: str,
+                    accel: Optional[List[float]] = None,
+                    dt: float = 0.0, damping: float = 0.05,
                     scale: float = 1.0, nonlinear: bool = False,
                     gravity: Optional[Dict[str, float]] = None,
                     hinges: str = "column_base",
                     My: Optional[Dict[str, float]] = None,
                     default_My: Optional[float] = None,
-                    hardening: float = 0.02) -> TimeHistoryCase:
+                    hardening: float = 0.02,
+                    function: str = "") -> TimeHistoryCase:
         th = TimeHistoryCase(
-            name, direction, [float(a) for a in accel], float(dt),
+            name, direction, [float(a) for a in (accel or [])], float(dt),
             damping=float(damping), scale=float(scale),
             nonlinear=bool(nonlinear), gravity=dict(gravity or {}),
             hinges=hinges,
             My={k: float(v) for k, v in (My or {}).items()},
             default_My=(None if default_My is None else float(default_My)),
-            hardening=float(hardening))
+            hardening=float(hardening), function=str(function))
         self._validate_th_case(th)
         self.th_cases[name] = th
         return th
@@ -1105,13 +1213,20 @@ class BuildingModel:
         if th.direction not in TH_DIRECTIONS:
             raise ValueError(f"TH case {th.name}: direction must be X|Y, "
                              f"got {th.direction!r}")
-        if not th.accel:
-            raise ValueError(f"TH case {th.name}: accel record is empty")
+        # v0.13: a case may EITHER name a th_function OR carry an inline record.
+        if th.function:
+            if th.function not in self.th_functions:
+                raise ValueError(f"TH case {th.name}: function "
+                                 f"{th.function!r} is not a defined "
+                                 "th_function")
+        elif not th.accel:
+            raise ValueError(f"TH case {th.name}: accel record is empty "
+                             "(or name a function)")
         for a in th.accel:
             if not math.isfinite(float(a)):
                 raise ValueError(f"TH case {th.name}: accel values must be "
                                  "finite")
-        if not (math.isfinite(th.dt) and th.dt > 0.0):
+        if not th.function and not (math.isfinite(th.dt) and th.dt > 0.0):
             raise ValueError(f"TH case {th.name}: dt must be > 0")
         if not 0.0 < th.damping < 1.0:
             raise ValueError(f"TH case {th.name}: damping must be in (0, 1)")
@@ -1141,6 +1256,86 @@ class BuildingModel:
                 math.isfinite(th.default_My) and th.default_My > 0.0):
             raise ValueError(f"TH case {th.name}: default_My must be a "
                              "finite value > 0 (or None)")
+
+    # ------------------------------------------- v0.13 function library
+    def add_spectrum_function(self, name: str, points: List[List[float]],
+                              damping: float = 0.05) -> SpectrumFunction:
+        fn = SpectrumFunction(
+            name, [[float(t), float(sa)] for t, sa in points],
+            damping=float(damping))
+        self._validate_spectrum_function(fn)
+        self.spectrum_functions[name] = fn
+        return fn
+
+    @staticmethod
+    def _validate_spectrum_function(fn: SpectrumFunction) -> None:
+        if not fn.points:
+            raise ValueError(f"Spectrum function {fn.name}: points must have "
+                             "at least one [T, Sa] pair")
+        for pt in fn.points:
+            if len(pt) != 2:
+                raise ValueError(f"Spectrum function {fn.name}: points must "
+                                 "be [T, Sa] pairs")
+            t, sa = float(pt[0]), float(pt[1])
+            if t < 0.0 or sa < 0.0:
+                raise ValueError(f"Spectrum function {fn.name}: values must "
+                                 f"be >= 0 (got [{t}, {sa}])")
+        if not (math.isfinite(fn.damping) and 0.0 < fn.damping < 1.0):
+            raise ValueError(f"Spectrum function {fn.name}: damping must be "
+                             "in (0, 1)")
+
+    def add_th_function(self, name: str, values: List[float],
+                        dt: float) -> TimeHistoryFunction:
+        fn = TimeHistoryFunction(name, [float(v) for v in values], float(dt))
+        self._validate_th_function(fn)
+        self.th_functions[name] = fn
+        return fn
+
+    @staticmethod
+    def _validate_th_function(fn: TimeHistoryFunction) -> None:
+        if not fn.values:
+            raise ValueError(f"TH function {fn.name}: values record is empty")
+        for v in fn.values:
+            if not math.isfinite(float(v)):
+                raise ValueError(f"TH function {fn.name}: values must be "
+                                 "finite")
+        if not (math.isfinite(fn.dt) and fn.dt > 0.0):
+            raise ValueError(f"TH function {fn.name}: dt must be > 0")
+
+    # ------------------------------------------- v0.13 section cuts
+    def add_section_cut(self, name: str, axis: str, coord: float,
+                        x_range: Optional[List[float]] = None,
+                        y_range: Optional[List[float]] = None,
+                        z_range: Optional[List[float]] = None) -> SectionCut:
+        cut = SectionCut(
+            str(name), str(axis), float(coord),
+            x_range=(None if x_range is None
+                     else [float(x_range[0]), float(x_range[1])]),
+            y_range=(None if y_range is None
+                     else [float(y_range[0]), float(y_range[1])]),
+            z_range=(None if z_range is None
+                     else [float(z_range[0]), float(z_range[1])]))
+        self._validate_section_cut(cut)
+        self.section_cuts.append(cut)
+        return cut
+
+    @staticmethod
+    def _validate_section_cut(cut: SectionCut) -> None:
+        if not cut.name:
+            raise ValueError("Section cut: name is required")
+        if cut.axis not in SECTION_CUT_AXES:
+            raise ValueError(f"Section cut {cut.name}: axis must be x|y|z, "
+                             f"got {cut.axis!r}")
+        if not math.isfinite(cut.coord):
+            raise ValueError(f"Section cut {cut.name}: coord must be finite")
+        for key in ("x_range", "y_range", "z_range"):
+            r = getattr(cut, key)
+            if r is None:
+                continue
+            if (len(r) != 2 or not all(math.isfinite(float(v)) for v in r)
+                    or float(r[0]) > float(r[1])):
+                raise ValueError(f"Section cut {cut.name}: {key} must be "
+                                 "[lo, hi] with lo <= hi")
 
     def add_staged_case(self, name: str, pattern: str = "DEAD",
                         stages: str = "per_story",
@@ -1553,6 +1748,12 @@ class BuildingModel:
             self._validate_buckling_case(bc)
         for cname, cb in self.rs_combos.items():
             self._validate_rs_combo(cname, cb)
+        for fn in self.spectrum_functions.values():
+            self._validate_spectrum_function(fn)
+        for fn in self.th_functions.values():
+            self._validate_th_function(fn)
+        for cut in self.section_cuts:
+            self._validate_section_cut(cut)
         link_uids = set()
         for lk in self.links:
             if lk.uid in link_uids:
@@ -1603,6 +1804,11 @@ class BuildingModel:
             "buckling_cases": {k: v.to_dict()
                                for k, v in self.buckling_cases.items()},
             "rs_combos": {k: dict(v) for k, v in self.rs_combos.items()},
+            "section_cuts": [c.to_dict() for c in self.section_cuts],
+            "spectrum_functions": {k: v.to_dict() for k, v in
+                                   self.spectrum_functions.items()},
+            "th_functions": {k: v.to_dict()
+                             for k, v in self.th_functions.items()},
             "num_modes": self.num_modes,
         }
 
@@ -1753,20 +1959,34 @@ class BuildingModel:
                 cd.get("name", name),
                 {c: float(f) for c, f in (cd.get("cases") or {}).items()},
                 combo_type=cd.get("combo_type", "add"))
+        # v0.13 named function library (loaded BEFORE cases so a case that
+        # references a function passes validation)
+        for name, fd in (d.get("spectrum_functions") or {}).items():
+            mdl.spectrum_functions[name] = SpectrumFunction(
+                name=fd.get("name", name),
+                points=[[float(p[0]), float(p[1])] for p in fd["points"]],
+                damping=float(fd.get("damping", 0.05)))
+        for name, fd in (d.get("th_functions") or {}).items():
+            mdl.th_functions[name] = TimeHistoryFunction(
+                name=fd.get("name", name),
+                values=[float(v) for v in fd["values"]],
+                dt=float(fd["dt"]))
         for name, rd in (d.get("rs_cases") or {}).items():
             mdl.rs_cases[name] = ResponseSpectrumCase(
                 name=rd.get("name", name), direction=rd["direction"],
                 spectrum=[[float(p[0]), float(p[1])]
-                          for p in rd["spectrum"]],
+                          for p in (rd.get("spectrum") or [])],
                 num_modes=int(rd.get("num_modes", 0)),
                 combo_method=rd.get("combo_method", "CQC"),
                 damping=float(rd.get("damping", 0.05)),
-                scale=float(rd.get("scale", 1.0)))
+                scale=float(rd.get("scale", 1.0)),
+                function=str(rd.get("function", "")))
         for name, td in (d.get("th_cases") or {}).items():
             tmy = td.get("default_My")
             mdl.th_cases[name] = TimeHistoryCase(
                 name=td.get("name", name), direction=td["direction"],
-                accel=[float(a) for a in td["accel"]], dt=float(td["dt"]),
+                accel=[float(a) for a in (td.get("accel") or [])],
+                dt=float(td.get("dt", 0.0)),
                 damping=float(td.get("damping", 0.05)),
                 scale=float(td.get("scale", 1.0)),
                 # v0.6 nonlinear fields; pre-v0.6 files stay linear
@@ -1776,7 +1996,8 @@ class BuildingModel:
                 hinges=td.get("hinges", "column_base"),
                 My={u: float(v) for u, v in (td.get("My") or {}).items()},
                 default_My=(None if tmy is None else float(tmy)),
-                hardening=float(td.get("hardening", 0.02)))
+                hardening=float(td.get("hardening", 0.02)),
+                function=str(td.get("function", "")))
         for name, pd in (d.get("pushover_cases") or {}).items():
             dmy = pd.get("default_My")
             mdl.pushover_cases[name] = PushoverCase(
@@ -1806,6 +2027,15 @@ class BuildingModel:
             mdl.rs_combos[name] = {"name_x": str(cd["name_x"]),
                                    "name_y": str(cd["name_y"]),
                                    "method": str(cd.get("method", "100_30"))}
+
+        def _rng(r):
+            return None if r is None else [float(r[0]), float(r[1])]
+        for cd in d.get("section_cuts") or []:
+            mdl.section_cuts.append(SectionCut(
+                name=cd["name"], axis=cd["axis"], coord=float(cd["coord"]),
+                x_range=_rng(cd.get("x_range")),
+                y_range=_rng(cd.get("y_range")),
+                z_range=_rng(cd.get("z_range"))))
         mdl.num_modes = int(d.get("num_modes", 6))
         mdl.validate()
         return mdl
@@ -1905,3 +2135,86 @@ def make_notional_pattern(model: "BuildingModel", name: str,
             fy=Ni if direction == "Y" else 0.0))
     model.patterns[name] = pat
     return pat
+
+
+# --------------------------------------------------------------------------- #
+# v0.13 Eurocode 8 elastic response spectrum (EN 1998-1 §3.2.2.2, Type 1)
+# --------------------------------------------------------------------------- #
+# Table 3.2 (Type 1, 5%-damped horizontal elastic spectrum): ground type ->
+# (S, TB [s], TC [s], TD [s]).
+EC8_TYPE1_GROUND: Dict[str, Tuple[float, float, float, float]] = {
+    "A": (1.00, 0.15, 0.4, 2.0),
+    "B": (1.20, 0.15, 0.5, 2.0),
+    "C": (1.15, 0.20, 0.6, 2.0),
+    "D": (1.35, 0.20, 0.8, 2.0),
+    "E": (1.40, 0.15, 0.5, 2.0),
+}
+
+
+def eurocode8_damping_correction(damping: float = 0.05) -> float:
+    """EC8 damping correction factor ``eta = sqrt(10/(5+xi)) >= 0.55``.
+
+    ``damping`` is the viscous damping RATIO (0.05 = 5%); ``xi`` in the
+    formula is that ratio in PERCENT (EN 1998-1 §3.2.2.2(3), eq. 3.6).  For
+    5% damping ``eta == 1``.
+    """
+    xi = float(damping) * 100.0
+    return max(math.sqrt(10.0 / (5.0 + xi)), 0.55)
+
+
+def eurocode8_se(T: float, ag: float, S: float, TB: float, TC: float,
+                 TD: float, eta: float) -> float:
+    """EC8 elastic horizontal spectral acceleration ``Se(T)`` (EN 1998-1
+    §3.2.2.2, eqs. 3.2-3.5), in the same units as ``ag``.
+
+    * ``0 <= T <= TB``:  ``ag*S*[1 + T/TB*(eta*2.5 - 1)]``
+    * ``TB <= T <= TC``: ``ag*S*eta*2.5``                  (constant-accel plateau)
+    * ``TC <= T <= TD``: ``ag*S*eta*2.5*(TC/T)``           (constant velocity)
+    * ``T  >= TD``:      ``ag*S*eta*2.5*(TC*TD/T^2)``       (constant displacement)
+    """
+    T = float(T)
+    if T <= TB:
+        return ag * S * (1.0 + T / TB * (eta * 2.5 - 1.0))
+    if T <= TC:
+        return ag * S * eta * 2.5
+    if T <= TD:
+        return ag * S * eta * 2.5 * (TC / T)
+    return ag * S * eta * 2.5 * (TC * TD / (T * T))
+
+
+def eurocode8_spectrum(ag: float, ground_type: str = "A",
+                       damping: float = 0.05, T_max: float = 4.0,
+                       dT: float = 0.05) -> List[List[float]]:
+    """EC8 Type-1 elastic response spectrum as ``[[T, Sa], ...]`` points.
+
+    ``ag`` is the design ground acceleration expressed in units of **g** (so
+    the returned ``Sa`` values are in g, ready for a
+    :class:`ResponseSpectrumCase` / :class:`SpectrumFunction`).  ``ground_type``
+    selects the S/TB/TC/TD row of EN 1998-1 Table 3.2 (Type 1).  The spectrum
+    is sampled on a uniform ``dT`` grid AND at every corner period (0, TB, TC,
+    2*TC, TD, T_max) so the exact closed-form value is present at each corner
+    (the descending branches are hyperbolic; the fine grid keeps the engine's
+    linear interpolation accurate between samples).
+    """
+    gt = str(ground_type).upper()
+    if gt not in EC8_TYPE1_GROUND:
+        raise ValueError(f"EC8 ground_type must be one of "
+                         f"{sorted(EC8_TYPE1_GROUND)}, got {ground_type!r}")
+    if not (isinstance(ag, (int, float)) and math.isfinite(ag) and ag >= 0.0):
+        raise ValueError("ag must be a finite value >= 0 (in units of g)")
+    if not (math.isfinite(T_max) and T_max > 0.0):
+        raise ValueError("T_max must be > 0")
+    if not (math.isfinite(dT) and dT > 0.0):
+        raise ValueError("dT must be > 0")
+    S, TB, TC, TD = EC8_TYPE1_GROUND[gt]
+    eta = eurocode8_damping_correction(damping)
+    ts = set()
+    t = 0.0
+    while t <= T_max + 1e-12:
+        ts.add(round(t, 10))
+        t += dT
+    for corner in (0.0, TB, TC, 2.0 * TC, TD, T_max):
+        if 0.0 <= corner <= T_max + 1e-12:
+            ts.add(round(float(corner), 10))
+    return [[float(tt), float(eurocode8_se(tt, ag, S, TB, TC, TD, eta))]
+            for tt in sorted(ts)]

@@ -1295,3 +1295,112 @@ member; the compression-only mirror likewise.
 
 `POST /api/model` round-trips the FrameMember `axial_limit` field (400 on a
 value other than `both`/`tension`/`compression`).
+
+---
+
+# v0.13 additions — section cuts, named RS/TH function library, EC8 preset
+
+## Section cuts (force integration across a plane)
+
+```python
+@dataclass SectionCut:              # model.section_cuts: List[SectionCut]
+    name: str
+    axis: str                        # "x" | "y" | "z" (the cut-plane normal)
+    coord: float                     # plane is  axis == coord
+    x_range: List[float] | None = None   # optional [lo, hi] bounding box that
+    y_range: List[float] | None = None   #   limits the cut extent (a crossing
+    z_range: List[float] | None = None   #   counts only if inside every range)
+# BuildingModel.add_section_cut(name, axis, coord, x_range=, y_range=,
+#   z_range=); round-trips as "section_cuts" (absent key = none).
+```
+
+**Engine (pure post-processing — no extra solve, cheap summation from the
+already-computed `member_stations`).**  For each cut and each **static case +
+additive combo**, every FRAME member that SPANS `coord` along `axis` (and
+whose crossing point lies inside the optional ranges) contributes: the
+member's 11-station internal forces (N, V2, V3, T, M2, M3) are LINEARLY
+interpolated at the exact crossing station and transformed local→global via
+the engine's own `_local_axes` triad, then summed into a resultant.
+
+**Sign convention (documented, ETABS-style):** the resultant is the internal
+force that the material on the NEGATIVE-coordinate side of the plane exerts on
+the material on the POSITIVE side (per member, `sign = -sign(coord_j -
+coord_i)`).  For a horizontal `z` cut this is "force from below supporting
+above": a downward tip load P gives `FZ = +P`; a mid-height cut reports
+`FZ = +weight above`; a lateral +H applied above gives the shear the lower
+part feeds the upper part, `FX = -H` (so `|FX| = H`, story-shear equilibrium).
+A cantilever cut at distance a has `|MY| = P*(L-a)` (v0.13 sign: `MY =
+-P*(L-a)`).  Moments are taken about the cut CENTROID (mean of the crossing
+points), so a single crossing member reports its own station moment.
+
+```jsonc
+results["section_cuts"]["<case|combo>"]["<cut name>"] = {
+  "FX":0,"FY":0,"FZ":0,        // total transmitted force (kN), global axes
+  "MX":0,"MY":0,"MZ":0,        // moment about the cut centroid (kN*m)
+  "n_members": 0,              // frame members crossing (and in-range)
+  "n_shells":  0,              // shells crossing (counted, NOT integrated)
+  "warnings": [ ... ]          // set when n_shells>0 (shells excluded)
+}
+```
+
+Top-level `"section_cuts"` key is ALWAYS present (may be `{}`).  **Shells that
+cross a cut are COUNTED (`n_shells`) but EXCLUDED from the resultant in v0.13
+(frame members only) with an explicit warning — documented limitation.**  The
+post-processing never alters or slows the existing case/combo results.
+
+## Named RS / TH function library (reusable spectra & records)
+
+```python
+@dataclass SpectrumFunction:       # model.spectrum_functions: Dict[str, ..]
+    name: str
+    points: List[[T, Sa_g]]        # same meaning as an RS-case spectrum
+    damping: float = 0.05          # metadata (CQC uses the CASE damping)
+@dataclass TimeHistoryFunction:    # model.th_functions: Dict[str, ..]
+    name: str
+    values: List[float]            # ground accel record, m/s^2
+    dt: float                      # s
+# BuildingModel.add_spectrum_function(name, points, damping=0.05);
+# BuildingModel.add_th_function(name, values, dt).  Both round-trip.
+```
+
+`ResponseSpectrumCase` gains `function: str = ""` and `TimeHistoryCase` gains
+`function: str = ""`.  When set, the case USES the named function's
+points / values+dt in place of its own inline `spectrum` / `accel`+`dt` (the
+case `scale`, `num_modes`, `combo_method`, `damping` still apply).  The engine
+resolves the reference (`_resolve_rs_spectrum` / `_resolve_th_record`); a
+missing name raises a clear `ValueError`, and `model.validate()` also rejects
+a case whose `function` is undefined (→ `POST /api/model` 400).  A case with
+no function keeps its inline data and behaves EXACTLY as before (an RS case
+referencing a function yields identical results to the same points inline,
+1e-12).  Cases may leave `spectrum`/`accel` empty when a function is named.
+
+## Eurocode 8 elastic response spectrum preset (EN 1998-1 §3.2.2.2, Type 1)
+
+```python
+from skyframe.core.model import (eurocode8_spectrum, eurocode8_se,
+                                 eurocode8_damping_correction, EC8_TYPE1_GROUND)
+eurocode8_spectrum(ag, ground_type="A", damping=0.05, T_max=4.0, dT=0.05)
+    -> [[T, Sa_g], ...]
+```
+
+`ag` is the design ground acceleration in units of **g** (so `Sa` is in g).
+`EC8_TYPE1_GROUND` holds Table 3.2 `(S, TB, TC, TD)` per ground type A-E
+(A: 1.00/0.15/0.4/2.0, B: 1.20/0.15/0.5/2.0, C: 1.15/0.20/0.6/2.0,
+D: 1.35/0.20/0.8/2.0, E: 1.40/0.15/0.5/2.0).  The elastic branches (eqs.
+3.2-3.5): ramp `ag*S*[1+T/TB*(2.5eta-1)]` on [0,TB], plateau `2.5*ag*S*eta`
+on [TB,TC], `2.5*ag*S*eta*(TC/T)` on [TC,TD], `2.5*ag*S*eta*(TC*TD/T^2)`
+beyond; `eta = sqrt(10/(5+xi)) >= 0.55`, xi in % (eta=1 at 5%).  The sampled
+point list includes every corner exactly (0, TB, TC, 2*TC, TD, T_max) so
+`Sa(TC) == plateau` and `Sa(2*TC) == plateau/2` hold to machine precision;
+suitable for a `SpectrumFunction` / `ResponseSpectrumCase`.
+
+## API
+
+| Method | Path               | Body / Response |
+|--------|--------------------|-----------------|
+| POST   | `/api/section-cut` | `{name, axis, coord, x_range?, y_range?, z_range?}` → adds a cut, returns model dict; 400 on bad axis / missing coord / bad range |
+
+`POST /api/model` round-trips `section_cuts`, `spectrum_functions`,
+`th_functions`, and the RS/TH-case `function` fields (400 when a case names an
+undefined function); `POST /api/analyze` returns the `"section_cuts"` block
+automatically.

@@ -95,7 +95,7 @@ from skyframe.core.mesh import MeshedModel, Segment, mesh_model
 from skyframe.core.model import (G_ACCEL, BuildingModel, FrameMember,
                                  FrameSection, LoadCase, LoadCombo,
                                  LoadPattern, ResponseSpectrumCase,
-                                 ShellRegion)
+                                 SectionCut, ShellRegion)
 
 # time-history step cap for engine.run(): if the model's TH cases together
 # exceed this many integration steps they are skipped in run() (a warning is
@@ -345,6 +345,139 @@ def _section_forces(fi: Sequence[float], records: Sequence[SpanLoad],
             my += x * rz - sz                        # int (x - x') wz dx'
             mz += sy - x * ry                        # int (x' - x) wy dx'
     return (-fx, -fy, -fz, -mx, -my, -mz)
+
+
+# --------------------------------------------------------------------------- #
+# v0.13 section cuts (force integration across a plane) — pure post-processing
+# --------------------------------------------------------------------------- #
+_SECTION_AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
+_CUT_TOL = 1e-9
+
+
+def _interp_station(st: Dict[str, List[float]], xq: float,
+                    key: str) -> float:
+    """Linear interpolation of a member-station column at distance ``xq``
+    from end i (clamped to the tabulated ends)."""
+    xs = st["x"]
+    vals = st[key]
+    if xq <= xs[0]:
+        return vals[0]
+    if xq >= xs[-1]:
+        return vals[-1]
+    for i in range(len(xs) - 1):
+        if xs[i] <= xq <= xs[i + 1]:
+            dx = xs[i + 1] - xs[i]
+            if dx <= 0.0:
+                return vals[i + 1]
+            t = (xq - xs[i]) / dx
+            return vals[i] + t * (vals[i + 1] - vals[i])
+    return vals[-1]
+
+
+def _within_ranges(pt: Vec3, cut: SectionCut) -> bool:
+    """True if ``pt`` lies inside every provided bounding-box range of the
+    cut (a ``None`` range imposes no limit on that axis)."""
+    for idx, r in ((0, cut.x_range), (1, cut.y_range), (2, cut.z_range)):
+        if r is None:
+            continue
+        if not (float(r[0]) - _TOL <= pt[idx] <= float(r[1]) + _TOL):
+            return False
+    return True
+
+
+def _shell_crosses(region: ShellRegion, cut: SectionCut) -> bool:
+    """True if the shell region straddles the cut plane (corners on both
+    sides) and overlaps the optional bounding-box ranges."""
+    ai = _SECTION_AXIS_INDEX[cut.axis]
+    cs = [c[ai] for c in region.corners]
+    if min(cs) > cut.coord + _CUT_TOL or max(cs) < cut.coord - _CUT_TOL:
+        return False
+    # require both sides (a region merely touching the plane is not a cross)
+    if not (min(cs) < cut.coord - _CUT_TOL and max(cs) > cut.coord + _CUT_TOL):
+        return False
+    for idx, r in ((0, cut.x_range), (1, cut.y_range), (2, cut.z_range)):
+        if r is None:
+            continue
+        vals = [c[idx] for c in region.corners]
+        if max(vals) < float(r[0]) - _TOL or min(vals) > float(r[1]) + _TOL:
+            return False
+    return True
+
+
+def compute_section_cut(model: BuildingModel, cut: SectionCut,
+                        case: "CaseResults") -> dict:
+    """Integrate frame internal forces across a cut plane (v0.13).
+
+    For each FRAME member that spans ``cut.coord`` along ``cut.axis`` (and
+    whose crossing point lies inside the optional bounding-box ranges), the
+    member's 11-station internal forces are LINEARLY interpolated at the exact
+    crossing station and transformed local -> global.  Each contribution is
+    oriented so the resultant is the internal force that the NEGATIVE-side
+    material exerts on the POSITIVE-side material (sign = -sign(coord_j -
+    coord_i)); the totals are summed with moments taken about the cut centroid
+    (the mean of the crossing points).
+
+    Shells that cross the plane are COUNTED (``n_shells``) but their forces are
+    NOT integrated in v0.13 — a warning is emitted so the exclusion is
+    explicit (frame-only integration; see CONTRACT v0.13).
+    """
+    ai = _SECTION_AXIS_INDEX[cut.axis]
+    c = float(cut.coord)
+    contribs: List[Tuple[Vec3, Vec3, Vec3]] = []
+    for m in model.members:
+        ci, cj = m.pi[ai], m.pj[ai]
+        span = abs(cj - ci)
+        if span <= _CUT_TOL:                     # member lies in the plane
+            continue
+        lo, hi = (ci, cj) if ci <= cj else (cj, ci)
+        if not (lo - _CUT_TOL <= c <= hi + _CUT_TOL):
+            continue
+        frac = min(max((c - ci) / (cj - ci), 0.0), 1.0)
+        r_cross: Vec3 = tuple(m.pi[k] + frac * (m.pj[k] - m.pi[k])
+                              for k in range(3))  # type: ignore[assignment]
+        if not _within_ranges(r_cross, cut):
+            continue
+        st = case.member_stations.get(m.uid)
+        if not st or not st.get("x"):
+            continue
+        x_cross = frac * m.length
+        N = _interp_station(st, x_cross, "N")
+        V2 = _interp_station(st, x_cross, "V2")
+        V3 = _interp_station(st, x_cross, "V3")
+        T = _interp_station(st, x_cross, "T")
+        M2 = _interp_station(st, x_cross, "M2")
+        M3 = _interp_station(st, x_cross, "M3")
+        xax, yax, zax, _, _ = _local_axes(m)
+        F: Vec3 = tuple(N * xax[k] + V2 * yax[k] + V3 * zax[k]
+                        for k in range(3))        # type: ignore[assignment]
+        Mv: Vec3 = tuple(T * xax[k] + M2 * yax[k] + M3 * zax[k]
+                         for k in range(3))       # type: ignore[assignment]
+        sign = -1.0 if (cj - ci) > 0 else 1.0
+        contribs.append((r_cross,
+                         tuple(sign * v for v in F),      # type: ignore
+                         tuple(sign * v for v in Mv)))    # type: ignore
+    n_shells = sum(1 for r in model.shells if _shell_crosses(r, cut))
+    if contribs:
+        centroid = tuple(sum(rc[k] for rc, _, _ in contribs) / len(contribs)
+                         for k in range(3))
+    else:
+        centroid = (0.0, 0.0, 0.0)
+    FX = FY = FZ = MX = MY = MZ = 0.0
+    for r_cross, F, Mv in contribs:
+        FX += F[0]; FY += F[1]; FZ += F[2]
+        d = (r_cross[0] - centroid[0], r_cross[1] - centroid[1],
+             r_cross[2] - centroid[2])
+        MX += Mv[0] + d[1] * F[2] - d[2] * F[1]
+        MY += Mv[1] + d[2] * F[0] - d[0] * F[2]
+        MZ += Mv[2] + d[0] * F[1] - d[1] * F[0]
+    warns: List[str] = []
+    if n_shells:
+        warns.append(
+            f"{n_shells} shell(s) cross this cut but are EXCLUDED from the "
+            "resultant (v0.13 integrates frame members only)")
+    return {"FX": FX, "FY": FY, "FZ": FZ, "MX": MX, "MY": MY, "MZ": MZ,
+            "n_members": len(contribs), "n_shells": int(n_shells),
+            "warnings": warns}
 
 
 # --------------------------------------------------------------------------- #
@@ -634,6 +767,8 @@ class AnalysisResults:
     #   v0.10: per buckling-case BucklingResult.to_dict()
     takedown: Dict[str, dict] = field(default_factory=dict)
     #   v0.11: per static case / additive combo gravity load takedown
+    section_cuts: Dict[str, Dict[str, dict]] = field(default_factory=dict)
+    #   v0.13: per static case / additive combo -> cut name -> resultant dict
     warning: str = ""                    # e.g. TH cases skipped (step cap)
 
     def to_dict(self) -> dict:
@@ -653,6 +788,8 @@ class AnalysisResults:
             "staged": {n: s.to_dict() for n, s in self.staged.items()},
             "buckling": {n: dict(b) for n, b in self.buckling.items()},
             "takedown": {n: dict(t) for n, t in self.takedown.items()},
+            "section_cuts": {c: {n: dict(v) for n, v in cuts.items()}
+                             for c, cuts in self.section_cuts.items()},
             "modal": self.modal.to_dict(),
         }
         if self.story_props:
@@ -723,7 +860,8 @@ class OpenSeesEngine:
         th_cases: Dict[str, THResults] = {}
         warning = ""
         if model.th_cases:
-            total_steps = sum(len(c.accel) for c in model.th_cases.values())
+            total_steps = sum(len(self._resolve_th_record(c)[0])
+                              for c in model.th_cases.values())
             if total_steps > TH_STEP_CAP:
                 warning = (f"time-history cases skipped: {total_steps} total "
                            f"integration steps exceed the {TH_STEP_CAP}-step "
@@ -777,6 +915,18 @@ class OpenSeesEngine:
                 for p, pf in model.cases[base_case].patterns.items():
                     eff[p] = eff.get(p, 0.0) + f * pf
             takedown[cname] = self._takedown(asm, combos[cname], eff)
+        # v0.13 section cuts: pure post-processing of member_stations over
+        # static cases + additive combos (cheap summation, no extra solve).
+        section_cuts: Dict[str, Dict[str, dict]] = {}
+        if model.section_cuts:
+            cut_src = dict(cases)
+            for cname, cb in model.combos.items():
+                if cb.combo_type == "add" and cname in combos:
+                    cut_src[cname] = combos[cname]
+            for cs_name, cr in cut_src.items():
+                section_cuts[cs_name] = {
+                    cut.name: compute_section_cut(model, cut, cr)
+                    for cut in model.section_cuts}
         members = [{"uid": m.uid, "kind": m.kind, "section": m.section,
                     "ni": asm.ele_nodes[m.uid][0], "nj": asm.ele_nodes[m.uid][1],
                     "story": m.story}
@@ -801,6 +951,7 @@ class OpenSeesEngine:
             irregularity=irregularity,
             buckling=buckling,
             takedown=takedown,
+            section_cuts=section_cuts,
             warning=warning,
         )
 
@@ -2929,6 +3080,7 @@ class OpenSeesEngine:
         if name not in model.th_cases:
             raise ValueError(f"Unknown time-history case {name!r}")
         th = model.th_cases[name]
+        accel, dt = self._resolve_th_record(th)
         nonlinear = bool(getattr(th, "nonlinear", False))
 
         modal = self.run_modal()      # INITIAL elastic modes (no hinges)
@@ -3007,8 +3159,8 @@ class OpenSeesEngine:
             ops.reactions()
             base0 = base_fxfy()
 
-        ops.timeSeries("Path", 1, "-dt", float(th.dt),
-                       "-values", *[float(a) for a in th.accel],
+        ops.timeSeries("Path", 1, "-dt", float(dt),
+                       "-values", *[float(a) for a in accel],
                        "-factor", float(th.scale))
         ops.pattern("UniformExcitation", 1, dof, "-accel", 1)
 
@@ -3028,7 +3180,7 @@ class OpenSeesEngine:
         massed = [(t, d, m) for (t, d), m in asm.mass_map.items()
                   if d in (1, 2)]
         massed_tags = sorted({t for t, _, _ in massed})
-        n = len(th.accel)
+        n = len(accel)
         t_out: List[float] = []
         sux: Dict[str, List[float]] = {s.name: [] for s in stories}
         suy: Dict[str, List[float]] = {s.name: [] for s in stories}
@@ -3040,16 +3192,16 @@ class OpenSeesEngine:
                                        for (uid, _e) in asm.hinge_ele}
         yielded: set = set()
         for k in range(n):
-            ok = ops.analyze(1, th.dt)
+            ok = ops.analyze(1, dt)
             if ok != 0 and nonlinear:
                 ops.algorithm("NewtonLineSearch")
-                ok = ops.analyze(1, th.dt)
+                ok = ops.analyze(1, dt)
                 ops.algorithm("Newton")
             if ok != 0:
                 raise RuntimeError(
                     f"Time-history analysis failed at step {k + 1}/{n} "
                     f"for case {name!r}")
-            t_out.append((k + 1) * th.dt)
+            t_out.append((k + 1) * dt)
             # story displacements (masters, else story-node average)
             for s in stories:
                 ux, uy = story_uxuy(s)
@@ -3057,7 +3209,7 @@ class OpenSeesEngine:
                 suy[s.name].append(uy - story0[s.name][1])
             # inertia-equilibrium story shears: total accel = relative
             # (nodeAccel) + ground (Path sample at the current time)
-            ag = th.scale * (th.accel[k + 1] if k + 1 < n else 0.0)
+            ag = th.scale * (accel[k + 1] if k + 1 < n else 0.0)
             agx = ag if dof == 1 else 0.0
             agy = ag if dof == 2 else 0.0
             acc = {t: ops.nodeAccel(t) for t in massed_tags}
@@ -3114,6 +3266,42 @@ class OpenSeesEngine:
         return result
 
     # --------------------------------------------------- response spectrum
+    def _resolve_rs_spectrum(self, rs) -> List[List[float]]:
+        """Effective spectrum points for an RS case (v0.13 function library).
+
+        When ``rs.function`` names a ``model.spectrum_functions`` entry, that
+        function's points are used in place of the inline ``rs.spectrum``;
+        a missing name is an error.  With no function the inline spectrum is
+        returned unchanged (backward compatible).
+        """
+        fn_name = getattr(rs, "function", "") or ""
+        if not fn_name:
+            return rs.spectrum
+        fn = self.model.spectrum_functions.get(fn_name)
+        if fn is None:
+            raise ValueError(
+                f"RS case {rs.name!r}: spectrum function {fn_name!r} is not "
+                "defined in model.spectrum_functions")
+        return fn.points
+
+    def _resolve_th_record(self, th) -> Tuple[List[float], float]:
+        """Effective (accel, dt) for a TH case (v0.13 function library).
+
+        When ``th.function`` names a ``model.th_functions`` entry, that
+        function's values/dt are used in place of the inline ``th.accel``/
+        ``th.dt``; a missing name is an error.  The case ``scale`` still
+        multiplies the record (applied by the caller).
+        """
+        fn_name = getattr(th, "function", "") or ""
+        if not fn_name:
+            return th.accel, th.dt
+        fn = self.model.th_functions.get(fn_name)
+        if fn is None:
+            raise ValueError(
+                f"TH case {th.name!r}: time-history function {fn_name!r} is "
+                "not defined in model.th_functions")
+        return fn.values, fn.dt
+
     def run_response_spectrum(self, name: str) -> CaseResults:
         """Run one response-spectrum case (cached per engine instance).
 
@@ -3128,6 +3316,7 @@ class OpenSeesEngine:
         if name not in model.rs_cases:
             raise ValueError(f"Unknown response-spectrum case {name!r}")
         rs = model.rs_cases[name]
+        spectrum = self._resolve_rs_spectrum(rs)
 
         n_req = rs.num_modes if rs.num_modes > 0 else None
         modal = self.run_modal(n_req)
@@ -3144,7 +3333,7 @@ class OpenSeesEngine:
         for i, T in enumerate(modal.periods, start=1):
             omega = 2.0 * math.pi / T
             gamma = modal.participation[i - 1][gamma_key]
-            sa = _interp_spectrum(rs.spectrum, T) * rs.scale * G_ACCEL
+            sa = _interp_spectrum(spectrum, T) * rs.scale * G_ACCEL
             phi = modal.shapes[i]
             loads = {(t, dof): gamma * sa * m * phi[t][dof - 1]
                      for (t, dof), m in mass_map.items()}
