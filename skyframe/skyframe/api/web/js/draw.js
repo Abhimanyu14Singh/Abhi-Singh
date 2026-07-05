@@ -30,6 +30,8 @@ const C = {
   spring: "#2fbf74",                      // green — grounded spring support (v0.8)
   thermal: "#e5a50a",                     // amber — ΔT thermal badge (v0.8)
   rigid: "rgba(120, 170, 220, 0.55)",     // pale blue — rigid end zone (v0.9)
+  panelRigid: "rgba(140, 185, 230, 0.8)", // v0.17 — rigid panel-zone joint block
+  panelScissors: "rgba(167, 139, 250, 0.85)", // v0.17 — scissors panel-zone spiral
   foundation: "rgba(190, 138, 74, 0.9)",  // earthy tan — Winkler soil bed (v0.11)
   axial: "#4fd0c7",                        // teal — tension/compression-only (v0.12)
   sel: "#35b5e5",
@@ -266,6 +268,43 @@ export class PlanEditor {
         "data-ref": `member:${mm.uid}`,
       }));
     }
+    // v0.17: panel zones — subtle joint glyphs at beam–column intersections
+    // of the current story ("rigid" → small joint blocks, "scissors" → small
+    // spring spirals; centerline draws nothing). Non-interactive.
+    const pz = m.panel_zones;
+    if (pz === "rigid" || pz === "scissors") {
+      const beamEnds = new Set();
+      for (const mm of m.members) {
+        if (mm.story !== story || mm.kind !== "beam") continue;
+        beamEnds.add(`${mm.pi[0].toFixed(3)},${mm.pi[1].toFixed(3)}`);
+        beamEnds.add(`${mm.pj[0].toFixed(3)},${mm.pj[1].toFixed(3)}`);
+      }
+      for (const mm of m.members) {
+        if (mm.story !== story || mm.kind !== "column") continue;
+        const x = mm.pi[0], y = mm.pi[1];
+        if (!beamEnds.has(`${x.toFixed(3)},${y.toFixed(3)}`)) continue;
+        if (pz === "rigid") {
+          // dashed joint-size outline just outside the column square
+          const sec = m.sections[mm.section];
+          const half = Math.max(sec ? (sec.b || 0.35) : 0.35, 0.3) / 2 + 0.14;
+          this.gElems.appendChild(el("rect", {
+            x: x - half, y: y - half, width: 2 * half, height: 2 * half,
+            fill: "none", stroke: C.panelRigid, "stroke-width": 1.7,
+            "stroke-dasharray": "4 2.6", "vector-effect": "non-scaling-stroke",
+            "pointer-events": "none", "data-ref": `panelzone:${mm.uid}`,
+          }));
+        } else {
+          this.gElems.appendChild(el("path", {
+            d: panelSpiralPlan(x, y, 0.3),
+            fill: "none", stroke: C.panelScissors, "stroke-width": 1.4,
+            "stroke-linejoin": "round", "stroke-linecap": "round",
+            "vector-effect": "non-scaling-stroke",
+            "pointer-events": "none", "data-ref": `panelzone:${mm.uid}`,
+          }));
+        }
+      }
+    }
+
     // v0.11: elastic (Winkler) foundation — a soil/spring-bed glyph beneath
     // members on a foundation (non-interactive, drawn under the element).
     for (const mm of m.members) {
@@ -762,6 +801,19 @@ export class PlanEditor {
 
 /** v0.8 — grounded spring glyph (coil + ground hatch) as one path `d`,
     in world coordinates; drawn with non-scaling stroke. */
+/** v0.17 — scissors panel-zone glyph in plan: a small 2.2-turn spiral spun
+    out from the joint center. Returned as one path `d` in world coords. */
+export function panelSpiralPlan(cx, cy, r) {
+  const AMAX = Math.PI * 4.4;
+  let d = "";
+  for (let a = 0; a <= AMAX + 1e-9; a += 0.32) {
+    const rr = r * (0.12 + 0.88 * a / AMAX);
+    const x = cx + rr * Math.cos(a), y = cy + rr * Math.sin(a);
+    d += `${d ? " L" : "M"}${x.toFixed(4)},${y.toFixed(4)}`;
+  }
+  return d;
+}
+
 export function springGlyphPlan(cx, cy, a) {
   const top = cy + a * 1.1;                 // node sits above the ground line
   const gy = cy - a * 1.1;                  // ground line

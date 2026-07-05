@@ -39,6 +39,8 @@ const COLORS = {
   spring: "#2fbf74",                           // v0.8 grounded spring supports
   thermal: "#e5a50a",                          // v0.8 ΔT thermal badge
   rigid: "rgba(140, 185, 230, 0.75)",          // v0.9 rigid end zones
+  panelRigid: "rgba(140, 185, 230, 0.85)",     // v0.17 rigid panel-zone joint blocks
+  panelScissors: "rgba(167, 139, 250, 0.85)",  // v0.17 scissors panel-zone spirals
   foundation: "rgba(198, 146, 82, 0.95)",      // v0.11 Winkler soil/spring bed
   axial: "#4fd0c7",                            // v0.12 tension/compression-only
   cutFill: "rgba(229, 165, 10, 0.9)",          // v0.13 section-cut plane (amber)
@@ -216,6 +218,27 @@ export class Viewer3D {
     this.rigidUids = new Set();
     for (const mm of m.members)
       if ((mm.rigid_i || 0) > 0 || (mm.rigid_j || 0) > 0) this.rigidUids.add(mm.uid);
+
+    // v0.17: panel zones — joints where a column endpoint meets a beam
+    // endpoint. "rigid" draws small filled joint blocks, "scissors" a small
+    // spring spiral; "none" (centerline) draws nothing.
+    this.panelZoneMode = (m.panel_zones === "rigid" || m.panel_zones === "scissors")
+      ? m.panel_zones : "none";
+    this.panelZonePts = [];
+    if (this.panelZoneMode !== "none") {
+      const pkey = p => `${p[0].toFixed(4)},${p[1].toFixed(4)},${p[2].toFixed(4)}`;
+      const colEnds = new Set();
+      for (const mm of m.members)
+        if (mm.kind === "column") { colEnds.add(pkey(mm.pi)); colEnds.add(pkey(mm.pj)); }
+      const seen = new Set();
+      for (const mm of m.members) {
+        if (mm.kind !== "beam") continue;
+        for (const p of [mm.pi, mm.pj]) {
+          const k = pkey(p);
+          if (colEnds.has(k) && !seen.has(k)) { seen.add(k); this.panelZonePts.push([p[0], p[1], p[2]]); }
+        }
+      }
+    }
 
     // v0.11: members on an elastic (Winkler) foundation → soil/spring-bed glyph
     this.foundationSegs = m.members
@@ -808,6 +831,43 @@ export class Viewer3D {
           ctx.beginPath();
           ctx.moveTo(s.x2, s.y2);
           ctx.lineTo(s.x2 - dx * fj, s.y2 - dy * fj);
+          ctx.stroke();
+        }
+      }
+    }
+
+    // ---- v0.17 panel zones: subtle joint glyphs at beam–column intersections
+    // "rigid" → small filled joint blocks; "scissors" → small spring spirals.
+    if (this.panelZonePts && this.panelZonePts.length &&
+        this.panelZoneMode !== "none" && !overlayActive) {
+      const rigidPZ = this.panelZoneMode === "rigid";
+      for (const p of this.panelZonePts) {
+        const pc = P.toCam(p);
+        if (pc[2] < P.near) continue;
+        const sp = P.proj(pc);
+        const r = rigidPZ
+          ? Math.min(Math.max(90 / pc[2], 2.5), 5.5)
+          : Math.min(Math.max(120 / pc[2], 3.2), 6.5);
+        if (rigidPZ) {
+          ctx.beginPath();
+          ctx.rect(sp.x - r, sp.y - r, 2 * r, 2 * r);
+          ctx.fillStyle = COLORS.panelRigid;
+          ctx.fill();
+          ctx.strokeStyle = "rgba(13, 17, 23, 0.55)";
+          ctx.lineWidth = 0.8;
+          ctx.stroke();
+        } else {
+          // 2.2-turn spiral growing out from the joint center
+          ctx.strokeStyle = COLORS.panelScissors;
+          ctx.lineWidth = 1.1;
+          ctx.lineJoin = "round";
+          ctx.beginPath();
+          const AMAX = Math.PI * 4.4;
+          for (let a = 0; a <= AMAX + 1e-9; a += 0.32) {
+            const rr = r * (0.12 + 0.88 * a / AMAX);
+            const x = sp.x + rr * Math.cos(a), y = sp.y + rr * Math.sin(a);
+            if (a === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          }
           ctx.stroke();
         }
       }

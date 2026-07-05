@@ -289,20 +289,22 @@ async function addSelfWeightPattern(params) {
 
 async function generateAsce7Combos(params) {
   const before = Object.keys(store.model.combos || {}).length;
+  // v0.17 — optional SDS in the request folds Ev = 0.2·SDS·D into seismic combos
+  const evTag = isFinite(params.SDS) ? ` · Ev @ SDS=${params.SDS}` : "";
   if (!store.mock) {
     try {
       await codeToolLive("/api/combos/asce7", params);
       const added = Object.keys(store.model.combos || {}).length - before;
       toast("ASCE 7 combinations generated",
-        `${added} combo${added === 1 ? "" : "s"} (${params.standard}) via POST /api/combos/asce7`, "info", 5000);
+        `${added} combo${added === 1 ? "" : "s"} (${params.standard}${evTag}) via POST /api/combos/asce7`, "info", 5000);
       return store.model;
     } catch (e) { console.warn("ASCE7 combos endpoint unavailable, computing locally:", e.message); }
   }
-  const { added } = mockAsce7Combos(store.model, params.standard);
+  const { added } = mockAsce7Combos(store.model, params.standard, params.SDS);
   ME.normalizeModel(store.model);
   markDirty();
   toast("ASCE 7 combinations generated",
-    `${added.length} combo${added.length === 1 ? "" : "s"} (${params.standard}) computed locally`, "info", 5000);
+    `${added.length} combo${added.length === 1 ? "" : "s"} (${params.standard}${evTag}) computed locally`, "info", 5000);
   return store.model;
 }
 
@@ -703,6 +705,20 @@ function setView(view) {
 
 function syncDiaphragmUI() {
   if (store.model) $("diaphragmSelect").value = store.model.diaphragm || "rigid";
+  syncPanelZoneUI();
+}
+
+/* v0.17 — panel-zone joint model select + one-line explanation per choice */
+const PANEL_ZONE_NOTES = {
+  none: "Members span joint centerlines node to node — the current (v0.16) behavior.",
+  rigid: "Auto rigid end zones sized to the joints — <b>stiffer</b> frame, smaller drift.",
+  scissors: "Flexible panel-zone shear spring (scissors) — <b>softer</b> frame, adds drift.",
+};
+function syncPanelZoneUI() {
+  if (!store.model) return;
+  const pz = store.model.panel_zones || "none";
+  $("panelZoneSelect").value = pz;
+  $("panelZoneNote").innerHTML = PANEL_ZONE_NOTES[pz] || PANEL_ZONE_NOTES.none;
 }
 
 /* ---- story selection */
@@ -4790,6 +4806,14 @@ function wire() {
     store.model.diaphragm = e.target.value === "none" ? "none" : "rigid";
     markDirty();
   });
+  /* ---- v0.17: panel-zone joint model (round-trips via POST /api/model) */
+  $("panelZoneSelect").addEventListener("change", e => {
+    const v = e.target.value;
+    store.model.panel_zones = (v === "rigid" || v === "scissors") ? v : "none";
+    syncPanelZoneUI();
+    markDirty();
+    refreshDrawViews();          // plan joint glyphs follow the choice live
+  });
 
   /* ---- v0.4: brace layout toggle */
   document.querySelectorAll("#braceToggle .seg-btn").forEach(b =>
@@ -5245,6 +5269,8 @@ async function boot() {
     renderSvcTab, rebuildSvcSelect, svcData, svcRows, svcCaseNames,
     fetchLiveReduction, renderLlrPanel, toggleLlr, llrRows, mockLiveReduction,
     designGovRatio,
+    // v0.17 — vertical seismic Ev in auto-combos + panel zones
+    syncPanelZoneUI, mockAsce7Combos,
   };
 }
 

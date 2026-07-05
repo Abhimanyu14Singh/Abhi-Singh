@@ -979,6 +979,13 @@ input.rs-name { width: 150px; flex: none; }
 .warn-inline { color: var(--amber); }
 p.warn-inline { margin-top: 8px; }
 
+/* v0.17 — vertical seismic Ev (0.2·SDS·D) option in the auto-combos card */
+.ac-ev-row { margin: 10px 0 0; flex-wrap: wrap; row-gap: 6px; }
+.ac-ev-row .rs-field { flex-direction: row; align-items: center; gap: 6px; cursor: default; }
+.ac-ev-row input[type="number"]:disabled { opacity: .45; cursor: not-allowed; }
+#acEvNote { margin-top: 7px; }
+#acEvNote b { color: var(--text-2); font-variant-numeric: tabular-nums; }
+
 /* code response-spectrum card — form + live preview side by side */
 .code-rs-body {
   display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px;

@@ -135,6 +135,16 @@
         </div>
         <p class="muted diaph-note">Per-story overrides live in <b>Edit Grid/Stories…</b></p>
 
+        <h3 class="group-title">Panel zones</h3>
+        <div class="field">
+          <select id="panelZoneSelect" title="Beam–column joint model — centerline spans node to node; rigid adds joint-size rigid end zones; scissors adds a flexible panel-zone shear spring">
+            <option value="none">Centerline (none)</option>
+            <option value="rigid">Rigid joints</option>
+            <option value="scissors">Flexible (scissors)</option>
+          </select>
+        </div>
+        <p class="muted diaph-note" id="panelZoneNote"></p>
+
         <h3 class="group-title">Properties</h3>
         <button class="btn btn-block" id="sectionMgrBtn" title="Manage frame sections, shell sections and materials">Section Manager…</button>
         <button class="btn btn-block" id="gridEditBtn" style="margin-top:8px" title="Edit grid line positions, story heights and names">Edit Grid/Stories…</button>

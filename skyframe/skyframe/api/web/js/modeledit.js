@@ -127,6 +127,9 @@ export function normalizeModel(m) {
   m.diaphragm = m.diaphragm === "none" ? "none" : "rigid";
   m.story_diaphragm = (m.story_diaphragm && typeof m.story_diaphragm === "object")
     ? m.story_diaphragm : {};
+  // v0.17 — beam–column joint model: "none" (centerline) | "rigid" | "scissors"
+  m.panel_zones = (m.panel_zones === "rigid" || m.panel_zones === "scissors")
+    ? m.panel_zones : "none";
   m.links = Array.isArray(m.links) ? m.links : [];
   for (const l of m.links) {
     if (!(Array.isArray(l.stiffness) && l.stiffness.length === 6 &&

@@ -323,6 +323,8 @@ export function mockModel(p = {}) {
     },
     diaphragm: "rigid",
     story_diaphragm: {},
+    // v0.17: beam–column joint model — "none" (centerline) | "rigid" | "scissors"
+    panel_zones: "none",
     // v0.16: serviceability deflection limit (L/x on beam live-load sag)
     deflection_limit: 360,
     // v0.15: model-level "auto-label all walls as piers" flag (off — the demo
@@ -1538,9 +1540,16 @@ export function mockSelfWeightPattern(model, p = {}) {
 }
 
 /** POST /api/combos/asce7 — append ASCE 7-16 §2.3/§2.4 combos matched by
-    the model's pattern kinds. Returns {model, added:[names]}. */
-export function mockAsce7Combos(model, standard = "LRFD") {
+    the model's pattern kinds. Returns {model, added:[names]}.
+    v0.17: optional SDS folds the vertical seismic component Ev = 0.2·SDS·D
+    (§12.4.2.2) into the seismic combos' D factors — strength
+    (1.2+0.2·SDS)·D + E and (0.9−0.2·SDS)·D + E; ASD (1.0+0.14·SDS)·D + 0.7E
+    and (0.6−0.14·SDS)·D + 0.7E. */
+export function mockAsce7Combos(model, standard = "LRFD", SDS) {
   const std = standard === "ASD" ? "ASD" : "LRFD";
+  const sds = isFinite(SDS) ? Math.max(SDS, 0) : null;
+  const rf = v => +v.toFixed(3);            // factor (dict value)
+  const rl = v => String(+v.toFixed(2));    // factor label (combo name)
   // classify existing cases by the kind of their dominant pattern
   const kindOf = c => {
     const pk = Object.keys(c.patterns || {});
@@ -1565,11 +1574,14 @@ export function mockAsce7Combos(model, standard = "LRFD") {
     if (std === "LRFD") {
       add("1.4D", { [D]: 1.4 });
       if (L) add("1.2D + 1.6L", { [D]: 1.2, [L]: 1.6 });
+      // v0.17: with SDS, Ev = 0.2·SDS·D shifts the seismic D factors
+      const dUp = sds != null ? rf(1.2 + 0.2 * sds) : 1.2;
+      const dDn = sds != null ? rf(0.9 - 0.2 * sds) : 0.9;
       for (const q of quakes) {
         for (const s of [1, -1]) {
-          const c = { [D]: 1.2 }; if (L) c[L] = 1.0; c[q] = 1.0 * s;
-          add(`1.2D ${L ? "+ 1.0L " : ""}${s > 0 ? "+" : "−"} 1.0${q}`, c);
-          add(`0.9D ${s > 0 ? "+" : "−"} 1.0${q}`, { [D]: 0.9, [q]: 1.0 * s });
+          const c = { [D]: dUp }; if (L) c[L] = 1.0; c[q] = 1.0 * s;
+          add(`${rl(dUp)}D ${L ? "+ 1.0L " : ""}${s > 0 ? "+" : "−"} 1.0${q}`, c);
+          add(`${rl(dDn)}D ${s > 0 ? "+" : "−"} 1.0${q}`, { [D]: dDn, [q]: 1.0 * s });
         }
       }
       for (const w of winds) for (const s of [1, -1]) {
@@ -1579,11 +1591,14 @@ export function mockAsce7Combos(model, standard = "LRFD") {
     } else { // ASD
       add("D", { [D]: 1.0 });
       if (L) add("D + L", { [D]: 1.0, [L]: 1.0 });
+      // v0.17: with SDS, Ev shifts the ASD seismic D factors by ±0.14·SDS
+      const dUp = sds != null ? rf(1.0 + 0.14 * sds) : 1.0;
+      const dDn = sds != null ? rf(0.6 - 0.14 * sds) : 0.6;
       for (const q of quakes) for (const s of [1, -1]) {
-        add(`D ${s > 0 ? "+" : "−"} 0.7${q}`, { [D]: 1.0, [q]: 0.7 * s });
+        add(`${rl(dUp)}D ${s > 0 ? "+" : "−"} 0.7${q}`, { [D]: dUp, [q]: 0.7 * s });
         const c = { [D]: 1.0 }; if (L) c[L] = 0.75; c[q] = 0.525 * s;
         add(`D ${L ? "+ 0.75L " : ""}${s > 0 ? "+" : "−"} 0.525${q}`, c);
-        add(`0.6D ${s > 0 ? "+" : "−"} 0.7${q}`, { [D]: 0.6, [q]: 0.7 * s });
+        add(`${rl(dDn)}D ${s > 0 ? "+" : "−"} 0.7${q}`, { [D]: dDn, [q]: 0.7 * s });
       }
       for (const w of winds) for (const s of [1, -1]) {
         add(`D ${s > 0 ? "+" : "−"} 0.6${w}`, { [D]: 1.0, [w]: 0.6 * s });

@@ -43,7 +43,8 @@ export class LoadsEditor {
     this._wind = { name: "WX", direction: "X", V: 40, exposure: "C", Cp: 0.8 };
     // v0.7 code-tool card state (persisted across re-renders)
     this._sw = { name: "SW", factor: 1.0 };
-    this._combos = { standard: "LRFD" };
+    // v0.17 — ev/SDS: optional vertical seismic Ev = 0.2·SDS·D folded into D
+    this._combos = { standard: "LRFD", ev: false, SDS: 1.0 };
     this._codeRs = { name: "RS-Code", Ss: 1.0, S1: 0.6, site_class: "D", R: 8, Ie: 1.0, direction: "X" };
     this._elf = { name: "EQ-ELF", SDS: 1.0, SD1: 0.6, R: 8, Ie: 1.0, direction: "X" };
     // v0.10 card state (persisted across re-renders)
@@ -457,14 +458,51 @@ export class LoadsEditor {
           </select></label>
         <button class="btn btn-small" id="acGen">Generate ASCE 7 combinations</button>
       </div>
+      <div class="check-row ac-ev-row">
+        <label title="Fold the vertical seismic component Ev = 0.2·SDS·D (ASCE 7-16 §12.4.2.2) into the seismic combos' D factors">
+          <input type="checkbox" id="acEv"${c.ev ? " checked" : ""}>
+          Include vertical seismic E<sub>v</sub> (0.2·S<sub>DS</sub>·D)
+        </label>
+        <label class="rs-field ac-sds-field"><span>SDS (g)</span>
+          <input id="acSDS" type="number" step="0.05" min="0" value="${c.SDS}"${c.ev ? "" : " disabled"}></label>
+      </div>
+      <p class="code-note muted" id="acEvNote"></p>
       <p class="code-note muted">Builds factored combinations from your
         <b>Dead / Live / Quake / Wind</b> cases (±E, ±W sign variants). Terms with no
         matching case are dropped. <span class="warn-inline">Appends to existing combinations.</span></p>`;
     const $ = id => card.querySelector("#" + id);
-    $("acStd").addEventListener("change", e => { c.standard = e.target.value; });
+    const fnum = v => String(+v.toFixed(2));
+    const evNote = () => {
+      const n = $("acEvNote");
+      if (!c.ev) {
+        n.innerHTML = `Seismic combos keep the plain D factors ` +
+          `(${c.standard === "ASD" ? "1.0D + 0.7E · 0.6D + 0.7E" : "1.2D + E · 0.9D + E"}).`;
+        return;
+      }
+      const s = c.SDS;
+      n.innerHTML = c.standard === "ASD"
+        ? `E<sub>v</sub> on — ASD seismic combos become <b>${fnum(1.0 + 0.14 * s)}D + 0.7E</b> / ` +
+          `<b>${fnum(0.6 - 0.14 * s)}D + 0.7E</b> at SDS=${fnum(s)} (±0.14·S<sub>DS</sub>·D).`
+        : `E<sub>v</sub> on — strength seismic combos become <b>${fnum(1.2 + 0.2 * s)}D + E</b> / ` +
+          `<b>${fnum(0.9 - 0.2 * s)}D + E</b> at SDS=${fnum(s)} (±0.2·S<sub>DS</sub>·D).`;
+    };
+    $("acStd").addEventListener("change", e => { c.standard = e.target.value; evNote(); });
+    $("acEv").addEventListener("change", e => {
+      c.ev = e.target.checked;
+      $("acSDS").disabled = !c.ev;
+      evNote();
+    });
+    $("acSDS").addEventListener("change", e => {
+      const v = parseFloat(e.target.value);
+      if (isFinite(v) && v >= 0) c.SDS = v; else e.target.value = String(c.SDS);
+      evNote();
+    });
     $("acGen").addEventListener("click", () =>
-      this._runTool($("acGen"), this.onAutoCombos, { ...c }, "Combo generation failed"));
+      this._runTool($("acGen"), this.onAutoCombos,
+        { standard: c.standard, ...(c.ev ? { SDS: c.SDS } : {}) },
+        "Combo generation failed"));
     if (!this.onAutoCombos) $("acGen").disabled = true;
+    evNote();
     return card;
   }
 
