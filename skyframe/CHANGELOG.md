@@ -1,5 +1,17 @@
 # SkyFrame changelog
 
+## 1.1.0
+
+### Wave 16 — seismic protection devices & wall piers
+- **Link device types**: viscous dampers (time-history damping, zero
+  static stiffness), gap/hook contacts, and bilinear base isolators —
+  with device glyphs and per-type parameter forms in the UI. Verified
+  against closed forms and an independent numpy bilinear integrator.
+- **Wall piers**: pier labels on walls (or auto-label) produce per-story
+  P/V/M design forces from an exact nodal free-body cut of the shell
+  elements, with a Wall Piers results tab, CSV and report section.
+- 356 tests (16 new).
+
 ## 1.0.0
 
 First stable release. SkyFrame is a personal ETABS-style building analysis

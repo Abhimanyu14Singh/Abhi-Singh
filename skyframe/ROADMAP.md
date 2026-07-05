@@ -121,6 +121,10 @@ scrutinized benchmark tests.
 - [x] Origin/rotation transforms, cross-system snapping (backward compatible)
 - [x] UI: grid-system manager, multi-grid render + snap in plan/3D
 
+## Wave 16 — protection devices & wall piers  ✅ done (v1.1)
+- [x] Viscous damper / gap / hook / isolator link types (device glyph UI)
+- [x] Wall pier labels with per-story P/V/M design forces + results tab
+
 ## Phase 4 — Parity increment 2  ✅ done
 - [x] 1. Model save/open (.skyframe JSON files) with File menu + gallery
 - [x] 2. Load pattern / case / combo editor UI (with per-case P-Delta toggle)
@@ -132,7 +136,7 @@ scrutinized benchmark tests.
 
 ## Status — v1.0 released 🎉
 All waves above are complete with engine + REST API + UI, pinned by a
-340-test suite. The app builds standalone locally (`packaging/build.sh`).
+356-test suite. The app builds standalone locally (`packaging/build.sh`).
 
 ## Possible future waves (not yet scheduled)
 - Native Windows local build (same build.sh on a Windows host)
