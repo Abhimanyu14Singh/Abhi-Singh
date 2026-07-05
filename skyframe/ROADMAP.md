@@ -134,7 +134,7 @@ scrutinized benchmark tests.
 - [x] 6. Wall/slab openings; elevation-view drawing (Wave 6)
 - [x] 7. Nonlinear static pushover (OpenSees fiber hinges) (Wave 6)
 
-## Status — v1.0 released 🎉
+## Status — v1.1 released 🎉
 All waves above are complete with engine + REST API + UI, pinned by a
 356-test suite. The app builds standalone locally (`packaging/build.sh`).
 
