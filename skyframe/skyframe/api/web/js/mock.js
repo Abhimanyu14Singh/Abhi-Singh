@@ -39,10 +39,13 @@ export function mockModel(p = {}) {
   }
   const members = [];
   const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-  const add = (kind, section, pi, pj, story, uid) =>
-    members.push({ uid, kind, section, pi, pj, story, length: dist(pi, pj),
+  const add = (kind, section, pi, pj, story, uid) => {
+    const mm = { uid, kind, section, pi, pj, story, length: dist(pi, pj),
       releases: "", angle: 0, rigid_i: 0, rigid_j: 0, rigid_factor: 1,
-      foundation_ks: 0, foundation_width: 0 });
+      foundation_ks: 0, foundation_width: 0, axial_limit: "both" };
+    members.push(mm);
+    return mm;
+  };
 
   stories.forEach((st, si) => {
     const zt = st.elevation, zb = st.elevation - st.height;
@@ -60,6 +63,20 @@ export function mockModel(p = {}) {
           `BY${si + 1}-${XL(xi)}${yi + 1}`);
     });
   });
+
+  // v0.12: demo X-bracing on the first bay (y = 0 plane) of the two lowest
+  // stories, flagged tension-only (axial_limit "tension") so the T-only glyph
+  // is visible in plan & 3D. Tension/compression-only makes the run nonlinear.
+  if (xs.length >= 2) {
+    for (let s = 0; s < Math.min(2, stories.length); s++) {
+      const st = stories[s], zt = st.elevation, zb = st.elevation - st.height;
+      const x0 = xs[0], x1 = xs[1], y = ys[0];
+      const b1 = add("brace", "BRACE", [x0, y, zb], [x1, y, zt], st.name, `BR${s + 1}-a`);
+      const b2 = add("brace", "BRACE", [x1, y, zb], [x0, y, zt], st.name, `BR${s + 1}-b`);
+      b1.axial_limit = "tension";
+      b2.axial_limit = "tension";
+    }
+  }
 
   // v0.9: demo rigid-end offsets on a couple of Story1 members — a beam
   // (rigid zones at both ends where it frames into columns) and a column.
@@ -210,6 +227,8 @@ export function mockModel(p = {}) {
       COL: { name: "COL", material: "CONC", b: o.column_size, h: o.column_size,
         mod_A: 1, mod_I33: 1, mod_I22: 1, mod_J: 1 },
       BEAM: { name: "BEAM", material: "CONC", b: o.beam_b, h: o.beam_h,
+        mod_A: 1, mod_I33: 1, mod_I22: 1, mod_J: 1 },
+      BRACE: { name: "BRACE", material: "CONC", b: 0.2, h: 0.2,
         mod_A: 1, mod_I33: 1, mod_I22: 1, mod_J: 1 },
     },
     shell_sections, shells,
@@ -1516,6 +1535,116 @@ function _steelChecks(model, caseName, Fy) {
     });
   }
   return checks;
+}
+
+/* ================================================================
+   v0.12 — mock section optimization (POST /api/design/optimize)
+   ================================================================ */
+
+/** Self-weight of a frame section in kg/m: A (m²) × material density (kg/m³),
+    density from the material unit weight (kN/m³ → kg/m³ via g). */
+function _sectionWeight(model, sec) {
+  if (!sec) return 0;
+  const A = isFinite(sec.A) && sec.A > 0 ? sec.A
+    : (sec.b || 0) * (sec.h || 0);
+  const mat = (model.materials || {})[sec.material];
+  const uw = mat && isFinite(mat.unit_weight) ? mat.unit_weight : 24;   // kN/m³
+  const density = uw * 1000 / 9.80665;                                   // kg/m³
+  return A * density;
+}
+
+/** Build a lighter, area-scaled variant of a section (area × factor). Rect
+    (b/h) sections scale each dimension by √factor; property (A/I) sections
+    scale A by the factor and I by factor². */
+function _scaledSection(sec, factor, name) {
+  const out = { ...sec, name };
+  if (isFinite(sec.b) && isFinite(sec.h)) {
+    const s = Math.sqrt(factor);
+    out.b = +(sec.b * s).toFixed(4);
+    out.h = +(sec.h * s).toFixed(4);
+  }
+  if (isFinite(sec.A)) out.A = +(sec.A * factor).toExponential(4) / 1;
+  if (isFinite(sec.I33)) out.I33 = +(sec.I33 * factor * factor).toExponential(4) / 1;
+  if (isFinite(sec.I22)) out.I22 = +(sec.I22 * factor * factor).toExponential(4) / 1;
+  if (isFinite(sec.J)) out.J = +(sec.J * factor * factor).toExponential(4) / 1;
+  return out;
+}
+
+/** Compute optimization suggestions for the current model against a target
+    D/C ratio. Over-designed members (ratio < target) are downsized to a lighter
+    section that keeps the demand under the target; the governing member and
+    any member already near/over capacity report "no_section_passes". Members
+    with no valid check are "n/a". Returns {suggestions, sections} where
+    `sections` maps a suggested-section name to its (scaled) section dict. */
+function _optimizeSuggestions(model, caseName, target) {
+  const tgt = isFinite(target) && target > 0 ? target : 0.95;
+  const checks = _steelChecks(model, caseName, 345000);
+  const byUid = new Map(checks.map(c => [c.uid, c]));
+  // governing member = the largest valid D/C ratio → never downsized
+  let govUid = null, govRatio = -1;
+  for (const c of checks) {
+    if (c.status !== "N/A" && c.ratio > govRatio) { govRatio = c.ratio; govUid = c.uid; }
+  }
+  const suggestions = [];
+  const sections = {};
+  for (const mm of model.members) {
+    if (mm.kind === "brace") continue;                 // braces excluded (as in checks)
+    const c = byUid.get(mm.uid);
+    const sec = (model.sections || {})[mm.section];
+    const curW = +_sectionWeight(model, sec).toFixed(1);
+    if (!c || c.status === "N/A" || !sec) {
+      suggestions.push({
+        uid: mm.uid, current_section: mm.section, suggested_section: mm.section,
+        current_ratio: c ? c.ratio : 0, suggested_ratio: c ? c.ratio : 0,
+        weight_kg_per_m: 0, status: "n/a",
+      });
+      continue;
+    }
+    const r0 = c.ratio;
+    const aNeeded = r0 / tgt;                           // area fraction to reach target
+    if (mm.uid === govUid || aNeeded >= 0.95 || r0 <= 1e-6) {
+      // controlling member, near capacity, or unloaded → keep the section
+      suggestions.push({
+        uid: mm.uid, current_section: mm.section, suggested_section: mm.section,
+        current_ratio: r0, suggested_ratio: r0, weight_kg_per_m: 0,
+        status: "no_section_passes",
+      });
+      continue;
+    }
+    // downsize: pick a lighter area factor with a little margin below target
+    const a = Math.min(0.92, Math.max(aNeeded, 0.5));
+    const pct = Math.round((1 - a) * 100);
+    const name = `${mm.section}-L${pct}`;
+    if (!sections[name]) sections[name] = _scaledSection(sec, a, name);
+    const newW = +_sectionWeight(model, sections[name]).toFixed(1);
+    suggestions.push({
+      uid: mm.uid, current_section: mm.section, suggested_section: name,
+      current_ratio: r0, suggested_ratio: +(r0 / a).toFixed(3),
+      weight_kg_per_m: +(newW - curW).toFixed(1), status: "ok",
+    });
+  }
+  return { suggestions, sections };
+}
+
+/** POST /api/design/optimize — auto section optimization (mock).
+    apply:false → {suggestions:[...]}; apply:true → the updated model dict with
+    members reassigned to their suggested (lighter) sections. */
+export function mockOptimize(model, body = {}) {
+  const caseName = body.case || Object.keys(model.cases || {})[0];
+  const target = isFinite(body.target_ratio) ? body.target_ratio : 0.95;
+  const { suggestions, sections } = _optimizeSuggestions(model, caseName, target);
+  if (!body.apply) return { suggestions, case: caseName, target_ratio: target };
+  // apply:true — clone the model, add the scaled sections, reassign members
+  const updated = JSON.parse(JSON.stringify(model));
+  updated.sections = updated.sections || {};
+  Object.assign(updated.sections, sections);
+  const suggMap = new Map(suggestions.map(s => [s.uid, s]));
+  for (const mm of updated.members) {
+    const s = suggMap.get(mm.uid);
+    if (s && s.status === "ok" && s.suggested_section !== mm.section)
+      mm.section = s.suggested_section;
+  }
+  return updated;
 }
 
 /** POST /api/design/concrete — flexure/axial screening from a rebar layout.

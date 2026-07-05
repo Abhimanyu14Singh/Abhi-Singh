@@ -558,6 +558,22 @@
           <div class="table-scroll">
             <table class="data-table design-table" id="designTable"></table>
           </div>
+
+          <!-- ---- v0.12: auto section optimization (Steel sub-tab) ---- -->
+          <div class="optimize-panel hidden" id="optimizePanel">
+            <div class="optimize-head">
+              <h3 class="opt-title">Optimize sections
+                <span class="unit">auto-size to a target D/C ratio</span></h3>
+              <span class="toolbar-spacer"></span>
+              <button class="chip csv-btn hidden" id="csvOptimize"
+                title="Download the optimization suggestions as CSV">⬇ CSV</button>
+            </div>
+            <div class="optimize-form" id="optimizeForm"></div>
+            <div class="design-summary opt-summary hidden" id="optSummary"></div>
+            <div class="table-scroll">
+              <table class="data-table optimize-table" id="optimizeTable"></table>
+            </div>
+          </div>
         </div>
       </section>
 

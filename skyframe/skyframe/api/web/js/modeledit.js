@@ -59,6 +59,12 @@ export function normalizeModel(m) {
     if (!(isFinite(mm.foundation_ks) && mm.foundation_ks >= 0)) mm.foundation_ks = 0;
     if (!(isFinite(mm.foundation_width) && mm.foundation_width >= 0)) mm.foundation_width = 0;
   }
+  // v0.12 — axial-limit behavior (tension/compression-only makes the run
+  // nonlinear). Anything other than the two limited modes falls back to "both".
+  for (const mm of m.members) {
+    if (mm.axial_limit !== "tension" && mm.axial_limit !== "compression")
+      mm.axial_limit = "both";
+  }
   for (const s of Object.values(m.sections)) {
     for (const k of ["mod_A", "mod_I33", "mod_I22", "mod_J"])
       if (!isFinite(s[k])) s[k] = 1.0;
@@ -435,6 +441,20 @@ export function hasRigidZone(mm) {
     subgrade modulus (kN/m³) and bearing width (m) must be positive. */
 export function onFoundation(mm) {
   return !!mm && (mm.foundation_ks || 0) > 0 && (mm.foundation_width || 0) > 0;
+}
+
+/** v0.12 — axial-limit (tension/compression-only) behavior of a frame member.
+    Returns "both" | "tension" | "compression"; anything else reads as "both". */
+export function axialLimit(mm) {
+  const v = mm && mm.axial_limit;
+  return (v === "tension" || v === "compression") ? v : "both";
+}
+
+/** v0.12 — short badge label for a limited-axial member ("T-only" / "C-only");
+    empty string when the member takes both tension and compression. */
+export function axialLimitBadge(mm) {
+  const v = axialLimit(mm);
+  return v === "tension" ? "T-only" : v === "compression" ? "C-only" : "";
 }
 
 /* ---- shell openings (region-parametric fractions 0..1) */

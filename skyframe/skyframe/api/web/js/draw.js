@@ -4,7 +4,7 @@
    the onDraw / onErase / onSelect callbacks. */
 
 import { zigzagPoints } from "./elev.js";
-import { springKey, anyThermalMember, onFoundation } from "./modeledit.js";
+import { springKey, anyThermalMember, onFoundation, axialLimit, axialLimitBadge } from "./modeledit.js";
 
 const NS = "http://www.w3.org/2000/svg";
 const el = (tag, attrs = {}) => {
@@ -29,6 +29,7 @@ const C = {
   thermal: "#e5a50a",                     // amber — ΔT thermal badge (v0.8)
   rigid: "rgba(120, 170, 220, 0.55)",     // pale blue — rigid end zone (v0.9)
   foundation: "rgba(190, 138, 74, 0.9)",  // earthy tan — Winkler soil bed (v0.11)
+  axial: "#4fd0c7",                        // teal — tension/compression-only (v0.12)
   sel: "#35b5e5",
   snap: "#35b5e5",
   rubber: "rgba(53, 181, 229, 0.9)",
@@ -349,6 +350,28 @@ export class PlanEditor {
         "text-anchor": "middle", "dominant-baseline": "central", "font-family": "inherit",
       });
       t.textContent = "ΔT";
+      this.gLabels.appendChild(bg);
+      this.gLabels.appendChild(t);
+    }
+
+    // v0.12: T-only / C-only badges on current-story members whose axial
+    // behavior is limited to tension or compression (nonlinear members).
+    for (const mm of m.members) {
+      if (mm.story !== story || axialLimit(mm) === "both") continue;
+      const label = axialLimitBadge(mm);
+      const [px, py] = this.toScreen((mm.pi[0] + mm.pj[0]) / 2, (mm.pi[1] + mm.pj[1]) / 2);
+      const w = 30, h = 13;
+      const bg = el("rect", {
+        x: px - w / 2, y: py - h / 2, width: w, height: h, rx: 6.5,
+        fill: "rgba(79,208,199,0.16)", stroke: C.axial, "stroke-width": 1,
+        "data-ref": `axial:${mm.uid}`,
+      });
+      const t = el("text", {
+        x: px, y: py + 0.5, fill: C.axial, "font-size": 8.5, "font-weight": 700,
+        "text-anchor": "middle", "dominant-baseline": "central", "font-family": "inherit",
+        "data-ref": `axial:${mm.uid}`,
+      });
+      t.textContent = label;
       this.gLabels.appendChild(bg);
       this.gLabels.appendChild(t);
     }

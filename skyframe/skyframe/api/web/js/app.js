@@ -6,7 +6,7 @@ import { renderStoryCharts, stationDiagram, timeSeriesChart, pushoverChart } fro
 import { mockModel, mockResults, mockSectionLibrary, mockModelFiles, mockWindPattern,
   mockDesignSteel, mockDesignConcrete, mockImport,
   mockSelfWeightPattern, mockAsce7Combos, mockCodeRsCase, mockElfPattern,
-  mockRsDirectional, mockNotionalPattern } from "./mock.js";
+  mockRsDirectional, mockNotionalPattern, mockOptimize } from "./mock.js";
 import { PlanEditor } from "./draw.js";
 import { ElevEditor } from "./elev.js";
 import { LoadsEditor } from "./loads.js";
@@ -61,6 +61,11 @@ const store = {
   designSort: { key: "ratio", dir: -1 },
   designFilter: "",
   designAllCombos: false, // v0.9 — check the design envelope over all combos
+  // v0.12 — auto section optimization (Steel sub-tab)
+  optCase: null,          // case/combo used for optimization
+  optTarget: 0.95,        // target D/C ratio
+  optResult: null,        // last /api/design/optimize {apply:false} response
+  optSort: { key: "weight_kg_per_m", dir: 1 },
   diagCase: null,         // v0.9 — selected lateral case for story diagnostics
   steelFy: 345000,       // kPa
   concreteFc: 30000,     // kPa
@@ -160,6 +165,26 @@ async function designCheck(kind, body) {
   await new Promise(r => setTimeout(r, 250));
   return kind === "steel" ? mockDesignSteel(store.model, body)
     : mockDesignConcrete(store.model, body);
+}
+
+/* ---- v0.12: auto section optimization. Mirrors designCheck — the live path
+   syncs the working model first (the backend re-analyses the current model),
+   then POSTs /api/design/optimize. Mock (or a missing endpoint) computes the
+   suggestions / applied model locally. apply:true returns the updated MODEL
+   dict; apply:false returns {suggestions:[...]}. */
+async function designOptimize(body) {
+  if (!store.mock) {
+    try {
+      const payload = JSON.parse(JSON.stringify(store.model));
+      delete payload._mock_params;
+      await postModel(payload);
+      return await api("/api/design/optimize", body);
+    } catch (e) {
+      console.warn("Optimize endpoint unavailable, using mock:", e.message);
+    }
+  }
+  await new Promise(r => setTimeout(r, 250));
+  return mockOptimize(store.model, body);
 }
 
 /* ---- v0.6: model importers. Reads the returned {model, warnings}; the
@@ -916,6 +941,21 @@ function renderProps() {
       <div class="field"><label for="propFrameSection">Section</label>
         <select id="propFrameSection">${optionList(Object.keys(m.sections), sec, sec === undefined)}</select>
       </div>`;
+    // v0.12 — axial-limit behavior (tension/compression-only). Any FrameMember,
+    // most useful on braces. Limited members make the analysis nonlinear.
+    const axl = commonVal(members, x => ME.axialLimit(x));
+    html += `
+      <div class="field"><label for="propAxial">Axial behavior <span class="unit">tension / compression-only</span></label>
+        <select id="propAxial">
+          ${axl === undefined ? `<option value="" selected disabled>— mixed —</option>` : ""}
+          <option value="both"${axl === "both" ? " selected" : ""}>Both (default)</option>
+          <option value="tension"${axl === "tension" ? " selected" : ""}>Tension-only</option>
+          <option value="compression"${axl === "compression" ? " selected" : ""}>Compression-only</option>
+        </select>
+      </div>
+      ${axl && axl !== "both"
+        ? `<p class="muted axial-note" style="font-size:11px">Tension/compression-only members carry a <b>${axl === "tension" ? "T-only" : "C-only"}</b> glyph in plan &amp; 3D and make the analysis <b>nonlinear</b>.</p>`
+        : `<p class="muted" style="font-size:11px">Restricting a member to tension- or compression-only makes the analysis nonlinear.</p>`}`;
     // v0.4: orientation angle for columns & braces (FrameMember.angle)
     const angMembers = [...columns, ...braces];
     if (angMembers.length) {
@@ -1108,6 +1148,16 @@ function renderProps() {
     if (!isFinite(v)) return;
     for (const mm of [...columns, ...braces]) mm.angle = v;
     markDirty();
+  });
+  // v0.12 — axial-limit behavior (tension/compression-only)
+  on("propAxial", "change", e => {
+    const v = e.target.value;
+    if (v !== "both" && v !== "tension" && v !== "compression") return;
+    for (const mm of members) mm.axial_limit = v;
+    markDirty();
+    store.modelEdited = true;
+    refreshDrawViews();     // T-only/C-only glyphs live in the label layer
+    renderProps();          // refresh the nonlinear note
   });
   // v0.9 — rigid end offsets + rigid factor
   const setRigid = (key, raw, hi) => {
@@ -2238,7 +2288,7 @@ function setResultsAvailable(on) {
     $(`empty-${t}`).classList.toggle("hidden", on);
     $(`content-${t}`).classList.toggle("hidden", !on);
   }
-  if (on) { renderDesignForm(); renderDesignTable(); }
+  if (on) { renderDesignForm(); renderDesignTable(); renderOptimizePanel(); }
   else if (store.tab === "design") switchTab("view3d");
   $("chipDeformed").disabled = !on;
   $("chipMode").disabled = !on;
@@ -3063,6 +3113,7 @@ function setDesignKind(kind) {
     b.classList.toggle("is-active", b.dataset.dk === store.designKind));
   renderDesignForm();
   renderDesignTable();
+  renderOptimizePanel();          // v0.12 — Steel sub-tab only
 }
 
 /** The check control form: case selector, params (Fy or rebar), Check button. */
@@ -3298,6 +3349,195 @@ function selectMemberFrom3D(uid) {
 }
 
 /* ================================================================
+   v0.12 — AUTO SECTION OPTIMIZATION (Design → Steel)
+   ================================================================ */
+
+/** The optimize panel lives in the Steel sub-tab: a target-ratio input, a
+    case/combo selector (reusing the design case list), Optimize + Apply. */
+function renderOptimizePanel() {
+  const panel = $("optimizePanel");
+  const steel = store.designKind === "steel";
+  panel.classList.toggle("hidden", !steel || !store.results);
+  if (!steel || !store.results) return;
+
+  const opts = designCaseOptions();
+  if (!store.optCase || !opts.includes(store.optCase))
+    store.optCase = store.designCase && opts.includes(store.designCase)
+      ? store.designCase : (opts[0] || null);
+  const form = $("optimizeForm");
+  const hasSugg = !!(store.optResult && store.optResult.suggestions);
+  const canApply = hasSugg && store.optResult.suggestions.some(s => s.status === "ok");
+  form.innerHTML = `<div class="design-form-row">
+    <label class="rs-field"><span>case / combo</span>
+      <select id="optCaseSelect">${opts.map(n =>
+        `<option value="${esc(n)}"${n === store.optCase ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
+    <label class="rs-field"><span>target D/C</span>
+      <input id="optTarget" type="number" min="0.1" max="2" step="0.05" value="${store.optTarget}"></label>
+    <button class="btn btn-run design-check" id="optRunBtn">
+      <span class="spinner hidden" id="optSpinner"></span><span>Optimize</span></button>
+    <button class="btn design-check" id="optApplyBtn"${canApply ? "" : " disabled"}
+      title="${canApply ? "Adopt the suggested sections into the model" : "Run an optimization with downsizable members first"}">Apply suggestions</button>
+  </div>
+  <p class="muted design-note">Suggests lighter sections that keep each member's demand/capacity at or below the target ratio (POST /api/design/optimize). Braces are excluded.</p>`;
+
+  $("optCaseSelect").addEventListener("change", e => { store.optCase = e.target.value; });
+  $("optTarget").addEventListener("change", e => {
+    const v = parseFloat(e.target.value);
+    if (isFinite(v) && v > 0) store.optTarget = v;
+  });
+  $("optRunBtn").addEventListener("click", runOptimize);
+  $("optApplyBtn").addEventListener("click", applyOptimize);
+  renderOptimizeTable();
+}
+
+async function runOptimize() {
+  const btn = $("optRunBtn");
+  if (btn.disabled) return;
+  btn.disabled = true;
+  $("optSpinner").classList.remove("hidden");
+  try {
+    store.optResult = await designOptimize({
+      case: store.optCase, target_ratio: store.optTarget, apply: false,
+    });
+    const s = optSummary();
+    toast("Optimization complete",
+      `${s.n} member${s.n === 1 ? "" : "s"} · ${s.downsized} downsized · ${fmt(s.totalWeight, 1)} kg/m`,
+      "info", 5000);
+    renderOptimizePanel();      // re-render enables Apply + fills the table
+  } catch (err) {
+    toast("Optimization failed", err.message, "error", 8000);
+  } finally {
+    btn.disabled = false;
+    $("optSpinner").classList.add("hidden");
+  }
+}
+
+async function applyOptimize() {
+  const btn = $("optApplyBtn");
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  const s = optSummary();                   // capture before optResult is cleared
+  try {
+    const updated = await designOptimize({
+      case: store.optCase, target_ratio: store.optTarget, apply: true,
+    });
+    // adopt the returned model dict (members now carry the suggested sections)
+    adoptModel(ME.normalizeModel(updated));
+    store.steelResult = null;               // sections changed → checks stale
+    store.optResult = null;
+    toast("Sections applied",
+      `${s.downsized} member${s.downsized === 1 ? "" : "s"} reassigned · re-run analysis to re-check`,
+      "info", 6000);
+    renderDesignForm();
+    renderDesignTable();
+    renderOptimizePanel();
+  } catch (err) {
+    toast("Apply failed", err.message, "error", 8000);
+    btn.disabled = false;
+  }
+}
+
+/** Summary numbers over the current suggestions: total members, count of
+    downsized (lighter) members, and the net weight change (kg/m). */
+function optSummary() {
+  const sugg = (store.optResult && store.optResult.suggestions) || [];
+  let downsized = 0, totalWeight = 0, nsp = 0, na = 0;
+  for (const s of sugg) {
+    if (s.status === "ok") { downsized++; totalWeight += s.weight_kg_per_m || 0; }
+    else if (s.status === "no_section_passes") nsp++;
+    else na++;
+  }
+  return { n: sugg.length, downsized, nsp, na, totalWeight };
+}
+
+const OPT_COLS = [
+  { key: "uid", label: "Member", txt: true },
+  { key: "current_section", label: "Current", txt: true },
+  { key: "suggested_section", label: "Suggested", txt: true },
+  { key: "current_ratio", label: "D/C now" },
+  { key: "suggested_ratio", label: "D/C new" },
+  { key: "weight_kg_per_m", label: "Δ weight kg/m" },
+  { key: "status", label: "Status", txt: true },
+];
+
+function optimizeRows() {
+  const sugg = (store.optResult && store.optResult.suggestions) || [];
+  const { key, dir } = store.optSort;
+  return [...sugg].sort((a, b) => {
+    const va = a[key], vb = b[key];
+    if (typeof va === "string") return String(va).localeCompare(String(vb), undefined, { numeric: true }) * dir;
+    return ((va || 0) - (vb || 0)) * dir;
+  });
+}
+
+function renderOptimizeTable() {
+  const summary = $("optSummary");
+  const table = $("optimizeTable");
+  const csv = $("csvOptimize");
+  if (!store.optResult || !store.optResult.suggestions) {
+    summary.classList.add("hidden");
+    csv.classList.add("hidden");
+    table.innerHTML = `<tbody><tr><td class="txt dim">No optimization yet — set a target ratio and press “Optimize”.</td></tr></tbody>`;
+    return;
+  }
+  const s = optSummary();
+  const tgt = store.optResult.target_ratio ?? store.optTarget;
+  summary.classList.remove("hidden");
+  csv.classList.remove("hidden");
+  const wCls = s.totalWeight < -0.05 ? "opt-lighter" : s.totalWeight > 0.05 ? "opt-heavier" : "";
+  summary.innerHTML =
+    `<span class="ds-item"><b>${s.n}</b> members</span>` +
+    `<span class="ds-item ds-ok"><b>${s.downsized}</b> downsized</span>` +
+    `<span class="ds-item"><b>${s.nsp}</b> no lighter section</span>` +
+    (s.na ? `<span class="ds-item ds-na"><b>${s.na}</b> N/A</span>` : "") +
+    `<span class="ds-item">total weight change <b class="${wCls}">${fmt(s.totalWeight, 1)} kg/m</b></span>` +
+    `<span class="ds-item ds-prelim">target D/C ${fmt(tgt, 2)} · ${esc(store.optResult.case || "")}</span>`;
+
+  const { key: sk, dir } = store.optSort;
+  const head = `<thead><tr>` + OPT_COLS.map(c =>
+    `<th class="sortable ${c.txt ? "txt" : ""}" data-key="${c.key}">${c.label}` +
+    (c.key === sk ? `<span class="sort-arrow">${dir > 0 ? "▲" : "▼"}</span>` : "") +
+    `</th>`).join("") + `</tr></thead>`;
+  const ratioChip = r => {
+    const cls = r > tgt ? "rc-over" : r > tgt * 0.85 ? "rc-near" : "rc-ok";
+    return `<span class="ratio-chip ${cls}">${fmt(r, 3)}</span>`;
+  };
+  const statChip = st => {
+    const map = { ok: ["st-ok", "downsized"], no_section_passes: ["st-warn", "no lighter"], "n/a": ["st-na", "N/A"] };
+    const [cls, label] = map[st] || ["st-na", st];
+    return `<span class="status-chip ${cls}">${esc(label)}</span>`;
+  };
+  const rows = optimizeRows();
+  const body = rows.map(x => {
+    const wc = (x.weight_kg_per_m || 0);
+    const wcls = wc < -0.05 ? "opt-lighter" : wc > 0.05 ? "opt-heavier" : "dim";
+    const arrow = x.status === "ok"
+      ? `<span class="opt-arrow">→</span> ${esc(x.suggested_section)}`
+      : `<span class="dim">${esc(x.suggested_section)}</span>`;
+    return `<tr data-uid="${esc(x.uid)}" class="opt-row${x.status === "ok" ? " is-ok" : ""}">
+      <td class="txt">${esc(x.uid)}</td>
+      <td class="txt dim">${esc(x.current_section)}</td>
+      <td class="txt">${arrow}</td>
+      <td>${ratioChip(x.current_ratio)}</td>
+      <td>${ratioChip(x.suggested_ratio)}</td>
+      <td class="${wcls}"><b>${wc > 0 ? "+" : ""}${fmt(wc, 1)}</b></td>
+      <td class="txt">${statChip(x.status)}</td></tr>`;
+  }).join("");
+  table.innerHTML = head + `<tbody>${body}</tbody>`;
+
+  table.querySelectorAll("th.sortable").forEach(th =>
+    th.addEventListener("click", () => {
+      const k = th.dataset.key;
+      if (store.optSort.key === k) store.optSort.dir *= -1;
+      else store.optSort = { key: k, dir: (k === "uid" || k === "current_section" || k === "suggested_section" || k === "status") ? 1 : -1 };
+      renderOptimizeTable();
+    }));
+  // row → select the member in 3D
+  table.querySelectorAll("tr.opt-row").forEach(tr =>
+    tr.addEventListener("click", () => selectMemberFrom3D(tr.dataset.uid)));
+}
+
+/* ================================================================
    v0.4 — SHELL FORCE CONTOURS
    ================================================================ */
 function contourAvailability() {
@@ -3464,6 +3704,17 @@ function csvRows(kind) {
         ...(env ? [x.governing_combo || ""] : []), x.status, x.notes]),
     ];
   }
+  if (kind === "optimize") {
+    if (!store.optResult || !store.optResult.suggestions) return null;
+    const s = optSummary();
+    return [
+      ["member", "current_section", "suggested_section", "current_ratio",
+        "suggested_ratio", "weight_change_kg_per_m", "status"],
+      ...optimizeRows().map(x => [x.uid, x.current_section, x.suggested_section,
+        x.current_ratio, x.suggested_ratio, x.weight_kg_per_m, x.status]),
+      ["TOTAL", "", "", "", "", +s.totalWeight.toFixed(1), `${s.downsized} downsized`],
+    ];
+  }
   if (kind === "buckling") {
     const bd = buckData();
     if (!bd) return null;
@@ -3509,6 +3760,7 @@ function csvFileName(kind) {
     : kind === "pushover" ? store.poCase
     : kind === "buckling" ? store.buckCase
     : kind === "takedown" ? store.tdCase
+    : kind === "optimize" ? `${store.optResult?.case || store.optCase || ""}`
     : kind === "design" ? `${store.designKind}-${designResult()?.case || ""}`
     : caseLabel(store.caseName) + (caseData()?.min ? `-${store.envSide}` : "");
   return `skyframe-${slug(store.model?.name)}-${kind}` +
@@ -3815,6 +4067,7 @@ function wire() {
     renderDesignTable();
   });
   $("csvDesign").addEventListener("click", () => downloadCsv("design"));
+  $("csvOptimize").addEventListener("click", () => downloadCsv("optimize"));
   const hideModal = id => $(id).classList.add("hidden");
   $("openModalClose").addEventListener("click", () => hideModal("openModal"));
   $("openModalCancel").addEventListener("click", () => hideModal("openModal"));
@@ -4105,6 +4358,9 @@ async function boot() {
     createRsDirectional, createNotionalPattern, mockRsDirectional, mockNotionalPattern,
     // v0.11 — elastic foundation + load takedown
     renderTakedownTab, rebuildTdSelect, tdData, tdRows, takedownBubbleSvg,
+    // v0.12 — auto section optimization + axial-limit behavior
+    renderOptimizePanel, runOptimize, applyOptimize, optimizeRows, optSummary,
+    renderOptimizeTable, designOptimize, mockOptimize,
   };
 }
 

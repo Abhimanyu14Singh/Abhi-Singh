@@ -40,6 +40,7 @@ const COLORS = {
   thermal: "#e5a50a",                          // v0.8 ΔT thermal badge
   rigid: "rgba(140, 185, 230, 0.75)",          // v0.9 rigid end zones
   foundation: "rgba(198, 146, 82, 0.95)",      // v0.11 Winkler soil/spring bed
+  axial: "#4fd0c7",                            // v0.12 tension/compression-only
   grid: "rgba(120, 140, 165, 0.16)",
   gridLabel: "rgba(140, 160, 185, 0.55)",
   slabFill: "rgba(53, 181, 229, 0.045)",
@@ -224,6 +225,13 @@ export class Viewer3D {
     this.thermalUids = new Set();
     for (const p of Object.values(m.patterns || {}))
       for (const t of (p.thermal_loads || [])) this.thermalUids.add(t.member_uid);
+
+    // v0.12: members limited to tension- or compression-only → axial-limit badge
+    this.axialLimitUids = new Map();
+    for (const mm of m.members) {
+      if (mm.axial_limit === "tension" || mm.axial_limit === "compression")
+        this.axialLimitUids.set(mm.uid, mm.axial_limit === "tension" ? "T-only" : "C-only");
+    }
 
     let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
     for (const s of this.segs) for (const p of [s.p1, s.p2]) {
@@ -753,6 +761,29 @@ export class Viewer3D {
         ctx.stroke();
         ctx.fillStyle = COLORS.thermal;
         ctx.fillText("ΔT", mx, my + 0.5);
+      }
+    }
+
+    // ---- v0.12 T-only / C-only badges on axial-limited members
+    if (this.axialLimitUids && this.axialLimitUids.size && !overlayActive) {
+      ctx.font = "700 8.5px -apple-system, 'Segoe UI', sans-serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      const drawn = new Set();
+      for (const s of this._segsScreen) {
+        const label = this.axialLimitUids.get(s.seg.uid);
+        if (!label || drawn.has(s.seg.uid)) continue;
+        drawn.add(s.seg.uid);
+        const mx = (s.x1 + s.x2) / 2, my = (s.y1 + s.y2) / 2;
+        const w = 30, h = 13;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(mx - w / 2, my - h / 2, w, h, 6.5);
+        else ctx.rect(mx - w / 2, my - h / 2, w, h);
+        ctx.fillStyle = "rgba(79,208,199,0.18)";
+        ctx.fill();
+        ctx.strokeStyle = COLORS.axial; ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = COLORS.axial;
+        ctx.fillText(label, mx, my + 0.5);
       }
     }
 
