@@ -111,6 +111,11 @@ scrutinized benchmark tests.
 - [x] Tension / compression-only members (braces, cables, ties; nonlinear)
 - [x] UI: optimize panel with apply, axial-behavior property + badge
 
+## Wave 14 — section cuts & function library  ✅ done
+- [x] Section cuts (integrate member forces across a plane; statics-validated)
+- [x] Named response-spectrum / time-history function library (+ EC8 preset)
+- [x] UI: cut manager + 3D plane + forces tab, function library manager
+
 ## Phase 4 — Parity increment 2  ✅ done
 - [x] 1. Model save/open (.skyframe JSON files) with File menu + gallery
 - [x] 2. Load pattern / case / combo editor UI (with per-case P-Delta toggle)
@@ -122,9 +127,8 @@ scrutinized benchmark tests.
 
 ## Status
 All waves above are complete with engine + REST API + UI, pinned by a
-305-test suite. The app builds standalone locally (`packaging/build.sh`).
+325-test suite. The app builds standalone locally (`packaging/build.sh`).
 
 ## Possible future waves (not yet scheduled)
 - Multiple / non-orthogonal grid systems
-- Response-spectrum function library (named, reusable spectra)
 - Native Windows local build (same build.sh on a Windows host)
