@@ -5,7 +5,7 @@
    Owns only view + interaction; model mutations happen in app.js via the
    onDraw / onErase / onSelect callbacks (same contract as PlanEditor). */
 
-import { springKey } from "./modeledit.js";
+import { springKey, linkTypeOf, LINK_TYPES } from "./modeledit.js";
 
 const NS = "http://www.w3.org/2000/svg";
 const el = (tag, attrs = {}) => {
@@ -282,15 +282,17 @@ export class ElevEditor {
       }));
     }
 
-    // links in the plane — green zigzag springs
+    // links in the plane — green device glyphs (v0.15: per link_type)
     for (const lk of (m.links || [])) {
       if (!this.inPlane(lk.pi) || !this.inPlane(lk.pj)) continue;
       const seld = isSel("link", lk.uid);
-      this.gElems.appendChild(el("polyline", {
-        points: zigzagPoints(this.sOf(lk.pi), lk.pi[2], this.sOf(lk.pj), lk.pj[2], 0.16),
+      this.gElems.appendChild(el("path", {
+        d: linkGlyphPath(this.sOf(lk.pi), lk.pi[2], this.sOf(lk.pj), lk.pj[2],
+          linkTypeOf(lk), 0.16),
         fill: "none",
         stroke: seld ? C.sel : C.link, "stroke-width": seld ? 2.5 : 1.8,
-        "stroke-linejoin": "round", "vector-effect": "non-scaling-stroke",
+        "stroke-linejoin": "round", "stroke-linecap": "round",
+        "vector-effect": "non-scaling-stroke",
         "data-ref": `link:${lk.uid}`,
       }));
     }
@@ -344,6 +346,26 @@ export class ElevEditor {
     mk(s0 - mS - 12 / this.scale, z0, "Base", "end");
     for (const st of (m ? m.stories : []))
       mk(s0 - mS - 12 / this.scale, st.elevation, `${st.name} · ${st.elevation.toFixed(1)}`, "end");
+
+    // v0.15: link device-type letters (D/G/H/I) on in-plane non-elastic links
+    for (const lk of ((m && m.links) || [])) {
+      if (!this.inPlane(lk.pi) || !this.inPlane(lk.pj)) continue;
+      const letter = LINK_TYPES[linkTypeOf(lk)].letter;
+      if (!letter) continue;
+      const [px, py] = this.toScreen(
+        (this.sOf(lk.pi) + this.sOf(lk.pj)) / 2, (lk.pi[2] + lk.pj[2]) / 2);
+      const oy = py - 12;                          // sit just above the glyph
+      this.gLabels.appendChild(el("circle", {
+        cx: px, cy: oy, r: 6.5, fill: "rgba(52,195,132,0.14)",
+        stroke: C.link, "stroke-width": 1,
+      }));
+      const t = el("text", {
+        x: px, y: oy + 0.5, fill: C.link, "font-size": 8.5, "font-weight": 700,
+        "text-anchor": "middle", "dominant-baseline": "central", "font-family": "inherit",
+      });
+      t.textContent = letter;
+      this.gLabels.appendChild(t);
+    }
   }
 
   /* ------------------------------------------------ snapping */
@@ -727,6 +749,60 @@ export function zigzagPoints(x1, y1, x2, y2, amp = 0.16, cycles = 5) {
   }
   pts.push([x2, y2]);
   return pts.map(p => `${p[0]},${p[1]}`).join(" ");
+}
+
+/** v0.15 — link-device glyph as one SVG path `d` between two points.
+    type: "elastic" | "damper" | "gap" | "hook" | "isolator". `amp` sets the
+    glyph half-width in the caller's units (world m for plan/elevation SVGs,
+    px for the 3D canvas via Path2D). Distinct silhouettes, one colour family:
+    damper = dashpot (piston in an open cylinder), gap = open jaws with a
+    clearance, hook = two interlocked chain rings, isolator = bearing
+    (plate · roller · plate); elastic keeps the classic zigzag spring. */
+export function linkGlyphPath(x1, y1, x2, y2, type, amp = 0.16) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const L = Math.hypot(dx, dy) || 1;
+  const ux = dx / L, uy = dy / L;
+  const nx = -uy, ny = ux;                        // unit normal
+  const a = Math.min(amp, L / 5);                 // glyph half-width
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+  // point at signed distance d along the axis from midpoint, offset o·a normal
+  const Q = (d, o) => `${mx + ux * d + nx * o * a},${my + uy * d + ny * o * a}`;
+  const M = (d, o) => `M${Q(d, o)}`, Ln = (d, o) => `L${Q(d, o)}`;
+  const ring = (d, r) => {                        // circle centred on the axis
+    const cx = mx + ux * d, cy = my + uy * d;
+    return `M${cx - r},${cy} a${r},${r} 0 1,0 ${2 * r},0 a${r},${r} 0 1,0 ${-2 * r},0`;
+  };
+  const b = Math.min(L * 0.18, a * 1.8);          // device half-length
+  const rod = (dA, dB) =>
+    `M${x1},${y1} ${Ln(dA, 0)} M${x2},${y2} ${Ln(dB, 0)}`;
+  switch (type) {
+    case "damper":                                 // dashpot: ─[▮ ]─
+      return rod(-b, b * 0.3) +
+        ` ${M(b, 1)} ${Ln(-b, 1)} ${Ln(-b, -1)} ${Ln(b, -1)}` +   // open cylinder
+        ` ${M(b * 0.3, 0.72)} ${Ln(b * 0.3, -0.72)}`;             // piston plate
+    case "gap": {                                  // open jaws: ─[  ]─
+      const g = Math.min(b * 0.45, a * 0.5);       // half clearance
+      return rod(-b, b) +
+        ` ${M(-b, 0)} ${Ln(-g, 0)} ${M(-g, 0.9)} ${Ln(-g, -0.9)}` +
+        ` ${M(-g, 0.9)} ${Ln(-g + g * 0.9, 0.9)} ${M(-g, -0.9)} ${Ln(-g + g * 0.9, -0.9)}` +
+        ` ${M(b, 0)} ${Ln(g, 0)} ${M(g, 0.9)} ${Ln(g, -0.9)}` +
+        ` ${M(g, 0.9)} ${Ln(g - g * 0.9, 0.9)} ${M(g, -0.9)} ${Ln(g - g * 0.9, -0.9)}`;
+    }
+    case "hook": {                                 // interlocked chain rings
+      const r = a * 0.8;
+      return rod(-r * 1.7, r * 1.7) +
+        ` ${ring(-r * 0.62, r)} ${ring(r * 0.62, r)}`;
+    }
+    case "isolator": {                             // bearing: ─|o|─
+      const r = Math.min(a * 0.6, b * 0.55);
+      return rod(-b * 0.7, b * 0.7) +
+        ` ${M(-b * 0.7, 1)} ${Ln(-b * 0.7, -1)}` +                // plates
+        ` ${M(b * 0.7, 1)} ${Ln(b * 0.7, -1)}` +
+        ` ${ring(0, r)}`;                                          // roller/pad
+    }
+    default:                                       // elastic zigzag spring
+      return "M" + zigzagPoints(x1, y1, x2, y2, a).split(" ").join(" L");
+  }
 }
 
 function distToSeg(px, py, x1, y1, x2, y2) {

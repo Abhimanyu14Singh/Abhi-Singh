@@ -106,7 +106,11 @@ export function normalizeModel(m) {
   for (const s of m.shells) {
     s.openings = (Array.isArray(s.openings) ? s.openings : []).filter(o =>
       o && isFinite(o.u0) && isFinite(o.v0) && isFinite(o.u1) && isFinite(o.v1));
+    // v0.15 — wall pier label (design grouping; "" = not a pier)
+    s.pier = typeof s.pier === "string" ? s.pier : "";
   }
+  // v0.15 — model-level "auto-label all walls as piers" flag
+  m.auto_pier_walls = !!m.auto_pier_walls;
   m.pushover_cases = m.pushover_cases || {};
   for (const [n, pc] of Object.entries(m.pushover_cases)) {
     pc.name = pc.name || n;
@@ -126,6 +130,7 @@ export function normalizeModel(m) {
     if (!(Array.isArray(l.stiffness) && l.stiffness.length === 6 &&
           l.stiffness.every(v => isFinite(v))))
       l.stiffness = [1e5, 1e5, 1e5, 1e4, 1e4, 1e4];
+    normalizeLinkDevice(l);                      // v0.15 — link_type + params
   }
   // v0.8 — spring supports + global thermal expansion coefficient
   m.spring_supports = Array.isArray(m.spring_supports) ? m.spring_supports : [];
@@ -401,7 +406,65 @@ export function addWallAt(model, corners, story) {
   return sh;
 }
 
-/** Two-node link with the default 6-dof stiffness (v0.5 contract). */
+/* ================================================================
+   v0.15 — link device types (elastic / damper / gap / hook / isolator)
+   ================================================================ */
+/** UI + serialization metadata per link device type. `params` entries are
+    [key, unit, default]; elastic keeps the 6-dof `stiffness` instead. */
+export const LINK_TYPES = {
+  elastic: {
+    label: "Elastic", letter: "",
+    note: "Linear 6-dof spring — same stiffness in every analysis type.",
+    params: [],
+  },
+  damper: {
+    label: "Viscous damper", letter: "D",
+    note: "F = c_d·v^α (Maxwell dashpot with series stiffness k) — adds damping in time-history analysis only; static cases see no damper force.",
+    params: [["cd", "kN·s/m", 1500], ["alpha", "–", 0.5], ["k", "kN/m", 25000]],
+  },
+  gap: {
+    label: "Gap (compression contact)", letter: "G",
+    note: "Engages in compression once the opening `gap` closes — makes static analysis nonlinear.",
+    params: [["k", "kN/m", 50000], ["gap", "m", 0.01]],
+  },
+  hook: {
+    label: "Hook (tension slack)", letter: "H",
+    note: "Engages in tension once the `slack` is taken up — makes static analysis nonlinear.",
+    params: [["k", "kN/m", 50000], ["slack", "m", 0.01]],
+  },
+  isolator: {
+    label: "Isolator (bearing)", letter: "I",
+    note: "Bilinear bearing — initial k1, post-yield k2 past Fy, vertical stiffness kv — makes static analysis nonlinear.",
+    params: [["k1", "kN/m", 80000], ["k2", "kN/m", 8000], ["Fy", "kN", 120], ["kv", "kN/m", 1e6]],
+  },
+};
+
+/** Effective device type of a link ("elastic" fallback). */
+export function linkTypeOf(l) {
+  return (l && LINK_TYPES[l.link_type]) ? l.link_type : "elastic";
+}
+
+/** Normalize a link's link_type + params in place (absent keys = defaults,
+    finite values preserved, stale keys pruned). Pre-v0.15 links = elastic. */
+export function normalizeLinkDevice(l) {
+  const t = linkTypeOf(l);
+  l.link_type = t;
+  const src = (l.params && typeof l.params === "object") ? l.params : {};
+  const params = {};
+  for (const [k, , dv] of LINK_TYPES[t].params)
+    params[k] = isFinite(src[k]) ? +src[k] : dv;
+  l.params = params;
+  return l;
+}
+
+/** Switch a link's device type, keeping same-named param values. */
+export function setLinkType(l, type) {
+  l.link_type = LINK_TYPES[type] ? type : "elastic";
+  return normalizeLinkDevice(l);
+}
+
+/** Two-node link with the default 6-dof stiffness (v0.5 contract);
+    v0.15: created elastic (link_type + params round-trip via POST /api/model). */
 export function addLink(model, pi, pj) {
   model.links = model.links || [];
   if (dist(pi, pj) < 1e-6) return null;
@@ -410,6 +473,7 @@ export function addLink(model, pi, pj) {
   const link = {
     uid: nextUid(model, "LK"), pi: [...pi], pj: [...pj],
     stiffness: [1e5, 1e5, 1e5, 1e4, 1e4, 1e4],
+    link_type: "elastic", params: {},
   };
   model.links.push(link);
   return link;

@@ -1629,3 +1629,25 @@ tr.cm-active td { background: var(--accent-ghost) !important; }
 .data-table tr.cut-row:hover td { background: var(--accent-ghost); }
 .data-table tr.cut-row.is-sel td { background: var(--amber-ghost); }
 .cut-warn { color: var(--amber); font-size: 11px; }
+
+/* ================================================================
+   v0.15 — link device types + wall-pier results
+   ================================================================ */
+/* link device parameter grid (reuses the .link-stiff layout, wider cells) */
+.link-params { grid-template-columns: 1fr 1fr; }
+.link-note { margin-top: 2px; }
+
+/* wall-piers table: pier group header rows + V-over-height sparkline */
+.data-table tr.pier-group td {
+  background: rgba(53, 181, 229, 0.07);
+  border-top: 1px solid rgba(53, 181, 229, 0.28);
+  padding-top: 6px; padding-bottom: 6px;
+}
+.data-table td.pier-name { font-weight: 700; color: var(--accent); white-space: nowrap; }
+.pier-count { color: var(--text-3); font-weight: 400; font-size: 11px; }
+.pier-spark-cell { text-align: right; }
+.pier-spark { display: inline-block; vertical-align: middle; }
+.pier-spark-lbl {
+  font-size: 9.5px; color: var(--text-3); margin-right: 8px;
+  vertical-align: middle; text-transform: uppercase; letter-spacing: .4px;
+}

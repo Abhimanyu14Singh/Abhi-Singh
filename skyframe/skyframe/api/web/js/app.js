@@ -55,6 +55,8 @@ const store = {
   buckCase: null,        // v0.10 — selected buckling case (results tab)
   tdCase: null,          // v0.11 — selected gravity case for the load-takedown tab
   cutCase: null,         // v0.13 — selected case for the section-cut-forces tab
+  pierCase: null,        // v0.15 — selected case for the wall-piers tab
+  pierSort: { key: "elev", dir: -1 },   // v0.15 — story order within pier groups
   // v0.6 — design checks, import, template gallery, staged, nonlinear TH
   designKind: "steel",   // "steel" | "concrete"
   designCase: null,      // case/combo checked
@@ -1066,6 +1068,18 @@ function renderProps() {
           <input id="propMesh" type="number" step="0.25" min="0.25"
             value="${mesh === undefined ? "" : mesh}" placeholder="${mesh === undefined ? "mixed" : ""}"></div>
       </div>`;
+    /* v0.15 — wall piers: label + model-level auto-label toggle */
+    if (walls.length) {
+      const pierV = commonVal(walls, x => x.pier || "");
+      html += `
+      <h3 class="group-title">Wall pier <span class="unit">in-plane design forces</span></h3>
+      <div class="field"><label for="propPier">Pier label</label>
+        <input id="propPier" type="text" spellcheck="false" autocomplete="off"
+          value="${pierV === undefined ? "" : esc(pierV)}"
+          placeholder="${pierV === undefined ? "mixed" : "e.g. P1 (blank = not a pier)"}"></div>
+      <div class="field"><label class="fdn-check"><input type="checkbox" id="propAutoPier"${m.auto_pier_walls ? " checked" : ""}> Auto-label all walls as piers <span class="unit">model-wide</span></label></div>
+      <p class="muted" style="font-size:11px">Walls sharing a pier label are grouped into one vertical pier — story-wise P/V/M design forces appear in the <b>Wall Piers</b> results tab after a solve. Auto-label lets the backend assign a pier to every unlabeled wall.</p>`;
+    }
     if (slabs.length) {
       const q = commonVal(slabs, x => ME.getAreaLoad(m, store.loadPattern, x.uid) ?? 0);
       html += `
@@ -1100,18 +1114,43 @@ function renderProps() {
     }
   }
 
-  /* v0.5 — link stiffness (6 dof) */
+  /* v0.5 — link stiffness (6 dof) · v0.15 — link device types + params */
   if (links.length) {
-    const K_LABELS = ["kx", "ky", "kz", "krx", "kry", "krz"];
+    const lt = commonVal(links, l => ME.linkTypeOf(l));
     html += `
+      <h3 class="group-title">Link device <span class="unit">type &amp; parameters</span></h3>
+      <div class="field"><label for="propLinkType">Type</label>
+        <select id="propLinkType">
+          ${lt === undefined ? `<option value="" selected disabled>— mixed —</option>` : ""}
+          ${Object.entries(ME.LINK_TYPES).map(([k, def]) =>
+            `<option value="${k}"${k === lt ? " selected" : ""}>${esc(def.label)}</option>`).join("")}
+        </select>
+      </div>`;
+    if (lt === undefined) {
+      html += `<p class="muted" style="font-size:11px">Mixed device types — pick a type above to unify, or select links of one type to edit parameters.</p>`;
+    } else if (lt === "elastic") {
+      const K_LABELS = ["kx", "ky", "kz", "krx", "kry", "krz"];
+      html += `
       <h3 class="group-title">Link stiffness <span class="unit">kN/m · kN·m/rad</span></h3>
       <div class="link-stiff">` +
-      K_LABELS.map((lbl, i) => {
-        const v = commonVal(links, l => l.stiffness[i]);
-        return `<label><span>${lbl}</span>
+        K_LABELS.map((lbl, i) => {
+          const v = commonVal(links, l => l.stiffness[i]);
+          return `<label><span>${lbl}</span>
           <input type="number" class="linkK" data-si="${i}" step="1000" min="0"
             value="${v === undefined ? "" : v}" placeholder="${v === undefined ? "mixed" : ""}"></label>`;
-      }).join("") + `</div>`;
+        }).join("") + `</div>`;
+    } else {
+      const def = ME.LINK_TYPES[lt];
+      html += `<div class="link-stiff link-params">` +
+        def.params.map(([k, unit]) => {
+          const v = commonVal(links, l => (l.params || {})[k]);
+          return `<label><span>${esc(k)} <span class="unit">${esc(unit)}</span></span>
+          <input type="number" class="linkP" data-pk="${esc(k)}" step="any"
+            value="${v === undefined ? "" : v}" placeholder="${v === undefined ? "mixed" : ""}"></label>`;
+        }).join("") + `</div>`;
+    }
+    if (lt !== undefined)
+      html += `<p class="muted link-note" style="font-size:11px">${esc(ME.LINK_TYPES[lt].note)}</p>`;
   }
 
   /* v0.8 — spring support stiffness (6 dof, grounded) */
@@ -1271,6 +1310,36 @@ function renderProps() {
       for (const l of links) l.stiffness[i] = v;
       markDirty();
     }));
+
+  /* v0.15 — link device type + parameter wiring */
+  on("propLinkType", "change", e => {
+    const t = e.target.value;
+    if (!ME.LINK_TYPES[t]) return;
+    for (const l of links) ME.setLinkType(l, t);
+    markDirty();
+    store.modelEdited = true;
+    refreshDrawViews();          // glyph silhouette + type letter change
+    renderProps();               // swap the parameter form + note
+  });
+  box.querySelectorAll(".linkP").forEach(inp =>
+    inp.addEventListener("change", () => {
+      const v = parseFloat(inp.value);
+      if (!isFinite(v)) return;
+      const k = inp.dataset.pk;
+      for (const l of links) { l.params = l.params || {}; l.params[k] = v; }
+      markDirty();
+    }));
+
+  /* v0.15 — wall pier label + model-level auto-label toggle */
+  on("propPier", "change", e => {
+    const label = e.target.value.trim();
+    for (const w of walls) w.pier = label;
+    markDirty();
+  });
+  on("propAutoPier", "change", e => {
+    m.auto_pier_walls = !!e.target.checked;
+    markDirty();
+  });
 
   /* v0.8 — spring support stiffness wiring */
   box.querySelectorAll(".springK").forEach(inp =>
@@ -2511,6 +2580,12 @@ function setResultsAvailable(on) {
   $("empty-cuts").classList.toggle("hidden", hasCuts);
   $("content-cuts").classList.toggle("hidden", !hasCuts);
   if (!hasCuts && store.tab === "cuts") switchTab("view3d");
+  // v0.15: wall-piers tab appears only when results carry a piers block
+  const hasPiers = on && !!Object.keys(store.results?.piers || {}).length;
+  $("pierTabBtn").classList.toggle("hidden", !hasPiers);
+  $("empty-piers").classList.toggle("hidden", hasPiers);
+  $("content-piers").classList.toggle("hidden", !hasPiers);
+  if (!hasPiers && store.tab === "piers") switchTab("view3d");
   if (!on) {
     store.contour.on = false;
     syncContoursUI();
@@ -2531,6 +2606,7 @@ function renderResultsTabs() {
   renderBucklingTab();
   renderTakedownTab();
   renderCutsTab();
+  renderPiersTab();
 }
 
 /* ---- story tab */
@@ -3397,6 +3473,135 @@ function renderCutsTab() {
 }
 
 /* ================================================================
+   v0.15 — WALL PIERS tab
+   results["piers"][case][pier][story] = {P, V, M} — in-plane pier design
+   forces. Table grouped by pier (sortable within groups), a per-pier V-over-
+   height sparkline, CSV export, report inclusion.
+   ================================================================ */
+function pierCaseNames() {
+  const pr = store.results && store.results.piers;
+  return pr ? Object.keys(pr) : [];
+}
+function pierData() {
+  const pr = store.results && store.results.piers;
+  if (!pr || !Object.keys(pr).length) return null;
+  if (!store.pierCase || !pr[store.pierCase]) store.pierCase = Object.keys(pr)[0];
+  return pr[store.pierCase];
+}
+function rebuildPierSelect() {
+  const names = pierCaseNames();
+  const sel = $("pierCaseSelect");
+  if (!sel) return;
+  sel.textContent = "";
+  for (const n of names) {
+    const o = document.createElement("option");
+    o.value = n; o.textContent = n;
+    sel.appendChild(o);
+  }
+  if (!store.pierCase || !names.includes(store.pierCase)) store.pierCase = names[0] || null;
+  if (store.pierCase) sel.value = store.pierCase;
+}
+
+/** Flat rows grouped by pier: [{pier, stories: [{story, elev, P, V, M}]}].
+    Pier groups sort by name; stories inside a group follow store.pierSort
+    (default: elevation descending — top story first, like every story table). */
+function pierRows(pd) {
+  const r = store.results;
+  const { key, dir } = store.pierSort;
+  const groups = Object.keys(pd)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    .map(pier => {
+      const stories = Object.entries(pd[pier] || {}).map(([story, f]) => ({
+        story, elev: (r.story_elev || {})[story] ?? 0,
+        P: f.P || 0, V: f.V || 0, M: f.M || 0,
+      }));
+      stories.sort((a, b) => {
+        const va = key === "story" ? a.story : a[key];
+        const vb = key === "story" ? b.story : b[key];
+        if (typeof va === "string") return va.localeCompare(vb, undefined, { numeric: true }) * dir;
+        return (va - vb) * dir;
+      });
+      return { pier, stories };
+    });
+  return groups;
+}
+
+/** Mini V-over-height profile for one pier — one horizontal bar per story
+    (top story first), lengths ∝ |V|. Stays legible when V is constant. */
+function pierSparkSvg(stories) {
+  if (stories.length < 2) return "";
+  const byElev = [...stories].sort((a, b) => b.elev - a.elev);   // top → bottom
+  const P = 3, W = 110;
+  const bw = 7;                                                   // bar height
+  const H = 2 * P + bw * byElev.length + (byElev.length - 1) * 2;
+  const maxV = Math.max(1e-9, ...byElev.map(s => Math.abs(s.V)));
+  const bars = byElev.map((s, i) => {
+    const w = Math.max((Math.abs(s.V) / maxV) * (W - 2 * P - 2), 1.5);
+    const y = P + i * (bw + 2);
+    return `<rect x="${P + 1}" y="${y}" width="${w.toFixed(1)}" height="${bw}" rx="1.5"
+      fill="rgba(53,181,229,0.32)" stroke="rgba(53,181,229,0.75)" stroke-width="0.8"/>`;
+  }).join("");
+  return `<svg class="pier-spark" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"
+    aria-label="Pier shear V per story, top story first">
+    <line x1="${P}" y1="${P - 1}" x2="${P}" y2="${H - P + 1}" stroke="rgba(120,140,165,0.45)" stroke-width="1"/>
+    ${bars}</svg>`;
+}
+
+const PIER_COLS = [
+  { key: "story", label: "Story", txt: true },
+  { key: "elev", label: "Elev m" },
+  { key: "P", label: "P kN" },
+  { key: "V", label: "V kN" },
+  { key: "M", label: "M kN·m" },
+];
+
+function renderPiersTab() {
+  const pd = pierData();
+  if (!pd) return;
+  rebuildPierSelect();
+  const groups = pierRows(pd);
+  const nStories = groups.reduce((a, g) => a + g.stories.length, 0);
+
+  $("pierMeta").textContent =
+    `${groups.length} pier${groups.length === 1 ? "" : "s"} · ${nStories} stor${nStories === 1 ? "y" : "ies"} · ${store.pierCase} · in-plane design forces`;
+
+  const { key: sk, dir } = store.pierSort;
+  const head = `<thead><tr><th class="txt">Pier</th>` + PIER_COLS.map(c =>
+    `<th class="sortable ${c.txt ? "txt" : ""}" data-key="${c.key}">${c.label}` +
+    (c.key === sk ? `<span class="sort-arrow">${dir > 0 ? "▲" : "▼"}</span>` : "") +
+    `</th>`).join("") + `</tr></thead>`;
+
+  const body = groups.map(g => {
+    const spark = pierSparkSvg(g.stories);
+    const header = `<tr class="pier-group">
+      <td class="txt pier-name" colspan="3">▮ ${esc(g.pier)} <span class="pier-count">· ${g.stories.length} stor${g.stories.length === 1 ? "y" : "ies"}</span></td>
+      <td colspan="3" class="pier-spark-cell">${spark ? `<span class="pier-spark-lbl">V over height</span>${spark}` : ""}</td></tr>`;
+    const rows = g.stories.map(s => `<tr>
+      <td class="txt dim"></td>
+      <td class="txt">${esc(s.story)}</td>
+      <td class="dim">${fmt(s.elev, 1)}</td>
+      <td>${fmt(s.P, 1)}</td>
+      <td>${fmt(s.V, 1)}</td>
+      <td>${fmt(s.M, 1)}</td></tr>`).join("");
+    return header + rows;
+  }).join("");
+  $("pierTable").innerHTML = head + `<tbody>${body}</tbody>`;
+
+  $("pierTable").querySelectorAll("th.sortable").forEach(th =>
+    th.addEventListener("click", () => {
+      const k = th.dataset.key;
+      if (store.pierSort.key === k) store.pierSort.dir *= -1;
+      else store.pierSort = { key: k, dir: -1 };
+      renderPiersTab();
+    }));
+
+  $("pierNote").textContent =
+    "In-plane wall-pier design forces per story — P axial (compression −), " +
+    "V in-plane shear, M in-plane moment at the story bottom. Piers group every " +
+    "wall sharing a pier label; the sparkline profiles V over the pier height.";
+}
+
+/* ================================================================
    v0.6 — DESIGN CHECKS (steel / concrete)
    ================================================================ */
 function designResult() {
@@ -4058,6 +4263,14 @@ function csvRows(kind) {
       }),
     ];
   }
+  if (kind === "piers") {
+    const pd = pierData();
+    if (!pd) return null;
+    const out = [["pier", "story", "elev_m", "P_kN", "V_kN", "M_kNm"]];
+    for (const g of pierRows(pd))
+      for (const s of g.stories) out.push([g.pier, s.story, s.elev, s.P, s.V, s.M]);
+    return out;
+  }
   if (kind === "th") {
     const td = thData();
     if (!td) return null;
@@ -4081,6 +4294,7 @@ function csvFileName(kind) {
     : kind === "buckling" ? store.buckCase
     : kind === "takedown" ? store.tdCase
     : kind === "cuts" ? store.cutCase
+    : kind === "piers" ? store.pierCase
     : kind === "optimize" ? `${store.optResult?.case || store.optCase || ""}`
     : kind === "design" ? `${store.designKind}-${designResult()?.case || ""}`
     : caseLabel(store.caseName) + (caseData()?.min ? `-${store.envSide}` : "");
@@ -4522,6 +4736,13 @@ function wire() {
   });
   $("csvCuts").addEventListener("click", () => downloadCsv("cuts"));
 
+  // v0.15 — wall-piers case selector + CSV
+  $("pierCaseSelect").addEventListener("change", e => {
+    store.pierCase = e.target.value;
+    renderPiersTab();
+  });
+  $("csvPiers").addEventListener("click", () => downloadCsv("piers"));
+
   // drift limit
   $("driftLimitInput").addEventListener("change", e => {
     const v = parseFloat(e.target.value);
@@ -4547,7 +4768,7 @@ function wire() {
   });
 
   // keyboard
-  const TABS = ["view3d", "story", "modal", "reactions", "forces", "design", "th", "pushover", "buckling", "takedown", "cuts"];
+  const TABS = ["view3d", "story", "modal", "reactions", "forces", "design", "th", "pushover", "buckling", "takedown", "cuts", "piers"];
   const TOOL_KEYS = { v: "select", c: "column", b: "beam", x: "brace", w: "wall", s: "slab", l: "link", g: "spring", e: "erase" };
   document.addEventListener("keydown", e => {
     const tag = (e.target.tagName || "").toLowerCase();
@@ -4593,7 +4814,8 @@ function wire() {
         (t === "pushover" && $("poTabBtn").classList.contains("hidden")) ||
         (t === "buckling" && $("buckTabBtn").classList.contains("hidden")) ||
         (t === "takedown" && $("tdTabBtn").classList.contains("hidden")) ||
-        (t === "cuts" && $("cutTabBtn").classList.contains("hidden"));
+        (t === "cuts" && $("cutTabBtn").classList.contains("hidden")) ||
+        (t === "piers" && $("pierTabBtn").classList.contains("hidden"));
       if (t && !hidden) switchTab(t);
     }
     else if (e.key === "r" || e.key === "R") doRun();
@@ -4699,6 +4921,9 @@ async function boot() {
     // v0.12 — auto section optimization + axial-limit behavior
     renderOptimizePanel, runOptimize, applyOptimize, optimizeRows, optSummary,
     renderOptimizeTable, designOptimize, mockOptimize,
+    // v0.15 — link device types + wall piers
+    renderPiersTab, rebuildPierSelect, pierData, pierRows, pierCaseNames,
+    pierSparkSvg,
   };
 }
 

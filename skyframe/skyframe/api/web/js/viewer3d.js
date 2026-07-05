@@ -236,8 +236,13 @@ export class Viewer3D {
           .map(([u, v]) => bilin(s.corners, u, v))),
     }));
 
-    // v0.5: two-node links (green spring glyphs)
-    this.linkSegs = (m.links || []).map(l => ({ p1: l.pi, p2: l.pj, uid: l.uid }));
+    // v0.5: two-node links (green glyphs); v0.15: device type → distinct
+    // glyph silhouette + a tiny type letter (D/G/H/I)
+    this.linkSegs = (m.links || []).map(l => ({
+      p1: l.pi, p2: l.pj, uid: l.uid,
+      linkType: LINK_LETTERS[l.link_type] !== undefined ? l.link_type : "elastic",
+      letter: LINK_LETTERS[l.link_type] || "",
+    }));
 
     // v0.8: grounded spring supports + members carrying thermal loads
     this.springPts = (m.spring_supports || []).map(s => s.point);
@@ -597,11 +602,11 @@ export class Viewer3D {
       }
       items.push({ type: "shell", pts, holes, z: zsum / sh.corners.length, kind: sh.kind });
     }
-    // v0.5: links — green zigzag springs, depth-sorted with everything else
+    // v0.5: links — green device glyphs, depth-sorted with everything else
     for (const lk of (this.linkSegs || [])) {
       const s = this._projSeg(P, lk.p1, lk.p2);
       if (!s) continue;
-      items.push({ type: "link", s, z: (s.a.z + s.b.z) / 2 });
+      items.push({ type: "link", s, z: (s.a.z + s.b.z) / 2, lk });
     }
     // v0.13: section-cut planes — translucent amber quads, depth-sorted
     for (const cut of (this.sectionCutPolys || [])) {
@@ -635,6 +640,7 @@ export class Viewer3D {
       });
     }
     this._segsScreen = [];
+    this._linkBadges = [];   // v0.15 — link device-type letters, drawn on top
     for (const seg of this.segs) {
       const s = this._projSeg(P, seg.p1, seg.p2);
       if (!s) continue;
@@ -702,15 +708,18 @@ export class Viewer3D {
         ctx.stroke();
         ctx.setLineDash([]);
       } else if (it.type === "link") {
-        const { s } = it;
+        const { s, lk } = it;
         ctx.globalAlpha = overlayActive ? COLORS.ghost : 1;
         ctx.strokeStyle = COLORS.link;
         ctx.lineWidth = 1.6;
         ctx.lineJoin = "round"; ctx.lineCap = "round";
         ctx.beginPath();
-        drawZigzag(ctx, s.a.x, s.a.y, s.b.x, s.b.y);
+        drawLinkDevice(ctx, s.a.x, s.a.y, s.b.x, s.b.y, (lk && lk.linkType) || "elastic");
         ctx.stroke();
         ctx.globalAlpha = 1;
+        if (lk && lk.letter && !overlayActive)
+          this._linkBadges.push({
+            x: (s.a.x + s.b.x) / 2, y: (s.a.y + s.b.y) / 2 - 11, letter: lk.letter });
       } else {
         const { s, seg } = it;
         const hovered = this._hover && this._hover.uid === seg.uid;
@@ -869,6 +878,22 @@ export class Viewer3D {
         ctx.stroke();
         ctx.fillStyle = COLORS.thermal;
         ctx.fillText("ΔT", mx, my + 0.5);
+      }
+    }
+
+    // ---- v0.15 link device-type letters (D/G/H/I) beside their glyphs
+    if (this._linkBadges && this._linkBadges.length) {
+      ctx.font = "700 8.5px -apple-system, 'Segoe UI', sans-serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      for (const bLk of this._linkBadges) {
+        ctx.beginPath();
+        ctx.arc(bLk.x, bLk.y, 6.5, 0, 2 * Math.PI);
+        ctx.fillStyle = "rgba(52,195,132,0.15)";
+        ctx.fill();
+        ctx.strokeStyle = COLORS.link; ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = COLORS.link;
+        ctx.fillText(bLk.letter, bLk.x, bLk.y + 0.5);
       }
     }
 
@@ -1179,6 +1204,60 @@ function drawSpringGlyph(ctx, x, y, r, color) {
   }
   ctx.stroke();
   ctx.restore();
+}
+
+/* v0.15 — link device types: tiny type letter per non-elastic device. */
+const LINK_LETTERS = { elastic: "", damper: "D", gap: "G", hook: "H", isolator: "I" };
+
+/** v0.15 — screen-space link device glyph (mirrors the plan/elevation SVG
+    glyphs): damper = dashpot, gap = open jaws, hook = interlocked chain
+    rings, isolator = plate·roller·plate bearing; elastic = classic zigzag.
+    Adds to the CURRENT path — caller begins/strokes. */
+function drawLinkDevice(ctx, x1, y1, x2, y2, type, ampPx = 5) {
+  if (!type || type === "elastic") { drawZigzag(ctx, x1, y1, x2, y2); return; }
+  const dx = x2 - x1, dy = y2 - y1;
+  const L = Math.hypot(dx, dy) || 1;
+  const ux = dx / L, uy = dy / L;
+  const nx = -uy, ny = ux;
+  const a = Math.min(ampPx, L / 5);
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+  const Q = (d, o) => [mx + ux * d + nx * o * a, my + uy * d + ny * o * a];
+  const mv = p => ctx.moveTo(p[0], p[1]);
+  const ln = p => ctx.lineTo(p[0], p[1]);
+  const ring = (d, r) => {
+    const c = Q(d, 0);
+    ctx.moveTo(c[0] + r, c[1]);
+    ctx.arc(c[0], c[1], r, 0, 2 * Math.PI);
+  };
+  const b = Math.min(L * 0.18, a * 1.8);          // device half-length
+  const rods = (dA, dB) => {
+    ctx.moveTo(x1, y1); ln(Q(dA, 0));
+    ctx.moveTo(x2, y2); ln(Q(dB, 0));
+  };
+  if (type === "damper") {                        // dashpot: piston in cylinder
+    rods(-b, b * 0.3);
+    mv(Q(b, 1)); ln(Q(-b, 1)); ln(Q(-b, -1)); ln(Q(b, -1));
+    mv(Q(b * 0.3, 0.72)); ln(Q(b * 0.3, -0.72));
+  } else if (type === "gap") {                    // open jaws with clearance
+    const g = Math.min(b * 0.45, a * 0.5);
+    rods(-b, b);
+    mv(Q(-b, 0)); ln(Q(-g, 0)); mv(Q(-g, 0.9)); ln(Q(-g, -0.9));
+    mv(Q(-g, 0.9)); ln(Q(-g * 0.1, 0.9)); mv(Q(-g, -0.9)); ln(Q(-g * 0.1, -0.9));
+    mv(Q(b, 0)); ln(Q(g, 0)); mv(Q(g, 0.9)); ln(Q(g, -0.9));
+    mv(Q(g, 0.9)); ln(Q(g * 0.1, 0.9)); mv(Q(g, -0.9)); ln(Q(g * 0.1, -0.9));
+  } else if (type === "hook") {                   // interlocked chain rings
+    const r = a * 0.8;
+    rods(-r * 1.7, r * 1.7);
+    ring(-r * 0.62, r); ring(r * 0.62, r);
+  } else if (type === "isolator") {               // bearing: plate·roller·plate
+    const r = Math.min(a * 0.6, b * 0.55);
+    rods(-b * 0.7, b * 0.7);
+    mv(Q(-b * 0.7, 1)); ln(Q(-b * 0.7, -1));
+    mv(Q(b * 0.7, 1)); ln(Q(b * 0.7, -1));
+    ring(0, r);
+  } else {
+    drawZigzag(ctx, x1, y1, x2, y2);
+  }
 }
 
 /** v0.5 — screen-space zigzag path between two points (link/spring glyph). */

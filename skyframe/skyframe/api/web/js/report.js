@@ -379,6 +379,29 @@ export function buildReportHtml(model, results, opts = {}) {
     }).join("");
   }
 
+  /* ---- v0.15: wall piers — story-wise in-plane P/V/M per pier, per case. */
+  let piersHtml = "";
+  const prAll = r.piers || {};
+  if (Object.keys(prAll).length) {
+    const storyRank = s => -(r.story_elev && r.story_elev[s] != null ? r.story_elev[s] : 0);
+    piersHtml = Object.entries(prAll).map(([caseName, pd]) => {
+      const rows = [];
+      for (const pier of Object.keys(pd).sort((a, b) =>
+          a.localeCompare(b, undefined, { numeric: true }))) {
+        const sts = Object.keys(pd[pier]).sort((a, b) => storyRank(a) - storyRank(b));
+        sts.forEach((s, i) => {
+          const f = pd[pier][s] || {};
+          rows.push([i === 0 ? T(`▮ ${pier}`) : D(""), T(s),
+            fmt(r.story_elev && r.story_elev[s], 1),
+            fmt(f.P, 1), fmt(f.V, 1), fmt(f.M, 1)]);
+        });
+      }
+      const t = table([{ label: "Pier", txt: true }, { label: "Story", txt: true },
+        "Elev (m)", "P (kN)", "V (kN)", "M (kN·m)"], rows);
+      return `<div class="case-block"><h3>${esc(caseName)} <span class="tag">wall piers</span></h3>${t}</div>`;
+    }).join("");
+  }
+
   /* ---- member force envelope (top 30 by |M3| across cases + combos) */
   const env = new Map();
   for (const [, cd] of [...Object.entries(r.cases || {}), ...Object.entries(r.combos || {})]) {
@@ -493,6 +516,7 @@ ${section("5 · Base reactions", baseTable)}
 ${(() => { let n = 5;
   const tdN = takedownHtml ? ++n : n;
   const cutN = cutsHtml ? ++n : n;
+  const pierN = piersHtml ? ++n : n;
   const envN = ++n;
   const pushN = pushoverHtml ? ++n : n;
   const chartN = chartsHtml ? ++n : n;
@@ -501,6 +525,8 @@ ${(() => { let n = 5;
     "Where vertical load reaches the foundation per gravity case/combo — support reactions with grid labels and a balance check (support ΣFZ vs applied gravity).") : ""}
 ${cutsHtml ? section(`${cutN} · Section cut forces`, cutsHtml,
     "Internal force resultant (FX/FY/FZ, MX/MY/MZ) transmitted across each defined cutting plane, per case — Σ of the internal forces of members crossing the plane.") : ""}
+${piersHtml ? section(`${pierN} · Wall pier forces`, piersHtml,
+    "In-plane wall-pier design forces per story — P axial (compression −), V in-plane shear, M in-plane moment at the story bottom; piers group walls sharing a pier label.") : ""}
 ${section(`${envN} · Member force envelope`, envTable,
   `Top ${envRows.length} members by |M3| — absolute envelope across all static cases and combinations.`)}
 ${pushoverHtml ? section(`${pushN} · Pushover analysis`, pushoverHtml,

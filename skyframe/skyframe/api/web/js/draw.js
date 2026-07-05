@@ -3,8 +3,9 @@
    Owns only view + interaction; model mutations happen in app.js via
    the onDraw / onErase / onSelect callbacks. */
 
-import { zigzagPoints } from "./elev.js";
+import { linkGlyphPath } from "./elev.js";
 import { springKey, anyThermalMember, onFoundation, axialLimit, axialLimitBadge,
+  linkTypeOf, LINK_TYPES,
   gridSystems, gridSystemGeometry, snapGrids } from "./modeledit.js";
 
 const NS = "http://www.w3.org/2000/svg";
@@ -302,14 +303,15 @@ export class PlanEditor {
     }
 
     // v0.5: links whose endpoints lie within the current story's z-span —
-    // green zigzag spring glyphs on top of everything
+    // green device glyphs on top of everything (v0.15: shape per link_type)
     for (const lk of this._storyLinks()) {
       const seld = isSel("link", lk.uid);
-      this.gElems.appendChild(el("polyline", {
-        points: zigzagPoints(lk.pi[0], lk.pi[1], lk.pj[0], lk.pj[1], 0.16),
+      this.gElems.appendChild(el("path", {
+        d: linkGlyphPath(lk.pi[0], lk.pi[1], lk.pj[0], lk.pj[1], linkTypeOf(lk), 0.16),
         fill: "none",
         stroke: seld ? C.sel : C.link, "stroke-width": seld ? 2.5 : 1.8,
-        "stroke-linejoin": "round", "vector-effect": "non-scaling-stroke",
+        "stroke-linejoin": "round", "stroke-linecap": "round",
+        "vector-effect": "non-scaling-stroke",
         "data-ref": `link:${lk.uid}`,
       }));
     }
@@ -397,6 +399,25 @@ export class PlanEditor {
       });
       t.textContent = label;
       this.gLabels.appendChild(bg);
+      this.gLabels.appendChild(t);
+    }
+
+    // v0.15: link device-type letters (D/G/H/I) on current-story links
+    for (const lk of this._storyLinks()) {
+      const letter = LINK_TYPES[linkTypeOf(lk)].letter;
+      if (!letter) continue;
+      const [px, py] = this.toScreen(
+        (lk.pi[0] + lk.pj[0]) / 2, (lk.pi[1] + lk.pj[1]) / 2);
+      const oy = py - 12;                     // sit just above the glyph
+      this.gLabels.appendChild(el("circle", {
+        cx: px, cy: oy, r: 6.5, fill: "rgba(52,195,132,0.14)",
+        stroke: C.link, "stroke-width": 1,
+      }));
+      const t = el("text", {
+        x: px, y: oy + 0.5, fill: C.link, "font-size": 8.5, "font-weight": 700,
+        "text-anchor": "middle", "dominant-baseline": "central", "font-family": "inherit",
+      });
+      t.textContent = letter;
       this.gLabels.appendChild(t);
     }
   }

@@ -133,6 +133,8 @@ export function mockModel(p = {}) {
       uid: `W${s + 1}`, kind: "wall", behavior: "shell", section: "SH200",
       corners: [[0, 0, zb], [wallLen, 0, zb], [wallLen, 0, zt], [0, 0, zt]],
       mesh_size: 1.0, story: st.name,
+      // v0.15: both wall lifts share one pier label → a 2-story pier "P1"
+      pier: "P1",
       // v0.5: ground-story wall gets a door + a window opening
       openings: s === 0
         ? [{ u0: 0.12, v0: 0, u1: 0.32, v1: 0.72 },
@@ -321,7 +323,25 @@ export function mockModel(p = {}) {
     },
     diaphragm: "rigid",
     story_diaphragm: {},
-    links: [],
+    // v0.15: model-level "auto-label all walls as piers" flag (off — the demo
+    // walls carry an explicit pier label instead)
+    auto_pier_walls: false,
+    // v0.15: demo link devices at the Story1 diaphragm level along the back
+    // edge — a viscous damper and an isolator (distinct glyphs + D/I letters)
+    links: (xs.length >= 3 ? [
+      {
+        uid: "LK1", pi: [xs[0], ys[ys.length - 1], stories[0].elevation],
+        pj: [xs[1], ys[ys.length - 1], stories[0].elevation],
+        stiffness: [1e5, 1e5, 1e5, 1e4, 1e4, 1e4],
+        link_type: "damper", params: { cd: 1500, alpha: 0.5, k: 25000 },
+      },
+      {
+        uid: "LK2", pi: [xs[1], ys[ys.length - 1], stories[0].elevation],
+        pj: [xs[2], ys[ys.length - 1], stories[0].elevation],
+        stiffness: [1e5, 1e5, 1e5, 1e4, 1e4, 1e4],
+        link_type: "isolator", params: { k1: 8e4, k2: 8e3, Fy: 120, kv: 1e6 },
+      },
+    ] : []),
     // v0.8: two demo spring supports at base grid corners (6-dof)
     spring_supports: [
       { point: [xs[0], ys[0], 0], stiffness: [1.5e5, 1.5e5, 3e5, 0, 0, 0] },
@@ -1131,6 +1151,50 @@ export function mockResults(model) {
     for (const [name, cd] of Object.entries(rs_cases)) perCase(name, cd);
   }
 
+  /* ---- v0.15: wall-pier design forces. Piers group walls sharing a pier
+     label (or every wall when auto_pier_walls, labelled by region uid).
+     Physically-sensible mock: the pier picks up a share of the story shear at
+     its TOP story and carries it down — V constant over the pier height, the
+     in-plane moment M = V × lever growing downward (cantilever wall), and P
+     accumulating gravity + the overturning chord force story by story. */
+  const pierWalls = {};
+  for (const sh of (model.shells || [])) {
+    if (sh.kind !== "wall") continue;
+    const label = (sh.pier || "").trim() || (model.auto_pier_walls ? sh.uid : "");
+    if (!label) continue;
+    (pierWalls[label] = pierWalls[label] || []).push(sh);
+  }
+  const piers = {};
+  if (Object.keys(pierWalls).length) {
+    const buildPierBlock = cd => {
+      const out2 = {};
+      for (const [label, walls] of Object.entries(pierWalls)) {
+        const sts = [...new Set(walls.map(w => w.story))]
+          .filter(s => storyOrder.includes(s))
+          .sort((a, b) => storyElev[b] - storyElev[a]);          // top → bottom
+        if (!sts.length) continue;
+        const zTop = storyElev[sts[0]];
+        const shTop = (cd.story || {})[sts[0]] || {};
+        const V = +(0.35 * Math.hypot(shTop.shear_x || 0, shTop.shear_y || 0)).toFixed(2);
+        const c = walls[0].corners;
+        const Lw = Math.max(Math.hypot(c[1][0] - c[0][0], c[1][1] - c[0][1]), 1);
+        const perStory = 0.06 * Math.max((cd.base && cd.base.FZ) || 0, 0);
+        out2[label] = {};
+        sts.forEach((s, i) => {
+          const zBot = elevs[storyOrder.indexOf(s)];
+          const M = +(V * (zTop - zBot)).toFixed(2);              // grows downward
+          const P = +(-(perStory * (i + 1)) - M / (2 * Lw)).toFixed(2);
+          out2[label][s] = { P, V, M };
+        });
+      }
+      return out2;
+    };
+    for (const [name, cd] of Object.entries(cases)) piers[name] = buildPierBlock(cd);
+    for (const [name, cd] of Object.entries(combos))
+      if (!cd.min) piers[name] = buildPierBlock(cd);
+    for (const [name, cd] of Object.entries(rs_cases)) piers[name] = buildPierBlock(cd);
+  }
+
   const out = {
     model_name: model.name,
     nodes, members, supports,
@@ -1146,6 +1210,7 @@ export function mockResults(model) {
   if (Object.keys(buckling).length) out.buckling = buckling;      // v0.10
   if (Object.keys(takedown).length) out.takedown = takedown;      // v0.11
   if (Object.keys(section_cuts).length) out.section_cuts = section_cuts;  // v0.13
+  if (Object.keys(piers).length) out.piers = piers;               // v0.15
   if (Object.keys(story_props).length) out.story_props = story_props;
   if (Object.keys(story_stiffness).length) out.story_stiffness = story_stiffness;
   if (Object.keys(irregularity).length) out.irregularity = irregularity;

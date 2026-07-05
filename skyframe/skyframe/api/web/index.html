@@ -325,6 +325,7 @@
         <button class="tab hidden" data-tab="buckling" role="tab" id="buckTabBtn">Buckling</button>
         <button class="tab hidden" data-tab="takedown" role="tab" id="tdTabBtn">Load Takedown</button>
         <button class="tab hidden" data-tab="cuts" role="tab" id="cutTabBtn">Section Cuts</button>
+        <button class="tab hidden" data-tab="piers" role="tab" id="pierTabBtn">Wall Piers</button>
         <div class="tabbar-spacer"></div>
         <span class="staged-badge hidden" id="stagedBadge" title="Staged construction vs one-shot analysis — max column-axial difference"></span>
         <div class="seg-toggle env-toggle hidden" id="envToggle" title="Envelope combo — switch tables between the max and min envelope">
@@ -721,6 +722,30 @@
           </div>
           <div class="pane-tools">
             <span class="muted" id="cutNote"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ WALL PIERS (v0.15) ============ -->
+      <section class="tabpane" id="pane-piers" role="tabpanel">
+        <div class="empty-state" id="empty-piers">
+          <div class="empty-art">▦</div>
+          <p>Label walls with a pier (Model mode → wall properties), then run analysis to see pier design forces</p>
+        </div>
+        <div class="pane-content hidden" id="content-piers">
+          <div class="charts-controls">
+            <div class="th-controls">
+              <label class="case-select-wrap"><span>Case</span>
+                <select id="pierCaseSelect" class="case-select"></select></label>
+              <span class="muted" id="pierMeta"></span>
+            </div>
+            <button class="chip csv-btn" id="csvPiers" title="Download the wall-pier forces as CSV (unrounded)">⬇ CSV</button>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table" id="pierTable"></table>
+          </div>
+          <div class="pane-tools">
+            <span class="muted" id="pierNote"></span>
           </div>
         </div>
       </section>
