@@ -106,6 +106,11 @@ scrutinized benchmark tests.
 - [x] Gravity load takedown per support, grouped by grid, with balance check
 - [x] UI: foundation assignment + soil glyph, takedown tab with bubble plan
 
+## Wave 13 — design automation  ✅ done
+- [x] Auto steel section optimization (lightest passing W-shape per member)
+- [x] Tension / compression-only members (braces, cables, ties; nonlinear)
+- [x] UI: optimize panel with apply, axial-behavior property + badge
+
 ## Phase 4 — Parity increment 2  ✅ done
 - [x] 1. Model save/open (.skyframe JSON files) with File menu + gallery
 - [x] 2. Load pattern / case / combo editor UI (with per-case P-Delta toggle)
@@ -117,7 +122,7 @@ scrutinized benchmark tests.
 
 ## Status
 All waves above are complete with engine + REST API + UI, pinned by a
-286-test suite. The app builds standalone locally (`packaging/build.sh`).
+305-test suite. The app builds standalone locally (`packaging/build.sh`).
 
 ## Possible future waves (not yet scheduled)
 - Multiple / non-orthogonal grid systems
