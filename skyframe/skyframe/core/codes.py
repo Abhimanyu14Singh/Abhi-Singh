@@ -14,6 +14,10 @@ Everything here is closed-form ASCE 7-16 (2016 edition):
 * :func:`asce7_elf` — the equivalent-lateral-force procedure (Section 12.8):
   approximate period, seismic response coefficient with its floors, base
   shear and the vertical force distribution.
+* :func:`live_load_reduction` (v0.16) — the §4.7 reduced-live-load
+  multiplier per COLUMN, plus :func:`reduce_live_demands`, the DESIGN-STAGE
+  helper the design endpoints use to scale the live-attributable share of
+  member demands before checking.
 
 Units follow the model everywhere: kN, m, tonne, s.
 """
@@ -356,3 +360,174 @@ def asce7_elf(model: BuildingModel, SDS: float, SD1: float, R: float,
             fy=f if direction == "Y" else 0.0))
     model.patterns[name] = pat
     return pat
+
+
+# --------------------------------------------------------------------------- #
+# v0.16: ASCE 7-16 §4.7 live-load reduction (columns)
+# --------------------------------------------------------------------------- #
+# Live-load element factor KLL (Table 4.7-1).  v0.16 uses KLL = 4 UNIFORMLY
+# for every column — the table value for interior columns AND exterior
+# columns without cantilever slabs (corner columns with cantilever slabs
+# would be 3, edge columns with cantilevers 3; SkyFrame has no cantilever
+# slabs, so 4 is the correct table value across the board — documented).
+LIVE_KLL_COLUMN = 4.0
+_LL_TOL = 1e-6
+
+
+def live_load_reduction(model: BuildingModel) -> Dict[str, Dict[str, float]]:
+    """ASCE 7-16 §4.7.1 reduced-live-load multiplier per COLUMN (v0.16).
+
+    For each column (SI form of Eq. 4.7-1, ``At`` in m^2)::
+
+        R = 0.25 + 4.57 / sqrt(KLL * At)
+
+    clamped to [0.4, 1.0] — floor 0.5 for members supporting ONE floor,
+    0.4 for members supporting two or more (§4.7.2).  ``KLL = 4``
+    uniformly (:data:`LIVE_KLL_COLUMN`).  ``At`` is the column's tributary
+    PLAN area times the number of stories supported at/above its top:
+
+    * **Tributary rule** (regular orthogonal framing): half of every beam
+      span framing into the column top in each plan direction —
+      ``At_floor = (sum Lx_beams / 2) * (sum Ly_beams / 2)`` (an interior
+      column with 6 m bays each way gets 6 x 6 = 36 m^2, a corner column
+      3 x 3 = 9 m^2).  A beam is attributed to the x/y family by its
+      dominant plan direction (skewed framing is approximated).
+    * **Fallback** (irregular layouts): a column with NO attached beam in
+      one of the two directions at its top elevation falls back to
+      ``plan_area / n_columns_at_that_level`` with a ``UserWarning`` — the
+      half-bay rule needs beams on the column to measure bays.
+    * **Stories supported** = count of story levels at/above the column
+      top (a story-1 column of an n-story building supports n floors;
+      §4.7.1 accumulates the tributary area of every supported floor).
+
+    The R = 1 cap embodies the §4.7.2 applicability threshold: the formula
+    crosses 1.0 at ``KLL*At = (4.57/0.75)^2 = 37.1 m^2``, i.e. the code's
+    400 ft^2 minimum for any reduction.
+
+    Returns ``{column uid -> {"KLL", "At", "R", "n_stories"}}``.  This is a
+    DESIGN-STAGE reduction: analysis results are never modified — the
+    design endpoints scale the live-attributable share of member demands by
+    R via :func:`reduce_live_demands`.
+    """
+    out: Dict[str, Dict[str, float]] = {}
+    columns = [m for m in model.members if m.kind == "column"]
+    if not columns:
+        return out
+    beams = [m for m in model.members if m.kind == "beam"]
+    lx, ly = model.plan_extents()
+    plan_area = lx * ly
+    for col in columns:
+        top = col.pi if col.pi[2] >= col.pj[2] else col.pj
+        x, y, zt = float(top[0]), float(top[1]), float(top[2])
+        n_above = sum(1 for s in model.stories
+                      if s.elevation >= zt - _LL_TOL)
+        n_above = max(n_above, 1)
+        dx = dy = 0.0
+        for b in beams:
+            # beam at the column-top floor with an endpoint on the column
+            if (abs(b.pi[2] - zt) > _LL_TOL
+                    or abs(b.pj[2] - zt) > _LL_TOL):
+                continue
+            at_i = (abs(b.pi[0] - x) < _LL_TOL
+                    and abs(b.pi[1] - y) < _LL_TOL)
+            at_j = (abs(b.pj[0] - x) < _LL_TOL
+                    and abs(b.pj[1] - y) < _LL_TOL)
+            if not (at_i or at_j):
+                continue
+            ex = abs(b.pj[0] - b.pi[0])
+            ey = abs(b.pj[1] - b.pi[1])
+            if ex >= ey:
+                dx += b.length / 2.0
+            else:
+                dy += b.length / 2.0
+        if dx > _LL_TOL and dy > _LL_TOL:
+            at_floor = dx * dy
+        else:
+            n_cols = sum(1 for c in columns
+                         if abs(max(c.pi[2], c.pj[2]) - zt) < _LL_TOL)
+            at_floor = plan_area / max(n_cols, 1)
+            warnings.warn(
+                f"live_load_reduction: column {col.uid!r} has no attached "
+                "beams in both plan directions at its top; tributary area "
+                f"falls back to plan_area/n_columns = {at_floor:.3g} m^2",
+                UserWarning)
+        At = at_floor * n_above
+        kll_at = LIVE_KLL_COLUMN * At
+        if kll_at > 0.0:
+            R = 0.25 + 4.57 / math.sqrt(kll_at)
+        else:
+            R = 1.0
+        floor_ = 0.5 if n_above <= 1 else 0.4
+        R = min(1.0, max(floor_, R))
+        out[col.uid] = {"KLL": LIVE_KLL_COLUMN, "At": float(At),
+                        "R": float(R), "n_stories": float(n_above)}
+    return out
+
+
+def reduce_live_demands(results_dict, model: BuildingModel, *,
+                        live_case: str = "LIVE",
+                        reduction: Optional[Dict[str, Dict[str, float]]]
+                        = None) -> dict:
+    """DEEP-COPIED results dict with the live share of COLUMN demands reduced.
+
+    DESIGN-STAGE helper (v0.16) used by the design endpoints: because the
+    analysis is linear, the live-attributable portion of any quantity in a
+    case/combo is ``combo factor x LIVE-case value``, so per column the
+    adjusted demand is::
+
+        q_adj = q_total + (R - 1) * f_live * q_LIVE
+
+    applied to the 12 member end forces and every station column
+    (N/V2/V3/T/M2/M3).  ``f_live`` is 1 for the live case itself, the
+    combo's LIVE-case factor for ADDITIVE combos, and 0 for every other
+    plain case; envelope combos and RS cases are left UNCHANGED (their
+    per-member live attribution is not linear — documented limitation).
+    ``reduction`` defaults to :func:`live_load_reduction`.  Analysis
+    results themselves are never mutated (a deep copy is returned).
+    Raises ``ValueError`` when ``live_case`` is not a solved case.
+    """
+    import copy
+
+    d = (results_dict.to_dict() if hasattr(results_dict, "to_dict")
+         else results_dict)
+    if not isinstance(d, dict):
+        raise TypeError("results must be a results object or a results dict")
+    live_block = (d.get("cases") or {}).get(live_case)
+    if live_block is None:
+        raise ValueError(f"live case {live_case!r} not found in results "
+                         "'cases'")
+    red = live_load_reduction(model) if reduction is None else reduction
+    out = copy.deepcopy(d)
+
+    def factor_for(name: str, kind: str) -> float:
+        if kind == "cases":
+            return 1.0 if name == live_case else 0.0
+        cb = model.combos.get(name)
+        if cb is not None and cb.combo_type == "add":
+            return float(cb.cases.get(live_case, 0.0))
+        return 0.0                       # envelope combo: left unchanged
+
+    live_mf = live_block.get("member_forces") or {}
+    live_st = live_block.get("member_stations") or {}
+    for kind in ("cases", "combos"):
+        for name, block in (out.get(kind) or {}).items():
+            f = factor_for(name, kind)
+            if f == 0.0:
+                continue
+            for uid, info in red.items():
+                scale = (info["R"] - 1.0) * f
+                if scale == 0.0:
+                    continue
+                mf_l = live_mf.get(uid)
+                mf = (block.get("member_forces") or {}).get(uid)
+                if mf_l and mf:
+                    block["member_forces"][uid] = [
+                        float(v) + scale * float(lv)
+                        for v, lv in zip(mf, mf_l)]
+                st_l = live_st.get(uid)
+                st = (block.get("member_stations") or {}).get(uid)
+                if st_l and st:
+                    for key in ("N", "V2", "V3", "T", "M2", "M3"):
+                        st[key] = [float(v) + scale * float(lv)
+                                   for v, lv in zip(st[key], st_l[key])]
+    return out

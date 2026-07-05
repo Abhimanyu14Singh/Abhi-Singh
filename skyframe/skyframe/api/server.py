@@ -45,6 +45,19 @@ v0.15 additions (no new endpoints):
 * ``POST /api/analyze`` results carry the ``"piers"`` block automatically
   (per static case + additive combo -> pier label -> story -> {P, V, M}).
 
+v0.16 additions:
+
+* ``GET /api/live-reduction`` — ASCE 7-16 §4.7 reduced-live-load multipliers
+  per column (pure model geometry, no analysis);
+* ``POST /api/design/steel`` / ``POST /api/design/concrete`` accept optional
+  ``live_reduction: true`` + ``live_case`` ("LIVE") — the live-attributable
+  share of each column's demands is scaled by its §4.7 multiplier R before
+  checking (design-stage reduction; analysis results are untouched), and the
+  response carries the ``live_reduction`` factors;
+* ``POST /api/analyze`` results gain ``member_deflections`` per static
+  case/additive combo and the top-level ``deflection_checks`` block;
+  ``POST /api/model`` round-trips ``model.deflection_limit``.
+
 Saved models live as ``<name>.skyframe.json`` files in ``~/.skyframe/models``
 (override with the ``SKYFRAME_MODELS_DIR`` environment variable; the
 directory is created on demand).  Names must match ``[A-Za-z0-9 _-]{1,60}``.
@@ -66,7 +79,8 @@ from flask import Flask, jsonify, request, send_from_directory
 from skyframe.core.builder import (add_self_weight, make_wind_pattern,
                                    quick_building)
 from skyframe.core.codes import (apply_asce7_combinations, asce7_elf,
-                                 make_rs_case_from_code)
+                                 live_load_reduction, make_rs_case_from_code,
+                                 reduce_live_demands)
 from skyframe.core.model import (BuildingModel, GridSystem,
                                  make_notional_pattern)
 from skyframe.core.sections_library import library_to_dict
@@ -597,6 +611,43 @@ def create_app() -> Flask:
             return jsonify({"error": str(exc)}), 400
         return jsonify(_state["model"].to_dict())
 
+    # ------------------------------------- v0.16: ASCE 7 live-load reduction
+    @app.get("/api/live-reduction")
+    def live_reduction():
+        """ASCE 7-16 §4.7 reduced-live-load multipliers per column.
+
+        Pure model geometry post-processing (no analysis): returns
+        ``{"factors": {uid: {KLL, At, R, n_stories}}}`` for the current
+        model.  This is a DESIGN-STAGE reduction — analysis results are
+        never modified; pass ``live_reduction: true`` to the design
+        endpoints to apply it to the checked demands.
+        """
+        try:
+            factors = live_load_reduction(_state["model"])
+        except (ValueError, TypeError) as exc:  # pragma: no cover
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"factors": factors})
+
+    def _maybe_reduce_live(results, body):
+        """(results-or-adjusted-dict, factors-or-None) for design endpoints.
+
+        With ``body["live_reduction"]`` truthy, the live-attributable share
+        of every column's member demands (in every case + additive combo) is
+        scaled by that column's §4.7 multiplier R before checking
+        (``reduce_live_demands``); ``body["live_case"]`` names the live CASE
+        (default "LIVE").  Raises ValueError when the live case is unknown.
+        """
+        if not body.get("live_reduction"):
+            return results, None
+        live_case = body.get("live_case", "LIVE")
+        if not isinstance(live_case, str) or not live_case:
+            raise ValueError("'live_case' must be a case name string")
+        factors = live_load_reduction(_state["model"])
+        adjusted = reduce_live_demands(results.to_dict(), _state["model"],
+                                       live_case=live_case,
+                                       reduction=factors)
+        return adjusted, factors
+
     @app.post("/api/analyze")
     def analyze():
         if not _OPENSEES_OK:
@@ -628,17 +679,21 @@ def create_app() -> Flask:
               if isinstance(body.get(k), (int, float))}
         try:
             results = OpenSeesEngine(_state["model"]).run()
+            src, factors = _maybe_reduce_live(results, body)
             if combos:
                 names = combos if isinstance(combos, list) else None
                 checks = check_members_envelope(
-                    _state["model"], results, combos=names, **kw)
+                    _state["model"], src, combos=names, **kw)
             else:
-                checks = check_members(_state["model"], results, case, **kw)
+                checks = check_members(_state["model"], src, case, **kw)
         except Exception as exc:
             return jsonify({"error": str(exc)}), 400
-        return jsonify({"preliminary": True, "case": case, "combos": combos,
-                        "checks": [c.to_dict() for c in checks],
-                        "summary": summarize(checks)})
+        payload = {"preliminary": True, "case": case, "combos": combos,
+                   "checks": [c.to_dict() for c in checks],
+                   "summary": summarize(checks)}
+        if factors is not None:
+            payload["live_reduction"] = factors
+        return jsonify(payload)
 
     @app.post("/api/design/concrete")
     def design_concrete():
@@ -667,20 +722,24 @@ def create_app() -> Flask:
             kw = {"fc": float(body["fc"])} if isinstance(
                 body.get("fc"), (int, float)) else {}
             results = OpenSeesEngine(_state["model"]).run()
+            src, factors = _maybe_reduce_live(results, body)
             if combos:
                 names = combos if isinstance(combos, list) else None
                 checks = check_concrete_members_envelope(
-                    _state["model"], results, rebar, combos=names, **kw)
+                    _state["model"], src, rebar, combos=names, **kw)
             else:
                 checks = check_concrete_members(
-                    _state["model"], results, case, rebar, **kw)
+                    _state["model"], src, case, rebar, **kw)
         except (TypeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 400
         except Exception as exc:
             return jsonify({"error": str(exc)}), 400
-        return jsonify({"preliminary": True, "case": case, "combos": combos,
-                        "checks": [c.to_dict() for c in checks],
-                        "summary": summ_c(checks)})
+        payload = {"preliminary": True, "case": case, "combos": combos,
+                   "checks": [c.to_dict() for c in checks],
+                   "summary": summ_c(checks)}
+        if factors is not None:
+            payload["live_reduction"] = factors
+        return jsonify(payload)
 
     # --------------------------------------------- v0.12: steel optimization
     @app.post("/api/design/optimize")

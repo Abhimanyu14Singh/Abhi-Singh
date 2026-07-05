@@ -37,8 +37,32 @@ ACI 318-19 strength provisions:
                     Symmetric layouts only (n_top == n_bot is enforced;
                     unsymmetric layouts return "N/A" with a note).
 
+* Columns, biaxial (v0.16) — when BOTH Mu33 and Mu22 exceed 5% of the
+                    respective axis's peak uniaxial phiMn, the check goes
+                    biaxial: the M2-axis interaction diagram is built with
+                    the SAME strain-compatibility code with b/h swapped
+                    (the same symmetric two-face layout is assumed about
+                    both axes — documented approximation), then
+                    * Pu >= 0.1 fc' Ag  →  BRESLER reciprocal load method
+                      (Bresler 1960; PCA Notes on ACI 318 / ACI R10.3.6):
+                      1/phiPn_b = 1/phiPn_x + 1/phiPn_y - 1/phiP0 with
+                      phiPn_x/y the compression-side axial capacity of each
+                      uniaxial diagram at that axis's moment demand and
+                      phiP0 = 0.65 * P0 (the UNCAPPED pure-compression
+                      point — Bresler's formula needs the true P0; the
+                      0.80 accidental-eccentricity cap stays on the
+                      uniaxial diagram);  ratio = Pu / phiPn_b;
+                    * Pu < 0.1 fc' Ag   →  the LOAD-CONTOUR fallback
+                      (Bresler's second method; PCA exponent range
+                      1.15-1.55, v0.16 uses 1.5):
+                      (Mu33/phiMn33)^1.5 + (Mu22/phiMn22)^1.5 <= 1 with
+                      phiMn at the demand axial level Pu (the reciprocal
+                      method loses accuracy at low axial loads — its
+                      documented applicability limit).
+                    A pure-uniaxial demand keeps the v0.6 path unchanged.
+
 THESE ARE PRELIMINARY SCREENING CHECKS, NOT A FINAL CODE CHECK.  Not
-covered: slenderness/second-order effects, torsion, biaxial bending,
+covered: slenderness/second-order effects, torsion,
 development/anchorage, detailing (bar spacing, max spacing of stirrups,
 confinement), deep-beam provisions, deflections, crack control, seismic
 provisions, and beam axial force (a note is emitted when a beam's axial
@@ -69,6 +93,8 @@ __all__ = [
     "check_concrete_members_envelope", "summarize",
     "ES_REBAR", "PHI_COMPRESSION", "beta1", "rho_min", "phi_from_strain",
     "beam_flexure", "beam_shear", "column_interaction",
+    "axial_capacity_at_moment", "moment_capacity_at_axial",
+    "BIAXIAL_TRIGGER", "CONTOUR_EXPONENT",
 ]
 
 # --------------------------------------------------------------------------- #
@@ -77,6 +103,12 @@ __all__ = [
 ES_REBAR = 200_000_000.0    # kPa (200 GPa) — reinforcement modulus (ACI 20.2.2.2)
 PHI_COMPRESSION = 0.65      # compression-controlled phi, TIED columns (ACI 21.2.2)
 EPS_CU = 0.003              # concrete crushing strain (ACI 22.2.2.1)
+# v0.16 biaxial column check: a column goes biaxial when BOTH moment demands
+# exceed this fraction of the respective axis's PEAK uniaxial phiMn.
+BIAXIAL_TRIGGER = 0.05
+# Load-contour exponent (Mux/phiMnx)^a + (Muy/phiMny)^a <= 1 for the
+# low-axial fallback; Bresler/PCA report 1.15-1.55, v0.16 fixes 1.5.
+CONTOUR_EXPONENT = 1.5
 
 
 # --------------------------------------------------------------------------- #
@@ -134,6 +166,7 @@ class ConcreteCheck:
     Mu_pos: float = 0.0                  # kN*m, sagging demand (beams)
     Mu_neg: float = 0.0                  # kN*m, hogging demand (beams)
     Mu: float = 0.0                      # kN*m, max |M3| (columns)
+    Mu22: float = 0.0                    # kN*m, max |M2| (columns, v0.16)
     Vu: float = 0.0                      # kN, max |V2| (beams)
     phiMn_pos: Optional[float] = None    # kN*m (bottom steel, sagging)
     phiMn_neg: Optional[float] = None    # kN*m (top steel, hogging)
@@ -146,12 +179,16 @@ class ConcreteCheck:
     notes: List[str] = field(default_factory=list)
     preliminary: bool = True             # ALWAYS True — screening check only
     governing_combo: str = ""            # v0.9 envelope: governing combo name
+    biaxial: bool = False                # v0.16: True when both axes checked
+    ratio_biaxial: Optional[float] = None
+    #   v0.16: Bresler ratio Pu/phiPn_b, or the load-contour value (<= 1 ok)
+    method: str = "uniaxial"             # "uniaxial" | "bresler" | "contour"
 
     def to_dict(self) -> dict:
         return {
             "uid": self.uid, "section": self.section, "kind": self.kind,
             "Pu": self.Pu, "Mu_pos": self.Mu_pos, "Mu_neg": self.Mu_neg,
-            "Mu": self.Mu, "Vu": self.Vu,
+            "Mu": self.Mu, "Mu22": self.Mu22, "Vu": self.Vu,
             "phiMn_pos": self.phiMn_pos, "phiMn_neg": self.phiMn_neg,
             "phiVn": self.phiVn,
             "pm_points": ([[m, p] for m, p in self.pm_points]
@@ -160,6 +197,9 @@ class ConcreteCheck:
             "status": self.status, "notes": list(self.notes),
             "preliminary": True,
             "governing_combo": self.governing_combo,
+            "biaxial": self.biaxial,
+            "ratio_biaxial": self.ratio_biaxial,
+            "method": self.method,
         }
 
 
@@ -377,6 +417,56 @@ def _radial_ratio(points: List[Tuple[float, float]],
     return None if best_s is None else 1.0 / best_s
 
 
+def axial_capacity_at_moment(points: List[Tuple[float, float]],
+                             Mu: float) -> Optional[float]:
+    """Largest phiPn on the interaction polyline at moment ``Mu`` (v0.16).
+
+    ``points`` is the [(phiMn, phiPn), ...] polyline from pure compression
+    down to pure tension.  The vertical line M = Mu can cross the boundary
+    twice (compression and tension branches); Bresler's reciprocal method
+    needs the COMPRESSION-side ordinate, i.e. the LARGEST phiPn.  Returns
+    ``None`` when ``Mu`` exceeds the diagram (no crossing).
+    """
+    best: Optional[float] = None
+    for (M1, P1), (M2, P2) in zip(points[:-1], points[1:]):
+        if (M1 - Mu) * (M2 - Mu) > 0.0:
+            continue                              # segment does not straddle
+        dM = M2 - M1
+        if abs(dM) < 1e-14:
+            if abs(M1 - Mu) < 1e-12:              # vertical segment ON the line
+                for P in (P1, P2):
+                    best = P if best is None else max(best, P)
+            continue
+        t = (Mu - M1) / dM
+        if -1e-9 <= t <= 1.0 + 1e-9:
+            P = P1 + t * (P2 - P1)
+            best = P if best is None else max(best, P)
+    return best
+
+
+def moment_capacity_at_axial(points: List[Tuple[float, float]],
+                             Pu: float) -> Optional[float]:
+    """Largest phiMn on the interaction polyline at axial level ``Pu``
+    (v0.16) — the uniaxial moment capacity entering the load-contour check.
+    Returns ``None`` when ``Pu`` lies outside the diagram's axial range.
+    """
+    best: Optional[float] = None
+    for (M1, P1), (M2, P2) in zip(points[:-1], points[1:]):
+        if (P1 - Pu) * (P2 - Pu) > 0.0:
+            continue
+        dP = P2 - P1
+        if abs(dP) < 1e-14:
+            if abs(P1 - Pu) < 1e-12:
+                for M in (M1, M2):
+                    best = M if best is None else max(best, M)
+            continue
+        t = (Pu - P1) / dP
+        if -1e-9 <= t <= 1.0 + 1e-9:
+            M = M1 + t * (M2 - M1)
+            best = M if best is None else max(best, M)
+    return best
+
+
 # --------------------------------------------------------------------------- #
 # demand extraction
 # --------------------------------------------------------------------------- #
@@ -425,18 +515,21 @@ def _beam_demands(case: dict, uid: str, notes: List[str]):
 
 
 def _column_demands(case: dict, uid: str):
-    """(Pu, Mu) for a column, or None.  Pu = +compression (end-i local N);
-    Mu = max |M3| over stations (else over the two ends)."""
+    """(Pu, Mu33, Mu22) for a column, or None.  Pu = +compression (end-i
+    local N); Mu33 = max |M3|, Mu22 = max |M2| over stations (else over the
+    two ends)."""
     mf = (case.get("member_forces") or {}).get(uid)
     if mf is None:
         return None
     Pu = float(mf[0])
     st = (case.get("member_stations") or {}).get(uid)
     if st and st.get("M3"):
-        Mu = max(abs(float(v)) for v in st["M3"])
+        Mu33 = max(abs(float(v)) for v in st["M3"])
+        Mu22 = max(abs(float(v)) for v in st.get("M2") or [0.0])
     else:
-        Mu = max(abs(float(mf[5])), abs(float(mf[11])))
-    return Pu, Mu
+        Mu33 = max(abs(float(mf[5])), abs(float(mf[11])))
+        Mu22 = max(abs(float(mf[4])), abs(float(mf[10])))
+    return Pu, Mu33, Mu22
 
 
 # --------------------------------------------------------------------------- #
@@ -511,24 +604,94 @@ def _check_column(chk: ConcreteCheck, case: dict, b: float, h: float,
     if dem is None:
         chk.notes.append("no member forces in results for this member")
         return
-    chk.Pu, chk.Mu = dem
+    chk.Pu, chk.Mu, chk.Mu22 = dem
     d = lay.d_eff(h)
     dp = lay.cover + lay.stirrup_dia + lay.bar_dia / 2.0
     if d <= dp:
         chk.notes.append(f"effective depth d = {d:.3f} m <= d' = {dp:.3f} m"
                          " (cover/stirrup/bar too large for h)")
         return
-    pts = column_interaction(b, h, d, dp, lay.n_top * lay.bar_area(), fc,
+    As_face = lay.n_top * lay.bar_area()
+    pts = column_interaction(b, h, d, dp, As_face, fc,
                              lay.fy, phi_tc=phi_flexure)
     chk.pm_points = [(p["phiMn"], p["phiPn"]) for p in pts]
-    chk.notes.append("approximate 5-point interaction, uniaxial about the "
-                     "major (local 3) axis; M2 not considered (v0.6)")
     ratio = _radial_ratio(chk.pm_points, chk.Mu, chk.Pu)
     if ratio is None:                          # defensive; should not happen
         chk.notes.append("interaction ratio could not be computed")
         return
-    chk.ratio, chk.equation = ratio, "P-M"
-    chk.status = "OK" if ratio <= 1.0 else "NG"
+
+    # ---- v0.16 biaxial trigger: both moment demands above 5% of the ----
+    # respective axis's PEAK uniaxial phiMn (the M2 diagram = the same
+    # strain-compatibility code with b/h swapped; same symmetric layout)
+    pts22 = None
+    biaxial = False
+    d2 = lay.d_eff(b)                         # depth for local-2 bending = b
+    if chk.Mu22 > 1e-9 and d2 > dp:
+        m_ref33 = max(m for m, _ in chk.pm_points)
+        pts22_raw = column_interaction(h, b, d2, dp, As_face, fc,
+                                       lay.fy, phi_tc=phi_flexure)
+        pts22 = [(p["phiMn"], p["phiPn"]) for p in pts22_raw]
+        m_ref22 = max(m for m, _ in pts22)
+        biaxial = (chk.Mu > BIAXIAL_TRIGGER * m_ref33
+                   and chk.Mu22 > BIAXIAL_TRIGGER * m_ref22)
+
+    if not biaxial:
+        # pure-uniaxial demand: the exact v0.6 path/result (regression-safe)
+        chk.notes.append("approximate 5-point interaction, uniaxial about "
+                         "the major (local 3) axis; M2 not considered "
+                         "(v0.6)")
+        chk.ratio, chk.equation = ratio, "P-M"
+        chk.status = "OK" if ratio <= 1.0 else "NG"
+        return
+
+    # ---- v0.16 biaxial check (Bresler) ---------------------------------
+    chk.biaxial = True
+    Ag = b * h
+    Ast = 2.0 * As_face
+    ratio_b: Optional[float] = None
+    if chk.Pu >= 0.10 * fc * Ag:
+        # Bresler reciprocal load method (applicable at Pu >= 0.1 fc' Ag):
+        # 1/phiPn_b = 1/phiPn_x + 1/phiPn_y - 1/phiP0 with phiP0 the
+        # UNCAPPED pure-compression design point (0.65 * P0) — Bresler's
+        # identity needs the true P0; the 0.80 tied-column cap is an
+        # accidental-eccentricity device and stays on the uniaxial diagram.
+        Pnx = axial_capacity_at_moment(chk.pm_points, chk.Mu)
+        Pny = axial_capacity_at_moment(pts22, chk.Mu22)
+        if Pnx is not None and Pny is not None and Pnx > 0.0 and Pny > 0.0:
+            P0 = 0.85 * fc * (Ag - Ast) + lay.fy * Ast
+            phiP0 = PHI_COMPRESSION * P0
+            inv = 1.0 / Pnx + 1.0 / Pny - 1.0 / phiP0
+            if inv > 0.0:
+                ratio_b = chk.Pu / (1.0 / inv)
+                chk.method = "bresler"
+                chk.notes.append(
+                    "biaxial Bresler reciprocal: 1/phiPn_b = "
+                    f"1/{Pnx:.1f} + 1/{Pny:.1f} - 1/{phiP0:.1f} kN "
+                    "(Bresler 1960 / PCA Notes; valid Pu >= 0.1 fc' Ag)")
+    if ratio_b is None:
+        # load-contour fallback (low axial, or a moment demand beyond the
+        # compression branch): (Mux/phiMnx)^1.5 + (Muy/phiMny)^1.5 <= 1
+        M3cap = moment_capacity_at_axial(chk.pm_points, chk.Pu)
+        M2cap = moment_capacity_at_axial(pts22, chk.Pu)
+        if not M3cap or not M2cap or M3cap <= 0.0 or M2cap <= 0.0:
+            chk.notes.append("biaxial check not available: the axial demand "
+                             "lies outside both interaction diagrams")
+            chk.ratio, chk.equation = ratio, "P-M"
+            chk.status = "OK" if ratio <= 1.0 else "NG"
+            return
+        ratio_b = ((chk.Mu / M3cap) ** CONTOUR_EXPONENT
+                   + (chk.Mu22 / M2cap) ** CONTOUR_EXPONENT)
+        chk.method = "contour"
+        chk.notes.append(
+            "biaxial load contour (Mux/phiMnx)^1.5 + (Muy/phiMny)^1.5 <= 1 "
+            f"at Pu (phiMnx = {M3cap:.1f}, phiMny = {M2cap:.1f} kN*m; "
+            "PCA exponent range 1.15-1.55, 1.5 used)")
+    chk.ratio_biaxial = float(ratio_b)
+    # governing: the biaxial value against the uniaxial major-axis radial
+    # ratio (the biaxial surface can never be less critical than uniaxial)
+    chk.ratio = max(ratio, float(ratio_b))
+    chk.equation = "P-M"
+    chk.status = "OK" if chk.ratio <= 1.0 else "NG"
 
 
 # --------------------------------------------------------------------------- #

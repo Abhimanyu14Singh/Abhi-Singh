@@ -1622,3 +1622,163 @@ No new endpoints: `POST /api/model` round-trips `link_type`/`params` (400
 on a bad type or bad/incomplete params via `validate()`), `pier`, and
 `auto_pier_walls`; `POST /api/analyze` returns the `"piers"` block
 automatically.
+
+---
+
+# v0.16 additions — beam deflection recovery + serviceability, live-load reduction, biaxial concrete columns
+
+## Beam transverse deflection recovery (engine)
+
+For every STATIC case and every ADDITIVE combo, each case block gains
+
+```jsonc
+"member_deflections": {"<uid>": {"x": [0, ..., L],   // the 11 stations (m)
+                                 "dy": [ ... ],       // LOCAL y deflection (m)
+                                 "dz": [ ... ]}}      // LOCAL z deflection (m)
+```
+
+**Method (EXACT for prismatic Euler members, closed form — no quadrature).**
+Per mesh segment the elastic line satisfies ``EI v'' = Mb(x)`` with the
+statics-exact bending-moment field already used by the stations (corrected
+local end-i forces + recorded span loads).  The two integration constants
+come from the segment end NODE displacements transformed to the member local
+axes:
+
+    v(xi)  = v_i + theta0*xi + I(xi)/EI,
+    theta0 = (v_j - v_i - I(L_seg)/EI) / L_seg,
+    I(xi)  = closed-form Macaulay double integral of Mb
+             (point load: p<xi-x0>^3/6; linear-varying distributed load:
+              w1<xi-xa>^4/24 + s<xi-xa>^5/120 - w2<xi-xb>^4/24 - s<xi-xb>^5/120).
+
+Only end DISPLACEMENTS enter — no end rotations — so moment releases are
+exact (the released-end rotation is implied by the zero end moment in
+``Mb``); the x-z plane uses the conjugate pair ``(V_i = fi[2],
+Mb_i = -fi[4])``.  Split members (shell-edge / foundation discretization)
+are recovered segment by segment (exact); stiffness modifiers enter through
+the effective EI.  Skipped: axial-only (Truss) members (no bending) and
+members with rigid end offsets (the elastic element spans untracked offset
+nodes) — no entry is emitted.  Additive combos superpose dy/dz linearly;
+RS/TH/envelope results carry an empty ``member_deflections`` (a positive
+envelope of a signed deflection is not a serviceability quantity).
+P-Delta cases report the same linear-statics recovery of their (incremental)
+state — approximate inside the span, consistent with their stations.
+
+Hand-checked closed forms (all 1e-6, most machine precision): SS UDL
+``5wL^4/384EI`` at midspan; fixed-fixed UDL ``wL^4/384EI`` (and the full
+elastic line ``w x^2 (L-x)^2 / 24EI``); SS central point load ``PL^3/48EI``;
+cantilever tip load ``PL^3/3EI`` with the whole station curve equal to the
+analytic cubic ``P x^2 (3L-x)/6EI``; a portal-frame beam (ends rotate AND
+settle) matches an independent numpy fine-mesh Euler FE with the same end
+conditions pointwise.
+
+## Beam serviceability checks
+
+```python
+# BuildingModel gains (round-trips; absent key = 360.0; finite > 0):
+#   deflection_limit: float = 360.0     # limit is L / deflection_limit
+```
+
+Top-level results gain ``deflection_checks`` (ALWAYS present, may be ``{}``),
+per static case + additive combo, BEAMS only:
+
+```jsonc
+"deflection_checks": {"<case|combo>": [{
+    "uid": "B1", "story": "Story1", "L": 6.0,
+    "max_abs_dy": 0.0025,        // max |dy RELATIVE TO THE CHORD| (m) — the
+                                 // straight line between the two end
+                                 // deflections; support settlement / joint
+                                 // displacement does not count against the span
+    "ratio_str": "L/2400",       // L / max_abs_dy, rounded ("L/inf" at ~0)
+    "limit": "L/360",            // from model.deflection_limit
+    "ok": true                   // max_abs_dy <= L / deflection_limit
+}]}
+```
+
+## ASCE 7-16 §4.7 live-load reduction (`skyframe/core/codes.py`)
+
+```python
+live_load_reduction(model) -> {column uid: {"KLL", "At", "R", "n_stories"}}
+```
+
+SI form of Eq. 4.7-1: ``R = 0.25 + 4.57/sqrt(KLL*At)`` (At in m^2), clamped
+to **[0.4, 1.0]** — floor **0.5** for a column supporting ONE floor, 0.4 for
+two or more (§4.7.2).  ``KLL = 4`` UNIFORMLY (`LIVE_KLL_COLUMN` — the Table
+4.7-1 value for interior and exterior columns without cantilever slabs; the
+R = 1 cap embodies the 400 ft^2 = 37.1 m^2 applicability threshold, where
+the formula crosses 1).  ``At`` = tributary plan area x stories supported
+at/above the column top:
+
+* **Tributary rule** — half of every beam span framing into the column top,
+  per plan direction: ``At_floor = (sum Lx/2) * (sum Ly/2)`` (interior
+  column of 6 m bays: 36 m^2; corner: 9 m^2; edge: 18 m^2).  Beams classify
+  x/y by dominant plan direction (skewed framing approximated).
+* **Fallback / limits** — a column with no attached beams in both directions
+  at its top elevation (irregular layouts, transfer levels, walls-only
+  floors) falls back to ``plan_area / n_columns_at_that_level`` with a
+  ``UserWarning``; a degenerate model (no plan area) reports R = 1.
+
+**This is a DESIGN-STAGE reduction — analysis results are never modified.**
+The helper
+
+```python
+reduce_live_demands(results_dict, model, *, live_case="LIVE", reduction=None)
+```
+
+returns a DEEP-COPIED results dict in which each column's member demands
+(12 end forces + all station columns) have their live-attributable share
+scaled by that column's R.  Linearity makes the attribution exact:
+``q_adj = q_total + (R-1) * f_live * q_LIVE`` with ``f_live`` = 1 for the
+live case itself, the combo's LIVE-case factor for ADDITIVE combos, 0 for
+other plain cases; envelope combos and RS cases are left UNCHANGED
+(documented limitation — their live share is not a single linear factor).
+Raises on an unknown ``live_case``.
+
+## Biaxial concrete column check — Bresler (`skyframe/design/concrete.py`)
+
+`ConcreteCheck` gains ``Mu22`` (max |M2| demand), ``biaxial: bool``,
+``ratio_biaxial: float|None``, ``method: "uniaxial"|"bresler"|"contour"``
+(all serialised).  A column goes BIAXIAL when BOTH Mu33 and Mu22 exceed
+``BIAXIAL_TRIGGER = 5%`` of the respective axis's PEAK uniaxial phiMn.  The
+M2-axis interaction diagram reuses the SAME strain-compatibility code with
+b/h swapped and the SAME symmetric two-face layout (documented
+approximation: equal steel about both axes).
+
+* ``Pu >= 0.1 fc' Ag`` — **Bresler reciprocal load method** (Bresler 1960;
+  PCA Notes / ACI R10.3.6): ``1/phiPn_b = 1/phiPn_x + 1/phiPn_y - 1/phiP0``
+  with ``phiPn_x/y`` the COMPRESSION-side axial capacity of each uniaxial
+  diagram at that axis's moment demand (`axial_capacity_at_moment`) and
+  ``phiP0 = 0.65 * P0`` the UNCAPPED pure-compression design point (the
+  0.80 tied-column cap is an accidental-eccentricity device and stays on
+  the uniaxial diagram; Bresler's identity needs the true P0).
+  ``ratio_biaxial = Pu / phiPn_b``.
+* ``Pu < 0.1 fc' Ag`` — **load-contour fallback** (the reciprocal method's
+  documented applicability limit): ``(Mu33/phiMnx)^1.5 + (Mu22/phiMny)^1.5
+  <= 1`` with phiMn at the demand axial level (`moment_capacity_at_axial`);
+  exponent ``CONTOUR_EXPONENT = 1.5`` (PCA range 1.15-1.55).
+  ``ratio_biaxial`` = the contour value.
+
+The reported ``ratio`` = max(uniaxial M3 radial ratio, ratio_biaxial);
+``status`` follows it.  A pure-uniaxial demand (either moment under the 5%
+trigger) keeps the v0.6 path BIT-IDENTICAL (method "uniaxial",
+ratio_biaxial null).  New exports: `axial_capacity_at_moment`,
+`moment_capacity_at_axial`, `BIAXIAL_TRIGGER`, `CONTOUR_EXPONENT` (also via
+`skyframe.design`).
+
+Hand-checks: square symmetric column with equal demands both axes →
+``1/phiPn_b = 2/phiPn_x - 1/phiP0`` verified to 1e-9 against an independent
+polyline intersection + hand P0; contour value hand-verified at low axial;
+uniaxial regression 1e-12.
+
+## API additions
+
+| Method | Path                  | Body / Response |
+|--------|-----------------------|-----------------|
+| GET    | `/api/live-reduction` | → `{"factors": {uid: {KLL, At, R, n_stories}}}` for the current model (pure geometry, no analysis) |
+
+`POST /api/design/steel` and `POST /api/design/concrete` accept optional
+``"live_reduction": true`` + ``"live_case": "LIVE"`` — demands are adjusted
+via `reduce_live_demands` before checking (single-case AND combo-envelope
+paths) and the response carries the ``"live_reduction"`` factors; 400 on an
+unknown live case.  `POST /api/model` round-trips ``deflection_limit``;
+`POST /api/analyze` returns ``member_deflections`` (per static case /
+additive combo) and the top-level ``deflection_checks`` block automatically.

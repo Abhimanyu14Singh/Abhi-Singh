@@ -1105,6 +1105,11 @@ class BuildingModel:
     # wall with its uid so it gets per-story pier P/V/M output (a wall with
     # an explicit ShellRegion.pier label always reports).
     auto_pier_walls: bool = False
+    # v0.16 serviceability: beam deflection limit denominator.  The engine's
+    # ``deflection_checks`` flag a beam when its max relative-to-chord
+    # transverse deflection exceeds L / deflection_limit (default L/360,
+    # the classic live-load floor-beam limit).  Finite and > 0.
+    deflection_limit: float = 360.0
     num_modes: int = 6
 
     # ---------------- convenience API ----------------
@@ -2105,6 +2110,11 @@ class BuildingModel:
                 and math.isfinite(self.thermal_alpha)):
             raise ValueError(f"thermal_alpha must be finite (got "
                              f"{self.thermal_alpha!r})")
+        if not (isinstance(self.deflection_limit, (int, float))
+                and math.isfinite(self.deflection_limit)
+                and self.deflection_limit > 0.0):
+            raise ValueError(f"deflection_limit must be a finite value > 0 "
+                             f"(got {self.deflection_limit!r})")
         self._validate_diaphragm()
         for g in self.effective_grids():
             self._validate_grid(g)
@@ -2189,6 +2199,7 @@ class BuildingModel:
             "th_functions": {k: v.to_dict()
                              for k, v in self.th_functions.items()},
             "auto_pier_walls": self.auto_pier_walls,
+            "deflection_limit": self.deflection_limit,
             "num_modes": self.num_modes,
         }
 
@@ -2430,6 +2441,8 @@ class BuildingModel:
                 y_range=_rng(cd.get("y_range")),
                 z_range=_rng(cd.get("z_range"))))
         mdl.auto_pier_walls = bool(d.get("auto_pier_walls", False))
+        # v0.16: serviceability deflection limit (absent = pre-v0.16 default)
+        mdl.deflection_limit = float(d.get("deflection_limit", 360.0))
         mdl.num_modes = int(d.get("num_modes", 6))
         mdl.validate()
         return mdl

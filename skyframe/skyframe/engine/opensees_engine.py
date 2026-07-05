@@ -46,6 +46,13 @@ v0.12 axial-only members); any device makes TH cases Newton.  v0.15 wall
 PIERS: labeled walls report per-story in-plane P/V/M from EXACT nodal
 free-body cuts of the shell elements (``results["piers"]``).
 
+v0.16 beam deflection recovery: every static case / additive combo reports
+``member_deflections`` — EXACT closed-form transverse deflection stations
+(local y/z) recovered per segment from the end node displacements plus the
+Macaulay double integral of the statics-exact moment field (see
+``_member_outputs``); ``results["deflection_checks"]`` flags beams whose
+relative-to-chord deflection exceeds ``L / model.deflection_limit``.
+
 v0.4 additions in results: frame stiffness modifiers (``FrameSection.mod_*``)
 and the shell modifier (``ShellSection.mod``, scales E) are applied when the
 elements are created; member local axes honour ``FrameMember.angle``
@@ -323,6 +330,49 @@ def _condensed_fef(records: Sequence[SpanLoad], L: float, E: float, G: float,
         krr = K[np.ix_(rel, rel)]
         f0 = f0 - K[:, rel] @ np.linalg.solve(krr, f0[rel])
     return f0
+
+
+def _defl_double_integral(V_i: float, M_i: float,
+                          records: Sequence[SpanLoad], comp: int,
+                          xi: float) -> float:
+    """Closed-form ``I(xi) = int_0^xi (xi - t) * Mb(t) dt`` for one bending
+    plane of a prismatic Euler segment (v0.16 deflection recovery).
+
+    ``Mb(t)`` is the internal bending moment of the plane's 2D beam
+    reconstructed by statics from the (corrected) local end-i forces and the
+    recorded span loads — exactly the field the station results integrate:
+
+        Mb(t) = -M_i + t*V_i + sum_pt p*(t - x0)_+          (point loads)
+                + Macaulay terms of each trapezoid record.
+
+    For the local x-y plane pass ``V_i = fi[1], M_i = fi[5], comp = 1``
+    (then ``Mb == M3`` and ``EI33 * v'' = Mb``); for the x-z plane pass
+    ``V_i = fi[2], M_i = -fi[4], comp = 2`` (the (uz, -ry) plane behaves as
+    a standard 2D beam whose conjugate end moment is ``-fi[4]``; then
+    ``EI22 * w'' = Mb``).  A linear-varying load ``q<t-a>^n`` contributes
+    ``q <xi-a>^(n+4) / ((n+1)(n+2)(n+3)(n+4))`` (Macaulay integration), so
+    the whole expression is exact — no quadrature.
+    """
+    val = -M_i * xi * xi / 2.0 + V_i * xi ** 3 / 6.0
+    for rec in records:
+        if rec[0] == "point":
+            p, x0 = rec[1][comp], rec[2]
+            if xi > x0:
+                val += p * (xi - x0) ** 3 / 6.0
+        else:
+            w1, w2 = rec[1][comp], rec[2][comp]
+            xa, xb = rec[3], rec[4]
+            span = xb - xa
+            if span < 1e-12:
+                continue
+            s = (w2 - w1) / span
+            if xi > xa:
+                dxa = xi - xa
+                val += w1 * dxa ** 4 / 24.0 + s * dxa ** 5 / 120.0
+            if xi > xb:
+                dxb = xi - xb
+                val -= w2 * dxb ** 4 / 24.0 + s * dxb ** 5 / 120.0
+    return val
 
 
 def _section_forces(fi: Sequence[float], records: Sequence[SpanLoad],
@@ -619,6 +669,12 @@ class CaseResults:
     #   resisting-force components (6 dof x 4 nodes) captured at solve time
     #   for the exact wall-pier free-body cuts; populated only when the
     #   model has pier-labeled walls
+    member_deflections: Dict[str, Dict[str, List[float]]] = field(
+        default_factory=dict)
+    #   v0.16: uid -> {"x": [0..L], "dy": [...], "dz": [...]} — exact
+    #   transverse deflections (LOCAL y / z, m) at the 11 member stations,
+    #   recovered in closed form for prismatic members (static cases and
+    #   additive combos; empty for RS/TH/envelopes)
 
     def to_dict(self) -> dict:
         d = {
@@ -629,6 +685,9 @@ class CaseResults:
             "story": {s: dict(v) for s, v in self.story.items()},
             "member_stations": {u: {k: list(v) for k, v in st.items()}
                                 for u, st in self.member_stations.items()},
+            "member_deflections": {u: {k: list(v) for k, v in md.items()}
+                                   for u, md in
+                                   self.member_deflections.items()},
         }
         if self.shell_forces:
             d["shell_forces"] = {str(i): list(v)
@@ -805,6 +864,9 @@ class AnalysisResults:
         default_factory=dict)
     #   v0.15: per static case / additive combo -> pier label -> story ->
     #   {"P", "V", "M"} in-plane wall pier design forces
+    deflection_checks: Dict[str, List[dict]] = field(default_factory=dict)
+    #   v0.16: per static case / additive combo -> beam serviceability
+    #   entries [{uid, story, L, max_abs_dy, ratio_str, limit, ok}]
     warning: str = ""                    # e.g. TH cases skipped (step cap)
 
     def to_dict(self) -> dict:
@@ -829,6 +891,9 @@ class AnalysisResults:
             "piers": {c: {p: {s: dict(v) for s, v in by_story.items()}
                           for p, by_story in by_pier.items()}
                       for c, by_pier in self.piers.items()},
+            "deflection_checks": {c: [dict(e) for e in entries]
+                                  for c, entries in
+                                  self.deflection_checks.items()},
             "modal": self.modal.to_dict(),
         }
         if self.story_props:
@@ -976,6 +1041,16 @@ class OpenSeesEngine:
                 if cb.combo_type == "add" and cname in combos:
                     pier_src[cname] = combos[cname]
             piers = self._compute_piers(asm, pier_src)
+        # v0.16 beam serviceability: relative-to-chord deflection checks per
+        # static case + additive combo (pure post-processing of the exact
+        # member_deflections stations).
+        defl_src = dict(cases)
+        for cname, cb in model.combos.items():
+            if cb.combo_type == "add" and cname in combos:
+                defl_src[cname] = combos[cname]
+        deflection_checks = {cname: self._deflection_checks(cr)
+                             for cname, cr in defl_src.items()
+                             if cr.member_deflections}
         members = [{"uid": m.uid, "kind": m.kind, "section": m.section,
                     "ni": asm.ele_nodes[m.uid][0], "nj": asm.ele_nodes[m.uid][1],
                     "story": m.story}
@@ -1002,8 +1077,46 @@ class OpenSeesEngine:
             takedown=takedown,
             section_cuts=section_cuts,
             piers=piers,
+            deflection_checks=deflection_checks,
             warning=warning,
         )
+
+    def _deflection_checks(self, cr: CaseResults) -> List[dict]:
+        """Beam serviceability entries for one case/combo (v0.16).
+
+        Per BEAM with deflection stations: the max ABSOLUTE local-y
+        deflection RELATIVE TO THE CHORD (the straight line between the two
+        end deflections — end settlements/joint displacements do not count
+        against the span limit), the classic ``L/n`` ratio string, and an
+        ok flag against ``L / model.deflection_limit``.
+        """
+        model = self.model
+        limit_den = float(getattr(model, "deflection_limit", 360.0))
+        out: List[dict] = []
+        for m in model.members:
+            if m.kind != "beam":
+                continue
+            md = cr.member_deflections.get(m.uid)
+            if not md or not md.get("dy"):
+                continue
+            L = m.length
+            dy = md["dy"]
+            xs = md["x"]
+            d0, d1 = dy[0], dy[-1]
+            rel = [v - (d0 + (d1 - d0) * (x / L))
+                   for v, x in zip(dy, xs)]
+            max_abs = max(abs(v) for v in rel)
+            allowed = L / limit_den
+            ratio_str = (f"L/{L / max_abs:.0f}" if max_abs > 1e-12
+                         else "L/inf")
+            out.append({
+                "uid": m.uid, "story": m.story, "L": float(L),
+                "max_abs_dy": float(max_abs),
+                "ratio_str": ratio_str,
+                "limit": f"L/{limit_den:g}",
+                "ok": bool(max_abs <= allowed * (1.0 + 1e-12)),
+            })
+        return out
 
     def _axial_only_present(self) -> bool:
         """True if any member is tension/compression-only (v0.12)."""
@@ -1066,7 +1179,8 @@ class OpenSeesEngine:
         reactions = {t: list(ops.nodeReaction(t)) for t in asm.support_tags}
         self._add_spring_reactions(asm, node_disp, reactions)
         base = self._base_totals(asm, reactions)
-        member_forces, member_stations = self._member_outputs(asm)
+        member_forces, member_stations, member_deflections = \
+            self._member_outputs(asm, node_disp=node_disp)
         story = self._story_results(asm, case, node_disp)
         shell_forces = self._shell_outputs(asm)
         shell_nodal = (self._shell_nodal(asm) if self._piers_enabled()
@@ -1075,7 +1189,8 @@ class OpenSeesEngine:
         result = CaseResults(case_name, node_disp, reactions, base,
                              member_forces, story, member_stations,
                              shell_forces=shell_forces,
-                             shell_nodal=shell_nodal)
+                             shell_nodal=shell_nodal,
+                             member_deflections=member_deflections)
         self._case_cache[case_name] = result
         return result
 
@@ -2080,8 +2195,10 @@ class OpenSeesEngine:
     # ----------------------------------------------- per-member results
     def _member_outputs(self, asm: _Assembly,
                         baseline: Optional[Dict[Tuple[str, int],
-                                                List[float]]] = None
+                                                List[float]]] = None,
+                        node_disp: Optional[Dict[int, List[float]]] = None
                         ) -> Tuple[Dict[str, List[float]],
+                                   Dict[str, Dict[str, List[float]]],
                                    Dict[str, Dict[str, List[float]]]]:
         """End forces + 11-station internal forces per ORIGINAL member.
 
@@ -2091,9 +2208,28 @@ class OpenSeesEngine:
         recorded span loads integrated in closed form.  ``baseline`` (v0.3,
         P-Delta two-stage runs) holds per-segment local forces of the
         gravity state to subtract, so the case reports its own increment.
+
+        v0.16: when ``node_disp`` is provided (static cases; the RS modal
+        pipeline passes None) the third returned dict holds the EXACT
+        transverse deflection stations per member (``member_deflections``,
+        local y / z, m).  Per segment the elastic line satisfies
+        ``EI v'' = Mb(x)`` with the statics-exact moment field, so
+
+            v(xi) = v_i + theta0*xi + I(xi)/EI,
+            theta0 = (v_j - v_i - I(L_seg)/EI) / L_seg,
+
+        with ``I(xi)`` the closed-form double integral of ``Mb``
+        (:func:`_defl_double_integral`) and ``v_i``/``v_j`` the segment end
+        NODE displacements transformed to the member local axes.  Only the
+        two end displacements enter — no end rotations — so moment releases
+        are handled exactly (the released-end rotation is implied by the
+        zero end moment in ``Mb``).  Split members are recovered segment by
+        segment (exact).  Axial-only (Truss) members and members with rigid
+        end offsets are skipped (no bending / offset nodes are not tracked).
         """
         member_forces: Dict[str, List[float]] = {}
         member_stations: Dict[str, Dict[str, List[float]]] = {}
+        member_deflections: Dict[str, Dict[str, List[float]]] = {}
         for m in self.model.members:
             # v0.12 axial-only members are 2-force Truss elements: report the
             # constant axial force (V/M/T = 0).  basicForce is tension-positive;
@@ -2149,7 +2285,82 @@ class OpenSeesEngine:
                 for key, v in zip(("N", "V2", "V3", "T", "M2", "M3"), vals):
                     cols[key].append(float(v))
             member_stations[m.uid] = {"x": xs, **cols}
-        return member_forces, member_stations
+            # v0.16 exact transverse deflection stations (static cases only;
+            # members with rigid end offsets are skipped — their elastic
+            # element spans untracked offset nodes)
+            if (node_disp is not None
+                    and (m.rigid_offset_i + m.rigid_offset_j) <= _TOL):
+                md = self._member_deflection(m, segs, corrected, xs,
+                                             node_disp)
+                if md is not None:
+                    member_deflections[m.uid] = md
+        return member_forces, member_stations, member_deflections
+
+    def _member_deflection(self, m: FrameMember, segs: List[Segment],
+                           corrected: Dict[int, List[float]],
+                           xs: List[float],
+                           node_disp: Dict[int, List[float]]
+                           ) -> Optional[Dict[str, List[float]]]:
+        """{"x", "dy", "dz"} deflection stations of one member (v0.16).
+
+        Exact elastic-line recovery per segment (see ``_member_outputs``):
+        the two segment end NODE displacements (transformed to the member
+        local y/z axes) plus the closed-form double integral of the
+        statics-exact moment field pin the interior cubic/quintic exactly.
+        ``dy``/``dz`` are ABSOLUTE local-y / local-z displacements (m) —
+        chord-relative values are derived by the serviceability checks.
+        """
+        model = self.model
+        sec = model.sections[m.section]
+        mat = model.materials[sec.material]
+        _, I22_eff, I33_eff, _ = self._eff_props(sec)
+        EIz = mat.E * I33_eff                     # x-y plane (dy)
+        EIy = mat.E * I22_eff                     # x-z plane (dz)
+        if EIz <= 0.0 or EIy <= 0.0:              # pragma: no cover
+            return None
+        _, yax, zax, _, _ = _local_axes(m)
+
+        def tdisp(tag: int, ax: Vec3) -> float:
+            d = node_disp.get(tag)
+            if d is None:                         # pragma: no cover
+                return 0.0
+            return d[0] * ax[0] + d[1] * ax[1] + d[2] * ax[2]
+
+        # per-segment elastic-line parameters: (vy_i, th_y, vz_i, th_z)
+        params: Dict[int, Tuple[float, float, float, float, tuple, list]] = {}
+        for seg in segs:
+            fi = corrected[seg.index][:6]
+            recs = tuple(self._seg_span_loads.get((m.uid, seg.index), ()))
+            Ls = seg.length
+            vy_i = tdisp(seg.ni + 1, yax)
+            vy_j = tdisp(seg.nj + 1, yax)
+            vz_i = tdisp(seg.ni + 1, zax)
+            vz_j = tdisp(seg.nj + 1, zax)
+            Iy_L = _defl_double_integral(fi[1], fi[5], recs, 1, Ls)
+            Iz_L = _defl_double_integral(fi[2], -fi[4], recs, 2, Ls)
+            th_y = (vy_j - vy_i - Iy_L / EIz) / Ls
+            th_z = (vz_j - vz_i - Iz_L / EIy) / Ls
+            params[seg.index] = (vy_i, th_y, vz_i, th_z, recs, fi)
+
+        dy: List[float] = []
+        dz: List[float] = []
+        for x in xs:
+            seg = None
+            for s in segs:
+                if s.x0 - 1e-9 <= x <= s.x0 + s.length + 1e-9:
+                    seg = s
+                    break
+            if seg is None:                        # numerical safety net
+                seg = segs[-1]
+            xi = min(max(x - seg.x0, 0.0), seg.length)
+            vy_i, th_y, vz_i, th_z, recs, fi = params[seg.index]
+            dy.append(float(
+                vy_i + th_y * xi
+                + _defl_double_integral(fi[1], fi[5], recs, 1, xi) / EIz))
+            dz.append(float(
+                vz_i + th_z * xi
+                + _defl_double_integral(fi[2], -fi[4], recs, 2, xi) / EIy))
+        return {"x": list(xs), "dy": dy, "dz": dz}
 
     # ----------------------------------------------- per-shell-quad results
     @staticmethod
@@ -2854,6 +3065,17 @@ class OpenSeesEngine:
                         for res, f in parts)
                     for i in range(len(st0[key]))]
             member_stations[uid] = entry
+        # v0.16: transverse deflection stations superpose linearly (a member
+        # present in every part — offset/truss members are absent everywhere)
+        member_deflections: Dict[str, Dict[str, List[float]]] = {}
+        for uid, md0 in parts[0][0].member_deflections.items():
+            entry_d: Dict[str, List[float]] = {"x": list(md0["x"])}
+            for key in ("dy", "dz"):
+                entry_d[key] = [
+                    sum(f * res.member_deflections[uid][key][i]
+                        for res, f in parts)
+                    for i in range(len(md0[key]))]
+            member_deflections[uid] = entry_d
         # shell stress resultants superpose linearly too (v0.4)
         shell_forces: Dict[int, List[float]] = {}
         for qi, v0 in parts[0][0].shell_forces.items():
@@ -2877,6 +3099,7 @@ class OpenSeesEngine:
             warning=warning,
             shell_forces=shell_forces,
             shell_nodal=shell_nodal,
+            member_deflections=member_deflections,
         )
 
     def _envelope(self, name: str, factors: Dict[str, float]) -> CaseResults:
@@ -3021,8 +3244,8 @@ class OpenSeesEngine:
         # incremental spring reaction, consistent with the other quantities.
         self._add_spring_reactions(asm, node_disp, reactions)
         base = self._base_totals(asm, reactions)
-        member_forces, member_stations = self._member_outputs(
-            asm, baseline=snap_ele)
+        member_forces, member_stations, member_deflections = \
+            self._member_outputs(asm, baseline=snap_ele, node_disp=node_disp)
         story = self._story_results(asm, case, node_disp)
         shell_forces = self._shell_outputs(
             asm, baseline=snap_shell if two_stage else None)
@@ -3032,7 +3255,8 @@ class OpenSeesEngine:
         return CaseResults(case.name, node_disp, reactions, base,
                            member_forces, story, member_stations,
                            shell_forces=shell_forces,
-                           shell_nodal=shell_nodal)
+                           shell_nodal=shell_nodal,
+                           member_deflections=member_deflections)
 
     @staticmethod
     def _setup_nonlinear_analysis(asm: _Assembly) -> None:
@@ -3807,7 +4031,9 @@ class OpenSeesEngine:
         reactions = {t: list(ops.nodeReaction(t)) for t in asm.support_tags}
         self._add_spring_reactions(asm, node_disp, reactions)
         base = self._base_totals(asm, reactions)
-        member_forces, member_stations = self._member_outputs(asm)
+        # deflection recovery is skipped for modal statics (RS results are
+        # positive envelopes; deflections are a static-case quantity)
+        member_forces, member_stations, _ = self._member_outputs(asm)
 
         # story values: modal story shear = cumulative applied modal force
         # at & above each story (loads live on massed nodes / masters)

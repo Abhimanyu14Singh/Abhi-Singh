@@ -13,7 +13,11 @@ names (``summarize`` = steel, kept for backward compatibility;
 from skyframe.design.concrete import (
     ConcreteCheck,
     RebarLayout,
+    axial_capacity_at_moment,
     check_concrete_members,
+    check_concrete_members_envelope,
+    column_interaction,
+    moment_capacity_at_axial,
 )
 from skyframe.design.concrete import summarize as summarize_concrete
 from skyframe.design.steel import (
@@ -29,5 +33,7 @@ __all__ = [
     "MemberCheck", "check_members", "summarize",
     "SectionSuggestion", "optimize_members", "apply_suggestions",
     "ConcreteCheck", "RebarLayout", "check_concrete_members",
+    "check_concrete_members_envelope", "column_interaction",
+    "axial_capacity_at_moment", "moment_capacity_at_axial",
     "summarize_concrete",
 ]
