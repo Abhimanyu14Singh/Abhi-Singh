@@ -16,10 +16,18 @@ from skyframe.design.concrete import (
     check_concrete_members,
 )
 from skyframe.design.concrete import summarize as summarize_concrete
-from skyframe.design.steel import MemberCheck, check_members, summarize
+from skyframe.design.steel import (
+    MemberCheck,
+    SectionSuggestion,
+    apply_suggestions,
+    check_members,
+    optimize_members,
+    summarize,
+)
 
 __all__ = [
     "MemberCheck", "check_members", "summarize",
+    "SectionSuggestion", "optimize_members", "apply_suggestions",
     "ConcreteCheck", "RebarLayout", "check_concrete_members",
     "summarize_concrete",
 ]

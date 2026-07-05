@@ -163,6 +163,9 @@ class Story:
         return asdict(self)
 
 
+AXIAL_LIMITS = ("both", "tension", "compression")
+
+
 @dataclass
 class FrameMember:
     """A frame element between two 3D points (already snapped to grid/story)."""
@@ -197,6 +200,14 @@ class FrameMember:
     # Z spring ``k_line * tributary_length`` at each node.
     foundation_ks: float = 0.0
     foundation_width: float = 0.0
+    # v0.12 axial force limit (braces, cables, ties): a member with
+    # ``axial_limit != "both"`` is modelled as a 2-force axial-only Truss that
+    # carries load in ONE direction only — "tension" (tension-only: a cable /
+    # tie that goes slack in compression) or "compression" (compression-only:
+    # a strut that releases in tension).  "both" (default) is the ordinary
+    # bending frame element.  A case that contains any non-"both" member is
+    # solved NONLINEARLY (Newton).
+    axial_limit: str = "both"
 
     @property
     def length(self) -> float:
@@ -231,6 +242,7 @@ class FrameMember:
                 "rigid_factor": self.rigid_factor,
                 "foundation_ks": self.foundation_ks,
                 "foundation_width": self.foundation_width,
+                "axial_limit": self.axial_limit,
                 "length": self.length}
 
 
@@ -845,7 +857,8 @@ class BuildingModel:
                    rigid_i: float = 0.0, rigid_j: float = 0.0,
                    rigid_factor: float = 1.0,
                    foundation_ks: float = 0.0,
-                   foundation_width: float = 0.0) -> FrameMember:
+                   foundation_width: float = 0.0,
+                   axial_limit: str = "both") -> FrameMember:
         if section not in self.sections:
             raise ValueError(f"Unknown section {section}")
         uid = uid or f"{kind[0].upper()}{len(self.members) + 1}"
@@ -856,7 +869,8 @@ class BuildingModel:
                         rigid_i=float(rigid_i), rigid_j=float(rigid_j),
                         rigid_factor=float(rigid_factor),
                         foundation_ks=float(foundation_ks),
-                        foundation_width=float(foundation_width))
+                        foundation_width=float(foundation_width),
+                        axial_limit=str(axial_limit))
         if m.length < 1e-9:
             raise ValueError(f"Member {uid} has zero length")
         if not m.release_tokens() <= {"Mi", "Mj"}:
@@ -864,8 +878,15 @@ class BuildingModel:
                              "(tokens must be 'Mi'/'Mj')")
         self._validate_rigid_offsets(m)
         self._validate_foundation(m)
+        self._validate_axial_limit(m)
         self.members.append(m)
         return m
+
+    @staticmethod
+    def _validate_axial_limit(m: FrameMember) -> None:
+        if m.axial_limit not in AXIAL_LIMITS:
+            raise ValueError(f"Member {m.uid}: axial_limit must be one of "
+                             f"{AXIAL_LIMITS}, got {m.axial_limit!r}")
 
     @staticmethod
     def _validate_foundation(m: FrameMember) -> None:
@@ -1465,6 +1486,7 @@ class BuildingModel:
                                  f"{m.releases!r}")
             self._validate_rigid_offsets(m)
             self._validate_foundation(m)
+            self._validate_axial_limit(m)
         region_uids = set()
         for r in self.shells:
             if r.uid in region_uids:
@@ -1635,7 +1657,8 @@ class BuildingModel:
                 rigid_j=float(md.get("rigid_j", 0.0)),
                 rigid_factor=float(md.get("rigid_factor", 1.0)),
                 foundation_ks=float(md.get("foundation_ks", 0.0)),
-                foundation_width=float(md.get("foundation_width", 0.0))))
+                foundation_width=float(md.get("foundation_width", 0.0)),
+                axial_limit=str(md.get("axial_limit", "both"))))
         for rd in d.get("shells") or []:
             mdl.shells.append(ShellRegion(
                 uid=rd["uid"], kind=rd["kind"], behavior=rd["behavior"],

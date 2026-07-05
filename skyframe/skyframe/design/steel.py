@@ -49,7 +49,12 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 __all__ = ["MemberCheck", "check_members", "check_members_envelope",
-           "summarize", "E_STEEL"]
+           "summarize", "E_STEEL", "SectionSuggestion", "optimize_members",
+           "apply_suggestions"]
+
+# Structural steel density (kg/m^3), for the weight-per-metre of a candidate
+# section (A [m^2] * 7850 = kg/m).
+STEEL_DENSITY = 7850.0
 
 # --------------------------------------------------------------------------- #
 # constants
@@ -378,6 +383,182 @@ def check_members_envelope(model, results, combos: Optional[List[str]] = None,
         gov.governing_combo = gov_combo
         out.append(gov)
     return out
+
+
+# --------------------------------------------------------------------------- #
+# v0.12 single-pass, demand-based section optimization
+# --------------------------------------------------------------------------- #
+@dataclass
+class SectionSuggestion:
+    """One member's optimized-section suggestion (v0.12).
+
+    ``current_ratio`` is the governing H1 interaction ratio of the member's
+    CURRENT section under the case demand (None when the current section is
+    not a recognised library W-shape).  ``suggested_section`` is the LIGHTEST
+    library W-shape whose H1 ratio <= ``target_ratio`` for the same demand;
+    ``suggested_ratio`` is that section's ratio; ``weight_kg_per_m`` is the
+    suggested section's self weight (A * 7850, kg/m).  ``status``:
+
+    * ``"ok"``                — a passing section was found;
+    * ``"no_section_passes"`` — the demand exceeds every candidate at target;
+    * ``"n/a"``               — the member has no analysis demand (no forces).
+    """
+
+    uid: str
+    current_section: str
+    suggested_section: str = ""
+    current_ratio: Optional[float] = None
+    suggested_ratio: Optional[float] = None
+    weight_kg_per_m: float = 0.0
+    status: str = "n/a"
+
+    def to_dict(self) -> dict:
+        return {"uid": self.uid, "current_section": self.current_section,
+                "suggested_section": self.suggested_section,
+                "current_ratio": self.current_ratio,
+                "suggested_ratio": self.suggested_ratio,
+                "weight_kg_per_m": self.weight_kg_per_m,
+                "status": self.status}
+
+
+def _section_ratio(name: str, Pu: float, Mu33: float, Mu22: float, L: float,
+                   *, Fy: float, kx: float, ky: float, Lb: Optional[float],
+                   phi_b: float, phi_c: float) -> Optional[float]:
+    """Governing AISC H1 interaction ratio of a library W-shape under a fixed
+    demand — the SAME capacity math as :func:`check_members`, but with the
+    section's properties taken entirely from the built-in library (so a
+    candidate can be scored without adding it to the model).  None if ``name``
+    is not a library shape.
+    """
+    from skyframe.core.sections_library import library_properties
+
+    p = design_properties(name)
+    if p is None:
+        return None
+    lp = library_properties(name)              # A, I33, I22, J, b, h (SI)
+    A = p["A"]
+    d, bf, tf = p["d"], p["bf"], p["tf"]
+    Sx = lp["I33"] / (d / 2.0)
+    Sy = lp["I22"] / (bf / 2.0)
+    ho = d - tf
+    Lb_m = L if Lb is None else float(Lb)
+    KLr = max(kx * L / p["rx"], ky * L / p["ry"])
+    if Pu >= 0.0:                              # compression (or no axial)
+        Pn, _ = _compression_capacity(A, KLr, Fy)
+        phiPn = phi_c * Pn
+    else:                                      # tension: D2 gross yielding
+        phiPn = PHI_T * Fy * A
+    Mn33, _ = _major_axis_capacity(Lb_m, Fy, p["Zx"], Sx, p["ry"],
+                                   p["rts"], lp["J"], ho)
+    phiMn33 = phi_b * Mn33
+    phiMn22 = phi_b * _minor_axis_capacity(Fy, p["Zy"], Sy)
+    pr_pc = abs(Pu) / phiPn
+    m_term = Mu33 / phiMn33 + Mu22 / phiMn22
+    if pr_pc >= 0.2:
+        return pr_pc + (8.0 / 9.0) * m_term                 # H1-1a
+    return pr_pc / 2.0 + m_term                             # H1-1b
+
+
+def optimize_members(model, results, case_or_combo: str,
+                     candidates: Optional[List[str]] = None, *,
+                     target_ratio: float = 0.95, Fy: float = 345_000.0,
+                     kx: float = 1.0, ky: float = 1.0,
+                     Lb: Optional[float] = None, phi_b: float = 0.9,
+                     phi_c: float = 0.9, iterate: int = 0
+                     ) -> List[SectionSuggestion]:
+    """Single-pass, demand-based steel section optimization (v0.12).
+
+    For every frame member with an analysis demand in ``case_or_combo`` (Pu,
+    Mu33, Mu22 extracted exactly as :func:`check_members` does), pick the
+    LIGHTEST library W-shape (candidates default to the whole library, sorted
+    by area/weight ascending) whose governing AISC H1 interaction ratio is
+    ``<= target_ratio`` for that demand.
+
+    This is SINGLE-PASS: it uses the CURRENT analysis demands.  A rigorous
+    redesign re-analyses after resizing (member stiffnesses change, so the
+    force distribution shifts); one re-analyse + re-optimize loop converges
+    for typical cases.  Pass ``iterate=1`` to perform exactly ONE such loop
+    (apply the suggestions to a COPY of the model, re-run the engine, and
+    re-optimize) — the returned suggestions then reflect the resized model.
+
+    Returns one :class:`SectionSuggestion` per member (model order).
+    """
+    from skyframe.core.sections_library import library_names, library_properties
+
+    case = _case_block(results, case_or_combo)
+    if candidates is None:
+        candidates = list(library_names())
+    # lightest first (area ~ weight; deterministic tie-break by name)
+    cand_sorted = sorted(candidates,
+                         key=lambda n: (library_properties(n)["A"], n))
+    kw = dict(Fy=Fy, kx=kx, ky=ky, Lb=Lb, phi_b=phi_b, phi_c=phi_c)
+
+    out: List[SectionSuggestion] = []
+    for m in model.members:
+        sug = SectionSuggestion(uid=m.uid, current_section=m.section)
+        dem = _demands(case, m.uid)
+        if dem is None:
+            sug.status = "n/a"
+            out.append(sug)
+            continue
+        Pu, Mu33, Mu22 = dem
+        L = m.length
+        if design_properties(m.section) is not None:
+            sug.current_ratio = _section_ratio(m.section, Pu, Mu33, Mu22, L,
+                                                **kw)
+        chosen: Optional[str] = None
+        chosen_ratio: Optional[float] = None
+        for name in cand_sorted:
+            r = _section_ratio(name, Pu, Mu33, Mu22, L, **kw)
+            if r is not None and r <= target_ratio:
+                chosen, chosen_ratio = name, r
+                break
+        if chosen is None:
+            sug.status = "no_section_passes"
+        else:
+            sug.suggested_section = chosen
+            sug.suggested_ratio = chosen_ratio
+            sug.weight_kg_per_m = library_properties(chosen)["A"] * STEEL_DENSITY
+            sug.status = "ok"
+        out.append(sug)
+
+    if iterate and int(iterate) > 0:
+        import copy
+
+        from skyframe.engine.opensees_engine import OpenSeesEngine
+        work = copy.deepcopy(model)
+        for _ in range(int(iterate)):
+            apply_suggestions(work, out)
+            res = OpenSeesEngine(work).run()
+            out = optimize_members(work, res, case_or_combo, candidates,
+                                   target_ratio=target_ratio, iterate=0, **kw)
+    return out
+
+
+def apply_suggestions(model, suggestions: List[SectionSuggestion]):
+    """Assign each ``"ok"`` suggestion's section onto its member (v0.12).
+
+    Library sections named by a suggestion that the model does not yet carry
+    are created with :meth:`FrameSection.from_library` (inheriting the member's
+    current-section material, else any model material).  Returns ``model``
+    (mutated in place).
+    """
+    from skyframe.core.model import FrameSection
+
+    for sug in suggestions:
+        if sug.status != "ok" or not sug.suggested_section:
+            continue
+        m = model._member(sug.uid)
+        if m is None:
+            continue
+        name = sug.suggested_section
+        if name not in model.sections:
+            cur = model.sections.get(m.section)
+            material = (cur.material if cur is not None
+                        else next(iter(model.materials), ""))
+            model.sections[name] = FrameSection.from_library(name, material)
+        m.section = name
+    return model
 
 
 def summarize(checks: List[MemberCheck]) -> dict:

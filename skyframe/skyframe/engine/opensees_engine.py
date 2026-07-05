@@ -131,6 +131,15 @@ RIGID_LINK_FACTOR = 1.0e6
 _TOL = 1e-6
 _N_STATIONS = 11
 
+# v0.12 tension/compression-only members: a non-"both" member is modelled as a
+# 2-force Truss whose uniaxialMaterial('Elastic', E, 0, Eneg) carries load in
+# ONE direction only.  The released direction keeps a TINY residual modulus
+# (this fraction of E) so the released brace does not create a rigid-body
+# mechanism (the system stays regular); at 1e-6 the released member sheds
+# > 99.99% of its force in a redundant path (verified) while the active
+# direction is exact.  A case with any such member is solved with Newton.
+AXIAL_ONLY_RATIO = 1.0e-6
+
 Vec3 = Tuple[float, float, float]
 
 # 3-point Gauss-Legendre (exact through degree-5 polynomials): the
@@ -393,6 +402,7 @@ class _Assembly:
     support_tags: List[int] = field(default_factory=list)
     seg_ele: Dict[Tuple[str, int], int] = field(default_factory=dict)
     ele_nodes: Dict[str, Tuple[int, int]] = field(default_factory=dict)
+    truss_uids: set = field(default_factory=set)   # v0.12 axial-only members
     shell_quads: List[dict] = field(default_factory=list)
     quad_ele: List[int] = field(default_factory=list)   # etag per shell quad
     masters: Dict[str, int] = field(default_factory=dict)         # story -> master
@@ -794,6 +804,11 @@ class OpenSeesEngine:
             warning=warning,
         )
 
+    def _axial_only_present(self) -> bool:
+        """True if any member is tension/compression-only (v0.12)."""
+        return any(getattr(m, "axial_limit", "both") != "both"
+                   for m in self.model.members)
+
     def run_static(self, case_name: str) -> CaseResults:
         """Solve one static load case (cached per engine instance)."""
         if case_name in self._case_cache:
@@ -815,7 +830,12 @@ class OpenSeesEngine:
         for pat_name, scale in case.patterns.items():
             self._apply_pattern(asm, pat_name, scale)
 
-        self._setup_analysis(asm)
+        # v0.12: a model with any tension/compression-only member is nonlinear
+        # (the Truss materials switch stiffness by strain sign) -> Newton.
+        if self._axial_only_present():
+            self._setup_nonlinear_analysis(asm)
+        else:
+            self._setup_analysis(asm)
         if ops.analyze(1) != 0:
             raise RuntimeError(f"Static analysis failed for case {case_name!r}")
 
@@ -1009,6 +1029,7 @@ class OpenSeesEngine:
         etag = 0
         rot_presence: Dict[int, np.ndarray] = {}
         released_nodes: set = set()
+        truss_end_nodes: set = set()   # v0.12 axial-only member end nodes
 
         def rot_add(nidx: int, mat3: np.ndarray) -> None:
             rot_presence[nidx] = rot_presence.get(nidx, np.zeros((3, 3))) + mat3
@@ -1039,6 +1060,42 @@ class OpenSeesEngine:
                 raise ValueError(
                     f"Member {m.uid}: rigid end offsets are not supported on "
                     "members split by shell-edge compatibility")
+            # --- v0.12 tension/compression-only members: a 2-force Truss ---
+            axial_limit = getattr(m, "axial_limit", "both")
+            if axial_limit != "both":
+                if len(segs) != 1:
+                    raise ValueError(
+                        f"Member {m.uid}: axial-only (tension/compression) "
+                        "members cannot be split by shell-edge compatibility")
+                if has_offset:
+                    raise ValueError(
+                        f"Member {m.uid}: axial-only members do not support "
+                        "rigid end offsets")
+                if my_i is not None or my_j is not None:
+                    raise ValueError(
+                        f"Member {m.uid}: a plastic hinge cannot be placed on "
+                        "an axial-only member")
+                seg = segs[0]
+                ni_tag, nj_tag = seg.ni + 1, seg.nj + 1
+                mtag += 1
+                # uniaxialMaterial('Elastic', E, eta, Eneg): E for +strain
+                # (tension), Eneg for -strain (compression).  Tension-only ->
+                # full E in tension, tiny in compression; compression-only ->
+                # the mirror.  The tiny residual keeps the system regular.
+                if axial_limit == "tension":
+                    ops.uniaxialMaterial("Elastic", mtag, mat.E, 0.0,
+                                         mat.E * AXIAL_ONLY_RATIO)
+                else:  # "compression"
+                    ops.uniaxialMaterial("Elastic", mtag,
+                                         mat.E * AXIAL_ONLY_RATIO, 0.0, mat.E)
+                etag += 1
+                ops.element("Truss", etag, ni_tag, nj_tag, A_eff, mtag)
+                asm.seg_ele[(m.uid, seg.index)] = etag
+                asm.ele_nodes[m.uid] = (ni_tag, nj_tag)
+                asm.truss_uids.add(m.uid)
+                truss_end_nodes.add(seg.ni)
+                truss_end_nodes.add(seg.nj)
+                continue
             for seg in segs:
                 etag += 1
                 beam_etag = etag
@@ -1275,6 +1332,30 @@ class OpenSeesEngine:
                     ops.fix(ntag, *newfix)
                     record_fix(ntag, newfix)
 
+        # --- auto-restrain rotations of truss-only nodes (v0.12) -----------
+        # A Truss (axial-only member) contributes NO rotational stiffness, so a
+        # node attached ONLY through axial-only members would be rotationally
+        # singular.  Hold its rotations (rz left to the diaphragm for a
+        # prospective slave); nodes that a beam/shell also stiffens are in
+        # rot_presence and are skipped.  Translational truss-mechanism
+        # stability remains the user's modelling responsibility (as for any
+        # truss model).
+        for nidx in sorted(truss_end_nodes):
+            if nidx in rot_presence:
+                continue
+            ntag = nidx + 1
+            prev = asm.node_restraints.get(ntag, (0,) * 6)
+            newfix = [0] * 6
+            for dof in (3, 4, 5):
+                if prev[dof]:
+                    continue
+                if dof == 5 and ntag in prospective_slaves:
+                    continue
+                newfix[dof] = 1
+            if any(newfix):
+                ops.fix(ntag, *newfix)
+                record_fix(ntag, newfix)
+
         # --- story node sets ----------------------------------------------
         # All FE nodes in the story plane join the set: frame nodes, slab
         # mesh nodes, and wall nodes lying exactly at the story elevation.
@@ -1491,6 +1572,11 @@ class OpenSeesEngine:
         segment-local x) for the exact statics station results, and every
         FEF-path load also feeds the member end-force correction.
         """
+        # v0.12: axial-only (Truss) members carry no transverse load; a
+        # distributed/point member load on them (incl. self-weight) is skipped
+        # (a Truss element rejects eleLoad).  Documented in CONTRACT v0.12.
+        if getattr(member, "axial_limit", "both") != "both":
+            return
         xax, yax, zax, _, vertical = _local_axes(member)
         if direction == "gravity" and vertical:
             warnings.warn(f"Gravity load on vertical member {member.uid!r} "
@@ -1627,6 +1713,8 @@ class OpenSeesEngine:
         """
         if dT == 0.0:
             return
+        if getattr(member, "axial_limit", "both") != "both":
+            return       # v0.12: axial-only Truss members take no thermal FEF
         model = self.model
         sec = model.sections[member.section]
         mat = model.materials[sec.material]
@@ -1691,6 +1779,24 @@ class OpenSeesEngine:
         member_forces: Dict[str, List[float]] = {}
         member_stations: Dict[str, Dict[str, List[float]]] = {}
         for m in self.model.members:
+            # v0.12 axial-only members are 2-force Truss elements: report the
+            # constant axial force (V/M/T = 0).  basicForce is tension-positive;
+            # member_forces[0] follows the engine convention (+compression) as
+            # for beams, so end i = -N_tension, end j = +N_tension.  Station N
+            # is tension-positive (matching the beam station convention).
+            if m.uid in asm.truss_uids:
+                etag = asm.seg_ele[(m.uid, 0)]
+                N = float(ops.eleResponse(etag, "basicForce")[0])
+                member_forces[m.uid] = [-N, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                        N, 0.0, 0.0, 0.0, 0.0, 0.0]
+                L = m.length
+                xs = [k * L / (_N_STATIONS - 1) for k in range(_N_STATIONS)]
+                zeros = [0.0] * _N_STATIONS
+                member_stations[m.uid] = {
+                    "x": xs, "N": [N] * _N_STATIONS, "V2": list(zeros),
+                    "V3": list(zeros), "T": list(zeros), "M2": list(zeros),
+                    "M3": list(zeros)}
+                continue
             segs = asm.mesh.segments[m.uid]
             corrected: Dict[int, List[float]] = {}
             for seg in segs:

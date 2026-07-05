@@ -588,6 +588,55 @@ def create_app() -> Flask:
                         "checks": [c.to_dict() for c in checks],
                         "summary": summ_c(checks)})
 
+    # --------------------------------------------- v0.12: steel optimization
+    @app.post("/api/design/optimize")
+    def design_optimize():
+        """Single-pass demand-based steel section optimization (runs analysis).
+
+        Body: {"case": "<name>", optional "target_ratio" (default 0.95),
+        "candidates" (list of library W-shape names), "apply" (bool),
+        "Fy","kx","ky","Lb"}.  With ``apply`` true the suggestions are
+        assigned onto the current model and the updated model dict is echoed;
+        otherwise only the suggestion list is returned.
+        """
+        if not _OPENSEES_OK:
+            return jsonify({"error": "OpenSeesPy is not available"}), 400
+        from skyframe.design.steel import (apply_suggestions,
+                                           optimize_members)
+        body = request.get_json(silent=True) or {}
+        case = body.get("case")
+        if not isinstance(case, str) or not case:
+            return jsonify({"error": "'case' (name of a case/combo) is "
+                                     "required"}), 400
+        candidates = body.get("candidates")
+        if candidates is not None and (
+                not isinstance(candidates, list)
+                or not all(isinstance(c, str) and c for c in candidates)):
+            return jsonify({"error": "'candidates' must be a list of "
+                                     "library W-shape names"}), 400
+        apply_flag = bool(body.get("apply", False))
+        try:
+            target = _num(body, "target_ratio", default=0.95)
+            if not (target > 0.0):
+                raise ValueError("'target_ratio' must be > 0")
+            kw = {k: float(body[k]) for k in ("Fy", "kx", "ky", "Lb")
+                  if isinstance(body.get(k), (int, float))
+                  and not isinstance(body.get(k), bool)}
+            model = _state["model"]
+            results = OpenSeesEngine(model).run()
+            suggestions = optimize_members(
+                model, results, case, candidates,
+                target_ratio=float(target), **kw)
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 400
+        payload: Dict[str, Any] = {
+            "case": case, "applied": apply_flag,
+            "suggestions": [s.to_dict() for s in suggestions]}
+        if apply_flag:
+            apply_suggestions(model, suggestions)
+            payload["model"] = model.to_dict()
+        return jsonify(payload)
+
     # --------------------------------------------- v0.6: model importers
     @app.post("/api/import/<fmt>")
     def import_model(fmt: str):
