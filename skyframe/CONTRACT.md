@@ -1189,3 +1189,109 @@ every ADDITIVE combo:
 
 `POST /api/model` round-trips the FrameMember `foundation_ks`/`foundation_width`
 fields; `POST /api/analyze` returns the `"takedown"` block automatically.
+
+---
+
+# v0.12 additions — auto steel section optimization, tension/compression-only members
+
+## Auto steel section optimization (`skyframe/design/steel.py`)
+
+Single-pass, demand-based sizing of steel W-shape members against the same
+preliminary AISC 360-16 interaction check as `check_members`.
+
+```python
+@dataclass
+class SectionSuggestion:
+    uid: str
+    current_section: str
+    suggested_section: str = ""          # lightest passing library W-shape
+    current_ratio: float | None = None   # H1 ratio of the CURRENT section
+    suggested_ratio: float | None = None  # H1 ratio of the suggested section
+    weight_kg_per_m: float = 0.0          # suggested A * 7850 (kg/m)
+    status: str = "n/a"                   # "ok" | "no_section_passes" | "n/a"
+
+optimize_members(model, results, case_or_combo, candidates=None, *,
+                 target_ratio=0.95, Fy=345_000.0, kx=1.0, ky=1.0, Lb=None,
+                 phi_b=0.9, phi_c=0.9, iterate=0) -> list[SectionSuggestion]
+apply_suggestions(model, suggestions) -> model
+```
+
+* For every frame member with an analysis demand in `case_or_combo` (Pu,
+  Mu33, Mu22 extracted EXACTLY as `check_members` does — `member_forces[0]`
+  is +compression, moments are max |M| over stations/ends), pick the LIGHTEST
+  library W-shape (candidates default to the whole library, sorted by
+  area/weight ascending; deterministic name tie-break) whose governing AISC
+  H1 interaction ratio is `<= target_ratio` for that demand.  The scoring
+  reuses the `check_members` capacity math (E3 / D2 / F2 / F6 / H1) with the
+  candidate's own library properties, so a candidate is evaluated without
+  being added to the model.
+* `status`: `"ok"` (a passing section found), `"no_section_passes"` (the
+  demand exceeds every candidate at target — `suggested_section` stays `""`),
+  `"n/a"` (member has no forces in the results).  `current_ratio` is the H1
+  ratio of the member's CURRENT section when it is a recognised library
+  W-shape, else `None`.
+* **Single-pass caveat (documented):** the optimizer uses the CURRENT
+  analysis demands.  A rigorous redesign re-analyses after resizing (member
+  stiffnesses change, so forces redistribute); one re-analyse + re-optimize
+  loop converges for typical cases.  `iterate=1` performs exactly ONE such
+  loop — it applies the suggestions to a DEEP COPY of the model (the caller's
+  model is never mutated), re-runs the engine, and re-optimizes; the returned
+  suggestions then reflect the resized model.
+* `apply_suggestions` assigns each `"ok"` suggestion's section onto its
+  member, creating any missing library `FrameSection` via
+  `FrameSection.from_library` (inheriting the member's current-section
+  material, else any model material); returns the mutated model.
+* Exported from `skyframe.design` and `skyframe.design.steel`.
+
+## Tension/compression-only members (braces, cables, ties)
+
+```python
+# FrameMember gains (round-trips; absent key / pre-v0.12 = "both"):
+#   axial_limit: str = "both"     # "both" | "tension" | "compression"
+# add_member(..., axial_limit="both"); validation: must be one of the three.
+```
+
+A member with `axial_limit != "both"` is modelled as a 2-force **Truss**
+(axial-only, no bending/shear/torsion).  The uniaxial material is
+`uniaxialMaterial('Elastic', E, 0.0, Eneg)` — `E` is the tangent for tension
+(+strain), `Eneg` for compression (−strain):
+
+* **tension-only** — full `E` in tension, `E * AXIAL_ONLY_RATIO` (1e-6) in
+  compression (the tie/cable goes slack in compression);
+* **compression-only** — the mirror (full `E` in compression, tiny in
+  tension: a strut that releases in tension).
+
+The tiny residual modulus keeps the released direction from creating a
+rigid-body mechanism (the system stays regular); in a redundant load path the
+released member sheds > 99.99% of its force while the active direction is
+exact (a determinate single member still carries its load — there is no
+alternate path).  Because these materials switch stiffness by strain sign the
+response is NONLINEAR: **a static case containing ANY non-"both" member is
+solved with Newton** (`_setup_nonlinear_analysis`: `test NormDispIncr 1e-8`,
+`algorithm Newton`), reusing the pushover / nonlinear-TH path.
+
+Reported results for an axial-only member: `member_forces` is
+`[-N, 0,0,0,0,0, N, 0,0,0,0,0]` (N tension-positive; `member_forces[0]`
+follows the engine +compression convention, as for beams); all 11 stations
+carry the constant axial `N` (tension-positive) with V2/V3/T/M2/M3 = 0.
+Axial-only members do NOT support shell-edge splitting, rigid end offsets,
+plastic hinges, or transverse/thermal member loads (a distributed load on one
+— including self-weight — is skipped: a Truss rejects `eleLoad`).  A truss-only
+node's rotations are auto-restrained (a Truss adds no rotational stiffness);
+translational truss-mechanism stability remains the user's modelling
+responsibility, as for any truss model.
+
+**Hand-checks:** a single-bay X-braced frame under a lateral H — the stretched
+diagonal carries `T = H / cos(theta)` (`cos(theta) = B / L_diag`) and the
+other diagonal deactivates (~0), base FX balancing H (1e-6); a tension-only
+tie under a compressive demand carries < 1e-3 of the equivalent elastic
+member; the compression-only mirror likewise.
+
+## API
+
+| Method | Path                    | Body / Response |
+|--------|-------------------------|-----------------|
+| POST   | `/api/design/optimize`  | `{case, target_ratio?, candidates?, apply?, Fy?, kx?, ky?, Lb?}` -> runs analysis + `optimize_members`; `{case, applied, suggestions:[SectionSuggestion]}` (and `"model"` = updated model dict when `apply` true).  400 on missing `case`, bad `candidates`, `target_ratio <= 0`, or no OpenSees |
+
+`POST /api/model` round-trips the FrameMember `axial_limit` field (400 on a
+value other than `both`/`tension`/`compression`).
