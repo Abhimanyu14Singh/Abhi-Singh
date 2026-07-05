@@ -52,6 +52,7 @@ const store = {
   elevLine: null,        // elevation grid line, e.g. "x:0" | "y:2"
   poCase: null,          // selected pushover case (results tab)
   buckCase: null,        // v0.10 — selected buckling case (results tab)
+  tdCase: null,          // v0.11 — selected gravity case for the load-takedown tab
   // v0.6 — design checks, import, template gallery, staged, nonlinear TH
   designKind: "steel",   // "steel" | "concrete"
   designCase: null,      // case/combo checked
@@ -981,6 +982,23 @@ function renderProps() {
             value="${dT === undefined ? "" : dT}" placeholder="${dT === undefined ? "mixed" : "0 = none"}"></div>
       </div>
       <p class="muted" style="font-size:11px">Adds a uniform temperature change to the selected member${members.length > 1 ? "s" : ""} in the chosen pattern (ETABS-style thermal load).</p>`;
+    // v0.11 — elastic (Winkler) foundation: subgrade modulus ks + bearing width
+    const onFdn = commonVal(members, x => ME.onFoundation(x));
+    const ks = commonVal(members, x => x.foundation_ks ?? 0);
+    const fw = commonVal(members, x => x.foundation_width ?? 0);
+    const fdnOn = onFdn === true;
+    html += `
+      <h3 class="group-title">Foundation (Winkler) <span class="unit">elastic soil bed</span></h3>
+      <div class="field"><label class="fdn-check"><input type="checkbox" id="propFdnOn"${fdnOn ? " checked" : ""}${onFdn === undefined ? ' data-mixed="1"' : ""}> On elastic foundation</label></div>
+      <div class="field-row${fdnOn ? "" : " fdn-off"}" id="propFdnFields">
+        <div class="field"><label for="propFdnKs">Subgrade k<sub>s</sub> <span class="unit">kN/m³</span></label>
+          <input id="propFdnKs" type="number" step="1000" min="0"${fdnOn ? "" : " disabled"}
+            value="${ks === undefined ? "" : ks}" placeholder="${ks === undefined ? "mixed" : ""}"></div>
+        <div class="field"><label for="propFdnW">Bearing width <span class="unit">m</span></label>
+          <input id="propFdnW" type="number" step="0.05" min="0"${fdnOn ? "" : " disabled"}
+            value="${fw === undefined ? "" : fw}" placeholder="${fw === undefined ? "mixed" : ""}"></div>
+      </div>
+      <p class="muted" style="font-size:11px">Members on a foundation carry a soil/spring-bed glyph in plan &amp; 3D. Active only when both k<sub>s</sub> and width &gt; 0.</p>`;
   }
 
   if (shells.length) {
@@ -1219,6 +1237,28 @@ function renderProps() {
     store.modelEdited = true;
     refreshDrawViews();     // ΔT badges live in the label layer
   });
+
+  /* v0.11 — elastic (Winkler) foundation wiring. The checkbox enables/writes
+     ks + width; unchecking clears both (member leaves the foundation). */
+  const applyFoundation = () => {
+    const on = $("propFdnOn").checked;
+    if (on) {
+      let ks = parseFloat($("propFdnKs").value);
+      let fw = parseFloat($("propFdnW").value);
+      if (!(isFinite(ks) && ks > 0)) ks = 30000;   // sensible default subgrade
+      if (!(isFinite(fw) && fw > 0)) fw = 0.6;      // default bearing width (m)
+      for (const mm of members) { mm.foundation_ks = ks; mm.foundation_width = fw; }
+    } else {
+      for (const mm of members) { mm.foundation_ks = 0; mm.foundation_width = 0; }
+    }
+    markDirty();
+    store.modelEdited = true;
+    refreshDrawViews();      // soil/spring-bed glyph lives in the element layer
+    renderProps();           // re-sync the enabled/disabled fields
+  };
+  on("propFdnOn", "change", applyFoundation);
+  on("propFdnKs", "change", applyFoundation);
+  on("propFdnW", "change", applyFoundation);
 }
 
 /** v0.5 — mini SVG preview of a shell region with opening cutouts. */
@@ -2220,6 +2260,12 @@ function setResultsAvailable(on) {
   $("empty-buckling").classList.toggle("hidden", hasBuck);
   $("content-buckling").classList.toggle("hidden", !hasBuck);
   if (!hasBuck && store.tab === "buckling") switchTab("view3d");
+  // v0.11: load-takedown tab appears only when results carry a takedown block
+  const hasTd = on && !!Object.keys(store.results?.takedown || {}).length;
+  $("tdTabBtn").classList.toggle("hidden", !hasTd);
+  $("empty-takedown").classList.toggle("hidden", hasTd);
+  $("content-takedown").classList.toggle("hidden", !hasTd);
+  if (!hasTd && store.tab === "takedown") switchTab("view3d");
   if (!on) {
     store.contour.on = false;
     syncContoursUI();
@@ -2238,6 +2284,7 @@ function renderResultsTabs() {
   renderThTab();
   renderPoTab();
   renderBucklingTab();
+  renderTakedownTab();
 }
 
 /* ---- story tab */
@@ -2857,6 +2904,143 @@ function rebuildBuckModeSelect() {
 }
 
 /* ================================================================
+   v0.11 — LOAD TAKEDOWN TAB
+   Per gravity case/combo: where the gravity load lands at each support
+   (grid label, x, y, FZ/FX/FY), a grand-total FZ with an applied-vs-total
+   balance chip, and a bubble plan diagram sized/coloured by FZ. CSV export.
+   ================================================================ */
+function tdCaseNames() {
+  const td = store.results && store.results.takedown;
+  return td ? Object.keys(td) : [];
+}
+function tdData() {
+  const td = store.results && store.results.takedown;
+  if (!td || !Object.keys(td).length) return null;
+  if (!store.tdCase || !td[store.tdCase]) store.tdCase = Object.keys(td)[0];
+  return td[store.tdCase];
+}
+function rebuildTdSelect() {
+  const names = tdCaseNames();
+  const sel = $("tdCaseSelect");
+  if (!sel) return;
+  sel.textContent = "";
+  for (const n of names) {
+    const o = document.createElement("option");
+    o.value = n; o.textContent = n;
+    sel.appendChild(o);
+  }
+  if (!store.tdCase || !names.includes(store.tdCase)) store.tdCase = names[0] || null;
+  if (store.tdCase) sel.value = store.tdCase;
+}
+
+/** Support rows sorted by grid label (A-1, A-2 … natural order), grid-less
+    supports last. */
+function tdRows(td) {
+  return (td.supports || []).slice().sort((a, b) => {
+    // grid-labelled supports first (natural order), grid-less mesh nodes last
+    if (!!a.grid !== !!b.grid) return a.grid ? -1 : 1;
+    return (a.grid || "").localeCompare(b.grid || "", undefined, { numeric: true, sensitivity: "base" })
+      || (a.y - b.y) || (a.x - b.x);
+  });
+}
+
+function renderTakedownTab() {
+  const td = tdData();
+  if (!td) return;
+  rebuildTdSelect();
+  const rows = tdRows(td);
+
+  $("tdMeta").textContent =
+    `${rows.length} support${rows.length === 1 ? "" : "s"} · ${store.tdCase} · gravity landing (FZ ↓)`;
+
+  // balance chip: green when the support ΣFZ matches the applied gravity
+  const chip = $("tdBalance");
+  const total = td.total_FZ || 0, applied = td.applied_FZ || 0;
+  const ok = !!td.balance_ok;
+  chip.className = `balance-chip ${ok ? "is-ok" : "is-bad"}`;
+  chip.textContent = ok
+    ? `● balanced · ΣFZ ${fmt(total, 1)} = applied ${fmt(applied, 1)} kN`
+    : `▲ unbalanced · ΣFZ ${fmt(total, 1)} vs applied ${fmt(applied, 1)} kN (Δ ${fmt(total - applied, 1)})`;
+
+  // table
+  const head = `<thead><tr>
+    <th class="txt">Grid</th><th class="txt">Node</th><th>X m</th><th>Y m</th>
+    <th>FZ kN</th><th>FX kN</th><th>FY kN</th></tr></thead>`;
+  const maxFz = Math.max(1e-9, ...rows.map(s => Math.abs(s.FZ || 0)));
+  const body = rows.map(s => {
+    const frac = Math.abs(s.FZ || 0) / maxFz;
+    return `<tr>
+      <td class="txt td-grid">${esc(s.grid || "—")}</td>
+      <td class="txt dim">${esc(s.node)}</td>
+      <td class="dim">${fmt(s.x, 2)}</td><td class="dim">${fmt(s.y, 2)}</td>
+      <td class="td-fz"><span class="td-bar" style="--f:${(frac * 100).toFixed(1)}%"></span>${fmt(s.FZ, 1)}</td>
+      <td>${fmt(s.FX, 1)}</td><td>${fmt(s.FY, 1)}</td></tr>`;
+  }).join("");
+  const totals = `<tr class="totals">
+    <td class="txt">Σ total</td><td></td><td></td><td></td>
+    <td>${fmt(total, 1)}</td>
+    <td>${fmt(rows.reduce((a, s) => a + (s.FX || 0), 0), 1)}</td>
+    <td>${fmt(rows.reduce((a, s) => a + (s.FY || 0), 0), 1)}</td></tr>`;
+  $("tdTable").innerHTML = head + `<tbody>${body}${totals}</tbody>`;
+
+  $("tdBubble").innerHTML = takedownBubbleSvg(rows);
+  $("tdNote").textContent =
+    "Gravity load takedown — where vertical load reaches the foundation. " +
+    "Bubble size & colour scale with FZ; the balance chip checks support ΣFZ against the applied gravity.";
+}
+
+/** Bubble plan: support points sized & coloured by |FZ|, over the model grid. */
+function takedownBubbleSvg(rows) {
+  const g = store.model.grid;
+  if (!g) return "";
+  const x0 = g.x_lines[0], x1 = g.x_lines[g.x_lines.length - 1];
+  const y0 = g.y_lines[0], y1 = g.y_lines[g.y_lines.length - 1];
+  const W = 460, H = 300, P = 34;
+  const spanX = Math.max(x1 - x0, 1), spanY = Math.max(y1 - y0, 1);
+  const sc = Math.min((W - 2 * P) / spanX, (H - 2 * P) / spanY);
+  const px = x => P + (x - x0) * sc;
+  const py = y => H - P - (y - y0) * sc;                 // y up
+  const flt = "rgba(120,140,165,0.20)", mline = "rgba(120,140,165,0.45)";
+  const maxFz = Math.max(1e-9, ...rows.map(s => Math.abs(s.FZ || 0)));
+  let svg = `<svg viewBox="0 0 ${W} ${H}" class="td-svg" aria-label="Load takedown plan — supports sized by FZ">`;
+  svg += `<rect x="${px(x0)}" y="${py(y1)}" width="${(x1 - x0) * sc}" height="${(y1 - y0) * sc}"
+    fill="rgba(53,181,229,0.03)" stroke="${mline}" stroke-width="1.1"/>`;
+  for (let i = 0; i < g.x_lines.length; i++) {
+    const x = g.x_lines[i];
+    svg += `<line x1="${px(x)}" y1="${py(y0)}" x2="${px(x)}" y2="${py(y1)}" stroke="${flt}" stroke-width="1"/>`;
+    svg += `<text x="${px(x)}" y="${py(y1) - 6}" fill="var(--text-3)" font-size="9" text-anchor="middle" font-family="inherit">${esc((g.x_labels || [])[i] || "")}</text>`;
+  }
+  for (let j = 0; j < g.y_lines.length; j++) {
+    const y = g.y_lines[j];
+    svg += `<line x1="${px(x0)}" y1="${py(y)}" x2="${px(x1)}" y2="${py(y)}" stroke="${flt}" stroke-width="1"/>`;
+    svg += `<text x="${px(x0) - 8}" y="${py(y) + 3}" fill="var(--text-3)" font-size="9" text-anchor="end" font-family="inherit">${esc((g.y_labels || [])[j] || "")}</text>`;
+  }
+  // bubbles — radius 5..20 px, colour ramps cool→warm with FZ
+  const ramp = f => {
+    // f in 0..1 → blue (low) to amber/red (high)
+    const stops = [[53, 181, 229], [52, 195, 132], [229, 165, 10], [230, 103, 103]];
+    const t = Math.max(0, Math.min(1, f)) * (stops.length - 1);
+    const i = Math.min(stops.length - 2, Math.floor(t)), k = t - i;
+    const c = stops[i].map((v, n) => Math.round(v + (stops[i + 1][n] - v) * k));
+    return `rgb(${c[0]},${c[1]},${c[2]})`;
+  };
+  for (const s of rows) {
+    const f = Math.abs(s.FZ || 0) / maxFz;
+    const r = 5 + f * 15;
+    const col = ramp(f);
+    const cx = px(s.x), cy = py(s.y);
+    svg += `<circle cx="${cx}" cy="${cy}" r="${r.toFixed(1)}" fill="${col}" fill-opacity="0.30" stroke="${col}" stroke-width="1.6"/>`;
+    // label grid supports (grid-less mesh nodes stay uncluttered — bubble only)
+    if (s.grid) {
+      svg += `<text x="${cx}" y="${cy - r - 3}" fill="var(--text-2)" font-size="9" font-weight="700" text-anchor="middle" font-family="inherit">${esc(s.grid)}</text>`;
+      svg += `<text x="${cx}" y="${cy + 3}" fill="var(--text-1)" font-size="8.5" text-anchor="middle" font-family="inherit">${fmt(s.FZ, 0)}</text>`;
+    }
+  }
+  svg += `</svg>`;
+  return svg;
+}
+
+/* ================================================================
    v0.6 — DESIGN CHECKS (steel / concrete)
    ================================================================ */
 function designResult() {
@@ -3290,6 +3474,19 @@ function csvRows(kind) {
       ]),
     ];
   }
+  if (kind === "takedown") {
+    const td = tdData();
+    if (!td) return null;
+    const rows = tdRows(td);
+    return [
+      ["grid", "node", "x_m", "y_m", "FZ_kN", "FX_kN", "FY_kN"],
+      ...rows.map(s => [s.grid || "", s.node, s.x, s.y, s.FZ, s.FX, s.FY]),
+      ["TOTAL", "", "", "", td.total_FZ || 0,
+        rows.reduce((a, s) => a + (s.FX || 0), 0), rows.reduce((a, s) => a + (s.FY || 0), 0)],
+      ["APPLIED_FZ", "", "", "", td.applied_FZ || 0, "", ""],
+      ["BALANCE_OK", "", "", "", td.balance_ok ? "true" : "false", "", ""],
+    ];
+  }
   if (kind === "th") {
     const td = thData();
     if (!td) return null;
@@ -3311,6 +3508,7 @@ function csvFileName(kind) {
   const caseTag = kind === "th" ? store.thCase
     : kind === "pushover" ? store.poCase
     : kind === "buckling" ? store.buckCase
+    : kind === "takedown" ? store.tdCase
     : kind === "design" ? `${store.designKind}-${designResult()?.case || ""}`
     : caseLabel(store.caseName) + (caseData()?.min ? `-${store.envSide}` : "");
   return `skyframe-${slug(store.model?.name)}-${kind}` +
@@ -3434,6 +3632,7 @@ async function doRun() {
     rebuildThSelects();                            // v0.4
     rebuildPoSelect();                             // v0.5
     rebuildBuckSelect();                           // v0.10
+    rebuildTdSelect();                             // v0.11
     viewer.setResults(results);
     setResultsAvailable(true);
     renderResultsTabs();
@@ -3728,6 +3927,13 @@ function wire() {
   });
   $("csvBuck").addEventListener("click", () => downloadCsv("buckling"));
 
+  // v0.11 — load takedown case selector + CSV
+  $("tdCaseSelect").addEventListener("change", e => {
+    store.tdCase = e.target.value;
+    renderTakedownTab();
+  });
+  $("csvTakedown").addEventListener("click", () => downloadCsv("takedown"));
+
   // drift limit
   $("driftLimitInput").addEventListener("change", e => {
     const v = parseFloat(e.target.value);
@@ -3753,7 +3959,7 @@ function wire() {
   });
 
   // keyboard
-  const TABS = ["view3d", "story", "modal", "reactions", "forces", "design", "th", "pushover", "buckling"];
+  const TABS = ["view3d", "story", "modal", "reactions", "forces", "design", "th", "pushover", "buckling", "takedown"];
   const TOOL_KEYS = { v: "select", c: "column", b: "beam", x: "brace", w: "wall", s: "slab", l: "link", g: "spring", e: "erase" };
   document.addEventListener("keydown", e => {
     const tag = (e.target.tagName || "").toLowerCase();
@@ -3797,7 +4003,8 @@ function wire() {
       const t = TABS[+e.key - 1];
       const hidden = (t === "th" && $("thTabBtn").classList.contains("hidden")) ||
         (t === "pushover" && $("poTabBtn").classList.contains("hidden")) ||
-        (t === "buckling" && $("buckTabBtn").classList.contains("hidden"));
+        (t === "buckling" && $("buckTabBtn").classList.contains("hidden")) ||
+        (t === "takedown" && $("tdTabBtn").classList.contains("hidden"));
       if (t && !hidden) switchTab(t);
     }
     else if (e.key === "r" || e.key === "R") doRun();
@@ -3896,6 +4103,8 @@ async function boot() {
     // v0.10 — buckling, RS directional, notional
     renderBucklingTab, rebuildBuckSelect, buckData, viewBucklingModeIn3D,
     createRsDirectional, createNotionalPattern, mockRsDirectional, mockNotionalPattern,
+    // v0.11 — elastic foundation + load takedown
+    renderTakedownTab, rebuildTdSelect, tdData, tdRows, takedownBubbleSvg,
   };
 }
 

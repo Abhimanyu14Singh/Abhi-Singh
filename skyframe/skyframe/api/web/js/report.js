@@ -325,6 +325,33 @@ export function buildReportHtml(model, results, opts = {}) {
         fmt(b.MX, 1), fmt(b.MY, 1), fmt(b.MZ, 1)];
     }));
 
+  /* ---- v0.11: load takedown — gravity landing at each support per gravity
+     case/combo, with grid labels, grand-total FZ and a balance chip. */
+  let takedownHtml = "";
+  const tdAll = r.takedown || {};
+  if (Object.keys(tdAll).length) {
+    takedownHtml = Object.entries(tdAll).map(([name, td]) => {
+      const sups = (td.supports || []).slice().sort((a, b) =>
+        (!!a.grid !== !!b.grid) ? (a.grid ? -1 : 1)
+          : ((a.grid || "").localeCompare(b.grid || "", undefined, { numeric: true })
+            || (a.y - b.y) || (a.x - b.x)));
+      const rows = sups.map(s => [T(s.grid || "—"), D(s.node),
+        fmt(s.x, 2), fmt(s.y, 2), fmt(s.FZ, 1), fmt(s.FX, 1), fmt(s.FY, 1)]);
+      rows.push([T("Σ total"), D(""), "", "", fmt(td.total_FZ, 1),
+        fmt(sups.reduce((a, s) => a + (s.FX || 0), 0), 1),
+        fmt(sups.reduce((a, s) => a + (s.FY || 0), 0), 1)]);
+      const t = table([{ label: "Grid", txt: true }, { label: "Node", txt: true },
+        "X (m)", "Y (m)", "FZ (kN)", "FX (kN)", "FY (kN)"], rows);
+      const ok = !!td.balance_ok;
+      const chipColor = ok ? "#1a7f4b" : "#c0392b";
+      const chip = `<span style="font-weight:650;color:${chipColor}">${ok
+        ? `● balanced — ΣFZ ${fmt(td.total_FZ, 1)} = applied ${fmt(td.applied_FZ, 1)} kN`
+        : `▲ unbalanced — ΣFZ ${fmt(td.total_FZ, 1)} vs applied ${fmt(td.applied_FZ, 1)} kN`}</span>`;
+      return `<div class="case-block"><h3>${esc(name)} <span class="tag">gravity takedown</span></h3>
+        <p class="note">${chip}</p>${t}</div>`;
+    }).join("");
+  }
+
   /* ---- member force envelope (top 30 by |M3| across cases + combos) */
   const env = new Map();
   for (const [, cd] of [...Object.entries(r.cases || {}), ...Object.entries(r.combos || {})]) {
@@ -436,12 +463,18 @@ ${section("3 · Modal analysis", modalHtml,
   "Mass-participation ratios per mode; Γ = modal participation factor (L/M*).")}
 ${section("4 · Story results by case", storyBlocks + diagBlocks)}
 ${section("5 · Base reactions", baseTable)}
-${section("6 · Member force envelope", envTable,
+${takedownHtml ? section("6 · Load takedown (gravity)", takedownHtml,
+  "Where vertical load reaches the foundation per gravity case/combo — support reactions with grid labels and a balance check (support ΣFZ vs applied gravity).") : ""}
+${section(`${takedownHtml ? 7 : 6} · Member force envelope`, envTable,
   `Top ${envRows.length} members by |M3| — absolute envelope across all static cases and combinations.`)}
-${pushoverHtml ? section("7 · Pushover analysis", pushoverHtml,
-  "Displacement-controlled nonlinear static — base shear vs roof displacement; amber markers = slope drop > 20 % (yield). Hinge table: top plastic rotations at target drift.") : ""}
-${chartsHtml ? section(`${pushoverHtml ? 8 : 7} · Story drift & response charts`, chartsHtml) : ""}
-${spectraHtml ? section(`${pushoverHtml ? 9 : 8} · Response spectra`, spectraHtml) : ""}
+${(() => { let n = takedownHtml ? 7 : 6;
+  const pushN = pushoverHtml ? ++n : n;
+  const chartN = chartsHtml ? ++n : n;
+  const specN = spectraHtml ? ++n : n;
+  return `${pushoverHtml ? section(`${pushN} · Pushover analysis`, pushoverHtml,
+    "Displacement-controlled nonlinear static — base shear vs roof displacement; amber markers = slope drop > 20 % (yield). Hinge table: top plastic rotations at target drift.") : ""}
+${chartsHtml ? section(`${chartN} · Story drift & response charts`, chartsHtml) : ""}
+${spectraHtml ? section(`${specN} · Response spectra`, spectraHtml) : ""}`; })()}
 
 <footer class="rfoot">
   Analysis: OpenSees 3.7 · SkyFrame validation suite: 60+ benchmarks ·

@@ -4,7 +4,7 @@
    the onDraw / onErase / onSelect callbacks. */
 
 import { zigzagPoints } from "./elev.js";
-import { springKey, anyThermalMember } from "./modeledit.js";
+import { springKey, anyThermalMember, onFoundation } from "./modeledit.js";
 
 const NS = "http://www.w3.org/2000/svg";
 const el = (tag, attrs = {}) => {
@@ -28,6 +28,7 @@ const C = {
   spring: "#2fbf74",                      // green — grounded spring support (v0.8)
   thermal: "#e5a50a",                     // amber — ΔT thermal badge (v0.8)
   rigid: "rgba(120, 170, 220, 0.55)",     // pale blue — rigid end zone (v0.9)
+  foundation: "rgba(190, 138, 74, 0.9)",  // earthy tan — Winkler soil bed (v0.11)
   sel: "#35b5e5",
   snap: "#35b5e5",
   rubber: "rgba(53, 181, 229, 0.9)",
@@ -238,6 +239,19 @@ export class PlanEditor {
         "data-ref": `member:${mm.uid}`,
       }));
     }
+    // v0.11: elastic (Winkler) foundation — a soil/spring-bed glyph beneath
+    // members on a foundation (non-interactive, drawn under the element).
+    for (const mm of m.members) {
+      if (mm.story !== story || !onFoundation(mm)) continue;
+      this.gElems.appendChild(el("path", {
+        d: foundationGlyphPlan(mm.pi[0], mm.pi[1], mm.pj[0], mm.pj[1], 0.5),
+        fill: "none", stroke: C.foundation, "stroke-width": 1.4,
+        "stroke-linejoin": "round", "stroke-linecap": "round",
+        "vector-effect": "non-scaling-stroke",
+        "pointer-events": "none", "data-ref": `foundation:${mm.uid}`,
+      }));
+    }
+
     // v0.9: rigid end zones — thicker hatched stubs at member ends where
     // rigid_i / rigid_j > 0 (subtle, drawn over beams/braces; non-interactive)
     for (const mm of m.members) {
@@ -707,6 +721,35 @@ export function springGlyphPlan(cx, cy, a) {
   for (let k = -1; k <= 1; k++) {           // hatches
     const x0 = cx + k * a * 0.7;
     d += ` M${x0},${gy} L${x0 - a * 0.55},${gy - a * 0.55}`;
+  }
+  return d;
+}
+
+/** v0.11 — Winkler foundation glyph in plan: a spring bed hanging below the
+    member (perpendicular offset `depth`) landing on a hatched ground line.
+    Returned as one path `d` in world coordinates. */
+export function foundationGlyphPlan(x1, y1, x2, y2, depth) {
+  const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+  const ux = dx / L, uy = dy / L;              // along the member
+  const nx = -uy, ny = ux;                     // perpendicular ("down" side)
+  const n = Math.max(3, Math.min(14, Math.round(L / 0.9)));
+  const s = depth * 0.22;                      // spring amplitude
+  let d = "";
+  // ground line offset by `depth`
+  const g1x = x1 + nx * depth, g1y = y1 + ny * depth;
+  const g2x = x2 + nx * depth, g2y = y2 + ny * depth;
+  d += `M${g1x},${g1y} L${g2x},${g2y}`;
+  for (let k = 0; k <= n; k++) {
+    const t = k / n;
+    const bx = x1 + dx * t, by = y1 + dy * t;        // point on member
+    const gx = bx + nx * depth, gy = by + ny * depth; // ground point below
+    // little two-kink spring coil from member down to the ground
+    d += ` M${bx},${by}` +
+      ` L${bx + nx * depth * 0.33 + ux * s},${by + ny * depth * 0.33 + uy * s}` +
+      ` L${bx + nx * depth * 0.66 - ux * s},${by + ny * depth * 0.66 - uy * s}` +
+      ` L${gx},${gy}`;
+    // soil hatch tick below the ground line
+    d += ` M${gx},${gy} L${gx + nx * depth * 0.5 - ux * depth * 0.5},${gy + ny * depth * 0.5 - uy * depth * 0.5}`;
   }
   return d;
 }

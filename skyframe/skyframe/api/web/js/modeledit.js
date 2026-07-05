@@ -53,6 +53,12 @@ export function normalizeModel(m) {
     if (!(isFinite(mm.rigid_factor) && mm.rigid_factor >= 0 && mm.rigid_factor <= 1))
       mm.rigid_factor = 1.0;
   }
+  // v0.11 — elastic (Winkler) foundation: subgrade modulus + bearing width.
+  // A member is on an elastic foundation only when BOTH are > 0.
+  for (const mm of m.members) {
+    if (!(isFinite(mm.foundation_ks) && mm.foundation_ks >= 0)) mm.foundation_ks = 0;
+    if (!(isFinite(mm.foundation_width) && mm.foundation_width >= 0)) mm.foundation_width = 0;
+  }
   for (const s of Object.values(m.sections)) {
     for (const k of ["mod_A", "mod_I33", "mod_I22", "mod_J"])
       if (!isFinite(s[k])) s[k] = 1.0;
@@ -423,6 +429,12 @@ export function anyThermalMember(model, uid) {
 export function hasRigidZone(mm) {
   return !!mm && ((isFinite(mm.rigid_i) && mm.rigid_i > 0) ||
                   (isFinite(mm.rigid_j) && mm.rigid_j > 0));
+}
+
+/** v0.11 — the member sits on an elastic (Winkler) foundation: BOTH the
+    subgrade modulus (kN/m³) and bearing width (m) must be positive. */
+export function onFoundation(mm) {
+  return !!mm && (mm.foundation_ks || 0) > 0 && (mm.foundation_width || 0) > 0;
 }
 
 /* ---- shell openings (region-parametric fractions 0..1) */

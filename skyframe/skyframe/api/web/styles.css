@@ -1470,3 +1470,34 @@ tr.cm-active td { background: var(--accent-ghost) !important; }
 .ds-envelope b { color: var(--accent); }
 .gov-combo { color: var(--accent); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
 .gov-combo:hover { color: var(--text-1); background: var(--accent-ghost); }
+
+/* ============ v0.11 — elastic foundation + load takedown ============ */
+/* foundation props group */
+.fdn-check { display: flex; align-items: center; gap: 8px; font-size: 12px;
+  color: var(--text-2); cursor: pointer; }
+.fdn-check input[type="checkbox"] { accent-color: var(--accent); width: 13px; height: 13px; cursor: pointer; }
+.field-row.fdn-off { opacity: .45; }
+
+/* balance chip (green ok / red unbalanced) */
+.balance-chip { display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 99px;
+  border: 1px solid var(--border); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.balance-chip.is-ok { color: var(--green); background: rgba(52,195,132,.12);
+  border-color: rgba(52,195,132,.35); }
+.balance-chip.is-bad { color: var(--red); background: rgba(230,103,103,.12);
+  border-color: rgba(230,103,103,.4); }
+
+/* takedown layout: bubble plan + table side by side, stacking when narrow */
+.td-body { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; margin: 10px 0; }
+.td-plan { flex: 1 1 380px; min-width: 300px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.td-plan-title { font-size: 11px; font-weight: 650; color: var(--text-2);
+  text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
+.td-svg { display: block; width: 100%; max-width: 480px; height: auto; margin: 0 auto; }
+.td-table-wrap { flex: 1 1 380px; min-width: 300px; }
+.data-table td.td-grid { color: var(--text-1); font-weight: 650; }
+.data-table td.td-fz { position: relative; }
+.data-table td.td-fz .td-bar { position: absolute; left: 0; top: 3px; bottom: 3px;
+  width: var(--f, 0%); background: rgba(53,181,229,.16); border-radius: 3px;
+  pointer-events: none; z-index: 0; }
+.data-table td.td-fz { z-index: 1; }

@@ -41,7 +41,8 @@ export function mockModel(p = {}) {
   const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
   const add = (kind, section, pi, pj, story, uid) =>
     members.push({ uid, kind, section, pi, pj, story, length: dist(pi, pj),
-      releases: "", angle: 0, rigid_i: 0, rigid_j: 0, rigid_factor: 1 });
+      releases: "", angle: 0, rigid_i: 0, rigid_j: 0, rigid_factor: 1,
+      foundation_ks: 0, foundation_width: 0 });
 
   stories.forEach((st, si) => {
     const zt = st.elevation, zb = st.elevation - st.height;
@@ -66,6 +67,13 @@ export function mockModel(p = {}) {
   if (demoBeam) { demoBeam.rigid_i = 0.25; demoBeam.rigid_j = 0.25; demoBeam.rigid_factor = 1.0; }
   const demoCol = members.find(mm => mm.kind === "column" && mm.story === "Story1");
   if (demoCol) { demoCol.rigid_j = 0.30; demoCol.rigid_factor = 0.5; }
+
+  // v0.11: a couple of Story1 grade beams on an elastic (Winkler) foundation —
+  // subgrade modulus ks (kN/m³) + bearing width (m). Drives the soil/spring-bed
+  // glyph in plan & 3D and the "on elastic foundation" props toggle.
+  const gradeBeams = members.filter(mm => mm.kind === "beam" && mm.story === "Story1"
+    && /^BX1-/.test(mm.uid)).slice(0, 2);
+  for (const gb of gradeBeams) { gb.foundation_ks = 30000; gb.foundation_width = 0.6; }
 
   // story mass from dead UDL on beams (as builder.py does)
   const story_masses = {};
@@ -970,6 +978,42 @@ export function mockResults(model) {
     }
   }
 
+  /* ---- v0.11: load takedown — per gravity case/combo, the gravity landing
+     at each support with a grid label (A-1 …), a grand-total FZ and a balance
+     check (support ΣFZ vs applied gravity). Reaction FZ sums to base.FZ by
+     construction, so the mock balance is always ok. */
+  const gridLabelFor = p => {
+    const g = model.grid || {};
+    const xi = (g.x_lines || []).findIndex(v => Math.abs(v - p[0]) < 1e-4);
+    const yi = (g.y_lines || []).findIndex(v => Math.abs(v - p[1]) < 1e-4);
+    if (xi < 0 || yi < 0) return "";
+    const xl = (g.x_labels && g.x_labels[xi]) || String(xi + 1);
+    const yl = (g.y_labels && g.y_labels[yi]) || String(yi + 1);
+    return `${xl}-${yl}`;
+  };
+  const buildTakedown = cd => {
+    const sups = supports.map(t => {
+      const p = nodes[t] || [0, 0, 0];
+      const f = (cd.reactions && cd.reactions[t]) || [0, 0, 0, 0, 0, 0];
+      return { node: t, grid: gridLabelFor(p),
+        x: +p[0].toFixed(3), y: +p[1].toFixed(3),
+        FZ: +f[2].toFixed(3), FX: +f[0].toFixed(3), FY: +f[1].toFixed(3) };
+    });
+    const total_FZ = +sups.reduce((a, s) => a + s.FZ, 0).toFixed(3);
+    const applied_FZ = +(((cd.base && cd.base.FZ) != null) ? cd.base.FZ : total_FZ).toFixed(3);
+    const balance_ok = Math.abs(total_FZ - applied_FZ) <= Math.max(1e-6, 0.005 * Math.abs(applied_FZ));
+    return { supports: sups, total_FZ, applied_FZ, balance_ok };
+  };
+  const isGravity = cd => {
+    if (!cd || cd.min) return false;                 // skip envelope combos
+    const b = cd.base || {};
+    // dominant downward FZ, negligible lateral base shear
+    return (b.FZ || 0) > 50 && Math.abs(b.FX || 0) < 1 && Math.abs(b.FY || 0) < 1;
+  };
+  const takedown = {};
+  for (const [name, cd] of Object.entries(cases)) if (isGravity(cd)) takedown[name] = buildTakedown(cd);
+  for (const [name, cd] of Object.entries(combos)) if (isGravity(cd)) takedown[name] = buildTakedown(cd);
+
   const out = {
     model_name: model.name,
     nodes, members, supports,
@@ -983,6 +1027,7 @@ export function mockResults(model) {
   };
   if (Object.keys(pushover).length) out.pushover = pushover;
   if (Object.keys(buckling).length) out.buckling = buckling;      // v0.10
+  if (Object.keys(takedown).length) out.takedown = takedown;      // v0.11
   if (Object.keys(story_props).length) out.story_props = story_props;
   if (Object.keys(story_stiffness).length) out.story_stiffness = story_stiffness;
   if (Object.keys(irregularity).length) out.irregularity = irregularity;

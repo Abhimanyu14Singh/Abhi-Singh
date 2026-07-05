@@ -321,6 +321,7 @@
         <button class="tab hidden" data-tab="th" role="tab" id="thTabBtn">Time History</button>
         <button class="tab hidden" data-tab="pushover" role="tab" id="poTabBtn">Pushover</button>
         <button class="tab hidden" data-tab="buckling" role="tab" id="buckTabBtn">Buckling</button>
+        <button class="tab hidden" data-tab="takedown" role="tab" id="tdTabBtn">Load Takedown</button>
         <div class="tabbar-spacer"></div>
         <span class="staged-badge hidden" id="stagedBadge" title="Staged construction vs one-shot analysis — max column-axial difference"></span>
         <div class="seg-toggle env-toggle hidden" id="envToggle" title="Envelope combo — switch tables between the max and min envelope">
@@ -642,6 +643,39 @@
           </div>
           <div class="pane-tools">
             <span class="muted" id="buckNote"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ LOAD TAKEDOWN (v0.11) ============ -->
+      <section class="tabpane" id="pane-takedown" role="tabpanel">
+        <div class="empty-state" id="empty-takedown">
+          <div class="empty-art">⊤</div>
+          <p>Run analysis with a gravity case to see the load takedown</p>
+        </div>
+        <div class="pane-content hidden" id="content-takedown">
+          <div class="charts-controls">
+            <div class="th-controls">
+              <label class="case-select-wrap"><span>Gravity case</span>
+                <select id="tdCaseSelect" class="case-select"></select></label>
+              <span class="muted" id="tdMeta"></span>
+              <span class="balance-chip is-ok" id="tdBalance">balanced</span>
+            </div>
+            <button class="chip csv-btn" id="csvTakedown" title="Download the takedown table as CSV (unrounded)">⬇ CSV</button>
+          </div>
+          <div class="td-body">
+            <div class="td-plan">
+              <div class="td-plan-title">Gravity landing — support FZ</div>
+              <div id="tdBubble"></div>
+            </div>
+            <div class="td-table-wrap">
+              <div class="table-scroll">
+                <table class="data-table" id="tdTable"></table>
+              </div>
+            </div>
+          </div>
+          <div class="pane-tools">
+            <span class="muted" id="tdNote"></span>
           </div>
         </div>
       </section>

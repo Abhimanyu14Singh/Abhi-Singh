@@ -39,6 +39,7 @@ const COLORS = {
   spring: "#2fbf74",                           // v0.8 grounded spring supports
   thermal: "#e5a50a",                          // v0.8 ΔT thermal badge
   rigid: "rgba(140, 185, 230, 0.75)",          // v0.9 rigid end zones
+  foundation: "rgba(198, 146, 82, 0.95)",      // v0.11 Winkler soil/spring bed
   grid: "rgba(120, 140, 165, 0.16)",
   gridLabel: "rgba(140, 160, 185, 0.55)",
   slabFill: "rgba(53, 181, 229, 0.045)",
@@ -195,6 +196,11 @@ export class Viewer3D {
     this.rigidUids = new Set();
     for (const mm of m.members)
       if ((mm.rigid_i || 0) > 0 || (mm.rigid_j || 0) > 0) this.rigidUids.add(mm.uid);
+
+    // v0.11: members on an elastic (Winkler) foundation → soil/spring-bed glyph
+    this.foundationSegs = m.members
+      .filter(mm => (mm.foundation_ks || 0) > 0 && (mm.foundation_width || 0) > 0)
+      .map(mm => ({ p1: mm.pi, p2: mm.pj, uid: mm.uid }));
 
     // v0.2 shell regions (walls / slabs) as filled quads.
     // v0.5: opening cutouts pre-computed as 3D quads (bilinear on corners).
@@ -679,6 +685,54 @@ export class Viewer3D {
           ctx.lineTo(s.x2 - dx * fj, s.y2 - dy * fj);
           ctx.stroke();
         }
+      }
+    }
+
+    // ---- v0.11 elastic-foundation soil/spring bed under members on a
+    // Winkler foundation: a row of small spring coils dropping to a ground
+    // line, DEPTH metres below the member (world −Z).
+    if (this.foundationSegs && this.foundationSegs.length && !overlayActive) {
+      const DEPTH = 0.55;
+      ctx.strokeStyle = COLORS.foundation;
+      ctx.lineWidth = 1.4;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      for (const f of this.foundationSegs) {
+        const p1 = f.p1, p2 = f.p2;
+        const n = Math.max(3, Math.min(12,
+          Math.round(Math.hypot(p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]) / 1.0)));
+        const gpts = [];        // projected ground points (for the ground line)
+        for (let k = 0; k <= n; k++) {
+          const t = k / n;
+          const bw = [p1[0] + (p2[0] - p1[0]) * t, p1[1] + (p2[1] - p1[1]) * t,
+            p1[2] + (p2[2] - p1[2]) * t];
+          const gw = [bw[0], bw[1], bw[2] - DEPTH];
+          const bc = P.toCam(bw), gc = P.toCam(gw);
+          if (bc[2] < P.near || gc[2] < P.near) { gpts.push(null); continue; }
+          const bs = P.proj(bc), gs = P.proj(gc);
+          gpts.push(gs);
+          // simple 2-kink coil in screen space between member point and ground
+          const mx = bs.x - gs.x, my = bs.y - gs.y;
+          const perp = { x: -my, y: mx };
+          const pl = Math.hypot(perp.x, perp.y) || 1;
+          const amp = Math.min(6, pl * 0.16);
+          const ax = perp.x / pl * amp, ay = perp.y / pl * amp;
+          ctx.beginPath();
+          ctx.moveTo(bs.x, bs.y);
+          ctx.lineTo(bs.x - mx * 0.33 + ax, bs.y - my * 0.33 + ay);
+          ctx.lineTo(bs.x - mx * 0.66 - ax, bs.y - my * 0.66 - ay);
+          ctx.lineTo(gs.x, gs.y);
+          ctx.stroke();
+        }
+        // ground line + hatch ticks
+        ctx.beginPath();
+        let started = false;
+        for (const g of gpts) {
+          if (!g) { started = false; continue; }
+          if (!started) { ctx.moveTo(g.x, g.y); started = true; }
+          else ctx.lineTo(g.x, g.y);
+        }
+        ctx.stroke();
       }
     }
 
