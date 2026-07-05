@@ -133,13 +133,41 @@ class ShellSection:
 # --------------------------------------------------------------------------- #
 # Geometry
 # --------------------------------------------------------------------------- #
+GRID_KINDS = ("orthogonal", "radial")
+_GRID_CIRCLE_SEGMENTS = 72          # polyline resolution for radial circles
+
+
 @dataclass
 class GridSystem:
-    """Orthogonal grid: x_lines/y_lines are sorted coordinates in metres."""
+    """A named drafting grid (v0.14).
 
-    x_lines: List[float]
-    y_lines: List[float]
+    Grids are DRAFTING AIDS ONLY: members store absolute global coordinates,
+    so grids never touch the analysis engine.  A grid may be placed at an
+    ``origin`` and ``rotation`` (degrees, CCW about the origin) and comes in
+    two kinds:
 
+    * ``kind == "orthogonal"`` (default) — ``x_lines``/``y_lines`` are the
+      grid-line coordinates in the grid's LOCAL frame (metres); labels are
+      ``A, B, ...`` across x and ``1, 2, ...`` up y (unchanged from v0.1).
+    * ``kind == "radial"`` — ``radii`` are concentric-circle radii (m) from
+      the origin and ``theta_deg`` are spoke angles (deg); the circles are
+      labelled ``R1, R2, ...`` and the spokes by angle.
+
+    The ``*_global`` helpers return drawable geometry / snap points already
+    transformed into the GLOBAL frame; ``snap`` returns the nearest
+    intersection within a tolerance.
+    """
+
+    x_lines: List[float] = field(default_factory=list)
+    y_lines: List[float] = field(default_factory=list)
+    name: str = "G1"
+    origin: Tuple[float, float] = (0.0, 0.0)
+    rotation: float = 0.0                       # degrees, CCW about origin
+    kind: str = "orthogonal"                    # "orthogonal" | "radial"
+    radii: List[float] = field(default_factory=list)      # radial only
+    theta_deg: List[float] = field(default_factory=list)  # radial only
+
+    # ---------------- labels ----------------
     @property
     def x_labels(self) -> List[str]:
         return [chr(ord("A") + i) for i in range(len(self.x_lines))]
@@ -148,9 +176,118 @@ class GridSystem:
     def y_labels(self) -> List[str]:
         return [str(i + 1) for i in range(len(self.y_lines))]
 
+    # ---------------- geometry ----------------
+    def to_global(self, lx: float, ly: float) -> Tuple[float, float]:
+        """Map a LOCAL grid point (lx, ly) to GLOBAL coords.
+
+        Rotate CCW by ``rotation`` about the grid origin, then translate:
+        ``(ox + lx*c - ly*s, oy + lx*s + ly*c)`` with c/s = cos/sin(rotation).
+        """
+        a = math.radians(self.rotation)
+        c, s = math.cos(a), math.sin(a)
+        ox, oy = float(self.origin[0]), float(self.origin[1])
+        return (ox + lx * c - ly * s, oy + lx * s + ly * c)
+
+    def lines_global(self) -> List[dict]:
+        """Drawable line segments in GLOBAL coords.
+
+        Each entry is ``{"label": str, "points": [[x, y], ...]}`` — two points
+        for a straight grid line / spoke, a closed polyline for a radial
+        circle.
+        """
+        if self.kind == "radial":
+            return self._radial_lines()
+        lines: List[dict] = []
+        xs, ys = self.x_lines, self.y_lines
+        ymin = ys[0] if ys else 0.0
+        ymax = ys[-1] if ys else 0.0
+        xmin = xs[0] if xs else 0.0
+        xmax = xs[-1] if xs else 0.0
+        for lab, xv in zip(self.x_labels, xs):
+            p1, p2 = self.to_global(xv, ymin), self.to_global(xv, ymax)
+            lines.append({"label": lab, "points": [list(p1), list(p2)]})
+        for lab, yv in zip(self.y_labels, ys):
+            p1, p2 = self.to_global(xmin, yv), self.to_global(xmax, yv)
+            lines.append({"label": lab, "points": [list(p1), list(p2)]})
+        return lines
+
+    def _radial_lines(self) -> List[dict]:
+        lines: List[dict] = []
+        n = _GRID_CIRCLE_SEGMENTS
+        rmax = max(self.radii) if self.radii else 0.0
+        for ri, r in enumerate(self.radii):
+            pts = []
+            for k in range(n + 1):
+                ang = 2.0 * math.pi * k / n
+                pts.append(list(self.to_global(r * math.cos(ang),
+                                               r * math.sin(ang))))
+            lines.append({"label": f"R{ri + 1}", "points": pts})
+        for t in self.theta_deg:
+            a = math.radians(t)
+            p1 = self.to_global(0.0, 0.0)
+            p2 = self.to_global(rmax * math.cos(a), rmax * math.sin(a))
+            lines.append({"label": f"{t:g}°",
+                          "points": [list(p1), list(p2)]})
+        return lines
+
+    def intersections_global(self) -> List[dict]:
+        """Labelled snap points in GLOBAL coords.
+
+        Orthogonal: every x-line x y-line crossing, label ``"A-1"``.
+        Radial: every circle x spoke crossing, label ``"R1-30°"``.
+        Each entry is ``{"label": str, "point": [x, y]}``.
+        """
+        out: List[dict] = []
+        if self.kind == "radial":
+            for ri, r in enumerate(self.radii):
+                for t in self.theta_deg:
+                    a = math.radians(t)
+                    p = self.to_global(r * math.cos(a), r * math.sin(a))
+                    out.append({"label": f"R{ri + 1}-{t:g}°",
+                                "point": list(p)})
+            return out
+        for xlab, xv in zip(self.x_labels, self.x_lines):
+            for ylab, yv in zip(self.y_labels, self.y_lines):
+                p = self.to_global(xv, yv)
+                out.append({"label": f"{xlab}-{ylab}", "point": list(p)})
+        return out
+
+    def snap(self, px: float, py: float, tol: float) -> Optional[dict]:
+        """Nearest intersection ``{"label", "point"}`` within ``tol`` or None."""
+        best = None
+        best_d = None
+        for it in self.intersections_global():
+            gx, gy = it["point"]
+            d = math.hypot(gx - px, gy - py)
+            if best_d is None or d < best_d:
+                best_d, best = d, it
+        if best is not None and best_d <= tol:
+            return best
+        return None
+
+    # ---------------- (de)serialisation ----------------
     def to_dict(self) -> dict:
-        return {"x_lines": self.x_lines, "y_lines": self.y_lines,
-                "x_labels": self.x_labels, "y_labels": self.y_labels}
+        return {"name": self.name, "kind": self.kind,
+                "origin": [float(self.origin[0]), float(self.origin[1])],
+                "rotation": float(self.rotation),
+                "x_lines": [float(x) for x in self.x_lines],
+                "y_lines": [float(y) for y in self.y_lines],
+                "x_labels": self.x_labels, "y_labels": self.y_labels,
+                "radii": [float(r) for r in self.radii],
+                "theta_deg": [float(t) for t in self.theta_deg]}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "GridSystem":
+        orig = d.get("origin", (0.0, 0.0))
+        return cls(
+            x_lines=[float(x) for x in (d.get("x_lines") or [])],
+            y_lines=[float(y) for y in (d.get("y_lines") or [])],
+            name=str(d.get("name", "G1")),
+            origin=(float(orig[0]), float(orig[1])),
+            rotation=float(d.get("rotation", 0.0)),
+            kind=str(d.get("kind", "orthogonal")),
+            radii=[float(r) for r in (d.get("radii") or [])],
+            theta_deg=[float(t) for t in (d.get("theta_deg") or [])])
 
 
 @dataclass
@@ -873,6 +1010,10 @@ class BuildingModel:
     sections: Dict[str, FrameSection] = field(default_factory=dict)
     shell_sections: Dict[str, ShellSection] = field(default_factory=dict)
     grid: Optional[GridSystem] = None
+    # v0.14 multiple named grid systems (rotated / radial). ``grid`` stays as
+    # the PRIMARY/legacy grid (plan_extents, takedown labels); ``grid_systems``
+    # holds the full list.  ``effective_grids()`` reconciles the two.
+    grid_systems: List[GridSystem] = field(default_factory=list)
     stories: List[Story] = field(default_factory=list)        # bottom -> top
     members: List[FrameMember] = field(default_factory=list)
     shells: List[ShellRegion] = field(default_factory=list)
@@ -1542,18 +1683,99 @@ class BuildingModel:
     def story_elevations(self) -> Dict[str, float]:
         return {s.name: s.elevation for s in self.stories}
 
+    # ---------------- grid systems (v0.14) ----------------
+    def effective_grids(self) -> List[GridSystem]:
+        """The active grid systems: ``grid_systems`` if any, else the legacy
+        single ``grid`` wrapped in a list, else empty."""
+        if self.grid_systems:
+            return list(self.grid_systems)
+        if self.grid is not None:
+            return [self.grid]
+        return []
+
+    def all_grid_lines_global(self) -> List[dict]:
+        """Union of every grid system's ``lines_global()`` (tagged by system).
+
+        Each entry gains a ``"system"`` key naming its grid.
+        """
+        out: List[dict] = []
+        for g in self.effective_grids():
+            for ln in g.lines_global():
+                out.append({"system": g.name, **ln})
+        return out
+
+    def all_intersections_global(self) -> List[dict]:
+        """Union of every grid system's ``intersections_global()`` (tagged)."""
+        out: List[dict] = []
+        for g in self.effective_grids():
+            for it in g.intersections_global():
+                out.append({"system": g.name, **it})
+        return out
+
+    def snap(self, px: float, py: float, tol: float) -> Optional[dict]:
+        """Nearest grid intersection across ALL grid systems within ``tol``."""
+        best = None
+        best_d = None
+        for it in self.all_intersections_global():
+            gx, gy = it["point"]
+            d = math.hypot(gx - px, gy - py)
+            if best_d is None or d < best_d:
+                best_d, best = d, it
+        if best is not None and best_d <= tol:
+            return best
+        return None
+
+    def set_grid_system(self, gs: GridSystem) -> GridSystem:
+        """Add ``gs`` (or replace the grid system with the same ``name``).
+
+        Migrates a legacy single ``grid`` into ``grid_systems`` on first use;
+        keeps ``grid`` pointed at the primary (first) system."""
+        self._validate_grid(gs)
+        if not self.grid_systems:
+            self.grid_systems = self.effective_grids()
+        for i, g in enumerate(self.grid_systems):
+            if g.name == gs.name:
+                self.grid_systems[i] = gs
+                break
+        else:
+            self.grid_systems.append(gs)
+        self.grid = self.grid_systems[0]
+        return gs
+
+    def _grid_plan_bbox(self) -> Optional[Tuple[float, float, float, float]]:
+        """(minx, maxx, miny, maxy) over ALL grid systems' global line points,
+        or None when no grid produces geometry."""
+        xs: List[float] = []
+        ys: List[float] = []
+        for g in self.effective_grids():
+            # Only grids that define a real 2D extent contribute (an
+            # orthogonal grid needs BOTH line families; a radial grid needs
+            # radii) — matching the legacy "grid OR members" fallback.
+            if g.kind == "radial":
+                if not g.radii:
+                    continue
+            elif not (g.x_lines and g.y_lines):
+                continue
+            for ln in g.lines_global():
+                for px, py in ln["points"]:
+                    xs.append(px)
+                    ys.append(py)
+        if not xs or not ys:
+            return None
+        return (min(xs), max(xs), min(ys), max(ys))
+
     def plan_extents(self) -> Tuple[float, float]:
-        if self.grid and self.grid.x_lines and self.grid.y_lines:
-            return (self.grid.x_lines[-1] - self.grid.x_lines[0],
-                    self.grid.y_lines[-1] - self.grid.y_lines[0])
+        b = self._grid_plan_bbox()
+        if b is not None:
+            return (b[1] - b[0], b[3] - b[2])
         xs = [p[0] for m in self.members for p in (m.pi, m.pj)] or [0.0]
         ys = [p[1] for m in self.members for p in (m.pi, m.pj)] or [0.0]
         return (max(xs) - min(xs), max(ys) - min(ys))
 
     def plan_center(self) -> Tuple[float, float]:
-        if self.grid and self.grid.x_lines and self.grid.y_lines:
-            return ((self.grid.x_lines[0] + self.grid.x_lines[-1]) / 2.0,
-                    (self.grid.y_lines[0] + self.grid.y_lines[-1]) / 2.0)
+        b = self._grid_plan_bbox()
+        if b is not None:
+            return ((b[0] + b[1]) / 2.0, (b[2] + b[3]) / 2.0)
         xs = [p[0] for m in self.members for p in (m.pi, m.pj)] or [0.0]
         ys = [p[1] for m in self.members for p in (m.pi, m.pj)] or [0.0]
         return ((min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0)
@@ -1767,16 +1989,56 @@ class BuildingModel:
             raise ValueError(f"thermal_alpha must be finite (got "
                              f"{self.thermal_alpha!r})")
         self._validate_diaphragm()
+        for g in self.effective_grids():
+            self._validate_grid(g)
+
+    @staticmethod
+    def _validate_grid(g: GridSystem) -> None:
+        """Validate a grid system (v0.14)."""
+        if g.kind not in GRID_KINDS:
+            raise ValueError(f"Grid {g.name!r}: kind must be one of "
+                             f"{GRID_KINDS}, got {g.kind!r}")
+        if (not isinstance(g.origin, (tuple, list)) or len(g.origin) != 2
+                or not all(isinstance(v, (int, float)) and math.isfinite(v)
+                           for v in g.origin)):
+            raise ValueError(f"Grid {g.name!r}: origin must be two finite "
+                             "numbers (x, y)")
+        if not (isinstance(g.rotation, (int, float))
+                and math.isfinite(g.rotation)):
+            raise ValueError(f"Grid {g.name!r}: rotation must be finite")
+        if g.kind == "orthogonal":
+            for key, vals in (("x_lines", g.x_lines), ("y_lines", g.y_lines)):
+                if not all(isinstance(v, (int, float)) and math.isfinite(v)
+                           for v in vals):
+                    raise ValueError(f"Grid {g.name!r}: {key} must be finite "
+                                     "numbers")
+        else:  # radial
+            if not g.radii:
+                raise ValueError(f"Grid {g.name!r}: a radial grid needs at "
+                                 "least one radius")
+            for r in g.radii:
+                if not (isinstance(r, (int, float)) and math.isfinite(r)
+                        and r > 0.0):
+                    raise ValueError(f"Grid {g.name!r}: radii must be finite "
+                                     f"and > 0 (got {r!r})")
+            for t in g.theta_deg:
+                if not (isinstance(t, (int, float)) and math.isfinite(t)):
+                    raise ValueError(f"Grid {g.name!r}: theta_deg must be "
+                                     "finite numbers")
 
     # ---------------- (de)serialisation ----------------
     def to_dict(self) -> dict:
+        _grids = self.effective_grids()
         return {
             "name": self.name,
             "materials": {k: v.to_dict() for k, v in self.materials.items()},
             "sections": {k: v.to_dict() for k, v in self.sections.items()},
             "shell_sections": {k: v.to_dict()
                                for k, v in self.shell_sections.items()},
-            "grid": self.grid.to_dict() if self.grid else None,
+            # v0.14: emit BOTH the primary/legacy `grid` (for old readers) and
+            # the full `grid_systems` list.
+            "grid": (_grids[0].to_dict() if _grids else None),
+            "grid_systems": [g.to_dict() for g in _grids],
             "stories": [s.to_dict() for s in self.stories],
             "members": [m.to_dict() for m in self.members],
             "shells": [r.to_dict() for r in self.shells],
@@ -1844,10 +2106,19 @@ class BuildingModel:
                 name=sd.get("name", name), material=sd["material"],
                 thickness=float(sd["thickness"]),
                 mod=float(sd.get("mod", 1.0)))
-        gd = d.get("grid")
-        if gd:
-            mdl.grid = GridSystem([float(x) for x in gd["x_lines"]],
-                                  [float(y) for y in gd["y_lines"]])
+        # v0.14 grid systems: prefer the full `grid_systems` list; otherwise
+        # wrap a legacy single `grid` as a one-element list.  Both `grid`
+        # (primary) and `grid_systems` are populated so all readers work.
+        gs_list = d.get("grid_systems")
+        if gs_list:
+            mdl.grid_systems = [GridSystem.from_dict(g) for g in gs_list]
+            mdl.grid = mdl.grid_systems[0]
+        else:
+            gd = d.get("grid")
+            if gd:
+                g = GridSystem.from_dict(gd)
+                mdl.grid = g
+                mdl.grid_systems = [g]
         for sd in d.get("stories") or []:
             mdl.stories.append(Story(sd["name"], float(sd["height"]),
                                      float(sd.get("elevation", 0.0))))

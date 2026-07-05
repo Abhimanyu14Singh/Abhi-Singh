@@ -58,7 +58,8 @@ from skyframe.core.builder import (add_self_weight, make_wind_pattern,
                                    quick_building)
 from skyframe.core.codes import (apply_asce7_combinations, asce7_elf,
                                  make_rs_case_from_code)
-from skyframe.core.model import BuildingModel, make_notional_pattern
+from skyframe.core.model import (BuildingModel, GridSystem,
+                                 make_notional_pattern)
 from skyframe.core.sections_library import library_to_dict
 
 try:
@@ -532,6 +533,57 @@ def create_app() -> Flask:
                 name.strip(), axis, coord,
                 x_range=_rng("x_range"), y_range=_rng("y_range"),
                 z_range=_rng("z_range"))
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(_state["model"].to_dict())
+
+    # ------------------------------------------ v0.14: grid system convenience
+    @app.post("/api/grid")
+    def add_grid():
+        """Add or replace a named grid system on the current model.
+
+        Body: ``{name, kind?, origin?, rotation?, x_lines?, y_lines?,
+        radii?, theta_deg?}``.  ``kind`` defaults to "orthogonal"; a "radial"
+        grid needs ``radii``.  Returns the updated model dict; 400 on bad
+        input.
+        """
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        name = body.get("name")
+        if not isinstance(name, str) or not name.strip():
+            return jsonify({"error": "'name' is required"}), 400
+        kind = body.get("kind", "orthogonal")
+        if kind not in ("orthogonal", "radial"):
+            return jsonify({"error": "'kind' must be orthogonal|radial"}), 400
+
+        def _numlist(key):
+            v = body.get(key)
+            if v is None:
+                return []
+            if (not isinstance(v, list)
+                    or not all(isinstance(x, (int, float))
+                               and not isinstance(x, bool) for x in v)):
+                raise ValueError(f"{key!r} must be a list of numbers")
+            return [float(x) for x in v]
+
+        try:
+            origin = body.get("origin", [0.0, 0.0])
+            if (not isinstance(origin, list) or len(origin) != 2
+                    or not all(isinstance(v, (int, float))
+                               and not isinstance(v, bool) for v in origin)):
+                raise ValueError("'origin' must be [x, y] numbers")
+            rotation = body.get("rotation", 0.0)
+            if isinstance(rotation, bool) or not isinstance(
+                    rotation, (int, float)):
+                raise ValueError("'rotation' must be a number (degrees)")
+            gs = GridSystem(
+                x_lines=_numlist("x_lines"), y_lines=_numlist("y_lines"),
+                name=name.strip(),
+                origin=(float(origin[0]), float(origin[1])),
+                rotation=float(rotation), kind=kind,
+                radii=_numlist("radii"), theta_deg=_numlist("theta_deg"))
+            _state["model"].set_grid_system(gs)
         except (ValueError, TypeError) as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify(_state["model"].to_dict())

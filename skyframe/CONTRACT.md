@@ -1404,3 +1404,94 @@ suitable for a `SpectrumFunction` / `ResponseSpectrumCase`.
 `th_functions`, and the RS/TH-case `function` fields (400 when a case names an
 undefined function); `POST /api/analyze` returns the `"section_cuts"` block
 automatically.
+
+---
+
+# v0.14 additions — multiple / rotated / radial grid systems
+
+Grids are DRAFTING AIDS ONLY.  Members store absolute GLOBAL coordinates, so
+grid systems never enter the analysis engine — this wave is a model +
+snapping-helper feature; the engine and all prior results are unchanged.
+
+## GridSystem redesign (`skyframe/core/model.py`, backward compatible)
+
+```python
+@dataclass
+class GridSystem:
+    x_lines: List[float] = []       # LOCAL-frame x grid coords (orthogonal)
+    y_lines: List[float] = []       # LOCAL-frame y grid coords (orthogonal)
+    name: str = "G1"
+    origin: Tuple[float, float] = (0.0, 0.0)
+    rotation: float = 0.0           # degrees, CCW about origin
+    kind: str = "orthogonal"        # "orthogonal" | "radial"
+    radii: List[float] = []         # radial: concentric-circle radii (m, > 0)
+    theta_deg: List[float] = []     # radial: spoke angles (degrees)
+```
+
+* Constructing `GridSystem(x_lines, y_lines)` positionally still works;
+  `x_labels` (`A, B, ...`) and `y_labels` (`1, 2, ...`) are unchanged.
+* **Local → global transform** (documented): rotate CCW by `rotation` about
+  the origin, then translate — `gx = ox + lx*cos - ly*sin`,
+  `gy = oy + lx*sin + ly*cos` (`GridSystem.to_global(lx, ly)`).
+* `lines_global()` → drawable segments in GLOBAL coords, each
+  `{"label", "points": [[x, y], ...]}`: orthogonal grid lines / radial spokes
+  are 2-point segments; radial circles are closed polylines (72 segments).
+  Circles are labelled `R1, R2, ...`; spokes by angle (e.g. `"30°"`).
+* `intersections_global()` → labelled snap points, each `{"label", "point"}`:
+  orthogonal line crossings `"A-1"`; radial circle×spoke crossings
+  `"R1-30°"`.
+* `snap(px, py, tol)` → the nearest intersection `{"label", "point"}` within
+  `tol`, else `None`.
+* `to_dict()` emits every field (plus derived `x_labels`/`y_labels` so old
+  readers keep working); `GridSystem.from_dict(d)` restores them (absent new
+  keys default: name `"G1"`, origin `(0,0)`, rotation `0`, kind
+  `"orthogonal"`, empty radii/theta).
+
+## BuildingModel
+
+```python
+grid: Optional[GridSystem] = None            # PRIMARY/legacy grid (unchanged)
+grid_systems: List[GridSystem] = []          # v0.14 full list
+```
+
+* `effective_grids()` → `grid_systems` if any, else `[grid]` if set, else `[]`.
+* `all_grid_lines_global()` / `all_intersections_global()` aggregate across
+  every grid system (each entry gains a `"system"` key = the grid name).
+* `snap(px, py, tol)` → nearest intersection across ALL grid systems (tagged
+  with `"system"`), else `None`.
+* `set_grid_system(gs)` adds `gs`, or replaces the system with the same
+  `name`; migrates a legacy single `grid` into `grid_systems` on first use and
+  keeps `grid` pointed at the primary (first) system.
+* **Serialisation:** `to_dict()` emits BOTH `grid` (the primary/first system,
+  for old readers) and `grid_systems` (the full list).  `from_dict()`: if
+  `grid_systems` is present it is used and `grid` is set to the first entry;
+  else a legacy `grid` is wrapped as a one-element `grid_systems` (both are
+  populated).  A model with no grid emits `grid: null`, `grid_systems: []`.
+* **plan_extents / plan_center** consider the UNION of every grid system's
+  global line extents (an orthogonal grid contributes only with BOTH line
+  families, a radial grid only with radii; otherwise the member-bounding-box
+  fallback applies).  A single orthogonal grid at origin/rotation 0 reproduces
+  the pre-v0.14 extents exactly.
+* **Validation** (`validate()`): `kind` ∈ {orthogonal, radial}; origin two
+  finite numbers; rotation finite; a radial grid needs ≥ 1 radius (all
+  finite > 0) and finite `theta_deg`.
+
+## API
+
+| Method | Path        | Body / Response |
+|--------|-------------|-----------------|
+| POST   | `/api/grid` | `{name, kind?, origin?, rotation?, x_lines?, y_lines?, radii?, theta_deg?}` → adds/replaces the named grid system, returns model dict; 400 on bad input (e.g. radial without `radii`) |
+
+`kind` defaults to `"orthogonal"`, `origin` to `[0, 0]`, `rotation` to `0`.
+`POST /api/model` round-trips `grid_systems` (and the legacy `grid`) through
+`from_dict`.
+
+## Backward-compat rules (summary)
+
+* Positional `GridSystem(x_lines, y_lines)` and `x_labels`/`y_labels` unchanged;
+  builders/importers that set `model.grid` need no change.
+* `to_dict()` keeps the legacy `grid` key (now with extra fields) AND adds
+  `grid_systems`; `from_dict()` reads either.  `from_dict(to_dict(m))` is an
+  exact round-trip; `quick_building()` plan extents/center are unchanged.
+* The engine is untouched: grid geometry never affects analysis (members carry
+  global coordinates); the full pre-existing suite stays green.
