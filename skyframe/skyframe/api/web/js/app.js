@@ -6,7 +6,7 @@ import { renderStoryCharts, stationDiagram, timeSeriesChart, pushoverChart } fro
 import { mockModel, mockResults, mockSectionLibrary, mockModelFiles, mockWindPattern,
   mockDesignSteel, mockDesignConcrete, mockImport,
   mockSelfWeightPattern, mockAsce7Combos, mockCodeRsCase, mockElfPattern,
-  mockRsDirectional, mockNotionalPattern, mockOptimize } from "./mock.js";
+  mockRsDirectional, mockNotionalPattern, mockOptimize, mockLiveReduction } from "./mock.js";
 import { PlanEditor } from "./draw.js";
 import { ElevEditor } from "./elev.js";
 import { LoadsEditor } from "./loads.js";
@@ -57,6 +57,10 @@ const store = {
   cutCase: null,         // v0.13 — selected case for the section-cut-forces tab
   pierCase: null,        // v0.15 — selected case for the wall-piers tab
   pierSort: { key: "elev", dir: -1 },   // v0.15 — story order within pier groups
+  svcCase: null,         // v0.16 — selected case for the serviceability tab
+  svcSort: { key: "ratioVal", dir: 1 }, // v0.16 — worst (smallest L/x) first
+  llReduction: false,    // v0.16 — apply ASCE 7 §4.7 live-load reduction to design
+  llrData: null,         // v0.16 — cached GET /api/live-reduction {uid:{KLL,At,R}}
   // v0.6 — design checks, import, template gallery, staged, nonlinear TH
   designKind: "steel",   // "steel" | "concrete"
   designCase: null,      // case/combo checked
@@ -189,6 +193,22 @@ async function designOptimize(body) {
   }
   await new Promise(r => setTimeout(r, 250));
   return mockOptimize(store.model, body);
+}
+
+/* ---- v0.16: live-load reduction factors (ASCE 7 §4.7). GET /api/live-reduction
+   returns {uid: {KLL, At, R}} per column; the mock derives the tributary areas
+   from the grid and computes R = 0.25 + 4.57/√(K_LL·A_T), clamped. Cached until
+   the next fetch(force). */
+async function fetchLiveReduction(force = false) {
+  if (store.llrData && !force) return store.llrData;
+  let data = null;
+  if (!store.mock) {
+    try { data = await api("/api/live-reduction"); }
+    catch (e) { console.warn("Live-reduction endpoint unavailable, computing locally:", e.message); }
+  }
+  store.llrData = (data && typeof data === "object" && Object.keys(data).length)
+    ? data : mockLiveReduction(store.model);
+  return store.llrData;
 }
 
 /* ---- v0.6: model importers. Reads the returned {model, warnings}; the
@@ -2091,6 +2111,8 @@ function adoptModel(modelDict, fileName) {
   store.steelResult = null;                       // v0.6
   store.concreteResult = null;
   store.designCase = null;
+  store.svcCase = null;                           // v0.16
+  store.llrData = null;                           // v0.16 — new geometry, new areas
   clearDirty();
   closeMemberPanel();
   viewer.setResults(null);
@@ -2465,6 +2487,8 @@ const DIAG_MINOR = [
   { key: "M2", title: "M2 — minor moment", unit: "kN·m", color: "#77879b" },
   { key: "T", title: "T — torsion", unit: "kN·m", color: "#77879b" },
 ];
+// v0.16 — local transverse deflection diagram (mm), from member_deflections
+const DIAG_DEFL = { key: "dy", title: "δy — deflection", unit: "mm", color: "#e5a50a", dec: 2 };
 
 function onMemberClick(seg) {
   if (store.mode !== "analyze" || !store.results) return;
@@ -2500,21 +2524,35 @@ function renderMemberPanel() {
 
   const cd = caseData();
   const st = cd && cd.member_stations && cd.member_stations[uid];
+  // v0.16 — local transverse deflections (beams): {x, dy, dz} in m
+  const md = cd && cd.member_deflections && cd.member_deflections[uid];
+  const hasDefl = !!(md && Array.isArray(md.x) && Array.isArray(md.dy) &&
+    md.dy.length === md.x.length);
   const main = $("memberDiagrams"), minor = $("memberDiagramsMinor");
   main.textContent = ""; minor.textContent = "";
-  $("memberEmpty").classList.toggle("hidden", !!st);
+  $("memberEmpty").classList.toggle("hidden", !!(st || hasDefl));
   $("memberMinor").classList.toggle("hidden", !st);
   const envBadge = isRsCase(store.caseName)
     ? ` <span class="env-badge" title="Response-spectrum values are positive envelopes — signs are indeterminate">envelope ±</span>` : "";
-  $("memberCaseNote").innerHTML = (st
+  $("memberCaseNote").innerHTML = ((st || hasDefl)
     ? `Station diagrams · case <b>${esc(caseLabel(store.caseName))}</b>`
     : `Case <b>${esc(caseLabel(store.caseName))}</b>`) + envBadge;
-  if (!st) return;
-  const vals = k => (st[k] && st[k].length === st.x.length) ? st[k] : st.x.map(() => 0);
-  for (const d of DIAG)
-    main.appendChild(stationDiagram(st.x, vals(d.key), d));
-  for (const d of DIAG_MINOR)
-    minor.appendChild(stationDiagram(st.x, vals(d.key), d));
+  if (st) {
+    const vals = k => (st[k] && st[k].length === st.x.length) ? st[k] : st.x.map(() => 0);
+    for (const d of DIAG)
+      main.appendChild(stationDiagram(st.x, vals(d.key), d));
+    for (const d of DIAG_MINOR)
+      minor.appendChild(stationDiagram(st.x, vals(d.key), d));
+  }
+  if (hasDefl) {
+    // δ diagram (mm) — appended alongside N/V2/M3; sag plots downward
+    const card = stationDiagram(md.x, md.dy.map(v => v * 1000), DIAG_DEFL);
+    card.classList.add("diagram-defl");
+    main.appendChild(card);
+    if (st && Array.isArray(md.dz) && md.dz.some(v => Math.abs(v) > 1e-9))
+      minor.appendChild(stationDiagram(md.x, md.dz.map(v => v * 1000),
+        { key: "dz", title: "δz — minor deflection", unit: "mm", color: "#77879b", dec: 2 }));
+  }
 }
 
 /* ------------------------------------------------ renders */
@@ -2546,7 +2584,7 @@ function setResultsAvailable(on) {
     $(`empty-${t}`).classList.toggle("hidden", on);
     $(`content-${t}`).classList.toggle("hidden", !on);
   }
-  if (on) { renderDesignForm(); renderDesignTable(); renderOptimizePanel(); }
+  if (on) { renderDesignForm(); renderDesignTable(); renderOptimizePanel(); renderLlrPanel(); }
   else if (store.tab === "design") switchTab("view3d");
   $("chipDeformed").disabled = !on;
   $("chipMode").disabled = !on;
@@ -2586,6 +2624,12 @@ function setResultsAvailable(on) {
   $("empty-piers").classList.toggle("hidden", hasPiers);
   $("content-piers").classList.toggle("hidden", !hasPiers);
   if (!hasPiers && store.tab === "piers") switchTab("view3d");
+  // v0.16: serviceability tab appears only when results carry deflection_checks
+  const hasSvc = on && !!Object.keys(store.results?.deflection_checks || {}).length;
+  $("svcTabBtn").classList.toggle("hidden", !hasSvc);
+  $("empty-svc").classList.toggle("hidden", hasSvc);
+  $("content-svc").classList.toggle("hidden", !hasSvc);
+  if (!hasSvc && store.tab === "svc") switchTab("view3d");
   if (!on) {
     store.contour.on = false;
     syncContoursUI();
@@ -2607,6 +2651,7 @@ function renderResultsTabs() {
   renderTakedownTab();
   renderCutsTab();
   renderPiersTab();
+  renderSvcTab();
 }
 
 /* ---- story tab */
@@ -3602,6 +3647,126 @@ function renderPiersTab() {
 }
 
 /* ================================================================
+   v0.16 — SERVICEABILITY tab
+   results["deflection_checks"][case] = [{uid, story, L, max_abs_dy,
+   ratio_str "L/412", limit "L/360", ok}] — beam deflection checks vs the
+   model's serviceability limit. Editable limit writes model.deflection_limit
+   (re-analysis refreshes the checks); sortable table, CSV, report inclusion,
+   NG rows highlighted, row → 3D member select.
+   ================================================================ */
+function svcCaseNames() {
+  const dc = store.results && store.results.deflection_checks;
+  return dc ? Object.keys(dc) : [];
+}
+function svcData() {
+  const dc = store.results && store.results.deflection_checks;
+  if (!dc || !Object.keys(dc).length) return null;
+  if (!store.svcCase || !dc[store.svcCase]) store.svcCase = Object.keys(dc)[0];
+  return dc[store.svcCase];
+}
+function rebuildSvcSelect() {
+  const names = svcCaseNames();
+  const sel = $("svcCaseSelect");
+  if (!sel) return;
+  sel.textContent = "";
+  for (const n of names) {
+    const o = document.createElement("option");
+    o.value = n; o.textContent = n;
+    sel.appendChild(o);
+  }
+  if (!store.svcCase || !names.includes(store.svcCase)) store.svcCase = names[0] || null;
+  if (store.svcCase) sel.value = store.svcCase;
+}
+
+/** Sorted check rows for the selected case; ratioVal = the numeric L/δ so the
+    worst beam (smallest L/x) sorts first by default. */
+function svcRows(list) {
+  const rows = (list || []).map(c => ({
+    ...c,
+    ratioVal: (c.max_abs_dy || 0) > 1e-12 ? (c.L || 0) / c.max_abs_dy : Infinity,
+    dyMm: (c.max_abs_dy || 0) * 1000,
+  }));
+  const { key, dir } = store.svcSort;
+  rows.sort((a, b) => {
+    const va = a[key], vb = b[key];
+    if (typeof va === "string") return va.localeCompare(vb, undefined, { numeric: true }) * dir;
+    return ((va === Infinity ? 1e12 : va) - (vb === Infinity ? 1e12 : vb)) * dir;
+  });
+  return rows;
+}
+
+const SVC_COLS = [
+  { key: "uid", label: "Beam", txt: true },
+  { key: "story", label: "Story", txt: true },
+  { key: "L", label: "L m" },
+  { key: "dyMm", label: "max |δ| mm" },
+  { key: "ratioVal", label: "Ratio" },
+  { key: "limit", label: "Limit", txt: true },
+  { key: "ok", label: "Status", txt: true },
+];
+
+function renderSvcTab() {
+  const list = svcData();
+  if (!list) return;
+  rebuildSvcSelect();
+  const rows = svcRows(list);
+  const ng = rows.filter(r => !r.ok).length;
+
+  $("svcMeta").innerHTML =
+    `${rows.length} beam${rows.length === 1 ? "" : "s"} · ${esc(store.svcCase)} · ` +
+    (ng ? `<b class="svc-ng-count">${ng} NG</b>` : `all OK`);
+  const limInput = $("svcLimitInput");
+  if (limInput && document.activeElement !== limInput)
+    limInput.value = String(store.model.deflection_limit ?? 360);
+
+  const { key: sk, dir } = store.svcSort;
+  const head = `<thead><tr>` + SVC_COLS.map(c =>
+    `<th class="sortable ${c.txt ? "txt" : ""}" data-key="${c.key}">${c.label}` +
+    (c.key === sk ? `<span class="sort-arrow">${dir > 0 ? "▲" : "▼"}</span>` : "") +
+    `</th>`).join("") + `</tr></thead>`;
+  const body = rows.map(x => `
+    <tr data-uid="${esc(x.uid)}" class="svc-row${x.ok ? "" : " over"}" title="Click to show ${esc(x.uid)} in 3D">
+      <td class="txt">${esc(x.uid)}</td>
+      <td class="txt dim">${esc(x.story || "—")}</td>
+      <td class="dim">${fmt(x.L, 2)}</td>
+      <td class="${x.ok ? "" : "exceed"}">${fmt(x.dyMm, 2)}</td>
+      <td class="${x.ok ? "" : "exceed"}"><b>${esc(x.ratio_str || "—")}</b></td>
+      <td class="txt dim">${esc(x.limit || "—")}</td>
+      <td class="txt">${x.ok
+        ? `<span class="status-chip st-ok">OK</span>`
+        : `<span class="status-chip st-ng">NG</span>`}</td>
+    </tr>`).join("");
+  $("svcTable").innerHTML = head + `<tbody>${body ||
+    `<tr><td class="txt dim">No beam deflection checks in this case</td></tr>`}</tbody>`;
+
+  $("svcTable").querySelectorAll("th.sortable").forEach(th =>
+    th.addEventListener("click", () => {
+      const k = th.dataset.key;
+      if (store.svcSort.key === k) store.svcSort.dir *= -1;
+      else store.svcSort = { key: k, dir: (k === "uid" || k === "story" || k === "limit") ? 1 : k === "ratioVal" ? 1 : -1 };
+      renderSvcTab();
+    }));
+  // row → highlight + open the member panel in 3D (deflection diagram there)
+  $("svcTable").querySelectorAll("tr.svc-row").forEach(tr =>
+    tr.addEventListener("click", () => {
+      if (svcCaseNames().includes(store.svcCase) && store.caseName !== store.svcCase &&
+          caseNames().includes(store.svcCase)) {
+        store.caseName = store.svcCase;               // member panel shows this case
+        $("caseSelect").value = store.svcCase;
+        syncOverlayUI();
+        syncContoursUI();
+      }
+      selectMemberFrom3D(tr.dataset.uid);
+    }));
+
+  $("svcNote").textContent =
+    "Beam serviceability — max |local transverse deflection| vs the span limit " +
+    `L/${store.model.deflection_limit ?? 360}. The achieved ratio L/x must stay above the limit ` +
+    "(x ≥ limit ⇒ OK). Editing the limit writes model.deflection_limit; re-run the analysis " +
+    "to refresh the checks against the new limit.";
+}
+
+/* ================================================================
    v0.6 — DESIGN CHECKS (steel / concrete)
    ================================================================ */
 function designResult() {
@@ -3704,6 +3869,74 @@ function renderDesignForm() {
   $("designCheckBtn").addEventListener("click", runDesignCheck);
 }
 
+/* ================================================================
+   v0.16 — LIVE-LOAD REDUCTION panel (ASCE 7 §4.7, Design tab)
+   Toggle + per-column factor table from GET /api/live-reduction (mock
+   computes R = 0.25 + 4.57/√(K_LL·A_T), clamped). When ON, design check
+   requests carry {live_reduction:true, live_case:"LIVE"} and the summary
+   strip notes "LL reduction applied". CSV of the factors.
+   ================================================================ */
+function renderLlrPanel() {
+  const panel = $("llrPanel");
+  if (!panel) return;
+  panel.classList.toggle("hidden", !store.results);
+  if (!store.results) return;
+  $("llrToggle").checked = store.llReduction;
+  $("llrAppliedChip").classList.toggle("hidden", !store.llReduction);
+  const open = store.llReduction && !!store.llrData;
+  $("llrBody").classList.toggle("hidden", !open);
+  $("csvLlr").classList.toggle("hidden", !open);
+  if (open) renderLlrTable();
+}
+
+function llrRows() {
+  const data = store.llrData || {};
+  const memBy = {};
+  for (const mm of store.model.members || []) memBy[mm.uid] = mm;
+  return Object.entries(data)
+    .map(([uid, f]) => ({ uid, story: (memBy[uid] || {}).story || "—",
+      KLL: f.KLL ?? 4, At: f.At ?? 0, R: f.R ?? 1 }))
+    .sort((a, b) => a.uid.localeCompare(b.uid, undefined, { numeric: true }));
+}
+
+function renderLlrTable() {
+  const rows = llrRows();
+  const rMin = rows.length ? Math.min(...rows.map(r => r.R)) : 1;
+  $("llrNote").innerHTML =
+    `${rows.length} column${rows.length === 1 ? "" : "s"} · K<sub>LL</sub>·A<sub>T</sub> from the ` +
+    `tributary plan areas · strongest reduction R = <b>${fmt(rMin, 3)}</b>. ` +
+    `With the toggle on, design checks send <code>{live_reduction:true, live_case:"LIVE"}</code> ` +
+    `— column live axial demand is multiplied by R.`;
+  const head = `<thead><tr>
+    <th class="txt">Column</th><th class="txt">Story</th>
+    <th title="Live-load element factor (Table 4.7-1)">K<sub>LL</sub></th>
+    <th title="Tributary area">A<sub>T</sub> m²</th>
+    <th title="Reduction multiplier on L">R</th><th class="txt"></th></tr></thead>`;
+  const body = rows.map(x => {
+    const pct = Math.round((1 - x.R) * 100);
+    return `<tr>
+      <td class="txt">${esc(x.uid)}</td>
+      <td class="txt dim">${esc(x.story)}</td>
+      <td class="dim">${fmt(x.KLL, 0)}</td>
+      <td>${fmt(x.At, 1)}</td>
+      <td><b>${fmt(x.R, 3)}</b></td>
+      <td class="txt"><span class="llr-bar-wrap"><span class="llr-bar" style="--r:${(x.R * 100).toFixed(1)}%"></span></span>
+        <span class="dim llr-pct">${pct ? `−${pct} %` : "—"}</span></td>
+    </tr>`;
+  }).join("");
+  $("llrTable").innerHTML = head + `<tbody>${body ||
+    `<tr><td class="txt dim">No columns in the model</td></tr>`}</tbody>`;
+}
+
+async function toggleLlr(on) {
+  store.llReduction = !!on;
+  if (store.llReduction && !store.llrData) {
+    try { await fetchLiveReduction(); }
+    catch (e) { toast("Live-reduction fetch failed", e.message, "error", 6000); }
+  }
+  renderLlrPanel();
+}
+
 async function runDesignCheck() {
   const btn = $("designCheckBtn");
   if (btn.disabled) return;
@@ -3713,6 +3946,8 @@ async function runDesignCheck() {
   const nCombos = Object.keys((store.results && store.results.combos) || {}).length;
   const useCombos = store.designAllCombos && nCombos > 0;
   const target = useCombos ? { combos: true } : { case: store.designCase };
+  // v0.16 — live-load reduction flags ride on every design request
+  if (store.llReduction) Object.assign(target, { live_reduction: true, live_case: "LIVE" });
   try {
     if (store.designKind === "steel") {
       store.steelResult = await designCheck("steel", { ...target, Fy: store.steelFy });
@@ -3727,6 +3962,8 @@ async function runDesignCheck() {
       store.concreteResult = await designCheck("concrete",
         { ...target, fc: store.concreteFc, rebar });
     }
+    // v0.16 — remember whether this run carried the LL-reduction flags
+    { const r0 = designResult(); if (r0) r0.ll_reduction = !!store.llReduction; }
     renderDesignTable();
     const res = designResult();
     toast("Design check complete",
@@ -3754,6 +3991,11 @@ const DESIGN_COLS = [
   { key: "status", label: "Status", txt: true },
 ];
 
+/** v0.16 — the governing D/C ratio of a check: ratio_biaxial when the check
+    is biaxial (Bresler / load-contour columns), else the plain ratio. */
+const designGovRatio = c =>
+  (c && c.biaxial && isFinite(c.ratio_biaxial)) ? c.ratio_biaxial : ((c && c.ratio) || 0);
+
 function designRows() {
   const res = designResult();
   if (!res) return [];
@@ -3761,10 +4003,12 @@ function designRows() {
   let rows = res.checks;
   if (q) rows = rows.filter(c =>
     c.uid.toLowerCase().includes(q) || (c.kind || "").toLowerCase().includes(q) ||
-    (c.status || "").toLowerCase().includes(q));
+    (c.status || "").toLowerCase().includes(q) ||
+    (c.method || "").toLowerCase().includes(q));
   const { key, dir } = store.designSort;
   rows = [...rows].sort((a, b) => {
-    const va = a[key], vb = b[key];
+    const va = key === "ratio" ? designGovRatio(a) : a[key];
+    const vb = key === "ratio" ? designGovRatio(b) : b[key];
     if (typeof va === "string") return String(va).localeCompare(String(vb), undefined, { numeric: true }) * dir;
     return ((va || 0) - (vb || 0)) * dir;
   });
@@ -3779,6 +4023,7 @@ function renderDesignTable() {
   if (!res) {
     summary.classList.add("hidden");
     ctrls.classList.add("hidden");
+    $("designFootnote").classList.add("hidden");
     table.innerHTML = `<tbody><tr><td class="txt dim">No ${store.designKind} check yet — set parameters and press “Check”.</td></tr></tbody>`;
     return;
   }
@@ -3795,15 +4040,23 @@ function renderDesignTable() {
     (envelope
       ? `<span class="ds-item ds-envelope">envelope over <b>${(res.combos || []).length}</b> combos</span>`
       : "") +
+    (res.ll_reduction
+      ? `<span class="ds-item ds-llr" title="Checks ran with {live_reduction:true, live_case:'LIVE'} — column live axial demand reduced per ASCE 7 §4.7">LL reduction applied</span>`
+      : "") +
     `<span class="ds-item ds-prelim">PRELIMINARY · ${esc(res.case)}</span>`;
 
   ctrls.classList.remove("hidden");
   const rows = designRows();
+  // v0.16 — concrete checks carrying a biaxial method gain a Method column
+  const hasMethod = res.checks.some(c => c.method);
   // v0.9 — insert a governing-combo column in envelope mode (after "equation")
-  const cols = envelope
+  let cols = envelope
     ? DESIGN_COLS.flatMap(c => c.key === "equation"
         ? [c, { key: "governing_combo", label: "Gov. combo", txt: true }] : [c])
     : DESIGN_COLS;
+  if (hasMethod)
+    cols = cols.flatMap(c => c.key === "ratio"
+      ? [{ key: "method", label: "Method", txt: true }, c] : [c]);
   const { key: sk, dir } = store.designSort;
   const head = `<thead><tr>` + cols.map(c =>
     `<th class="sortable ${c.txt ? "txt" : ""}" data-key="${c.key}">${c.label}` +
@@ -3813,7 +4066,21 @@ function renderDesignTable() {
   const govCell = x => x.governing_combo && x.status !== "N/A"
     ? `<td class="txt gov-combo" data-combo="${esc(x.governing_combo)}" title="Switch the case selector to this combo">${esc(x.governing_combo)}</td>`
     : `<td class="txt dim">—</td>`;
-  const body = rows.map(x => `<tr data-uid="${esc(x.uid)}" class="design-row${x.ratio > 1 ? " over" : ""}" title="${esc(x.notes || "")}">
+  // v0.16 — method chip + governing-ratio cell (biaxial ⇒ ratio_biaxial governs)
+  const methodCell = x => {
+    if (x.status === "N/A") return `<td class="txt dim">—</td>`;
+    const m = x.method === "bresler" ? ["mc-bresler", "Bresler"]
+      : x.method === "contour" ? ["mc-contour", "contour"] : ["mc-uni", "uniaxial"];
+    return `<td class="txt"><span class="method-chip ${m[0]}">${m[1]}</span></td>`;
+  };
+  const ratioCell = x => {
+    const gov = designGovRatio(x);
+    const bx = x.biaxial && isFinite(x.ratio_biaxial);
+    return `<td class="${gov > 1 ? "exceed" : ""}"${bx
+      ? ` title="biaxial (${esc(x.method)}) ratio governs · uniaxial P-M ratio ${fmt(x.ratio, 3)}"` : ""}>` +
+      `<b>${fmt(gov, 3)}</b>${bx ? `<sup class="ratio-bx">bx</sup>` : ""}</td>`;
+  };
+  const body = rows.map(x => `<tr data-uid="${esc(x.uid)}" class="design-row${designGovRatio(x) > 1 ? " over" : ""}" title="${esc(x.notes || "")}">
     <td class="txt">${esc(x.uid)}</td>
     <td class="txt dim">${esc(x.kind)}</td>
     <td class="txt dim">${esc(x.section)}</td>
@@ -3822,18 +4089,21 @@ function renderDesignTable() {
     <td>${fmt(x.Mu22, 1)}</td>
     <td class="dim">${fmt(x.phiPn, 1)}</td>
     <td class="dim">${fmt(x.phiMn33, 1)}</td>
-    <td class="${x.ratio > 1 ? "exceed" : ""}"><b>${fmt(x.ratio, 3)}</b></td>
+    ${hasMethod ? methodCell(x) : ""}${ratioCell(x)}
     <td class="txt dim">${esc(x.equation)}</td>${envelope ? govCell(x) : ""}
     <td class="txt">${chip(x.status)}</td></tr>`).join("");
   table.innerHTML = head + `<tbody>${body || `<tr><td class="txt dim">No members match the filter</td></tr>`}</tbody>`;
   $("designCount").textContent =
     `${rows.length} of ${res.checks.length} members · ${store.designKind} · ${caseLabel(res.case)}`;
+  // v0.16 — biaxial-method footnote (visible when any biaxial check exists)
+  $("designFootnote").classList.toggle("hidden",
+    !res.checks.some(c => c.biaxial));
 
   table.querySelectorAll("th.sortable").forEach(th =>
     th.addEventListener("click", () => {
       const k = th.dataset.key;
       if (store.designSort.key === k) store.designSort.dir *= -1;
-      else store.designSort = { key: k, dir: (k === "uid" || k === "kind" || k === "section" || k === "status" || k === "equation" || k === "governing_combo") ? 1 : -1 };
+      else store.designSort = { key: k, dir: (k === "uid" || k === "kind" || k === "section" || k === "status" || k === "equation" || k === "governing_combo" || k === "method") ? 1 : -1 };
       renderDesignTable();
     }));
   // v0.9 — governing-combo cell → switch the case selector to that combo
@@ -4206,13 +4476,32 @@ function csvRows(kind) {
     const res = designResult();
     if (!res) return null;
     const env = !!res.envelope;
+    const hasMethod = res.checks.some(c => c.method);   // v0.16 — biaxial columns
     return [
       ["member", "kind", "section", "Pu_kN", "Mu33_kNm", "Mu22_kNm",
-        "phiPn_kN", "phiMn33_kNm", "phiMn22_kNm", "ratio", "equation",
+        "phiPn_kN", "phiMn33_kNm", "phiMn22_kNm", "ratio",
+        ...(hasMethod ? ["method", "ratio_biaxial"] : []), "equation",
         ...(env ? ["governing_combo"] : []), "status", "notes"],
       ...designRows().map(x => [x.uid, x.kind, x.section, x.Pu, x.Mu33, x.Mu22,
-        x.phiPn, x.phiMn33, x.phiMn22, x.ratio, x.equation,
+        x.phiPn, x.phiMn33, x.phiMn22, x.ratio,
+        ...(hasMethod ? [x.method || "uniaxial", x.ratio_biaxial ?? ""] : []), x.equation,
         ...(env ? [x.governing_combo || ""] : []), x.status, x.notes]),
+    ];
+  }
+  if (kind === "svc") {
+    const list = svcData();
+    if (!list) return null;
+    return [
+      ["beam", "story", "L_m", "max_abs_dy_m", "max_abs_dy_mm", "ratio", "limit", "ok"],
+      ...svcRows(list).map(x => [x.uid, x.story, x.L, x.max_abs_dy,
+        x.dyMm, x.ratio_str, x.limit, x.ok ? "OK" : "NG"]),
+    ];
+  }
+  if (kind === "livered") {
+    if (!store.llrData) return null;
+    return [
+      ["column", "story", "KLL", "At_m2", "R"],
+      ...llrRows().map(x => [x.uid, x.story, x.KLL, x.At, x.R]),
     ];
   }
   if (kind === "optimize") {
@@ -4288,8 +4577,9 @@ function csvRows(kind) {
 }
 
 function csvFileName(kind) {
-  const caseless = kind === "modal";
+  const caseless = kind === "modal" || kind === "livered";
   const caseTag = kind === "th" ? store.thCase
+    : kind === "svc" ? store.svcCase
     : kind === "pushover" ? store.poCase
     : kind === "buckling" ? store.buckCase
     : kind === "takedown" ? store.tdCase
@@ -4420,6 +4710,8 @@ async function doRun() {
     rebuildPoSelect();                             // v0.5
     rebuildBuckSelect();                           // v0.10
     rebuildTdSelect();                             // v0.11
+    rebuildSvcSelect();                            // v0.16
+    $("svcLimitNote").classList.add("hidden");     // v0.16 — fresh checks
     viewer.setResults(results);
     setResultsAvailable(true);
     renderResultsTabs();
@@ -4743,6 +5035,31 @@ function wire() {
   });
   $("csvPiers").addEventListener("click", () => downloadCsv("piers"));
 
+  // v0.16 — serviceability tab: case selector, CSV, editable deflection limit
+  $("svcCaseSelect").addEventListener("change", e => {
+    store.svcCase = e.target.value;
+    renderSvcTab();
+  });
+  $("csvSvc").addEventListener("click", () => downloadCsv("svc"));
+  $("svcLimitInput").addEventListener("change", e => {
+    const v = parseFloat(e.target.value);
+    if (!(isFinite(v) && v > 0)) {
+      e.target.value = String(store.model.deflection_limit ?? 360);
+      return;
+    }
+    store.model.deflection_limit = Math.round(v);
+    markDirty();
+    $("svcLimitNote").classList.remove("hidden");
+    renderSvcTab();
+    toast("Deflection limit updated",
+      `model.deflection_limit = ${Math.round(v)} — re-run the analysis to refresh the checks`,
+      "info", 5000);
+  });
+
+  // v0.16 — live-load reduction toggle + factor CSV (Design tab)
+  $("llrToggle").addEventListener("change", e => { toggleLlr(e.target.checked); });
+  $("csvLlr").addEventListener("click", () => downloadCsv("livered"));
+
   // drift limit
   $("driftLimitInput").addEventListener("change", e => {
     const v = parseFloat(e.target.value);
@@ -4924,6 +5241,10 @@ async function boot() {
     // v0.15 — link device types + wall piers
     renderPiersTab, rebuildPierSelect, pierData, pierRows, pierCaseNames,
     pierSparkSvg,
+    // v0.16 — deflection diagrams, serviceability, live-load reduction, biaxial
+    renderSvcTab, rebuildSvcSelect, svcData, svcRows, svcCaseNames,
+    fetchLiveReduction, renderLlrPanel, toggleLlr, llrRows, mockLiveReduction,
+    designGovRatio,
   };
 }
 

@@ -402,6 +402,26 @@ export function buildReportHtml(model, results, opts = {}) {
     }).join("");
   }
 
+  /* ---- v0.16: serviceability — beam deflection checks per case. */
+  let svcHtml = "";
+  const dcAll = r.deflection_checks || {};
+  if (Object.keys(dcAll).length) {
+    const chipOf = ok => `<span style="font-weight:650;color:${ok ? "#1a7f4b" : "#c0392b"}">${ok ? "OK" : "NG"}</span>`;
+    svcHtml = Object.entries(dcAll).map(([caseName, list]) => {
+      const rows = (list || []).map(c => [T(c.uid), D(c.story || "—"),
+        fmt(c.L, 2), fmt((c.max_abs_dy || 0) * 1000, 2),
+        T(c.ratio_str || "—"), D(c.limit || "—"),
+        { html: chipOf(!!c.ok), txt: true }]);
+      const ng = (list || []).filter(c => !c.ok).length;
+      const t = table([{ label: "Beam", txt: true }, { label: "Story", txt: true },
+        "L (m)", "max |δ| (mm)", { label: "Ratio", txt: true },
+        { label: "Limit", txt: true }, { label: "Status", txt: true }], rows);
+      return `<div class="case-block"><h3>${esc(caseName)} <span class="tag">deflection checks</span>` +
+        (ng ? ` <span class="tag" style="color:#c0392b;border-color:#e6b8b3;background:#fdf0ee">${ng} NG</span>` : "") +
+        `</h3>${t}</div>`;
+    }).join("");
+  }
+
   /* ---- member force envelope (top 30 by |M3| across cases + combos) */
   const env = new Map();
   for (const [, cd] of [...Object.entries(r.cases || {}), ...Object.entries(r.combos || {})]) {
@@ -517,6 +537,7 @@ ${(() => { let n = 5;
   const tdN = takedownHtml ? ++n : n;
   const cutN = cutsHtml ? ++n : n;
   const pierN = piersHtml ? ++n : n;
+  const svcN = svcHtml ? ++n : n;
   const envN = ++n;
   const pushN = pushoverHtml ? ++n : n;
   const chartN = chartsHtml ? ++n : n;
@@ -527,6 +548,8 @@ ${cutsHtml ? section(`${cutN} · Section cut forces`, cutsHtml,
     "Internal force resultant (FX/FY/FZ, MX/MY/MZ) transmitted across each defined cutting plane, per case — Σ of the internal forces of members crossing the plane.") : ""}
 ${piersHtml ? section(`${pierN} · Wall pier forces`, piersHtml,
     "In-plane wall-pier design forces per story — P axial (compression −), V in-plane shear, M in-plane moment at the story bottom; piers group walls sharing a pier label.") : ""}
+${svcHtml ? section(`${svcN} · Serviceability — beam deflections`, svcHtml,
+    `Max |local transverse deflection| per beam vs the span limit L/${esc(String(model.deflection_limit ?? 360))} — the achieved ratio L/x must not fall below the limit.`) : ""}
 ${section(`${envN} · Member force envelope`, envTable,
   `Top ${envRows.length} members by |M3| — absolute envelope across all static cases and combinations.`)}
 ${pushoverHtml ? section(`${pushN} · Pushover analysis`, pushoverHtml,

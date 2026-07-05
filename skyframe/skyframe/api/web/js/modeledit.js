@@ -111,6 +111,8 @@ export function normalizeModel(m) {
   }
   // v0.15 — model-level "auto-label all walls as piers" flag
   m.auto_pier_walls = !!m.auto_pier_walls;
+  // v0.16 — serviceability deflection limit L/x (default 360; round-trips)
+  if (!(isFinite(m.deflection_limit) && m.deflection_limit > 0)) m.deflection_limit = 360;
   m.pushover_cases = m.pushover_cases || {};
   for (const [n, pc] of Object.entries(m.pushover_cases)) {
     pc.name = pc.name || n;

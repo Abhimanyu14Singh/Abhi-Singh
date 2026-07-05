@@ -326,6 +326,7 @@
         <button class="tab hidden" data-tab="takedown" role="tab" id="tdTabBtn">Load Takedown</button>
         <button class="tab hidden" data-tab="cuts" role="tab" id="cutTabBtn">Section Cuts</button>
         <button class="tab hidden" data-tab="piers" role="tab" id="pierTabBtn">Wall Piers</button>
+        <button class="tab hidden" data-tab="svc" role="tab" id="svcTabBtn">Serviceability</button>
         <div class="tabbar-spacer"></div>
         <span class="staged-badge hidden" id="stagedBadge" title="Staged construction vs one-shot analysis — max column-axial difference"></span>
         <div class="seg-toggle env-toggle hidden" id="envToggle" title="Envelope combo — switch tables between the max and min envelope">
@@ -554,6 +555,26 @@
             <button class="chip csv-btn" id="csvDesign" title="Download the check table as CSV (unrounded)">⬇ CSV</button>
           </div>
           <div class="design-form" id="designForm"></div>
+
+          <!-- ---- v0.16: live-load reduction (ASCE 7 §4.7) ---- -->
+          <div class="llr-panel hidden" id="llrPanel">
+            <div class="llr-head">
+              <label class="llr-toggle" title="When on, design check requests carry {live_reduction:true, live_case:'LIVE'} — column live axial demand is reduced by R">
+                <input type="checkbox" id="llrToggle">
+                <span><b>Live-load reduction</b> <span class="unit">ASCE 7 §4.7 · columns · R = 0.25 + 4.57/√(K<sub>LL</sub>A<sub>T</sub>)</span></span>
+              </label>
+              <span class="llr-applied-chip hidden" id="llrAppliedChip">LL reduction applied</span>
+              <span class="toolbar-spacer"></span>
+              <button class="chip csv-btn hidden" id="csvLlr" title="Download the reduction factors as CSV (unrounded)">⬇ CSV</button>
+            </div>
+            <div class="llr-body hidden" id="llrBody">
+              <p class="muted llr-note" id="llrNote"></p>
+              <div class="table-scroll llr-scroll">
+                <table class="data-table" id="llrTable"></table>
+              </div>
+            </div>
+          </div>
+
           <div class="design-summary hidden" id="designSummary"></div>
           <div class="forces-controls design-table-controls hidden" id="designTableControls">
             <input type="search" id="designFilter" class="filter-input" placeholder="Filter by uid / kind / status…">
@@ -562,6 +583,15 @@
           <div class="table-scroll">
             <table class="data-table design-table" id="designTable"></table>
           </div>
+          <!-- v0.16: biaxial-method footnote (concrete results with biaxial columns) -->
+          <p class="muted design-footnote hidden" id="designFootnote">
+            <b>Biaxial column methods</b> — <b>Bresler</b>: reciprocal-load interaction
+            1/P<sub>n</sub> = 1/P<sub>nx</sub> + 1/P<sub>ny</sub> − 1/P<sub>0</sub> (good near the
+            compression-controlled range); <b>contour</b>: PCA load-contour
+            (M<sub>33</sub>/φM<sub>n33</sub>)<sup>α</sup> + (M<sub>22</sub>/φM<sub>n22</sub>)<sup>α</sup> ≤ 1
+            at constant P<sub>u</sub>; <b>uniaxial</b>: single-axis P-M screen (no meaningful
+            minor-axis demand). When a check is biaxial its <b>ratio<sub>bx</sub></b> governs the status.
+          </p>
 
           <!-- ---- v0.12: auto section optimization (Steel sub-tab) ---- -->
           <div class="optimize-panel hidden" id="optimizePanel">
@@ -746,6 +776,34 @@
           </div>
           <div class="pane-tools">
             <span class="muted" id="pierNote"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ SERVICEABILITY (v0.16) ============ -->
+      <section class="tabpane" id="pane-svc" role="tabpanel">
+        <div class="empty-state" id="empty-svc">
+          <div class="empty-art">⌒</div>
+          <p>Run analysis to see beam deflection (serviceability) checks</p>
+        </div>
+        <div class="pane-content hidden" id="content-svc">
+          <div class="charts-controls">
+            <div class="th-controls">
+              <label class="case-select-wrap"><span>Case</span>
+                <select id="svcCaseSelect" class="case-select"></select></label>
+              <span class="muted" id="svcMeta"></span>
+              <label class="svc-limit-wrap" title="Serviceability deflection limit — saved on the model as deflection_limit">
+                Limit&nbsp;L&nbsp;/ <input type="number" id="svcLimitInput" min="1" step="10" value="360">
+              </label>
+              <span class="svc-limit-note hidden" id="svcLimitNote">limit saved — re-run analysis to refresh checks</span>
+            </div>
+            <button class="chip csv-btn" id="csvSvc" title="Download the deflection checks as CSV (unrounded)">⬇ CSV</button>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table" id="svcTable"></table>
+          </div>
+          <div class="pane-tools">
+            <span class="muted" id="svcNote"></span>
           </div>
         </div>
       </section>

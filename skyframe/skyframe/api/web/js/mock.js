@@ -323,6 +323,8 @@ export function mockModel(p = {}) {
     },
     diaphragm: "rigid",
     story_diaphragm: {},
+    // v0.16: serviceability deflection limit (L/x on beam live-load sag)
+    deflection_limit: 360,
     // v0.15: model-level "auto-label all walls as piers" flag (off — the demo
     // walls carry an explicit pier label instead)
     auto_pier_walls: false,
@@ -454,6 +456,56 @@ export function mockResults(model) {
     return out;
   }
 
+  /* ---- v0.16: local transverse BEAM deflections (11 stations, m).
+     Gravity: the exact simply-supported-UDL sag shape
+     y(t) = δmax·(16/5)(t − 2t³ + t⁴), δmax = 5wL⁴/384EI (downward = negative
+     local y). Lateral: a small anti-symmetric frame-sway shape from the end
+     moments. One designated beam is amplified so a deflection check goes NG. */
+  const _EI = mm => {
+    const sec = (model.sections || {})[mm.section] || {};
+    const mat = (model.materials || {})[sec.material] || {};
+    const E = isFinite(mat.E) && mat.E > 0 ? mat.E : 25e6;                  // kPa
+    const I = isFinite(sec.I33) && sec.I33 > 0 ? sec.I33
+      : (sec.b || 0.3) * Math.pow(sec.h || 0.6, 3) / 12;                    // m⁴
+    return E * I;
+  };
+  const _ngBeam = (model.members.find(mm => mm.kind === "beam" && /^BX2-/.test(mm.uid))
+    || model.members.find(mm => mm.kind === "beam") || {}).uid;
+  function buildDeflections(member_forces, wMap) {
+    const out = {};
+    const NS = 11;
+    for (const mm of model.members) {
+      if (mm.kind !== "beam") continue;
+      const f = member_forces[mm.uid];
+      if (!f) continue;
+      const L = lenOf[mm.uid] || 6;
+      const EI = _EI(mm);
+      const x = [], dy = [], dz = [];
+      if (wMap) {                                   // gravity: parabolic UDL sag
+        const w = wMap[mm.uid] || 0;
+        let dmax = 5 * w * Math.pow(L, 4) / (384 * EI);
+        if (mm.uid === _ngBeam) dmax *= 9;          // one deliberately NG beam
+        for (let k = 0; k < NS; k++) {
+          const t = k / (NS - 1);
+          x.push(+(t * L).toFixed(3));
+          dy.push(+(-dmax * (16 / 5) * (t - 2 * t ** 3 + t ** 4)).toFixed(7));
+          dz.push(0);
+        }
+      } else {                                      // lateral: S-shape from end moments
+        const M = Math.max(Math.abs(f[5]), Math.abs(f[11]));
+        const amp = M * L * L / (40 * EI);
+        for (let k = 0; k < NS; k++) {
+          const t = k / (NS - 1);
+          x.push(+(t * L).toFixed(3));
+          dy.push(+(amp * Math.sin(2 * Math.PI * t) * 0.5).toFixed(7));
+          dz.push(0);
+        }
+      }
+      out[mm.uid] = { x, dy, dz };
+    }
+    return out;
+  }
+
   // ---- masses / seismic
   const masses = model.story_masses || {};
   const W = storyOrder.reduce((a, s) => a + (masses[s] || 100) * G, 0);
@@ -517,7 +569,10 @@ export function mockResults(model) {
         const h = stories[si].height;
         const n = Mot / supports.length / 8 * (1 - si / storyOrder.length) * jit(0.4);
         const m = v * h / 2;
-        member_forces[mm.uid] = [n, v, 0, 0, 0, m, -n, -v, 0, 0, 0, m * jit(0.15)];
+        // v0.16: columns pick up a modest minor-axis share (frame action ⊥ the
+        // load) so concrete biaxial (Bresler / load-contour) checks light up
+        member_forces[mm.uid] = [n, v, v * 0.3 * jit(0.2), 0, m * 0.3 * jit(0.2), m,
+          -n, -v, -v * 0.3, 0, m * 0.24, m * jit(0.15)];
       } else {
         const m = Vst / colsPerStory * stories[si].height * 0.45 * jit(0.25);
         const L = 6, v = 2 * m / L;
@@ -525,7 +580,8 @@ export function mockResults(model) {
       }
     });
     const member_stations = buildStations(member_forces, null);
-    return { node_disp, reactions, base, member_forces, member_stations, story };
+    const member_deflections = buildDeflections(member_forces, null);   // v0.16
+    return { node_disp, reactions, base, member_forces, member_stations, member_deflections, story };
   }
 
   function gravityCase(w /* kN/m on beams */, patName) {
@@ -562,7 +618,8 @@ export function mockResults(model) {
       }
     });
     const member_stations = buildStations(member_forces, wMap);
-    return { node_disp, reactions, base, member_forces, member_stations, story };
+    const member_deflections = buildDeflections(member_forces, wMap);   // v0.16
+    return { node_disp, reactions, base, member_forces, member_stations, member_deflections, story };
   }
 
   /* ---- v0.4: per-quad shell internal forces for STATIC cases.
@@ -652,7 +709,7 @@ export function mockResults(model) {
 
   // combos = linear superposition of case dicts
   function combine(factors) {
-    const out = { node_disp: {}, reactions: {}, base: { FX: 0, FY: 0, FZ: 0, MX: 0, MY: 0, MZ: 0 }, member_forces: {}, member_stations: {}, story: {} };
+    const out = { node_disp: {}, reactions: {}, base: { FX: 0, FY: 0, FZ: 0, MX: 0, MY: 0, MZ: 0 }, member_forces: {}, member_stations: {}, member_deflections: {}, story: {} };
     const add6 = (dst, k, arr, f) => {
       if (!dst[k]) dst[k] = new Array(arr.length).fill(0);
       arr.forEach((v, i) => dst[k][i] += f * v);
@@ -670,6 +727,16 @@ export function mockResults(model) {
         }
         for (const k of ["N", "V2", "V3", "T", "M2", "M3"])
           st[k].forEach((v, i) => out.member_stations[u][k][i] += f * v);
+      }
+      // v0.16 — local beam deflections superpose linearly like stations
+      for (const [u, md] of Object.entries(c.member_deflections || {})) {
+        if (!out.member_deflections[u]) {
+          out.member_deflections[u] = { x: md.x.slice() };
+          for (const k of ["dy", "dz"])
+            out.member_deflections[u][k] = new Array(md.x.length).fill(0);
+        }
+        for (const k of ["dy", "dz"])
+          md[k].forEach((v, i) => out.member_deflections[u][k][i] += f * v);
       }
       for (const k of Object.keys(out.base)) out.base[k] += f * c.base[k];
       for (const [s, sr] of Object.entries(c.story)) {
@@ -707,6 +774,8 @@ export function mockResults(model) {
     // station x-coordinates stay coordinates, not extrema of themselves
     for (const [u, st] of Object.entries(mx.member_stations || {}))
       if (mn.member_stations[u]) mn.member_stations[u].x = st.x.slice();
+    for (const [u, md] of Object.entries(mx.member_deflections || {}))
+      if (mn.member_deflections && mn.member_deflections[u]) mn.member_deflections[u].x = md.x.slice();
     return { ...mx, min: mn };
   }
   const combos = {};
@@ -1097,6 +1166,43 @@ export function mockResults(model) {
   for (const [name, cd] of Object.entries(cases)) if (isGravity(cd)) takedown[name] = buildTakedown(cd);
   for (const [name, cd] of Object.entries(combos)) if (isGravity(cd)) takedown[name] = buildTakedown(cd);
 
+  /* ---- v0.16: serviceability deflection checks — per static case + additive
+     combo, one row per beam with member_deflections: max |dy| vs L/limit.
+     ratio_str is the achieved "L/412" form; ok when max|dy| ≤ L/limit. */
+  const deflLimit = (isFinite(model.deflection_limit) && model.deflection_limit > 0)
+    ? model.deflection_limit : 360;
+  const memByUid16 = {};
+  for (const mm of model.members) memByUid16[mm.uid] = mm;
+  const buildDeflChecks = cd => {
+    const rows = [];
+    for (const [uid, md] of Object.entries(cd.member_deflections || {})) {
+      const mm = memByUid16[uid];
+      if (!mm || mm.kind !== "beam") continue;
+      const L = lenOf[uid] || 6;
+      const maxAbs = (md.dy || []).reduce((a, v) => Math.max(a, Math.abs(v)), 0);
+      const ratio = maxAbs > 1e-12 ? L / maxAbs : Infinity;
+      rows.push({
+        uid, story: mm.story, L: +L.toFixed(3),
+        max_abs_dy: +maxAbs.toFixed(7),
+        ratio_str: isFinite(ratio) ? `L/${Math.round(ratio)}` : "—",
+        limit: `L/${deflLimit}`,
+        ok: maxAbs <= L / deflLimit + 1e-12,
+      });
+    }
+    rows.sort((a, b) => a.uid.localeCompare(b.uid, undefined, { numeric: true }));
+    return rows;
+  };
+  const deflection_checks = {};
+  for (const [name, cd] of Object.entries(cases)) {
+    const rows = buildDeflChecks(cd);
+    if (rows.length) deflection_checks[name] = rows;
+  }
+  for (const [name, cd] of Object.entries(combos)) {
+    if (cd.min) continue;                        // envelope combos: skip
+    const rows = buildDeflChecks(cd);
+    if (rows.length) deflection_checks[name] = rows;
+  }
+
   /* ---- v0.13: section-cut force resultants. For each defined cut and each
      case/combo/RS case, sum the internal forces of members that strictly cross
      the cutting plane (clipped to optional in-plane ranges). A low horizontal
@@ -1209,6 +1315,7 @@ export function mockResults(model) {
   if (Object.keys(pushover).length) out.pushover = pushover;
   if (Object.keys(buckling).length) out.buckling = buckling;      // v0.10
   if (Object.keys(takedown).length) out.takedown = takedown;      // v0.11
+  if (Object.keys(deflection_checks).length) out.deflection_checks = deflection_checks;  // v0.16
   if (Object.keys(section_cuts).length) out.section_cuts = section_cuts;  // v0.13
   if (Object.keys(piers).length) out.piers = piers;               // v0.15
   if (Object.keys(story_props).length) out.story_props = story_props;
@@ -1665,22 +1772,59 @@ function _summary(checks, governKey = "ratio") {
   const ok = checks.filter(c => c.status === "OK").length;
   const ng = checks.filter(c => c.status === "NG").length;
   const na = checks.filter(c => c.status === "N/A").length;
+  // v0.16: a biaxial column's governing ratio is ratio_biaxial
+  const govOf = c => (c.biaxial && isFinite(c.ratio_biaxial)) ? c.ratio_biaxial : c.ratio;
   let max_ratio = 0, governing = null;
   for (const c of checks) {
     if (c.status === "N/A") continue;
-    if (c.ratio > max_ratio) { max_ratio = c.ratio; governing = c.uid; }
+    if (govOf(c) > max_ratio) { max_ratio = govOf(c); governing = c.uid; }
   }
   return { n: checks.length, ok, ng, na, max_ratio: +max_ratio.toFixed(3), governing };
 }
 
-/** POST /api/design/steel — AISC-H1-style interaction screening (mock).
-    Accepts {case} or {combos:true|[names]} (v0.9 envelope over combos). */
-export function mockDesignSteel(model, body = {}) {
-  const Fy = isFinite(body.Fy) && body.Fy > 0 ? body.Fy : 345000;   // kPa (≈345 MPa)
-  return _designEnvelope(model, body, caseName => _steelChecks(model, caseName, Fy));
+/* ================================================================
+   v0.16 — mock GET /api/live-reduction (ASCE 7 §4.7)
+   ================================================================ */
+
+/** Per-column live-load reduction factors: {uid: {KLL, At, R}}.
+    KLL = 4 (interior columns, Table 4.7-1); At = the column's tributary plan
+    area from the grid spacing (half-bay each side, edges get half);
+    R = 0.25 + 4.57/√(KLL·At), clamped to [0.4, 1.0] (§4.7.2, SI form). */
+export function mockLiveReduction(model) {
+  const g = model.grid || {};
+  const xs = Array.isArray(g.x_lines) && g.x_lines.length >= 2 ? g.x_lines : [0, 6];
+  const ys = Array.isArray(g.y_lines) && g.y_lines.length >= 2 ? g.y_lines : [0, 6];
+  const tribAlong = (lines, c) => {
+    let i = 0, bd = Infinity;
+    lines.forEach((v, k) => { const d = Math.abs(v - c); if (d < bd) { bd = d; i = k; } });
+    const below = i > 0 ? (lines[i] - lines[i - 1]) / 2 : 0;
+    const above = i < lines.length - 1 ? (lines[i + 1] - lines[i]) / 2 : 0;
+    return Math.max(below + above, 0.5);
+  };
+  const out = {};
+  for (const mm of model.members || []) {
+    if (mm.kind !== "column") continue;
+    const KLL = 4;
+    const At = tribAlong(xs, mm.pi[0]) * tribAlong(ys, mm.pi[1]);
+    let R = 0.25 + 4.57 / Math.sqrt(KLL * At);
+    R = Math.min(1.0, Math.max(0.4, R));
+    out[mm.uid] = { KLL, At: +At.toFixed(2), R: +R.toFixed(3) };
+  }
+  return out;
 }
 
-function _steelChecks(model, caseName, Fy) {
+/** POST /api/design/steel — AISC-H1-style interaction screening (mock).
+    Accepts {case} or {combos:true|[names]} (v0.9 envelope over combos) and the
+    v0.16 {live_reduction, live_case} flags (columns get Pu × R). */
+export function mockDesignSteel(model, body = {}) {
+  const Fy = isFinite(body.Fy) && body.Fy > 0 ? body.Fy : 345000;   // kPa (≈345 MPa)
+  const llr = body.live_reduction ? mockLiveReduction(model) : null;
+  const res = _designEnvelope(model, body, caseName => _steelChecks(model, caseName, Fy, llr));
+  if (body.live_reduction) res.live_reduction = true;
+  return res;
+}
+
+function _steelChecks(model, caseName, Fy, llr) {
   const { forces } = _caseForcesFor(model, caseName);
   const checks = [];
   for (const mm of model.members) {
@@ -1699,7 +1843,9 @@ function _steelChecks(model, caseName, Fy) {
     const A = isFinite(sec.A) && sec.A > 0 ? sec.A : b * h;
     const Z33 = isFinite(sec.I33) ? sec.I33 / (h / 2) * 1.12 : b * h * h / 4;
     const Z22 = isFinite(sec.I22) ? sec.I22 / (b / 2) * 1.12 : h * b * b / 4;
-    const Pu = Math.max(Math.abs(f[0]), Math.abs(f[6]));
+    let Pu = Math.max(Math.abs(f[0]), Math.abs(f[6]));
+    // v0.16: live-load reduction — reduced axial demand on columns
+    if (llr && mm.kind === "column" && llr[mm.uid]) Pu *= llr[mm.uid].R;
     const Mu33 = Math.max(Math.abs(f[5]), Math.abs(f[11]));
     const Mu22 = Math.max(Math.abs(f[4]), Math.abs(f[10]));
     const phiPn = +(0.9 * Fy * A).toFixed(1);
@@ -1837,14 +1983,21 @@ export function mockOptimize(model, body = {}) {
 }
 
 /** POST /api/design/concrete — flexure/axial screening from a rebar layout.
-    Accepts {case} or {combos:true|[names]} (v0.9 envelope over combos). */
+    Accepts {case} or {combos:true|[names]} (v0.9 envelope over combos) and the
+    v0.16 {live_reduction, live_case} flags. Column checks gain the v0.16
+    biaxial fields: biaxial, ratio_biaxial, method "bresler"|"contour"|"uniaxial". */
 export function mockDesignConcrete(model, body = {}) {
   const fc = isFinite(body.fc) && body.fc > 0 ? body.fc : 30000;   // kPa (≈30 MPa)
   const rebar = body.rebar || {};
-  return _designEnvelope(model, body, caseName => _concreteChecks(model, caseName, fc, rebar));
+  const llr = body.live_reduction ? mockLiveReduction(model) : null;
+  const res = _designEnvelope(model, body,
+    caseName => _concreteChecks(model, caseName, fc, rebar, llr));
+  if (body.live_reduction) res.live_reduction = true;
+  return res;
 }
 
-function _concreteChecks(model, caseName, fc, rebar) {
+function _concreteChecks(model, caseName, fc, rebar, llr) {
+  let biaxCount = 0;                              // alternate bresler / contour
   const { forces } = _caseForcesFor(model, caseName);
   const checks = [];
   for (const mm of model.members) {
@@ -1856,6 +2009,7 @@ function _concreteChecks(model, caseName, fc, rebar) {
       checks.push({
         uid: mm.uid, section: mm.section, kind: mm.kind, Pu: 0, Mu33: 0, Mu22: 0,
         phiPn: 0, phiMn33: 0, phiMn22: 0, ratio: 0, equation: "—",
+        biaxial: false, ratio_biaxial: null, method: "uniaxial",
         status: "N/A", notes: rb ? "no forces/section" : "no rebar assigned",
         preliminary: true,
       });
@@ -1878,24 +2032,40 @@ function _concreteChecks(model, caseName, fc, rebar) {
     const Ag = b * h;
     const phiPn = +(0.65 * 0.80 * (0.85 * fc * (Ag - (AsBot + AsTop)) +
       fy * (AsBot + AsTop))).toFixed(1);
-    const Pu = Math.max(Math.abs(f[0]), Math.abs(f[6]));
+    let Pu = Math.max(Math.abs(f[0]), Math.abs(f[6]));
+    // v0.16: live-load reduction — reduced axial demand on columns
+    if (llr && mm.kind === "column" && llr[mm.uid]) Pu *= llr[mm.uid].R;
     const Mu33 = Math.max(Math.abs(f[5]), Math.abs(f[11]));
     const Mu22 = Math.max(Math.abs(f[4]), Math.abs(f[10]));
+    const rP = Pu / (phiPn || 1), r33 = Mu33 / (phiMn33 || 1), r22 = Mu22 / (phiMn22 || 1);
     let ratio, equation;
+    // v0.16: biaxial column interaction — Bresler reciprocal-load / PCA load
+    // contour when the minor-axis demand is meaningful; else uniaxial.
+    let biaxial = false, method = "uniaxial", ratio_biaxial = null;
     if (mm.kind === "column") {
-      ratio = Pu / (phiPn || 1) + Mu33 / (phiMn33 || 1) + Mu22 / (phiMn22 || 1);
+      ratio = rP + r33 + r22;
       equation = "P-M (screen)";
+      if (r22 > 0.02) {
+        biaxial = true;
+        method = (biaxCount++ % 2 === 0) ? "bresler" : "contour";
+        const alpha = method === "contour" ? 1.5 : 1.15;
+        ratio_biaxial = +(rP +
+          Math.pow(Math.pow(r33, alpha) + Math.pow(r22, alpha), 1 / alpha)).toFixed(3);
+        equation = method === "contour" ? "P-M contour" : "P-M Bresler";
+      }
     } else {
-      ratio = Mu33 / (phiMn33 || 1);
+      ratio = r33;
       equation = "Mn (flexure)";
     }
     ratio = +ratio.toFixed(3);
+    const governing = biaxial ? ratio_biaxial : ratio;
     checks.push({
       uid: mm.uid, section: mm.section, kind: mm.kind,
       Pu: +Pu.toFixed(1), Mu33: +Mu33.toFixed(1), Mu22: +Mu22.toFixed(1),
       phiPn, phiMn33, phiMn22, ratio, equation,
-      status: ratio <= 1.0 ? "OK" : "NG",
-      notes: `${nTop}T/${nBot}B ⌀${rb.bar_dia || 20}` + (ratio > 1.0 ? " · over" : ""),
+      biaxial, ratio_biaxial, method,
+      status: governing <= 1.0 ? "OK" : "NG",
+      notes: `${nTop}T/${nBot}B ⌀${rb.bar_dia || 20}` + (governing > 1.0 ? " · over" : ""),
       preliminary: true,
     });
   }

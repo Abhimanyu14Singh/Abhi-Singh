@@ -1651,3 +1651,85 @@ tr.cm-active td { background: var(--accent-ghost) !important; }
   font-size: 9.5px; color: var(--text-3); margin-right: 8px;
   vertical-align: middle; text-transform: uppercase; letter-spacing: .4px;
 }
+
+/* ================================================================
+   v0.16 — deflection diagrams, serviceability, live-load reduction,
+   biaxial column methods
+   ================================================================ */
+/* member panel: the δ deflection diagram card gets a soft amber accent */
+.diagram-defl { border-left: 2px solid rgba(229, 165, 10, 0.45); }
+
+/* serviceability tab */
+.svc-limit-wrap {
+  font-size: 12px; color: var(--text-2);
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+}
+.svc-limit-wrap input { width: 68px; padding: 3px 6px; font-size: 12px; }
+.svc-limit-note {
+  font-size: 11px; color: var(--amber); background: var(--amber-ghost);
+  border: 1px solid rgba(229, 165, 10, 0.35); border-radius: 99px;
+  padding: 2px 10px; white-space: nowrap;
+}
+.svc-ng-count { color: var(--red); }
+.data-table tr.svc-row { cursor: pointer; }
+.data-table tr.svc-row:hover td { background: var(--accent-ghost); }
+.data-table tr.svc-row.over:hover td { background: rgba(230, 103, 103, 0.16); }
+.data-table tr.svc-row.over td { background: rgba(230, 103, 103, 0.08); }
+
+/* live-load reduction panel (Design tab) */
+.llr-panel {
+  margin: 12px 16px; border: 1px solid var(--border-soft); border-radius: 8px;
+  background: var(--surface-1);
+}
+.llr-head { display: flex; align-items: center; gap: 12px; padding: 10px 14px; flex-wrap: wrap; }
+.llr-toggle {
+  display: inline-flex; align-items: center; gap: 9px; cursor: pointer;
+  font-size: 12.5px; color: var(--text-2);
+}
+.llr-toggle b { color: var(--text-1); }
+.llr-toggle input { width: auto; accent-color: var(--accent); }
+.llr-toggle .unit { color: var(--text-3); font-size: 11px; }
+.llr-applied-chip {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase;
+  color: var(--green); background: rgba(52, 195, 132, 0.12);
+  border: 1px solid rgba(52, 195, 132, 0.35); padding: 3px 10px; border-radius: 99px;
+  white-space: nowrap;
+}
+.llr-body { border-top: 1px solid var(--border-soft); padding: 10px 14px 12px; }
+.llr-note { font-size: 11.5px; margin-bottom: 8px; }
+.llr-note code {
+  font-family: var(--mono); font-size: 10.5px; color: var(--accent);
+  background: var(--accent-ghost); border-radius: 4px; padding: 1px 5px;
+}
+.llr-scroll { max-height: 260px; overflow-y: auto; }
+.llr-bar-wrap {
+  display: inline-block; vertical-align: middle; width: 84px; height: 7px;
+  background: var(--surface-3); border-radius: 4px; overflow: hidden; margin-right: 8px;
+}
+.llr-bar {
+  display: block; height: 100%; width: var(--r, 100%);
+  background: linear-gradient(90deg, var(--green), var(--accent));
+  border-radius: 4px;
+}
+.llr-pct { font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.ds-llr { color: var(--green); font-weight: 650; font-size: 11px; }
+
+/* biaxial column method chips + footnote */
+.method-chip {
+  display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .3px;
+  padding: 2px 9px; border-radius: 99px; white-space: nowrap;
+}
+.method-chip.mc-bresler {
+  color: var(--accent); background: var(--accent-ghost);
+  border: 1px solid rgba(53, 181, 229, 0.35);
+}
+.method-chip.mc-contour {
+  color: #a78bfa; background: rgba(167, 139, 250, 0.12);
+  border: 1px solid rgba(167, 139, 250, 0.35);
+}
+.method-chip.mc-uni { color: var(--text-3); background: var(--surface-3); border: 1px solid var(--border); }
+.ratio-bx { color: var(--accent); font-size: 8.5px; font-weight: 700; margin-left: 2px; }
+.design-footnote {
+  padding: 8px 16px 14px; font-size: 11px; line-height: 1.55; max-width: 900px;
+}
+.design-footnote b { color: var(--text-2); }
