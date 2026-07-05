@@ -40,6 +40,46 @@ from .model import BuildingModel, FrameMember, ShellRegion, _polygon_area3d
 
 _TOL = 1e-6
 
+# v0.11 Winkler elastic-foundation discretization controls.  A foundation
+# member (foundation_ks > 0 and foundation_width > 0) is split into N equal
+# segments so the lumped nodal soil springs resolve the beam-on-elastic-
+# foundation response: segment length <= min(L / FOUNDATION_MIN_SEGMENTS,
+# lc / FOUNDATION_SEGS_PER_LC), where the Hetenyi characteristic length
+# lc = (4 E I33 / k_line)^0.25.  N is floored at FOUNDATION_MIN_SEGMENTS and
+# capped at FOUNDATION_MAX_SEGMENTS.  (Exposed as module globals so tests can
+# force a fixed N and assert monotone mesh convergence.)
+FOUNDATION_MIN_SEGMENTS = 8
+FOUNDATION_MAX_SEGMENTS = 40
+FOUNDATION_SEGS_PER_LC = 4.0
+
+
+def foundation_segment_count(model: BuildingModel, member: FrameMember) -> int:
+    """Number of equal FE segments for a Winkler-foundation member (1 if off).
+
+    Hetenyi beam on elastic foundation: characteristic length
+    ``lc = (4 E I33 / k_line)^0.25`` (``k_line = ks * width``).  The segment
+    length is capped at ``min(L / FOUNDATION_MIN_SEGMENTS, lc /
+    FOUNDATION_SEGS_PER_LC)`` and N clamped to
+    [FOUNDATION_MIN_SEGMENTS, FOUNDATION_MAX_SEGMENTS].
+    """
+    k_line = getattr(member, "foundation_k_line", 0.0)
+    if k_line <= 0.0:
+        return 1
+    sec = model.sections.get(member.section)
+    if sec is None:
+        return 1
+    mat = model.materials.get(sec.material)
+    if mat is None:
+        return 1
+    EI = mat.E * sec.I33 * getattr(sec, "mod_I33", 1.0)
+    L = member.length
+    if EI <= 0.0 or L <= 0.0:
+        return 1
+    lc = (4.0 * EI / k_line) ** 0.25
+    seg_max = min(L / FOUNDATION_MIN_SEGMENTS, lc / FOUNDATION_SEGS_PER_LC)
+    n = math.ceil(L / seg_max) if seg_max > 0.0 else FOUNDATION_MIN_SEGMENTS
+    return max(FOUNDATION_MIN_SEGMENTS, min(FOUNDATION_MAX_SEGMENTS, n))
+
 Vec3 = Tuple[float, float, float]
 
 
@@ -222,12 +262,21 @@ def _mesh_region(region: ShellRegion, pool: _PointPool,
 # frame member splitting at shell mesh nodes
 # --------------------------------------------------------------------------- #
 def _split_member(member: FrameMember, pool: _PointPool,
-                  shell_pts: List[int]) -> List[Segment]:
-    """Split a member wherever a shell mesh node lies on its axis (1e-6)."""
+                  shell_pts: List[int],
+                  model: Optional[BuildingModel] = None) -> List[Segment]:
+    """Split a member at shell mesh nodes and (v0.11) Winkler-foundation nodes.
+
+    Shell-edge compatibility cuts (a shell mesh node on the axis) and
+    foundation discretization cuts (``foundation_segment_count`` equal
+    subdivisions) are merged into one ordered station list; interior
+    foundation cut points are inserted into the global pool.
+    """
     pi, pj = tuple(map(float, member.pi)), tuple(map(float, member.pj))
     length = member.length
     u = tuple(d / length for d in _sub(pj, pi))
-    cuts: List[Tuple[float, int]] = []
+    # (t, point-index-or-None) cuts: shell nodes carry an index, foundation
+    # cuts get a pool point created lazily below.
+    cuts: List[Tuple[float, Optional[int]]] = []
     for p_idx in shell_pts:
         p = pool.points[p_idx]
         t = _dot(_sub(p, pi), u)
@@ -236,12 +285,21 @@ def _split_member(member: FrameMember, pool: _PointPool,
         foot = (pi[0] + t * u[0], pi[1] + t * u[1], pi[2] + t * u[2])
         if _norm(_sub(p, foot)) < _TOL:
             cuts.append((t, p_idx))
-    cuts.sort()
-    # drop cuts closer than tolerance to each other
+    if model is not None:
+        nseg = foundation_segment_count(model, member)
+        for i in range(1, nseg):
+            cuts.append((i * length / nseg, None))
+    cuts.sort(key=lambda c: c[0])
+    # drop cuts closer than tolerance to each other; create pool points for
+    # foundation cuts that survive.
     filtered: List[Tuple[float, int]] = []
     for t, p_idx in cuts:
-        if not filtered or t - filtered[-1][0] > _TOL:
-            filtered.append((t, p_idx))
+        if filtered and t - filtered[-1][0] <= _TOL:
+            continue
+        if p_idx is None:
+            foot = (pi[0] + t * u[0], pi[1] + t * u[1], pi[2] + t * u[2])
+            p_idx = pool.add(foot)
+        filtered.append((t, p_idx))
 
     ni = pool.add(pi)
     nj = pool.add(pj)
@@ -497,7 +555,7 @@ def mesh_model(model: BuildingModel) -> MeshedModel:
             region_trib[region.uid] = _mesh_region(region, pool, quads)
 
     shell_pts = sorted({n for q in quads for n in q.nodes})
-    segments = {m.uid: _split_member(m, pool, shell_pts)
+    segments = {m.uid: _split_member(m, pool, shell_pts, model)
                 for m in model.members}
 
     membrane_loads: Dict[str, List[TributaryMemberLoad]] = {}

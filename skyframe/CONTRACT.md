@@ -1100,3 +1100,92 @@ under `name` (replacing an existing pattern). `sum(Ni) == coeff * W_total`.
 `POST /api/model` round-trips `buckling_cases` and `rs_combos`;
 `POST /api/analyze` returns the `"buckling"` block automatically and the
 directional RS combos inside `"rs_cases"`.
+
+---
+
+# v0.11 additions — Winkler elastic foundation on members, gravity load takedown
+
+## Winkler elastic foundation (`skyframe/core/model.py`, mesher, engine)
+
+```python
+# FrameMember gains (both default 0.0; round-trip; absent = defaults):
+#   foundation_ks: float = 0.0      # subgrade modulus (kN/m^3)
+#   foundation_width: float = 0.0   # bearing width b (m)
+# Property: foundation_k_line = ks*width when ks>0 AND width>0, else 0.0
+#   (kN/m per metre of length — the distributed vertical line-spring modulus).
+# add_member(..., foundation_ks=, foundation_width=); validation: both finite
+#   and >= 0.
+```
+
+When `foundation_k_line > 0` a member rests on a Winkler bed of vertical
+(global -Z) grounded springs.
+
+* **Mesher** (`skyframe/core/mesh.py`): a foundation member is DISCRETIZED into
+  N equal segments (intermediate nodes inserted into the global point pool),
+  merged with any shell-edge split cuts.  N is chosen so the segment length
+  `<= min(L / 8, lc / 4)` where the Hetenyi characteristic length
+  `lc = (4 E I33 / k_line)^0.25` (`I33` includes `mod_I33`); N is floored at 8
+  and capped at 40.  Controls are the module globals
+  `FOUNDATION_MIN_SEGMENTS = 8`, `FOUNDATION_MAX_SEGMENTS = 40`,
+  `FOUNDATION_SEGS_PER_LC = 4.0` (exposed for convergence testing);
+  `foundation_segment_count(model, member)` returns N (1 when inactive).  A
+  non-foundation member is never split by this path (numbering unchanged, so
+  pre-v0.11 models mesh identically).
+* **Engine**: a grounded Z spring of stiffness `k_line * tributary_length`
+  (tributary = half of each adjacent segment) is lumped at every node of the
+  discretized member, reusing the v0.8 grounded-`zeroLength`-to-fixed-node
+  spring mechanism (Z dof only).  The sprung Z dof is cleared of any base
+  fixity, the spring reaction `-k*uz` enters the case `reactions` and base
+  totals, and the node counts as a support.  Member end forces / 11-station
+  results still aggregate to the ORIGINAL member over its full length (the
+  existing split-member re-aggregation); member loads distribute exactly over
+  the sub-segments through the existing exact load path.
+* Rigid end offsets are NOT supported together with a foundation (the member
+  is multi-segment): the existing single-segment offset guard raises a clear
+  error.
+
+Hand-checked closed forms (Hetenyi beam on elastic foundation,
+`beta = (k_line / (4 E I33))^0.25`, central point load P): max deflection
+`y_max = P*beta/(2*k_line)`, max moment `M_max = P/(4*beta)` — matched within
+3% at the automatic (fine) discretization on a long beam (L >> lc), the error
+converging monotonically to the closed form as N grows; a rigid-ish short
+footing settles nearly uniformly at `w = P/(k_line*L)` (1%); the soil-spring
+reactions sum exactly to the applied downward load.
+
+## Gravity load takedown / support-reaction summary
+
+Top-level results gain `"takedown"` (ALWAYS present, may be `{}`), computed by
+pure post-processing of the already-solved reactions for every static case and
+every ADDITIVE combo:
+
+```jsonc
+"takedown": {
+  "<case|combo>": {
+    "supports": [{"node": tag, "grid": "A-1"|"", "x": 0, "y": 0,
+                  "FZ": 0, "FX": 0, "FY": 0}],   // one per support node
+    "total_FZ":   0.0,   // sum of support FZ reactions (kN)
+    "applied_FZ": 0.0,   // INDEPENDENT sum of applied gravity (kN)
+    "balance_ok": true   // |total_FZ - applied_FZ| within tolerance
+  }
+}
+```
+
+* Every real support node (base supports AND spring / foundation-spring nodes)
+  appears once, labelled by its NEAREST grid intersection (`x_labels`-`y_labels`,
+  e.g. corner `"A-1"`) when the model has a grid, else `""` (story = Base).
+* `applied_FZ` is summed straight from the load definitions with the SAME
+  vertical-load rules the engine applies (gravity member loads skip vertical
+  members; self-weight and `global_z` loads act on all members; area loads use
+  the meshed net tributary / membrane net area), so `balance_ok` is a genuine
+  independent check.  A combo's `applied_FZ` folds the case pattern factors
+  linearly, matching the linearly-superposed per-support reactions
+  (`1.2*deadFZ + 1.6*liveFZ`, etc.).
+
+## API additions
+
+| Method | Path                      | Body / Response |
+|--------|---------------------------|-----------------|
+| POST   | `/api/member/foundation`  | `{member_uids:[...], ks, width}` -> sets `foundation_ks`/`foundation_width` on the named members, returns the model dict; 400 on unknown member, missing/negative `ks`/`width`, or empty list |
+
+`POST /api/model` round-trips the FrameMember `foundation_ks`/`foundation_width`
+fields; `POST /api/analyze` returns the `"takedown"` block automatically.

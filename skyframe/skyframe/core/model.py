@@ -188,10 +188,26 @@ class FrameMember:
     rigid_i: float = 0.0
     rigid_j: float = 0.0
     rigid_factor: float = 1.0
+    # v0.11 Winkler elastic foundation (beam/mat on soil): when both are > 0
+    # the member rests on a Winkler bed of vertical (global -Z) grounded
+    # springs.  ``foundation_ks`` is the subgrade modulus (kN/m^3) and
+    # ``foundation_width`` the bearing width b (m); the distributed line
+    # spring modulus is ``k_line = foundation_ks * foundation_width`` (kN/m per
+    # metre of length).  The engine discretizes the member and lumps a grounded
+    # Z spring ``k_line * tributary_length`` at each node.
+    foundation_ks: float = 0.0
+    foundation_width: float = 0.0
 
     @property
     def length(self) -> float:
         return math.dist(self.pi, self.pj)
+
+    @property
+    def foundation_k_line(self) -> float:
+        """Distributed vertical spring modulus (kN/m per m), 0 when inactive."""
+        if self.foundation_ks > 0.0 and self.foundation_width > 0.0:
+            return self.foundation_ks * self.foundation_width
+        return 0.0
 
     @property
     def rigid_offset_i(self) -> float:
@@ -213,6 +229,8 @@ class FrameMember:
                 "releases": self.releases, "angle": self.angle,
                 "rigid_i": self.rigid_i, "rigid_j": self.rigid_j,
                 "rigid_factor": self.rigid_factor,
+                "foundation_ks": self.foundation_ks,
+                "foundation_width": self.foundation_width,
                 "length": self.length}
 
 
@@ -825,7 +843,9 @@ class BuildingModel:
                    story: str = "", uid: str = "",
                    releases: str = "", angle: float = 0.0,
                    rigid_i: float = 0.0, rigid_j: float = 0.0,
-                   rigid_factor: float = 1.0) -> FrameMember:
+                   rigid_factor: float = 1.0,
+                   foundation_ks: float = 0.0,
+                   foundation_width: float = 0.0) -> FrameMember:
         if section not in self.sections:
             raise ValueError(f"Unknown section {section}")
         uid = uid or f"{kind[0].upper()}{len(self.members) + 1}"
@@ -834,15 +854,27 @@ class BuildingModel:
                         tuple(float(v) for v in pj), story,
                         releases=releases, angle=float(angle),
                         rigid_i=float(rigid_i), rigid_j=float(rigid_j),
-                        rigid_factor=float(rigid_factor))
+                        rigid_factor=float(rigid_factor),
+                        foundation_ks=float(foundation_ks),
+                        foundation_width=float(foundation_width))
         if m.length < 1e-9:
             raise ValueError(f"Member {uid} has zero length")
         if not m.release_tokens() <= {"Mi", "Mj"}:
             raise ValueError(f"Member {uid}: bad releases {releases!r} "
                              "(tokens must be 'Mi'/'Mj')")
         self._validate_rigid_offsets(m)
+        self._validate_foundation(m)
         self.members.append(m)
         return m
+
+    @staticmethod
+    def _validate_foundation(m: FrameMember) -> None:
+        for key in ("foundation_ks", "foundation_width"):
+            v = getattr(m, key)
+            if not (isinstance(v, (int, float)) and math.isfinite(v)
+                    and v >= 0.0):
+                raise ValueError(f"Member {m.uid}: {key} must be a finite "
+                                 f"value >= 0 (got {v!r})")
 
     @staticmethod
     def _validate_rigid_offsets(m: FrameMember) -> None:
@@ -1432,6 +1464,7 @@ class BuildingModel:
                 raise ValueError(f"Member {m.uid}: bad releases "
                                  f"{m.releases!r}")
             self._validate_rigid_offsets(m)
+            self._validate_foundation(m)
         region_uids = set()
         for r in self.shells:
             if r.uid in region_uids:
@@ -1600,7 +1633,9 @@ class BuildingModel:
                 angle=float(md.get("angle", 0.0)),
                 rigid_i=float(md.get("rigid_i", 0.0)),
                 rigid_j=float(md.get("rigid_j", 0.0)),
-                rigid_factor=float(md.get("rigid_factor", 1.0))))
+                rigid_factor=float(md.get("rigid_factor", 1.0)),
+                foundation_ks=float(md.get("foundation_ks", 0.0)),
+                foundation_width=float(md.get("foundation_width", 0.0))))
         for rd in d.get("shells") or []:
             mdl.shells.append(ShellRegion(
                 uid=rd["uid"], kind=rd["kind"], behavior=rd["behavior"],

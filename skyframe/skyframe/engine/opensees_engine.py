@@ -622,6 +622,8 @@ class AnalysisResults:
     #   v0.9: per lateral case/story ASCE 7 torsional + soft-story flags
     buckling: Dict[str, dict] = field(default_factory=dict)
     #   v0.10: per buckling-case BucklingResult.to_dict()
+    takedown: Dict[str, dict] = field(default_factory=dict)
+    #   v0.11: per static case / additive combo gravity load takedown
     warning: str = ""                    # e.g. TH cases skipped (step cap)
 
     def to_dict(self) -> dict:
@@ -640,6 +642,7 @@ class AnalysisResults:
             "pushover": {n: p.to_dict() for n, p in self.pushover.items()},
             "staged": {n: s.to_dict() for n, s in self.staged.items()},
             "buckling": {n: dict(b) for n, b in self.buckling.items()},
+            "takedown": {n: dict(t) for n, t in self.takedown.items()},
             "modal": self.modal.to_dict(),
         }
         if self.story_props:
@@ -751,6 +754,19 @@ class OpenSeesEngine:
             if cb.combo_type == "add" and cname in combos:
                 diag_src[cname] = combos[cname]
         story_stiffness, irregularity = self._seismic_diagnostics(asm, diag_src)
+        # v0.11 gravity load takedown: per static case + additive combo
+        takedown: Dict[str, dict] = {}
+        for cname, cr in cases.items():
+            takedown[cname] = self._takedown(asm, cr,
+                                             model.cases[cname].patterns)
+        for cname, cb in model.combos.items():
+            if cb.combo_type != "add" or cname not in combos:
+                continue
+            eff: Dict[str, float] = {}
+            for base_case, f in cb.cases.items():
+                for p, pf in model.cases[base_case].patterns.items():
+                    eff[p] = eff.get(p, 0.0) + f * pf
+            takedown[cname] = self._takedown(asm, combos[cname], eff)
         members = [{"uid": m.uid, "kind": m.kind, "section": m.section,
                     "ni": asm.ele_nodes[m.uid][0], "nj": asm.ele_nodes[m.uid][1],
                     "story": m.story}
@@ -774,6 +790,7 @@ class OpenSeesEngine:
             story_stiffness=story_stiffness,
             irregularity=irregularity,
             buckling=buckling,
+            takedown=takedown,
             warning=warning,
         )
 
@@ -918,6 +935,30 @@ class OpenSeesEngine:
             spring_specs.append((rt, [float(k) for k in sp.stiffness]))
             cover = spring_cover.setdefault(rt, set())
             cover |= {d for d in range(6) if sp.stiffness[d] != 0.0}
+
+        # --- Winkler elastic-foundation line springs (v0.11) ---------------
+        # A member with foundation_k_line > 0 rests on a Winkler bed: a
+        # grounded vertical (global -Z) spring of stiffness
+        # k_line * tributary_length is lumped at each of its (discretized)
+        # nodes.  These reuse the grounded-spring machinery below (co-located
+        # fixed ground node + zeroLength on the Z dof), so the Z fixity on
+        # those nodes is cleared and the spring reaction enters the case
+        # reactions and base totals.
+        for m in model.members:
+            k_line = getattr(m, "foundation_k_line", 0.0)
+            if k_line <= 0.0:
+                continue
+            node_trib: Dict[int, float] = {}
+            for seg in mesh.segments[m.uid]:
+                node_trib[seg.ni] = node_trib.get(seg.ni, 0.0) + seg.length / 2.0
+                node_trib[seg.nj] = node_trib.get(seg.nj, 0.0) + seg.length / 2.0
+            for nidx, trib in node_trib.items():
+                rt = nidx + 1
+                kz = k_line * trib
+                if kz <= 0.0:
+                    continue
+                spring_specs.append((rt, [0.0, 0.0, kz, 0.0, 0.0, 0.0]))
+                spring_cover.setdefault(rt, set()).add(2)   # dof index 2 = uz
 
         # --- supports ----------------------------------------------------
         def record_fix(ntag: int, restr: Sequence[int]) -> None:
@@ -1762,6 +1803,117 @@ class OpenSeesEngine:
             base["MY"] += my + z * fx - x * fz
             base["MZ"] += mz + x * fy - y * fx
         return base
+
+    # ------------------------------------------ v0.11 gravity load takedown
+    def _grid_label(self, x: float, y: float) -> str:
+        """Nearest grid intersection label (e.g. "A-1"); "" when no grid."""
+        g = self.model.grid
+        if not g or not g.x_lines or not g.y_lines:
+            return ""
+        xi = min(range(len(g.x_lines)),
+                 key=lambda i: abs(g.x_lines[i] - x))
+        yi = min(range(len(g.y_lines)),
+                 key=lambda i: abs(g.y_lines[i] - y))
+        return f"{g.x_labels[xi]}-{g.y_labels[yi]}"
+
+    def _area_load_fz(self, asm: _Assembly, region, q: float) -> float:
+        """Downward reaction-equivalent FZ (kN) of an area load q (kPa)."""
+        if region.behavior == "shell":
+            trib = asm.mesh.region_trib.get(region.uid, {})
+            return q * sum(trib.values())
+        return q * region.net_area
+
+    def _applied_gravity_fz(self, asm: _Assembly,
+                            patterns: Dict[str, float]) -> float:
+        """Total downward gravity load (kN, reaction-equivalent FZ) applied by
+        a pattern combination.
+
+        Independent of the solved reactions — summed straight from the load
+        definitions with the SAME vertical-load rules the engine applies
+        (gravity member loads skip vertical members; self-weight and
+        ``global_z`` loads act on all members; area loads use the meshed net
+        tributary / membrane net area) — so it can verify reaction balance.
+        """
+        model = self.model
+        total = 0.0
+
+        def member_fz(m: FrameMember, direction: str, w_total: float) -> float:
+            _, yax, _, _, vertical = _local_axes(m)
+            if direction == "gravity":
+                return 0.0 if vertical else w_total       # global -Z
+            if direction == "global_z":
+                return -w_total                           # global +Z
+            if direction == "local_y":
+                return -w_total * yax[2]
+            return 0.0                                    # global_x / global_y
+
+        for pname, scale in patterns.items():
+            pat = model.patterns.get(pname)
+            if pat is None:
+                continue
+            for udl in pat.member_udls:
+                m = self._members_by_uid.get(udl.member_uid)
+                if m is not None:
+                    total += scale * member_fz(m, "gravity", udl.w * m.length)
+            for ml in pat.member_loads:
+                m = self._members_by_uid.get(ml.member_uid)
+                if m is None:
+                    continue
+                if ml.kind == "point":
+                    w_tot = ml.w
+                elif ml.kind == "udl":
+                    w_tot = ml.w * (ml.b - ml.a) * m.length
+                else:  # trapezoid
+                    w_tot = 0.5 * (ml.w + ml.w2) * (ml.b - ml.a) * m.length
+                total += scale * member_fz(m, ml.direction, w_tot)
+            for nl in pat.nodal_loads:
+                total += scale * (-nl.fz)
+            swf = getattr(pat, "self_weight_factor", 0.0)
+            if swf:
+                for m in model.members:
+                    sec = model.sections.get(m.section)
+                    mat = model.materials.get(sec.material) if sec else None
+                    if sec is None or mat is None:
+                        continue
+                    total += scale * swf * sec.A * mat.unit_weight * m.length
+                for region in model.shells:
+                    ssec = model.shell_sections.get(region.section)
+                    mat = model.materials.get(ssec.material) if ssec else None
+                    if ssec is None or mat is None:
+                        continue
+                    q = swf * ssec.thickness * mat.unit_weight
+                    total += scale * self._area_load_fz(asm, region, q)
+            for al in pat.area_loads:
+                region = model._shell(al.region_uid)
+                if region is not None:
+                    total += scale * self._area_load_fz(asm, region, al.q)
+        return total
+
+    def _takedown(self, asm: _Assembly, cr: CaseResults,
+                  patterns: Dict[str, float]) -> dict:
+        """Support-reaction takedown for one gravity case/combo (v0.11).
+
+        Per support node (real supports incl. springs): vertical reaction FZ
+        (plus FX/FY), labelled by nearest grid intersection.  ``total_FZ`` is
+        the reaction sum; ``applied_FZ`` the independently-summed applied
+        gravity; ``balance_ok`` checks they match.
+        """
+        supports: List[dict] = []
+        total_fz = 0.0
+        for t in sorted(cr.reactions):
+            r = cr.reactions[t]
+            c = asm.node_coords.get(t, (0.0, 0.0, 0.0))
+            fz = float(r[2])
+            total_fz += fz
+            supports.append({
+                "node": int(t), "grid": self._grid_label(c[0], c[1]),
+                "x": float(c[0]), "y": float(c[1]),
+                "FZ": fz, "FX": float(r[0]), "FY": float(r[1])})
+        applied = self._applied_gravity_fz(asm, patterns)
+        tol = 1e-6 * max(1.0, abs(applied))
+        return {"supports": supports, "total_FZ": float(total_fz),
+                "applied_FZ": float(applied),
+                "balance_ok": bool(abs(total_fz - applied) <= tol)}
 
     def _story_shears(self, case: LoadCase) -> Dict[str, Tuple[float, float]]:
         """Cumulative applied lateral force at & above each story (kN).

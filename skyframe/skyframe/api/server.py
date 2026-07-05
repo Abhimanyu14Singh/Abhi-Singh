@@ -469,6 +469,40 @@ def create_app() -> Flask:
             return jsonify({"error": str(exc)}), 400
         return jsonify(_state["model"].to_dict())
 
+    # ---------------------------------------- v0.11: Winkler foundation set
+    @app.post("/api/member/foundation")
+    def member_foundation():
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        uids = body.get("member_uids")
+        if not isinstance(uids, list) or not uids or not all(
+                isinstance(u, str) and u for u in uids):
+            return jsonify({"error": "'member_uids' must be a non-empty list "
+                                     "of member uid strings"}), 400
+        try:
+            ks = _num(body, "ks", required=True)
+            width = _num(body, "width", required=True)
+            if ks < 0.0 or width < 0.0:
+                raise ValueError("'ks' and 'width' must be >= 0")
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        model = _state["model"]
+        by_uid = {m.uid: m for m in model.members}
+        missing = [u for u in uids if u not in by_uid]
+        if missing:
+            return jsonify({"error": f"unknown member(s): "
+                                     f"{', '.join(missing)}"}), 400
+        for u in uids:
+            m = by_uid[u]
+            m.foundation_ks = float(ks)
+            m.foundation_width = float(width)
+        try:
+            model.validate()
+        except (ValueError, KeyError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(model.to_dict())
+
     @app.post("/api/analyze")
     def analyze():
         if not _OPENSEES_OK:
