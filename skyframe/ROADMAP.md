@@ -112,7 +112,7 @@ scrutinized benchmark tests.
 
 ## Status
 All waves above are complete with engine + REST API + UI, pinned by a
-254-test suite. The app builds standalone locally (`packaging/build.sh`).
+272-test suite. The app builds standalone locally (`packaging/build.sh`).
 
 ## Possible future waves (not yet scheduled)
 - Winkler elastic-foundation line springs / mat foundations
