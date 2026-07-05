@@ -116,6 +116,11 @@ scrutinized benchmark tests.
 - [x] Named response-spectrum / time-history function library (+ EC8 preset)
 - [x] UI: cut manager + 3D plane + forces tab, function library manager
 
+## Wave 15 — grid systems  ✅ done
+- [x] Multiple grid systems (orthogonal + rotated wings + radial)
+- [x] Origin/rotation transforms, cross-system snapping (backward compatible)
+- [x] UI: grid-system manager, multi-grid render + snap in plan/3D
+
 ## Phase 4 — Parity increment 2  ✅ done
 - [x] 1. Model save/open (.skyframe JSON files) with File menu + gallery
 - [x] 2. Load pattern / case / combo editor UI (with per-case P-Delta toggle)
@@ -125,10 +130,9 @@ scrutinized benchmark tests.
 - [x] 6. Wall/slab openings; elevation-view drawing (Wave 6)
 - [x] 7. Nonlinear static pushover (OpenSees fiber hinges) (Wave 6)
 
-## Status
+## Status — v1.0 released 🎉
 All waves above are complete with engine + REST API + UI, pinned by a
-325-test suite. The app builds standalone locally (`packaging/build.sh`).
+340-test suite. The app builds standalone locally (`packaging/build.sh`).
 
 ## Possible future waves (not yet scheduled)
-- Multiple / non-orthogonal grid systems
 - Native Windows local build (same build.sh on a Windows host)

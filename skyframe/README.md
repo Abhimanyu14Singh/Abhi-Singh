@@ -1,6 +1,11 @@
-# SkyFrame — Building Analysis Studio
+# SkyFrame 1.0 — Building Analysis Studio
 
 **Your personal ETABS-style structural analysis app, powered by [OpenSees](https://opensees.berkeley.edu/).**
+
+> **v1.0** — 340 benchmark tests · full model → draw → assign → analyze → design
+> → report workflow · builds to a self-contained desktop app. See
+> [`CHANGELOG.md`](CHANGELOG.md) for the complete feature list and
+> [`ROADMAP.md`](ROADMAP.md) for the wave-by-wave history.
 
 SkyFrame wraps the research-grade, open-source OpenSees finite-element framework
 (the solver trusted by earthquake-engineering researchers worldwide) in a fast,
