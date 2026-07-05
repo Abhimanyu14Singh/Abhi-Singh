@@ -101,6 +101,11 @@ scrutinized benchmark tests.
 - [x] Notional loads (AISC direct-analysis stability)
 - [x] UI: buckling tab with animated mode shapes, RS-directional + notional cards
 
+## Wave 12 — foundations & load takedown  ✅ done
+- [x] Winkler elastic foundations on members (soil springs, Hetenyi-validated)
+- [x] Gravity load takedown per support, grouped by grid, with balance check
+- [x] UI: foundation assignment + soil glyph, takedown tab with bubble plan
+
 ## Phase 4 — Parity increment 2  ✅ done
 - [x] 1. Model save/open (.skyframe JSON files) with File menu + gallery
 - [x] 2. Load pattern / case / combo editor UI (with per-case P-Delta toggle)
@@ -112,9 +117,9 @@ scrutinized benchmark tests.
 
 ## Status
 All waves above are complete with engine + REST API + UI, pinned by a
-272-test suite. The app builds standalone locally (`packaging/build.sh`).
+286-test suite. The app builds standalone locally (`packaging/build.sh`).
 
 ## Possible future waves (not yet scheduled)
-- Winkler elastic-foundation line springs / mat foundations
 - Multiple / non-orthogonal grid systems
+- Response-spectrum function library (named, reusable spectra)
 - Native Windows local build (same build.sh on a Windows host)
