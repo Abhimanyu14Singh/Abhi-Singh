@@ -95,6 +95,12 @@ scrutinized benchmark tests.
 - [x] Design over all load combinations (governing combo per member)
 - [x] UI: offset inputs + glyph, diagnostics chips, design envelope toggle
 
+## Wave 11 — advanced analysis  ✅ done
+- [x] Linear buckling analysis (numpy geometric-stiffness, Euler-validated)
+- [x] Response-spectrum directional combination (ASCE 7 §12.5: 100/30, SRSS)
+- [x] Notional loads (AISC direct-analysis stability)
+- [x] UI: buckling tab with animated mode shapes, RS-directional + notional cards
+
 ## Phase 4 — Parity increment 2  ✅ done
 - [x] 1. Model save/open (.skyframe JSON files) with File menu + gallery
 - [x] 2. Load pattern / case / combo editor UI (with per-case P-Delta toggle)
@@ -109,8 +115,6 @@ All waves above are complete with engine + REST API + UI, pinned by a
 254-test suite. The app builds standalone locally (`packaging/build.sh`).
 
 ## Possible future waves (not yet scheduled)
-- Linear buckling analysis (geometric-stiffness eigenproblem)
 - Winkler elastic-foundation line springs / mat foundations
-- Response-spectrum directional combination (100/30, orthogonal SRSS)
 - Multiple / non-orthogonal grid systems
 - Native Windows local build (same build.sh on a Windows host)
