@@ -3169,8 +3169,7 @@ function renderCutsTab() {
   const rows = cutRows(cd);
 
   $("cutMeta").textContent =
-    `${rows.length} cut${rows.length === 1 ? "" : "s"} · ${store.cutCase}` +
-    (isRsCase(`rs:${store.cutCase}`) ? "" : "") + ` · resultants (kN, kN·m)`;
+    `${rows.length} cut${rows.length === 1 ? "" : "s"} · ${store.cutCase} · resultants (kN, kN·m)`;
 
   const head = `<thead><tr>
     <th class="txt">Cut</th><th class="txt">Plane</th>
