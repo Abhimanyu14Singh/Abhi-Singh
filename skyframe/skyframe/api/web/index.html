@@ -156,12 +156,14 @@
           <button data-target="ls-patterns">Patterns <span class="nav-count" id="cnt-patterns">0</span></button>
           <button data-target="ls-codetools">Code tools <span class="nav-badge">ASCE 7</span></button>
           <button data-target="ls-cases">Static cases <span class="nav-count" id="cnt-cases">0</span></button>
+          <button data-target="ls-functions">Functions <span class="nav-count" id="cnt-functions">0</span></button>
           <button data-target="ls-rs">RS cases <span class="nav-count" id="cnt-rs">0</span></button>
           <button data-target="ls-th">TH cases <span class="nav-count" id="cnt-th">0</span></button>
           <button data-target="ls-pushover">Pushover <span class="nav-count" id="cnt-pushover">0</span></button>
           <button data-target="ls-buckling">Buckling <span class="nav-count" id="cnt-buckling">0</span></button>
           <button data-target="ls-staged">Staged <span class="nav-count" id="cnt-staged">0</span></button>
           <button data-target="ls-combos">Combos <span class="nav-count" id="cnt-combos">0</span></button>
+          <button data-target="ls-cuts">Section cuts <span class="nav-count" id="cnt-cuts">0</span></button>
           <button data-target="ls-mass">Mass source</button>
         </div>
         <div class="draw-help">
@@ -322,6 +324,7 @@
         <button class="tab hidden" data-tab="pushover" role="tab" id="poTabBtn">Pushover</button>
         <button class="tab hidden" data-tab="buckling" role="tab" id="buckTabBtn">Buckling</button>
         <button class="tab hidden" data-tab="takedown" role="tab" id="tdTabBtn">Load Takedown</button>
+        <button class="tab hidden" data-tab="cuts" role="tab" id="cutTabBtn">Section Cuts</button>
         <div class="tabbar-spacer"></div>
         <span class="staged-badge hidden" id="stagedBadge" title="Staged construction vs one-shot analysis — max column-axial difference"></span>
         <div class="seg-toggle env-toggle hidden" id="envToggle" title="Envelope combo — switch tables between the max and min envelope">
@@ -692,6 +695,32 @@
           </div>
           <div class="pane-tools">
             <span class="muted" id="tdNote"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ SECTION CUT FORCES (v0.13) ============ -->
+      <section class="tabpane" id="pane-cuts" role="tabpanel">
+        <div class="empty-state" id="empty-cuts">
+          <div class="empty-art">✂</div>
+          <p>Define section cuts in the Loads editor, then run analysis to see cut-force resultants</p>
+        </div>
+        <div class="pane-content hidden" id="content-cuts">
+          <div class="charts-controls">
+            <div class="th-controls">
+              <label class="case-select-wrap"><span>Case</span>
+                <select id="cutCaseSelect" class="case-select"></select></label>
+              <span class="muted" id="cutMeta"></span>
+            </div>
+            <button class="chip csv-btn" id="csvCuts" title="Download the section-cut forces as CSV (unrounded)">⬇ CSV</button>
+          </div>
+          <div class="cut-table-wrap">
+            <div class="table-scroll">
+              <table class="data-table" id="cutTable"></table>
+            </div>
+          </div>
+          <div class="pane-tools">
+            <span class="muted" id="cutNote"></span>
           </div>
         </div>
       </section>

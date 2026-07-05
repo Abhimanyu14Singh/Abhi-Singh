@@ -41,6 +41,8 @@ const COLORS = {
   rigid: "rgba(140, 185, 230, 0.75)",          // v0.9 rigid end zones
   foundation: "rgba(198, 146, 82, 0.95)",      // v0.11 Winkler soil/spring bed
   axial: "#4fd0c7",                            // v0.12 tension/compression-only
+  cutFill: "rgba(229, 165, 10, 0.9)",          // v0.13 section-cut plane (amber)
+  cutEdge: "rgba(245, 190, 60, 0.95)",
   grid: "rgba(120, 140, 165, 0.16)",
   gridLabel: "rgba(140, 160, 185, 0.55)",
   slabFill: "rgba(53, 181, 229, 0.045)",
@@ -248,6 +250,29 @@ export class Viewer3D {
     }
     if (!this.segs.length && !this.shellPolys.length) { lo = [0, 0, 0]; hi = [10, 10, 10]; }
     this._bbox = [lo, hi];
+
+    // v0.13: section cuts — each defined cutting plane becomes a translucent
+    // quad at its coordinate along the axis, clipped to optional in-plane
+    // ranges (else spanning the model bbox), with a name label at its centroid.
+    this.sectionCutPolys = (m.section_cuts || []).map(cut => {
+      const axis = (cut.axis === "x" || cut.axis === "y") ? cut.axis : "z";
+      const rng = (key, idx) => {
+        const r = cut[key];
+        return (Array.isArray(r) && r.length === 2 && r.every(isFinite))
+          ? [Math.min(r[0], r[1]), Math.max(r[0], r[1])]
+          : [lo[idx], hi[idx]];
+      };
+      const [x0, x1] = rng("x_range", 0);
+      const [y0, y1] = rng("y_range", 1);
+      const [z0, z1] = rng("z_range", 2);
+      const c = cut.coord;
+      let corners;
+      if (axis === "z") corners = [[x0, y0, c], [x1, y0, c], [x1, y1, c], [x0, y1, c]];
+      else if (axis === "x") corners = [[c, y0, z0], [c, y1, z0], [c, y1, z1], [c, y0, z1]];
+      else corners = [[x0, c, z0], [x1, c, z0], [x1, c, z1], [x0, c, z1]];
+      const centroid = [0, 1, 2].map(i => corners.reduce((a, p) => a + p[i], 0) / 4);
+      return { name: cut.name, axis, corners, centroid };
+    });
 
     // ground grid from model grid
     const g = m.grid;
@@ -521,6 +546,18 @@ export class Viewer3D {
       if (!s) continue;
       items.push({ type: "link", s, z: (s.a.z + s.b.z) / 2 });
     }
+    // v0.13: section-cut planes — translucent amber quads, depth-sorted
+    for (const cut of (this.sectionCutPolys || [])) {
+      const pts = [];
+      let zsum = 0, ok = true;
+      for (const p of cut.corners) {
+        const pc = P.toCam(p);
+        if (pc[2] < P.near) { ok = false; break; }
+        zsum += pc[2]; pts.push(P.proj(pc));
+      }
+      if (!ok) continue;
+      items.push({ type: "cut", pts, z: zsum / cut.corners.length, cut });
+    }
     // v0.4 — shell-force contour quads (colored by component value)
     if (contour && this.results && this._nodeXYZ) {
       this.results.shell_quads.forEach((q, i) => {
@@ -593,6 +630,20 @@ export class Viewer3D {
           ctx.lineWidth = 1.2;
           ctx.fill("evenodd"); ctx.stroke();
         }
+      } else if (it.type === "cut") {
+        // v0.13: translucent cutting plane (amber) with a dashed border
+        ctx.beginPath();
+        it.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.closePath();
+        ctx.fillStyle = COLORS.cutFill;
+        ctx.globalAlpha = overlayActive ? 0.10 : 0.18;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = COLORS.cutEdge;
+        ctx.lineWidth = 1.4;
+        ctx.setLineDash([6, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
       } else if (it.type === "link") {
         const { s } = it;
         ctx.globalAlpha = overlayActive ? COLORS.ghost : 1;
@@ -784,6 +835,28 @@ export class Viewer3D {
         ctx.stroke();
         ctx.fillStyle = COLORS.axial;
         ctx.fillText(label, mx, my + 0.5);
+      }
+    }
+
+    // ---- v0.13 section-cut plane name labels (at each plane centroid)
+    if (this.sectionCutPolys && this.sectionCutPolys.length) {
+      ctx.font = "700 10px -apple-system, 'Segoe UI', sans-serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      for (const cut of this.sectionCutPolys) {
+        const pc = P.toCam(cut.centroid);
+        if (pc[2] < P.near) continue;
+        const sp = P.proj(pc);
+        const label = `✂ ${cut.name}`;
+        const w = ctx.measureText(label).width + 12;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(sp.x - w / 2, sp.y - 8, w, 16, 7);
+        else ctx.rect(sp.x - w / 2, sp.y - 8, w, 16);
+        ctx.fillStyle = "rgba(24,20,8,0.72)";
+        ctx.fill();
+        ctx.strokeStyle = COLORS.cutEdge; ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = "#f5be3c";
+        ctx.fillText(label, sp.x, sp.y + 0.5);
       }
     }
 

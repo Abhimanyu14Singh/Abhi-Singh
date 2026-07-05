@@ -352,6 +352,33 @@ export function buildReportHtml(model, results, opts = {}) {
     }).join("");
   }
 
+  /* ---- v0.13: section cut forces — per case, the FX/FY/FZ, MX/MY/MZ
+     resultant transmitted across each defined cutting plane. */
+  let cutsHtml = "";
+  const scAll = r.section_cuts || {};
+  if (Object.keys(scAll).length) {
+    const cutDefs = model.section_cuts || [];
+    const planeOf = name => {
+      const d = cutDefs.find(c => c.name === name);
+      return d ? `${(d.axis || "z").toUpperCase()} = ${fmt(d.coord, 2)} m` : "—";
+    };
+    cutsHtml = Object.entries(scAll).map(([caseName, cd]) => {
+      const names = cutDefs.length ? cutDefs.map(c => c.name).filter(n => cd[n]) : Object.keys(cd);
+      const rows = names.map(n => {
+        const v = cd[n] || {};
+        const warn = (v.warnings || []).length ? (v.warnings || []).join("; ") : "";
+        return [T(`✂ ${n}`), D(planeOf(n)),
+          fmt(v.FX, 1), fmt(v.FY, 1), fmt(v.FZ, 1),
+          fmt(v.MX, 1), fmt(v.MY, 1), fmt(v.MZ, 1),
+          D(String(v.n_members ?? 0)), D(String(v.n_shells ?? 0)), D(warn)];
+      });
+      const t = table([{ label: "Cut", txt: true }, { label: "Plane", txt: true },
+        "FX (kN)", "FY (kN)", "FZ (kN)", "MX (kN·m)", "MY (kN·m)", "MZ (kN·m)",
+        "n·mem", "n·shell", { label: "Warnings", txt: true }], rows);
+      return `<div class="case-block"><h3>${esc(caseName)} <span class="tag">section cut forces</span></h3>${t}</div>`;
+    }).join("");
+  }
+
   /* ---- member force envelope (top 30 by |M3| across cases + combos) */
   const env = new Map();
   for (const [, cd] of [...Object.entries(r.cases || {}), ...Object.entries(r.combos || {})]) {
@@ -463,15 +490,20 @@ ${section("3 · Modal analysis", modalHtml,
   "Mass-participation ratios per mode; Γ = modal participation factor (L/M*).")}
 ${section("4 · Story results by case", storyBlocks + diagBlocks)}
 ${section("5 · Base reactions", baseTable)}
-${takedownHtml ? section("6 · Load takedown (gravity)", takedownHtml,
-  "Where vertical load reaches the foundation per gravity case/combo — support reactions with grid labels and a balance check (support ΣFZ vs applied gravity).") : ""}
-${section(`${takedownHtml ? 7 : 6} · Member force envelope`, envTable,
-  `Top ${envRows.length} members by |M3| — absolute envelope across all static cases and combinations.`)}
-${(() => { let n = takedownHtml ? 7 : 6;
+${(() => { let n = 5;
+  const tdN = takedownHtml ? ++n : n;
+  const cutN = cutsHtml ? ++n : n;
+  const envN = ++n;
   const pushN = pushoverHtml ? ++n : n;
   const chartN = chartsHtml ? ++n : n;
   const specN = spectraHtml ? ++n : n;
-  return `${pushoverHtml ? section(`${pushN} · Pushover analysis`, pushoverHtml,
+  return `${takedownHtml ? section(`${tdN} · Load takedown (gravity)`, takedownHtml,
+    "Where vertical load reaches the foundation per gravity case/combo — support reactions with grid labels and a balance check (support ΣFZ vs applied gravity).") : ""}
+${cutsHtml ? section(`${cutN} · Section cut forces`, cutsHtml,
+    "Internal force resultant (FX/FY/FZ, MX/MY/MZ) transmitted across each defined cutting plane, per case — Σ of the internal forces of members crossing the plane.") : ""}
+${section(`${envN} · Member force envelope`, envTable,
+  `Top ${envRows.length} members by |M3| — absolute envelope across all static cases and combinations.`)}
+${pushoverHtml ? section(`${pushN} · Pushover analysis`, pushoverHtml,
     "Displacement-controlled nonlinear static — base shear vs roof displacement; amber markers = slope drop > 20 % (yield). Hinge table: top plastic rotations at target drift.") : ""}
 ${chartsHtml ? section(`${chartN} · Story drift & response charts`, chartsHtml) : ""}
 ${spectraHtml ? section(`${specN} · Response spectra`, spectraHtml) : ""}`; })()}

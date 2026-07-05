@@ -190,14 +190,16 @@ export function mockModel(p = {}) {
   // v0.3: response-spectrum cases (UBC-style default shape)
   const ubc = [[0, 0.4], [0.11, 1.0], [0.56, 1.0], [0.8, 0.7], [1.0, 0.56],
     [1.5, 0.373], [2.0, 0.28], [3.0, 0.187], [4.0, 0.14]];
+  // v0.13: EQ-RS-X references the "EC8-Type1" library spectrum function (its
+  // inline points are ignored while `function` is set); EQ-RS-Y stays inline.
   const rs_cases = {
     "EQ-RS-X": {
       name: "EQ-RS-X", direction: "X", spectrum: ubc.map(p => [...p]),
-      combo_method: "CQC", damping: 0.05, scale: 1.0,
+      combo_method: "CQC", damping: 0.05, scale: 1.0, function: "EC8-Type1",
     },
     "EQ-RS-Y": {
       name: "EQ-RS-Y", direction: "Y", spectrum: ubc.map(p => [...p]),
-      combo_method: "SRSS", damping: 0.05, scale: 1.0,
+      combo_method: "SRSS", damping: 0.05, scale: 1.0, function: "",
     },
   };
 
@@ -250,6 +252,7 @@ export function mockModel(p = {}) {
         name: "TH-SINE-X", direction: "X", accel: sine,
         dt: 0.02, damping: 0.05, scale: 1.0,
         nonlinear: false, gravity: {}, hinges: "column_base", My: {}, hardening: 0.02,
+        function: "",
       },
       "TH-NL-X": {
         name: "TH-NL-X", direction: "X", accel: sine,
@@ -257,6 +260,7 @@ export function mockModel(p = {}) {
         // v0.6: nonlinear plastic-hinge run — yield moments on ground columns
         nonlinear: true, gravity: { DEAD: 1.0 }, hinges: "column_base",
         My: { ...pushMy }, default_My: 250, hardening: 0.03,
+        function: "",
       },
     },
     // v0.6: staged construction — sequential story-by-story DEAD build
@@ -274,6 +278,27 @@ export function mockModel(p = {}) {
     },
     rs_combos: {
       "RS-100/30": { name: "RS-100/30", name_x: "EQ-RS-X", name_y: "EQ-RS-Y", method: "100_30" },
+    },
+    // v0.13: section cuts — two horizontal (z) planes through Story1: one to
+    // read the story shear (FX ≈ base shear under lateral cases) and one to
+    // read the gravity landing (FZ ≈ weight under gravity cases).
+    section_cuts: [
+      { name: "Base Shear", axis: "z", coord: +(o.story_height * 0.5).toFixed(3) },
+      { name: "Story1 Gravity", axis: "z", coord: +(o.story_height * 0.4).toFixed(3) },
+    ],
+    // v0.13: function library — a Eurocode 8 spectrum + a demo ground record.
+    spectrum_functions: {
+      "EC8-Type1": {
+        name: "EC8-Type1", damping: 0.05,
+        points: mockEc8Spectrum({ ag: 0.25, S: 1.2 }),
+      },
+      "UBC-Lib": {
+        name: "UBC-Lib", damping: 0.05,
+        points: ubc.map(p => [...p]),
+      },
+    },
+    th_functions: {
+      "SINE-REC": { name: "SINE-REC", values: sine.slice(), dt: 0.02 },
     },
     diaphragm: "rigid",
     story_diaphragm: {},
@@ -1033,6 +1058,60 @@ export function mockResults(model) {
   for (const [name, cd] of Object.entries(cases)) if (isGravity(cd)) takedown[name] = buildTakedown(cd);
   for (const [name, cd] of Object.entries(combos)) if (isGravity(cd)) takedown[name] = buildTakedown(cd);
 
+  /* ---- v0.13: section-cut force resultants. For each defined cut and each
+     case/combo/RS case, sum the internal forces of members that strictly cross
+     the cutting plane (clipped to optional in-plane ranges). A low horizontal
+     (z) cut reads FX ≈ base shear under a lateral case and FZ ≈ weight under a
+     gravity case — local V2→X, V3→Y, axial→Z (mock mapping). */
+  const secCutDefs = (model.section_cuts || []).filter(c => c && c.name);
+  const buildCut = (cd, cut) => {
+    const axisIdx = { x: 0, y: 1, z: 2 }[cut.axis] ?? 2;
+    const inRange = p => {
+      for (const [k, idx] of [["x_range", 0], ["y_range", 1], ["z_range", 2]]) {
+        if (idx === axisIdx) continue;
+        const rg = cut[k];
+        if (rg && !(p[idx] >= rg[0] - 1e-6 && p[idx] <= rg[1] + 1e-6)) return false;
+      }
+      return true;
+    };
+    let FX = 0, FY = 0, FZ = 0, MX = 0, MY = 0, MZ = 0, nMem = 0, nShell = 0;
+    for (const mm of model.members) {
+      const a = mm.pi[axisIdx], b = mm.pj[axisIdx];
+      const lo = Math.min(a, b), hi = Math.max(a, b);
+      if (!(cut.coord > lo + 1e-6 && cut.coord < hi - 1e-6)) continue;
+      const t = (cut.coord - a) / (b - a || 1);
+      const cp = [0, 1, 2].map(i => mm.pi[i] + (mm.pj[i] - mm.pi[i]) * t);
+      if (!inRange(cp)) continue;
+      const f = (cd.member_forces || {})[mm.uid];
+      if (!f) continue;
+      nMem++;
+      FX += f[1]; FY += f[2]; FZ += -f[0];
+      MX += f[3]; MY += f[4]; MZ += f[5];
+    }
+    for (const sh of (model.shells || [])) {
+      const zs = sh.corners.map(c => c[axisIdx]);
+      const lo = Math.min(...zs), hi = Math.max(...zs);
+      if (cut.coord > lo + 1e-6 && cut.coord < hi - 1e-6 &&
+          inRange(sh.corners[0])) nShell++;
+    }
+    const warnings = [];
+    if (!nMem && !nShell) warnings.push("no members or shells cross this cut plane");
+    const r2 = v => +v.toFixed(2);
+    return { FX: r2(FX), FY: r2(FY), FZ: r2(FZ), MX: r2(MX), MY: r2(MY), MZ: r2(MZ),
+      n_members: nMem, n_shells: nShell, warnings };
+  };
+  const section_cuts = {};
+  if (secCutDefs.length) {
+    const perCase = (name, cd) => {
+      const row = {};
+      for (const cut of secCutDefs) row[cut.name] = buildCut(cd, cut);
+      section_cuts[name] = row;
+    };
+    for (const [name, cd] of Object.entries(cases)) perCase(name, cd);
+    for (const [name, cd] of Object.entries(combos)) perCase(name, cd);
+    for (const [name, cd] of Object.entries(rs_cases)) perCase(name, cd);
+  }
+
   const out = {
     model_name: model.name,
     nodes, members, supports,
@@ -1047,6 +1126,7 @@ export function mockResults(model) {
   if (Object.keys(pushover).length) out.pushover = pushover;
   if (Object.keys(buckling).length) out.buckling = buckling;      // v0.10
   if (Object.keys(takedown).length) out.takedown = takedown;      // v0.11
+  if (Object.keys(section_cuts).length) out.section_cuts = section_cuts;  // v0.13
   if (Object.keys(story_props).length) out.story_props = story_props;
   if (Object.keys(story_stiffness).length) out.story_stiffness = story_stiffness;
   if (Object.keys(irregularity).length) out.irregularity = irregularity;
@@ -1222,6 +1302,31 @@ export function asce7SpectrumPreview(Ss, S1, site = "D", TL = 8.0) {
   const seen = new Set();
   return pts.filter(p => { const k = p[0]; if (seen.has(k)) return false; seen.add(k); return true; })
     .sort((a, b) => a[0] - b[0]);
+}
+
+/** Eurocode 8 (EN 1998-1) elastic response spectrum, Type 1 → [[T, Sa_g], …].
+    A plausible mock EC8 shape for the function-library EC8 preset button. */
+export function mockEc8Spectrum(opts = {}) {
+  const ag = isFinite(opts.ag) ? opts.ag : 0.25;      // g
+  const S = isFinite(opts.S) ? opts.S : 1.2;          // soil factor
+  const TB = isFinite(opts.TB) ? opts.TB : 0.15;
+  const TC = isFinite(opts.TC) ? opts.TC : 0.5;
+  const TD = isFinite(opts.TD) ? opts.TD : 2.0;
+  const zeta = isFinite(opts.damping) ? opts.damping * 100 : 5;   // %
+  const eta = Math.max(0.55, Math.sqrt(10 / (5 + zeta)));
+  const B = 2.5;
+  const Se = T => {
+    if (T <= TB) return ag * S * (1 + (T / TB) * (eta * B - 1));
+    if (T <= TC) return ag * S * eta * B;
+    if (T <= TD) return ag * S * eta * B * (TC / T);
+    return ag * S * eta * B * (TC * TD / (T * T));
+  };
+  const Ts = [0, TB, TC];
+  for (const T of [0.7, 1.0, 1.5, TD, 3.0, 4.0]) if (T > TC) Ts.push(T);
+  const seen = new Set();
+  return Ts.filter(T => { const k = +T.toFixed(4); if (seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a, b) => a - b)
+    .map(T => [+T.toFixed(3), +Se(T).toFixed(4)]);
 }
 
 /** POST /api/pattern/selfweight — add/replace a self-weight dead pattern.

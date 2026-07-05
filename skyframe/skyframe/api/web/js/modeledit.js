@@ -89,6 +89,8 @@ export function normalizeModel(m) {
     tc.My = (tc.My && typeof tc.My === "object") ? tc.My : {};
     if (tc.default_My != null && !isFinite(tc.default_My)) delete tc.default_My;
     tc.hardening = isFinite(tc.hardening) ? tc.hardening : 0.02;
+    // v0.13 — optional reference to a library time-history function ("" = inline)
+    tc.function = typeof tc.function === "string" ? tc.function : "";
   }
   for (const [n, rc] of Object.entries(m.rs_cases)) {
     rc.name = rc.name || n;
@@ -97,6 +99,8 @@ export function normalizeModel(m) {
     rc.combo_method = rc.combo_method === "SRSS" ? "SRSS" : "CQC";
     rc.damping = isFinite(rc.damping) ? rc.damping : 0.05;
     rc.scale = isFinite(rc.scale) ? rc.scale : 1.0;
+    // v0.13 — optional reference to a library spectrum function (name; "" = inline)
+    rc.function = typeof rc.function === "string" ? rc.function : "";
   }
   // v0.5 — shell openings, pushover cases, diaphragm option, links
   for (const s of m.shells) {
@@ -155,6 +159,38 @@ export function normalizeModel(m) {
     rcmb.name_x = rcmb.name_x || "";
     rcmb.name_y = rcmb.name_y || "";
     rcmb.method = rcmb.method === "SRSS" ? "SRSS" : "100_30";
+  }
+  // v0.13 — section cuts (list of cutting planes) + function library
+  m.section_cuts = (Array.isArray(m.section_cuts) ? m.section_cuts : [])
+    .filter(c => c && typeof c === "object")
+    .map(c => {
+      const axis = (c.axis === "x" || c.axis === "y") ? c.axis : "z";
+      const cut = {
+        name: c.name || "CUT",
+        axis,
+        coord: isFinite(c.coord) ? c.coord : 0,
+      };
+      // optional bounding ranges [lo, hi] on each in-plane axis
+      for (const k of ["x_range", "y_range", "z_range"]) {
+        if (Array.isArray(c[k]) && c[k].length === 2 && c[k].every(isFinite))
+          cut[k] = [Math.min(c[k][0], c[k][1]), Math.max(c[k][0], c[k][1])];
+      }
+      return cut;
+    });
+  m.spectrum_functions = (m.spectrum_functions && typeof m.spectrum_functions === "object")
+    ? m.spectrum_functions : {};
+  for (const [n, sf] of Object.entries(m.spectrum_functions)) {
+    sf.name = sf.name || n;
+    sf.points = (Array.isArray(sf.points) ? sf.points : [])
+      .filter(p => Array.isArray(p) && p.length === 2 && p.every(isFinite));
+    sf.damping = isFinite(sf.damping) ? sf.damping : 0.05;
+  }
+  m.th_functions = (m.th_functions && typeof m.th_functions === "object")
+    ? m.th_functions : {};
+  for (const [n, tf] of Object.entries(m.th_functions)) {
+    tf.name = tf.name || n;
+    tf.values = (Array.isArray(tf.values) ? tf.values : []).filter(isFinite);
+    tf.dt = isFinite(tf.dt) && tf.dt > 0 ? tf.dt : 0.02;
   }
   return m;
 }
@@ -760,7 +796,7 @@ export function addRsCase(model, base = "RS") {
   const name = uniqueKey(model.rs_cases, base);
   model.rs_cases[name] = {
     name, direction: "X", spectrum: ubcSpectrum(),
-    combo_method: "CQC", damping: 0.05, scale: 1.0,
+    combo_method: "CQC", damping: 0.05, scale: 1.0, function: "",
   };
   return name;
 }
@@ -805,6 +841,151 @@ export function deleteBucklingCase(model, name) {
 export function deleteRsCombo(model, name) {
   if (model.rs_combos) delete model.rs_combos[name];
   return true;
+}
+
+/* ================================================================
+   v0.13 — section cuts + function library
+   ================================================================ */
+
+/** A unique section-cut name against the current list. */
+function uniqueCutName(model, base = "CUT") {
+  const taken = new Set((model.section_cuts || []).map(c => c.name));
+  let i = 1;
+  while (taken.has(`${base}${i}`)) i++;
+  return `${base}${i}`;
+}
+
+/** Model bounding box over member endpoints + shell corners. */
+export function modelBBox(model) {
+  let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  const grow = p => { for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], p[i]); hi[i] = Math.max(hi[i], p[i]); } };
+  for (const mm of model.members || []) { grow(mm.pi); grow(mm.pj); }
+  for (const sh of model.shells || []) for (const c of sh.corners) grow(c);
+  if (!isFinite(lo[0])) { lo = [0, 0, 0]; hi = [10, 10, 10]; }
+  return [lo, hi];
+}
+
+/** Add a new section cut. Default: a horizontal (z) plane at mid-height,
+    spanning the full plan. Returns the created cut. */
+export function addSectionCut(model) {
+  model.section_cuts = model.section_cuts || [];
+  const [lo, hi] = modelBBox(model);
+  const cut = {
+    name: uniqueCutName(model),
+    axis: "z",
+    coord: +(((lo[2] + hi[2]) / 2) || 0).toFixed(3),
+  };
+  model.section_cuts.push(cut);
+  return cut;
+}
+
+export function renameSectionCut(model, oldName, newName) {
+  newName = (newName || "").trim();
+  if (!newName || newName === oldName) return false;
+  if ((model.section_cuts || []).some(c => c.name === newName)) return false;
+  const cut = (model.section_cuts || []).find(c => c.name === oldName);
+  if (!cut) return false;
+  cut.name = newName;
+  return true;
+}
+
+export function deleteSectionCut(model, name) {
+  const i = (model.section_cuts || []).findIndex(c => c.name === name);
+  if (i < 0) return false;
+  model.section_cuts.splice(i, 1);
+  return true;
+}
+
+/** Toggle an optional bounding range on a cut. lo/hi finite → set (ordered);
+    null → remove. Returns the cut. */
+export function setCutRange(cut, key, lo, hi) {
+  if (lo == null || hi == null || !isFinite(lo) || !isFinite(hi)) delete cut[key];
+  else cut[key] = [Math.min(lo, hi), Math.max(lo, hi)];
+  return cut;
+}
+
+/* ---- spectrum functions (response-spectrum curve library) */
+export function addSpectrumFunction(model, base = "SPEC") {
+  model.spectrum_functions = model.spectrum_functions || {};
+  const name = uniqueKey(model.spectrum_functions, base);
+  model.spectrum_functions[name] = { name, points: ubcSpectrum(), damping: 0.05 };
+  return name;
+}
+
+export function renameSpectrumFunction(model, oldName, newName) {
+  if (!newName || newName === oldName || model.spectrum_functions[newName]) return false;
+  model.spectrum_functions[newName] = { ...model.spectrum_functions[oldName], name: newName };
+  delete model.spectrum_functions[oldName];
+  // keep referencing RS cases pointed at the renamed function
+  for (const rc of Object.values(model.rs_cases || {}))
+    if (rc.function === oldName) rc.function = newName;
+  return true;
+}
+
+/** Names of RS cases referencing a spectrum function (blocks deletion). */
+export function spectrumFunctionRefs(model, name) {
+  return Object.values(model.rs_cases || {})
+    .filter(rc => rc.function === name).map(rc => rc.name);
+}
+
+export function deleteSpectrumFunction(model, name) {
+  if (spectrumFunctionRefs(model, name).length) return false;
+  delete model.spectrum_functions[name];
+  return true;
+}
+
+/* ---- time-history functions (ground-acceleration record library) */
+export function addThFunction(model, base = "REC") {
+  model.th_functions = model.th_functions || {};
+  const name = uniqueKey(model.th_functions, base);
+  model.th_functions[name] = { name, values: sineRecord(0.02, 8), dt: 0.02 };
+  return name;
+}
+
+export function renameThFunction(model, oldName, newName) {
+  if (!newName || newName === oldName || model.th_functions[newName]) return false;
+  model.th_functions[newName] = { ...model.th_functions[oldName], name: newName };
+  delete model.th_functions[oldName];
+  for (const tc of Object.values(model.th_cases || {}))
+    if (tc.function === oldName) tc.function = newName;
+  return true;
+}
+
+export function thFunctionRefs(model, name) {
+  return Object.values(model.th_cases || {})
+    .filter(tc => tc.function === name).map(tc => tc.name);
+}
+
+export function deleteThFunction(model, name) {
+  if (thFunctionRefs(model, name).length) return false;
+  delete model.th_functions[name];
+  return true;
+}
+
+/** Eurocode 8 (EN 1998-1) elastic response spectrum, Type 1, in Sa(g) vs T(s).
+    ag = design ground accel (g), S = soil factor, TB/TC/TD corner periods,
+    eta = damping correction sqrt(10/(5+ζ%)) ≥ 0.55. Returns [[T, Sa], …]. */
+export function ec8Spectrum(opts = {}) {
+  const ag = isFinite(opts.ag) ? opts.ag : 0.25;      // g
+  const S = isFinite(opts.S) ? opts.S : 1.2;          // soil factor (ground type B/C)
+  const TB = isFinite(opts.TB) ? opts.TB : 0.15;
+  const TC = isFinite(opts.TC) ? opts.TC : 0.5;
+  const TD = isFinite(opts.TD) ? opts.TD : 2.0;
+  const zeta = isFinite(opts.damping) ? opts.damping * 100 : 5;   // %
+  const eta = Math.max(0.55, Math.sqrt(10 / (5 + zeta)));
+  const B = 2.5;                                       // amplification factor β0
+  const Se = T => {
+    if (T <= TB) return ag * S * (1 + (T / TB) * (eta * B - 1));
+    if (T <= TC) return ag * S * eta * B;
+    if (T <= TD) return ag * S * eta * B * (TC / T);
+    return ag * S * eta * B * (TC * TD / (T * T));
+  };
+  const Ts = [0, TB, TC];
+  for (const T of [0.7, 1.0, 1.5, TD, 3.0, 4.0]) if (T > TC) Ts.push(T);
+  const seen = new Set();
+  return Ts.filter(T => { const k = +T.toFixed(4); if (seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a, b) => a - b)
+    .map(T => [+T.toFixed(3), +Se(T).toFixed(4)]);
 }
 
 /* ================================================================
@@ -999,7 +1180,7 @@ export function addThCase(model, base = "TH") {
   const name = uniqueKey(model.th_cases, base);
   model.th_cases[name] = {
     name, direction: "X", accel: sineRecord(),
-    dt: 0.02, damping: 0.05, scale: 1.0,
+    dt: 0.02, damping: 0.05, scale: 1.0, function: "",
   };
   return name;
 }

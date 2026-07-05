@@ -65,12 +65,14 @@ export class LoadsEditor {
     this.root.appendChild(this._patternsSection(m));
     this.root.appendChild(this._codeToolsSection(m));
     this.root.appendChild(this._casesSection(m));
+    this.root.appendChild(this._functionsSection(m));   // v0.13
     this.root.appendChild(this._rsSection(m));
     this.root.appendChild(this._thSection(m));
     this.root.appendChild(this._poSection(m));
     this.root.appendChild(this._bucklingSection(m));
     this.root.appendChild(this._stagedSection(m));
     this.root.appendChild(this._combosSection(m));
+    this.root.appendChild(this._sectionCutsSection(m));  // v0.13
     this.root.appendChild(this._massSection(m));
     this.root.scrollTop = scroll;
   }
@@ -906,6 +908,19 @@ export class LoadsEditor {
     });
     head.appendChild(mkField("scale", scale));
 
+    // v0.13 — reference a library spectrum function ("(inline)" keeps the
+    // inline point editor; a named function hides/disables it).
+    const funcNames = Object.keys(m.spectrum_functions || {});
+    const funcSel = document.createElement("select");
+    funcSel.className = "func-select";
+    funcSel.innerHTML = `<option value="">(inline)</option>` +
+      funcNames.map(n => `<option value="${esc(n)}"${rc.function === n ? " selected" : ""}>${esc(n)}</option>`).join("");
+    if (rc.function && !funcNames.includes(rc.function))    // dangling ref
+      funcSel.insertAdjacentHTML("beforeend",
+        `<option value="${esc(rc.function)}" selected>${esc(rc.function)} (missing)</option>`);
+    funcSel.value = rc.function || "";
+    head.appendChild(mkField("function", funcSel));
+
     head.appendChild(this._delBtn(null, `RS case ${name}`, () => {
       if (ME.deleteRsCase(m, name)) this._mutated();
     }));
@@ -919,13 +934,19 @@ export class LoadsEditor {
     tableWrap.className = "rs-table";
     const chartWrap = document.createElement("div");
     chartWrap.className = "rs-chart";
+    // v0.13 — points come from the referenced function when one is set
+    const activePoints = () => {
+      const fn = rc.function && (m.spectrum_functions || {})[rc.function];
+      return fn ? (fn.points || []) : rc.spectrum;
+    };
     const drawChart = () => {
       chartWrap.textContent = "";
       const title = document.createElement("div");
       title.className = "chart-title";
-      title.innerHTML = `Spectrum preview <span class="unit">Sa g vs T s · ${esc(rc.direction)} · ${esc(rc.combo_method)}</span>`;
+      const src = rc.function ? `function ${esc(rc.function)}` : "inline";
+      title.innerHTML = `Spectrum preview <span class="unit">Sa g vs T s · ${esc(rc.direction)} · ${esc(rc.combo_method)} · ${src}</span>`;
       chartWrap.appendChild(title);
-      chartWrap.appendChild(spectrumChart(rc.spectrum));
+      chartWrap.appendChild(spectrumChart(activePoints()));
     };
     const rebuildTable = () => {
       tableWrap.textContent = "";
@@ -995,7 +1016,30 @@ export class LoadsEditor {
     dir.addEventListener("change", drawChart);
     meth.addEventListener("change", drawChart);
 
-    body.append(tableWrap, chartWrap);
+    // v0.13 — "using function <name>" note replaces the inline editor
+    const funcNote = document.createElement("p");
+    funcNote.className = "func-ref muted";
+    const applyFuncState = () => {
+      const on = !!rc.function;
+      tableWrap.classList.toggle("hidden", on);
+      funcNote.classList.toggle("hidden", !on);
+      if (on) {
+        const missing = !(m.spectrum_functions || {})[rc.function];
+        funcNote.innerHTML = missing
+          ? `⚠ using function <b>${esc(rc.function)}</b> — not found in the library`
+          : `Using function <b>${esc(rc.function)}</b> — the inline point table is disabled. ` +
+            `Pick <b>(inline)</b> to edit points here.`;
+      }
+      drawChart();
+    };
+    funcSel.addEventListener("change", () => {
+      rc.function = funcSel.value || "";
+      this._mutated(false);
+      applyFuncState();
+    });
+    applyFuncState();
+
+    body.append(tableWrap, funcNote, chartWrap);
     card.appendChild(body);
     return card;
   }
@@ -1061,6 +1105,19 @@ export class LoadsEditor {
     const dtIn = mkNum(tc.dt, "0.005", 0.001, v => { tc.dt = v; });
     head.appendChild(mkField("dt s", dtIn));
 
+    // v0.13 — reference a library time-history function ("(inline)" keeps the
+    // inline accel record; a named function hides/disables it).
+    const funcNames = Object.keys(m.th_functions || {});
+    const funcSel = document.createElement("select");
+    funcSel.className = "func-select";
+    funcSel.innerHTML = `<option value="">(inline)</option>` +
+      funcNames.map(n => `<option value="${esc(n)}"${tc.function === n ? " selected" : ""}>${esc(n)}</option>`).join("");
+    if (tc.function && !funcNames.includes(tc.function))
+      funcSel.insertAdjacentHTML("beforeend",
+        `<option value="${esc(tc.function)}" selected>${esc(tc.function)} (missing)</option>`);
+    funcSel.value = tc.function || "";
+    head.appendChild(mkField("function", funcSel));
+
     head.appendChild(this._delBtn(null, `TH case ${name}`, () => {
       if (ME.deleteThCase(m, name)) this._mutated();
     }));
@@ -1122,19 +1179,52 @@ export class LoadsEditor {
 
     const right = document.createElement("div");
     right.className = "rs-chart th-chart";
+    // v0.13 — record comes from the referenced function when one is set
+    const activeRecord = () => {
+      const fn = tc.function && (m.th_functions || {})[tc.function];
+      return fn ? { values: fn.values || [], dt: fn.dt || tc.dt } : { values: tc.accel, dt: tc.dt };
+    };
     const drawSpark = () => {
       right.textContent = "";
       const title = document.createElement("div");
       title.className = "chart-title";
-      title.innerHTML = `Record preview <span class="unit">${esc(tc.direction)} · ζ ${fmt(tc.damping, 3)} · ×${fmt(tc.scale, 2)}</span>`;
+      const src = tc.function ? `function ${esc(tc.function)}` : "inline";
+      title.innerHTML = `Record preview <span class="unit">${esc(tc.direction)} · ζ ${fmt(tc.damping, 3)} · ×${fmt(tc.scale, 2)} · ${src}</span>`;
       right.appendChild(title);
-      right.appendChild(thSparkline(tc.accel, tc.dt, { width: 320, height: 84 }));
+      const rec = activeRecord();
+      right.appendChild(thSparkline(rec.values, rec.dt, { width: 320, height: 84 }));
     };
     drawSpark();
     dir.addEventListener("change", drawSpark);
     dtIn.addEventListener("change", drawSpark);
 
-    body.append(left, right);
+    // v0.13 — "using function <name>" note replaces the inline record editor
+    const funcNote = document.createElement("p");
+    funcNote.className = "func-ref muted";
+    const applyFuncState = () => {
+      const on = !!tc.function;
+      left.classList.toggle("hidden", on);
+      funcNote.classList.toggle("hidden", !on);
+      if (on) {
+        const fn = (m.th_functions || {})[tc.function];
+        funcNote.innerHTML = fn
+          ? `Using function <b>${esc(tc.function)}</b> <span class="unit">${(fn.values || []).length} pts · dt ${fmt(fn.dt, 3)} s</span> — ` +
+            `the inline record is disabled. Pick <b>(inline)</b> to paste a record here.`
+          : `⚠ using function <b>${esc(tc.function)}</b> — not found in the library`;
+      }
+      drawSpark();
+    };
+    funcSel.addEventListener("change", () => {
+      tc.function = funcSel.value || "";
+      this._mutated(false);
+      applyFuncState();
+    });
+    applyFuncState();
+
+    const leftCol = document.createElement("div");
+    leftCol.className = "th-left-col";
+    leftCol.append(left, funcNote);
+    body.append(leftCol, right);
     card.appendChild(body);
     return card;
   }
@@ -1684,6 +1774,380 @@ export class LoadsEditor {
     }
     sec.appendChild(list);
     return sec;
+  }
+
+  /* ============================================================ function library (v0.13)
+     Two lists — response-spectrum functions (name + editable (T,Sa) points +
+     live spectrum preview, with a Eurocode 8 preset) and time-history
+     functions (name + values + dt + sparkline). RS/TH cases reference these
+     by name via their "function" dropdown. */
+  _functionsSection(m) {
+    m.spectrum_functions = m.spectrum_functions || {};
+    m.th_functions = m.th_functions || {};
+    const sec = this._section("ls-functions", "Function library",
+      "Reusable spectrum &amp; ground-motion functions. Reference one from an RS " +
+      "or TH case's <b>function</b> dropdown to share the same curve across cases.",
+      null, null);
+
+    /* ---- response-spectrum functions ---- */
+    const specGroup = document.createElement("div");
+    specGroup.className = "fn-group";
+    const specHead = document.createElement("div");
+    specHead.className = "fn-group-head";
+    specHead.innerHTML = `<h4>Response-spectrum functions <span class="muted">Sa (g) vs T (s)</span></h4>`;
+    const addSpec = document.createElement("button");
+    addSpec.className = "btn btn-small"; addSpec.id = "addSpecFn"; addSpec.textContent = "+ Spectrum function";
+    addSpec.addEventListener("click", () => { ME.addSpectrumFunction(m); this._mutated(); });
+    specHead.appendChild(addSpec);
+    specGroup.appendChild(specHead);
+    const specList = document.createElement("div");
+    specList.className = "loads-rows";
+    const specNames = Object.keys(m.spectrum_functions);
+    if (!specNames.length)
+      specList.innerHTML = `<p class="muted loads-empty">No spectrum functions yet.</p>`;
+    for (const name of specNames) specList.appendChild(this._specFnCard(m, name));
+    specGroup.appendChild(specList);
+    sec.appendChild(specGroup);
+
+    /* ---- time-history functions ---- */
+    const thGroup = document.createElement("div");
+    thGroup.className = "fn-group";
+    const thHead = document.createElement("div");
+    thHead.className = "fn-group-head";
+    thHead.innerHTML = `<h4>Time-history functions <span class="muted">ground accel · m/s²</span></h4>`;
+    const addTh = document.createElement("button");
+    addTh.className = "btn btn-small"; addTh.id = "addThFn"; addTh.textContent = "+ TH function";
+    addTh.addEventListener("click", () => { ME.addThFunction(m); this._mutated(); });
+    thHead.appendChild(addTh);
+    thGroup.appendChild(thHead);
+    const thList = document.createElement("div");
+    thList.className = "loads-rows";
+    const thNames = Object.keys(m.th_functions);
+    if (!thNames.length)
+      thList.innerHTML = `<p class="muted loads-empty">No time-history functions yet.</p>`;
+    for (const name of thNames) thList.appendChild(this._thFnCard(m, name));
+    thGroup.appendChild(thList);
+    sec.appendChild(thGroup);
+
+    return sec;
+  }
+
+  _specFnCard(m, name) {
+    const sf = m.spectrum_functions[name];
+    const card = document.createElement("div");
+    card.className = "rs-card spec-fn-card";
+
+    const head = document.createElement("div");
+    head.className = "rs-head";
+    head.appendChild(this._nameInput(name, "rs-name",
+      nu => ME.renameSpectrumFunction(m, name, nu)));
+
+    const mkField = (label, node) => {
+      const w = document.createElement("label");
+      w.className = "rs-field";
+      const s = document.createElement("span");
+      s.textContent = label;
+      w.append(s, node);
+      return w;
+    };
+    const damp = document.createElement("input");
+    damp.type = "number"; damp.step = "0.01"; damp.min = "0"; damp.max = "0.5";
+    damp.value = String(sf.damping);
+    damp.addEventListener("change", () => {
+      const v = parseFloat(damp.value);
+      if (isFinite(v) && v >= 0 && v < 1) { sf.damping = v; this._mutated(false); }
+      else damp.value = String(sf.damping);
+    });
+    head.appendChild(mkField("damping", damp));
+
+    const refs = ME.spectrumFunctionRefs(m, name);
+    head.appendChild(this._delBtn(refs, `spectrum function ${name}`, () => {
+      if (ME.deleteSpectrumFunction(m, name)) this._mutated();
+    }));
+    card.appendChild(head);
+
+    const body = document.createElement("div");
+    body.className = "rs-body";
+    const tableWrap = document.createElement("div");
+    tableWrap.className = "rs-table";
+    const chartWrap = document.createElement("div");
+    chartWrap.className = "rs-chart";
+    const drawChart = () => {
+      chartWrap.textContent = "";
+      const title = document.createElement("div");
+      title.className = "chart-title";
+      title.innerHTML = `Spectrum preview <span class="unit">Sa g vs T s · ζ ${fmt(sf.damping, 3)} · ${(sf.points || []).length} pts</span>`;
+      chartWrap.appendChild(title);
+      chartWrap.appendChild(spectrumChart(sf.points));
+    };
+    const rebuildTable = () => {
+      tableWrap.textContent = "";
+      const head2 = document.createElement("div");
+      head2.className = "rs-pt head";
+      head2.innerHTML = `<span>T s</span><span>Sa g</span><span></span>`;
+      tableWrap.appendChild(head2);
+      sf.points.forEach((pt, idx) => {
+        const r = document.createElement("div");
+        r.className = "rs-pt";
+        const mkNum = (col, min) => {
+          const i = document.createElement("input");
+          i.type = "number"; i.step = col === 0 ? "0.1" : "0.05"; i.min = String(min);
+          i.value = String(pt[col]);
+          i.addEventListener("change", () => {
+            const v = parseFloat(i.value);
+            if (isFinite(v) && v >= min) { pt[col] = v; this._mutated(false); drawChart(); }
+            else i.value = String(pt[col]);
+          });
+          return i;
+        };
+        r.appendChild(mkNum(0, 0));
+        r.appendChild(mkNum(1, 0));
+        const x = document.createElement("button");
+        x.className = "chip-x"; x.textContent = "✕"; x.title = "Remove point";
+        x.addEventListener("click", () => {
+          sf.points.splice(idx, 1); this._mutated(false); rebuildTable(); drawChart();
+        });
+        r.appendChild(x);
+        tableWrap.appendChild(r);
+      });
+      const foot = document.createElement("div");
+      foot.className = "rs-table-foot";
+      const addPt = document.createElement("button");
+      addPt.className = "btn btn-small"; addPt.textContent = "+ Point";
+      addPt.addEventListener("click", () => {
+        const last = sf.points[sf.points.length - 1];
+        const T = last ? +(last[0] + 0.5).toFixed(2) : 0;
+        const Sa = last ? +(Math.max(0.05, last[1] * 0.8)).toFixed(3) : 0.4;
+        sf.points.push([T, Sa]); this._mutated(false); rebuildTable(); drawChart();
+      });
+      const ec8 = document.createElement("button");
+      ec8.className = "btn btn-small ec8-preset"; ec8.textContent = "EC8 preset";
+      ec8.title = "Seed a Eurocode 8 (Type 1) elastic response spectrum";
+      ec8.addEventListener("click", () => {
+        sf.points = ME.ec8Spectrum({ damping: sf.damping });
+        this._mutated(false); rebuildTable(); drawChart();
+        this.toast("EC8 spectrum seeded", `Eurocode 8 Type 1 curve · ${sf.points.length} points`, "info", 3500);
+      });
+      const ubc = document.createElement("button");
+      ubc.className = "btn btn-small"; ubc.textContent = "UBC default";
+      ubc.addEventListener("click", () => {
+        sf.points = ME.ubcSpectrum(); this._mutated(false); rebuildTable(); drawChart();
+      });
+      foot.append(addPt, ec8, ubc);
+      tableWrap.appendChild(foot);
+    };
+    rebuildTable();
+    drawChart();
+    body.append(tableWrap, chartWrap);
+    card.appendChild(body);
+    return card;
+  }
+
+  _thFnCard(m, name) {
+    const tf = m.th_functions[name];
+    const card = document.createElement("div");
+    card.className = "rs-card th-card th-fn-card";
+
+    const head = document.createElement("div");
+    head.className = "rs-head";
+    head.appendChild(this._nameInput(name, "rs-name",
+      nu => ME.renameThFunction(m, name, nu)));
+
+    const mkField = (label, node) => {
+      const w = document.createElement("label");
+      w.className = "rs-field";
+      const s = document.createElement("span");
+      s.textContent = label;
+      w.append(s, node);
+      return w;
+    };
+    const dtIn = document.createElement("input");
+    dtIn.type = "number"; dtIn.step = "0.005"; dtIn.min = "0.001"; dtIn.value = String(tf.dt);
+    dtIn.addEventListener("change", () => {
+      const v = parseFloat(dtIn.value);
+      if (isFinite(v) && v > 0) { tf.dt = v; this._mutated(false); drawSpark(); }
+      else dtIn.value = String(tf.dt);
+    });
+    head.appendChild(mkField("dt s", dtIn));
+
+    const refs = ME.thFunctionRefs(m, name);
+    head.appendChild(this._delBtn(refs, `TH function ${name}`, () => {
+      if (ME.deleteThFunction(m, name)) this._mutated();
+    }));
+    card.appendChild(head);
+
+    const body = document.createElement("div");
+    body.className = "th-body";
+    const left = document.createElement("div");
+    left.className = "th-record";
+    const lbl = document.createElement("div");
+    lbl.className = "th-label";
+    lbl.innerHTML = `Values <span class="unit">m/s² · comma / whitespace separated</span>`;
+    const ta = document.createElement("textarea");
+    ta.className = "th-accel"; ta.spellcheck = false; ta.rows = 5;
+    ta.placeholder = "0, 0.12, 0.31, …";
+    const fill = () => { ta.value = tf.values.map(v => +(+v).toFixed(4)).join(", "); };
+    fill();
+    ta.addEventListener("change", () => {
+      const vals = ME.parseAccel(ta.value);
+      if (vals === null) {
+        this.toast("Record not parsed", "Only numbers, commas and whitespace are allowed", "error", 5000);
+        fill(); return;
+      }
+      tf.values = vals; this._mutated(false); drawSpark();
+    });
+    const foot = document.createElement("div");
+    foot.className = "rs-table-foot";
+    const seed = document.createElement("button");
+    seed.className = "btn btn-small"; seed.textContent = "Sine demo";
+    seed.addEventListener("click", () => {
+      tf.values = ME.sineRecord(tf.dt, 8); fill(); this._mutated(false); drawSpark();
+    });
+    const clear = document.createElement("button");
+    clear.className = "btn btn-small"; clear.textContent = "Clear";
+    clear.addEventListener("click", () => { tf.values = []; fill(); this._mutated(false); drawSpark(); });
+    foot.append(seed, clear);
+    left.append(lbl, ta, foot);
+
+    const right = document.createElement("div");
+    right.className = "rs-chart th-chart";
+    const drawSpark = () => {
+      right.textContent = "";
+      const title = document.createElement("div");
+      title.className = "chart-title";
+      title.innerHTML = `Record preview <span class="unit">${tf.values.length} pts · dt ${fmt(tf.dt, 3)} s</span>`;
+      right.appendChild(title);
+      right.appendChild(thSparkline(tf.values, tf.dt, { width: 320, height: 84 }));
+    };
+    drawSpark();
+    body.append(left, right);
+    card.appendChild(body);
+    return card;
+  }
+
+  /* ============================================================ section cuts (v0.13)
+     Manager for cutting planes written to model.section_cuts — name, axis
+     (X/Y/Z), coordinate along that axis, and optional in-plane bounding
+     ranges. Drawn as translucent planes in the 3D view; resultants land in the
+     Section Cut Forces results tab after a solve. */
+  _sectionCutsSection(m) {
+    m.section_cuts = m.section_cuts || [];
+    const sec = this._section("ls-cuts", "Section cuts",
+      "Cutting planes that report the internal force resultant (FX/FY/FZ, " +
+      "MX/MY/MZ) transmitted across them. Results land in the <b>Section Cuts</b> " +
+      "tab after a solve; each plane is drawn in the 3D view.",
+      "+ Section cut", () => { ME.addSectionCut(m); this._mutated(); });
+
+    const list = document.createElement("div");
+    list.className = "loads-rows";
+    if (!m.section_cuts.length)
+      list.innerHTML = `<p class="muted loads-empty">No section cuts yet.</p>`;
+    for (const cut of m.section_cuts) list.appendChild(this._cutCard(m, cut));
+    sec.appendChild(list);
+    return sec;
+  }
+
+  _cutCard(m, cut) {
+    const card = document.createElement("div");
+    card.className = "rs-card cut-card";
+
+    const head = document.createElement("div");
+    head.className = "rs-head";
+    head.appendChild(this._nameInput(cut.name, "rs-name",
+      nu => ME.renameSectionCut(m, cut.name, nu)));
+
+    const mkField = (label, node) => {
+      const w = document.createElement("label");
+      w.className = "rs-field";
+      const s = document.createElement("span");
+      s.textContent = label;
+      w.append(s, node);
+      return w;
+    };
+    const axisSel = document.createElement("select");
+    axisSel.innerHTML = `<option value="x">X (Y-Z plane)</option>
+      <option value="y">Y (X-Z plane)</option><option value="z">Z (X-Y plane)</option>`;
+    axisSel.value = cut.axis;
+    head.appendChild(mkField("axis", axisSel));
+
+    const coord = document.createElement("input");
+    coord.type = "number"; coord.step = "0.5"; coord.value = String(cut.coord);
+    coord.addEventListener("change", () => {
+      const v = parseFloat(coord.value);
+      if (isFinite(v)) { cut.coord = v; this._mutated(); }
+      else coord.value = String(cut.coord);
+    });
+    head.appendChild(mkField("coord m", coord));
+
+    head.appendChild(this._delBtn(null, `section cut ${cut.name}`, () => {
+      if (ME.deleteSectionCut(m, cut.name)) this._mutated();
+    }));
+    card.appendChild(head);
+
+    // optional in-plane bounding ranges (the two axes NOT equal to `axis`)
+    const AX = [["x", 0, "x_range"], ["y", 1, "y_range"], ["z", 2, "z_range"]];
+    const rangesRow = document.createElement("div");
+    rangesRow.className = "cut-ranges";
+    const rebuildRanges = () => {
+      rangesRow.textContent = "";
+      const tag = document.createElement("span");
+      tag.className = "mass-tag"; tag.textContent = "bound to:";
+      tag.title = "Optional bounding box that clips the cut plane";
+      rangesRow.appendChild(tag);
+      for (const [ax, , key] of AX) {
+        if (ax === cut.axis) continue;
+        const wrap = document.createElement("label");
+        wrap.className = "cut-range-field";
+        const on = Array.isArray(cut[key]);
+        const cb = document.createElement("input");
+        cb.type = "checkbox"; cb.checked = on; cb.className = "cut-range-cb";
+        const lo = document.createElement("input");
+        lo.type = "number"; lo.step = "0.5"; lo.className = "cut-range-num";
+        lo.placeholder = "lo"; lo.value = on ? String(cut[key][0]) : "";
+        const hi = document.createElement("input");
+        hi.type = "number"; hi.step = "0.5"; hi.className = "cut-range-num";
+        hi.placeholder = "hi"; hi.value = on ? String(cut[key][1]) : "";
+        lo.disabled = hi.disabled = !on;
+        const label = document.createElement("span");
+        label.className = "cut-range-lbl"; label.textContent = ax.toUpperCase();
+        const commit = () => {
+          const l = parseFloat(lo.value), h = parseFloat(hi.value);
+          if (cb.checked && isFinite(l) && isFinite(h)) ME.setCutRange(cut, key, l, h);
+          else if (cb.checked) { /* incomplete — leave as-is */ }
+          else ME.setCutRange(cut, key, null, null);
+          this._mutated(false);
+        };
+        cb.addEventListener("change", () => {
+          if (cb.checked) {
+            const [loB, hiB] = ME.modelBBox(m);
+            const idx = { x: 0, y: 1, z: 2 }[ax];
+            ME.setCutRange(cut, key, +loB[idx].toFixed(2), +hiB[idx].toFixed(2));
+          } else ME.setCutRange(cut, key, null, null);
+          this._mutated();
+        });
+        lo.addEventListener("change", commit);
+        hi.addEventListener("change", commit);
+        wrap.append(cb, label, lo, hi);
+        rangesRow.appendChild(wrap);
+      }
+    };
+    axisSel.addEventListener("change", () => {
+      cut.axis = axisSel.value;
+      // drop the range on the (now out-of-plane) new axis to keep it in-plane
+      delete cut[{ x: "x_range", y: "y_range", z: "z_range" }[cut.axis]];
+      this._mutated();
+    });
+    rebuildRanges();
+    card.appendChild(rangesRow);
+
+    const note = document.createElement("p");
+    note.className = "muted staged-note";
+    note.innerHTML = `Plane <b>${cut.axis.toUpperCase()} = ${fmt(cut.coord, 2)} m</b>. ` +
+      `The resultant sums the internal forces of members crossing the plane` +
+      (Array.isArray(cut.x_range) || Array.isArray(cut.y_range) || Array.isArray(cut.z_range)
+        ? ` within the bounding box.` : `.`);
+    card.appendChild(note);
+    return card;
   }
 
   /* ============================================================ mass source (v0.4) */

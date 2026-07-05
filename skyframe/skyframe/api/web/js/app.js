@@ -53,6 +53,7 @@ const store = {
   poCase: null,          // selected pushover case (results tab)
   buckCase: null,        // v0.10 — selected buckling case (results tab)
   tdCase: null,          // v0.11 — selected gravity case for the load-takedown tab
+  cutCase: null,         // v0.13 — selected case for the section-cut-forces tab
   // v0.6 — design checks, import, template gallery, staged, nonlinear TH
   designKind: "steel",   // "steel" | "concrete"
   designCase: null,      // case/combo checked
@@ -547,6 +548,9 @@ function syncLoadsNav() {
   $("cnt-buckling").textContent = Object.keys(m.buckling_cases || {}).length;
   $("cnt-staged").textContent = Object.keys(m.staged_cases || {}).length;
   $("cnt-combos").textContent = Object.keys(m.combos || {}).length;
+  $("cnt-functions").textContent =
+    Object.keys(m.spectrum_functions || {}).length + Object.keys(m.th_functions || {}).length;
+  $("cnt-cuts").textContent = (m.section_cuts || []).length;
 }
 
 function setMode(mode) {
@@ -2316,6 +2320,12 @@ function setResultsAvailable(on) {
   $("empty-takedown").classList.toggle("hidden", hasTd);
   $("content-takedown").classList.toggle("hidden", !hasTd);
   if (!hasTd && store.tab === "takedown") switchTab("view3d");
+  // v0.13: section-cut-forces tab appears only when results carry section_cuts
+  const hasCuts = on && !!Object.keys(store.results?.section_cuts || {}).length;
+  $("cutTabBtn").classList.toggle("hidden", !hasCuts);
+  $("empty-cuts").classList.toggle("hidden", hasCuts);
+  $("content-cuts").classList.toggle("hidden", !hasCuts);
+  if (!hasCuts && store.tab === "cuts") switchTab("view3d");
   if (!on) {
     store.contour.on = false;
     syncContoursUI();
@@ -2335,6 +2345,7 @@ function renderResultsTabs() {
   renderPoTab();
   renderBucklingTab();
   renderTakedownTab();
+  renderCutsTab();
 }
 
 /* ---- story tab */
@@ -3091,6 +3102,117 @@ function takedownBubbleSvg(rows) {
 }
 
 /* ================================================================
+   v0.13 — SECTION CUT FORCES tab
+   Per selected case, a table of cuts with FX/FY/FZ/MX/MY/MZ resultants,
+   n_members/n_shells, and warnings. CSV export. Selecting a cut highlights
+   the members crossing it in 3D.
+   ================================================================ */
+function cutCaseNames() {
+  const sc = store.results && store.results.section_cuts;
+  return sc ? Object.keys(sc) : [];
+}
+function cutData() {
+  const sc = store.results && store.results.section_cuts;
+  if (!sc || !Object.keys(sc).length) return null;
+  if (!store.cutCase || !sc[store.cutCase]) store.cutCase = Object.keys(sc)[0];
+  return sc[store.cutCase];
+}
+function rebuildCutSelect() {
+  const names = cutCaseNames();
+  const sel = $("cutCaseSelect");
+  if (!sel) return;
+  sel.textContent = "";
+  for (const n of names) {
+    const o = document.createElement("option");
+    o.value = n; o.textContent = n;
+    sel.appendChild(o);
+  }
+  if (!store.cutCase || !names.includes(store.cutCase)) store.cutCase = names[0] || null;
+  if (store.cutCase) sel.value = store.cutCase;
+}
+
+/** Rows for the section-cut table (one per defined cut), in model order. */
+function cutRows(cd) {
+  const defs = (store.model.section_cuts || []).map(c => c.name);
+  const names = defs.length ? defs.filter(n => cd[n]) : Object.keys(cd);
+  return names.map(name => ({ name, ...cd[name], def: (store.model.section_cuts || []).find(c => c.name === name) }));
+}
+
+/** Member uids that cross a given cut (for 3D highlight). */
+function membersCrossingCut(cutDef) {
+  if (!cutDef) return [];
+  const axisIdx = { x: 0, y: 1, z: 2 }[cutDef.axis] ?? 2;
+  const inRange = p => {
+    for (const [k, idx] of [["x_range", 0], ["y_range", 1], ["z_range", 2]]) {
+      if (idx === axisIdx) continue;
+      const rg = cutDef[k];
+      if (rg && !(p[idx] >= rg[0] - 1e-6 && p[idx] <= rg[1] + 1e-6)) return false;
+    }
+    return true;
+  };
+  const out = [];
+  for (const mm of store.model.members) {
+    const a = mm.pi[axisIdx], b = mm.pj[axisIdx];
+    const lo = Math.min(a, b), hi = Math.max(a, b);
+    if (!(cutDef.coord > lo + 1e-6 && cutDef.coord < hi - 1e-6)) continue;
+    const t = (cutDef.coord - a) / (b - a || 1);
+    const cp = [0, 1, 2].map(i => mm.pi[i] + (mm.pj[i] - mm.pi[i]) * t);
+    if (inRange(cp)) out.push(mm.uid);
+  }
+  return out;
+}
+
+function renderCutsTab() {
+  const cd = cutData();
+  if (!cd) return;
+  rebuildCutSelect();
+  const rows = cutRows(cd);
+
+  $("cutMeta").textContent =
+    `${rows.length} cut${rows.length === 1 ? "" : "s"} · ${store.cutCase}` +
+    (isRsCase(`rs:${store.cutCase}`) ? "" : "") + ` · resultants (kN, kN·m)`;
+
+  const head = `<thead><tr>
+    <th class="txt">Cut</th><th class="txt">Plane</th>
+    <th>FX kN</th><th>FY kN</th><th>FZ kN</th>
+    <th>MX kN·m</th><th>MY kN·m</th><th>MZ kN·m</th>
+    <th>n·mem</th><th>n·shell</th><th class="txt">Warnings</th></tr></thead>`;
+  const body = rows.map(row => {
+    const d = row.def || {};
+    const plane = d.axis ? `${d.axis.toUpperCase()}=${fmt(d.coord, 2)}` : "—";
+    const warn = (row.warnings || []).length
+      ? `<span class="cut-warn">⚠ ${esc((row.warnings || []).join(" · "))}</span>` : "";
+    const sel = row.name === store.cutSel ? " is-sel" : "";
+    return `<tr class="cut-row${sel}" data-cut="${esc(row.name)}" title="Click to highlight crossing members in 3D">
+      <td class="txt cut-name">✂ ${esc(row.name)}</td>
+      <td class="txt dim">${plane}</td>
+      <td>${fmt(row.FX, 1)}</td><td>${fmt(row.FY, 1)}</td>
+      <td class="cut-fz">${fmt(row.FZ, 1)}</td>
+      <td>${fmt(row.MX, 1)}</td><td>${fmt(row.MY, 1)}</td><td>${fmt(row.MZ, 1)}</td>
+      <td class="dim">${row.n_members ?? 0}</td><td class="dim">${row.n_shells ?? 0}</td>
+      <td class="txt">${warn}</td></tr>`;
+  }).join("");
+  $("cutTable").innerHTML = head + `<tbody>${body}</tbody>`;
+
+  // row → highlight members crossing that cut in the 3D view
+  $("cutTable").querySelectorAll("tr.cut-row").forEach(tr => {
+    tr.addEventListener("click", () => {
+      const name = tr.dataset.cut;
+      const def = (store.model.section_cuts || []).find(c => c.name === name);
+      store.cutSel = store.cutSel === name ? null : name;
+      const uids = store.cutSel ? membersCrossingCut(def) : [];
+      if (viewer) viewer.setHighlight(uids, "#f5be3c");
+      switchTab("view3d");
+      renderCutsTab();
+    });
+  });
+
+  $("cutNote").textContent =
+    "Force resultant transmitted across each cutting plane (Σ of the internal " +
+    "forces of members crossing it). Click a row to highlight the crossing members in 3D.";
+}
+
+/* ================================================================
    v0.6 — DESIGN CHECKS (steel / concrete)
    ================================================================ */
 function designResult() {
@@ -3738,6 +3860,20 @@ function csvRows(kind) {
       ["BALANCE_OK", "", "", "", td.balance_ok ? "true" : "false", "", ""],
     ];
   }
+  if (kind === "cuts") {
+    const cd = cutData();
+    if (!cd) return null;
+    return [
+      ["cut", "axis", "coord_m", "FX_kN", "FY_kN", "FZ_kN",
+        "MX_kNm", "MY_kNm", "MZ_kNm", "n_members", "n_shells", "warnings"],
+      ...cutRows(cd).map(row => {
+        const d = row.def || {};
+        return [row.name, d.axis || "", d.coord ?? "", row.FX, row.FY, row.FZ,
+          row.MX, row.MY, row.MZ, row.n_members ?? 0, row.n_shells ?? 0,
+          (row.warnings || []).join("; ")];
+      }),
+    ];
+  }
   if (kind === "th") {
     const td = thData();
     if (!td) return null;
@@ -3760,6 +3896,7 @@ function csvFileName(kind) {
     : kind === "pushover" ? store.poCase
     : kind === "buckling" ? store.buckCase
     : kind === "takedown" ? store.tdCase
+    : kind === "cuts" ? store.cutCase
     : kind === "optimize" ? `${store.optResult?.case || store.optCase || ""}`
     : kind === "design" ? `${store.designKind}-${designResult()?.case || ""}`
     : caseLabel(store.caseName) + (caseData()?.min ? `-${store.envSide}` : "");
@@ -4187,6 +4324,15 @@ function wire() {
   });
   $("csvTakedown").addEventListener("click", () => downloadCsv("takedown"));
 
+  // v0.13 — section-cut-forces case selector + CSV
+  $("cutCaseSelect").addEventListener("change", e => {
+    store.cutCase = e.target.value;
+    store.cutSel = null;
+    if (viewer) viewer.setHighlight(null);
+    renderCutsTab();
+  });
+  $("csvCuts").addEventListener("click", () => downloadCsv("cuts"));
+
   // drift limit
   $("driftLimitInput").addEventListener("change", e => {
     const v = parseFloat(e.target.value);
@@ -4212,7 +4358,7 @@ function wire() {
   });
 
   // keyboard
-  const TABS = ["view3d", "story", "modal", "reactions", "forces", "design", "th", "pushover", "buckling", "takedown"];
+  const TABS = ["view3d", "story", "modal", "reactions", "forces", "design", "th", "pushover", "buckling", "takedown", "cuts"];
   const TOOL_KEYS = { v: "select", c: "column", b: "beam", x: "brace", w: "wall", s: "slab", l: "link", g: "spring", e: "erase" };
   document.addEventListener("keydown", e => {
     const tag = (e.target.tagName || "").toLowerCase();
@@ -4257,7 +4403,8 @@ function wire() {
       const hidden = (t === "th" && $("thTabBtn").classList.contains("hidden")) ||
         (t === "pushover" && $("poTabBtn").classList.contains("hidden")) ||
         (t === "buckling" && $("buckTabBtn").classList.contains("hidden")) ||
-        (t === "takedown" && $("tdTabBtn").classList.contains("hidden"));
+        (t === "takedown" && $("tdTabBtn").classList.contains("hidden")) ||
+        (t === "cuts" && $("cutTabBtn").classList.contains("hidden"));
       if (t && !hidden) switchTab(t);
     }
     else if (e.key === "r" || e.key === "R") doRun();
@@ -4358,6 +4505,8 @@ async function boot() {
     createRsDirectional, createNotionalPattern, mockRsDirectional, mockNotionalPattern,
     // v0.11 — elastic foundation + load takedown
     renderTakedownTab, rebuildTdSelect, tdData, tdRows, takedownBubbleSvg,
+    // v0.13 — section cuts + function library
+    renderCutsTab, rebuildCutSelect, cutData, cutRows, cutCaseNames, membersCrossingCut,
     // v0.12 — auto section optimization + axial-limit behavior
     renderOptimizePanel, runOptimize, applyOptimize, optimizeRows, optSummary,
     renderOptimizeTable, designOptimize, mockOptimize,
