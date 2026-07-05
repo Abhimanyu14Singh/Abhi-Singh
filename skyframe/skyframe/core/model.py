@@ -426,6 +426,10 @@ class ShellRegion:
     mesh_size: float = 1.0                 # m, target FE size (shell behavior)
     story: str = ""
     openings: List[Opening] = field(default_factory=list)   # v0.5
+    pier: str = ""                         # v0.15 pier label (walls): a
+    #   labeled wall reports per-story pier design forces P/V/M; walls with
+    #   the same label are summed into one pier.  "" = no pier output
+    #   (unless BuildingModel.auto_pier_walls labels the wall with its uid).
 
     @property
     def area(self) -> float:
@@ -465,7 +469,8 @@ class ShellRegion:
                 "section": self.section,
                 "corners": [list(c) for c in self.corners],
                 "mesh_size": self.mesh_size, "story": self.story,
-                "openings": [op.to_dict() for op in self.openings]}
+                "openings": [op.to_dict() for op in self.openings],
+                "pier": self.pier}
 
 
 # --------------------------------------------------------------------------- #
@@ -870,28 +875,73 @@ class BucklingCase:
 # v0.10 response-spectrum directional combination methods (ASCE 7 §12.5)
 RS_DIRECTIONAL_METHODS = ("100_30", "SRSS")
 
+# v0.15 advanced link types (seismic protection devices).  ``elastic`` is the
+# original v0.5 6-DOF spring; the others are device links driven by
+# ``LinkMember.params``:
+#   damper   {cd, alpha=1.0, k=DAMPER_DEFAULT_K}   axial Maxwell viscous
+#            damper along the link axis (OpenSees ViscousDamper: series
+#            spring k + dashpot cd*sign(v)*|v|^alpha).  Carries NO static
+#            force; adds damping in time-history cases.
+#   gap      {k, gap}    compression-only contact along the link axis that
+#            engages once the pair CLOSES by more than ``gap`` (m); force
+#            k*(closing - gap) thereafter (ElasticPPGap, huge yield).
+#   hook     {k, slack}  the tension mirror: engages after the pair OPENS
+#            by more than ``slack`` (m).
+#   isolator {k1, k2, Fy, kv=ISOLATOR_DEFAULT_KV}  base-isolation bearing:
+#            bilinear (Steel01: initial k1, yield Fy, post-yield k2) shear
+#            in BOTH horizontal directions, elastic vertical kv, rotations
+#            free.  The link axis must be vertical (or zero length).
+LINK_TYPES = ("elastic", "damper", "gap", "hook", "isolator")
+
+# required / optional param keys per advanced link type
+_LINK_PARAM_KEYS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
+    "damper": (("cd",), ("alpha", "k")),
+    "gap": (("k", "gap"), ()),
+    "hook": (("k", "slack"), ()),
+    "isolator": (("k1", "k2", "Fy"), ("kv",)),
+}
+
+DAMPER_DEFAULT_ALPHA = 1.0     # velocity exponent (1 = linear dashpot)
+DAMPER_DEFAULT_K = 1.0e6       # kN/m, Maxwell series spring ("rigid" spring)
+ISOLATOR_DEFAULT_KV = 1.0e7    # kN/m, vertical bearing stiffness
+
 
 @dataclass
 class LinkMember:
-    """Linear link (spring) element between two points (v0.5).
+    """Link (spring / device) element between two points (v0.5, v0.15).
 
-    ``stiffness`` = [kx, ky, kz, krx, kry, krz] (kN/m, kN*m/rad) acting on
-    the GLOBAL axes (local axes = global for v0.5).  Modeled as an OpenSees
-    zeroLength element with one elastic uniaxial material per non-zero
-    entry — a pure spring: the element length carries no rigid-arm moment
-    transfer.  Endpoints merge with existing FE nodes within 1e-6; a node
-    that connects ONLY to links gets its zero-stiffness DOFs auto-
+    ``link_type == "elastic"`` (default, v0.5): ``stiffness`` = [kx, ky, kz,
+    krx, kry, krz] (kN/m, kN*m/rad) acting on the GLOBAL axes.  Modeled as
+    an OpenSees zeroLength element with one elastic uniaxial material per
+    non-zero entry — a pure spring: the element length carries no rigid-arm
+    moment transfer.  Endpoints merge with existing FE nodes within 1e-6; a
+    node that connects ONLY to links gets its zero-stiffness DOFs auto-
     restrained (else the system would be singular).
+
+    v0.15 advanced types (see :data:`LINK_TYPES`): ``stiffness`` is unused
+    (kept for the serialised shape) and the device is defined by ``params``.
+    damper/gap/hook act AXIALLY along the link axis and need a non-zero
+    length; an isolator's axis must be vertical (or zero length).  A node
+    connected ONLY to advanced-type links is treated as a grounded anchor
+    (fully fixed, reported as a support).
     """
 
     uid: str
     pi: Tuple[float, float, float]
     pj: Tuple[float, float, float]
     stiffness: List[float]                      # 6 entries, >= 0
+    link_type: str = "elastic"                  # v0.15, one of LINK_TYPES
+    params: Dict[str, float] = field(default_factory=dict)   # v0.15
+
+    @property
+    def length(self) -> float:
+        return math.dist(self.pi, self.pj)
 
     def to_dict(self) -> dict:
         return {"uid": self.uid, "pi": list(self.pi), "pj": list(self.pj),
-                "stiffness": [float(k) for k in self.stiffness]}
+                "stiffness": [float(k) for k in self.stiffness],
+                "link_type": self.link_type,
+                "params": {k: float(v) for k, v in self.params.items()}}
 
 
 DIAPHRAGM_OPTIONS = ("rigid", "none")
@@ -1051,6 +1101,10 @@ class BuildingModel:
     spectrum_functions: Dict[str, SpectrumFunction] = field(
         default_factory=dict)
     th_functions: Dict[str, TimeHistoryFunction] = field(default_factory=dict)
+    # v0.15 wall piers: when True the engine auto-labels every unlabeled
+    # wall with its uid so it gets per-story pier P/V/M output (a wall with
+    # an explicit ShellRegion.pier label always reports).
+    auto_pier_walls: bool = False
     num_modes: int = 6
 
     # ---------------- convenience API ----------------
@@ -1599,11 +1653,18 @@ class BuildingModel:
 
     def add_link(self, pi: Tuple[float, float, float],
                  pj: Tuple[float, float, float],
-                 stiffness: List[float], uid: str = "") -> LinkMember:
+                 stiffness: Optional[List[float]] = None, uid: str = "",
+                 link_type: str = "elastic",
+                 params: Optional[Dict[str, float]] = None) -> LinkMember:
         uid = uid or f"L{len(self.links) + 1}"
+        if stiffness is None:
+            stiffness = [0.0] * 6           # advanced types: unused
         lk = LinkMember(uid, tuple(float(v) for v in pi),
                         tuple(float(v) for v in pj),
-                        [float(k) for k in stiffness])
+                        [float(k) for k in stiffness],
+                        link_type=str(link_type),
+                        params={str(k): float(v)
+                                for k, v in (params or {}).items()})
         self._validate_link(lk)
         if any(o.uid == lk.uid for o in self.links):
             raise ValueError(f"Duplicate link uid {lk.uid!r}")
@@ -1652,9 +1713,65 @@ class BuildingModel:
                     and k >= 0.0):
                 raise ValueError(f"Link {lk.uid}: stiffness entries must be "
                                  f"finite and >= 0 (got {k!r})")
-        if not any(k > 0.0 for k in lk.stiffness):
-            raise ValueError(f"Link {lk.uid}: at least one stiffness entry "
-                             "must be > 0")
+        ltype = getattr(lk, "link_type", "elastic")
+        if ltype not in LINK_TYPES:
+            raise ValueError(f"Link {lk.uid}: link_type must be one of "
+                             f"{LINK_TYPES}, got {ltype!r}")
+        if ltype == "elastic":
+            if not any(k > 0.0 for k in lk.stiffness):
+                raise ValueError(f"Link {lk.uid}: at least one stiffness "
+                                 "entry must be > 0")
+            return
+        # ---- v0.15 advanced device links: validate params completeness ----
+        prm = getattr(lk, "params", {}) or {}
+        required, optional = _LINK_PARAM_KEYS[ltype]
+        for key in required:
+            if key not in prm:
+                raise ValueError(f"Link {lk.uid} ({ltype}): missing required "
+                                 f"param {key!r} (needs {list(required)})")
+        for key, v in prm.items():
+            if key not in required and key not in optional:
+                raise ValueError(f"Link {lk.uid} ({ltype}): unknown param "
+                                 f"{key!r} (allowed: "
+                                 f"{list(required) + list(optional)})")
+            if not (isinstance(v, (int, float)) and math.isfinite(v)):
+                raise ValueError(f"Link {lk.uid} ({ltype}): param {key!r} "
+                                 f"must be a finite number (got {v!r})")
+        length = lk.length
+        if ltype == "damper":
+            if prm["cd"] <= 0.0:
+                raise ValueError(f"Link {lk.uid} (damper): cd must be > 0")
+            alpha = prm.get("alpha", DAMPER_DEFAULT_ALPHA)
+            if not 0.0 < alpha <= 2.0:
+                raise ValueError(f"Link {lk.uid} (damper): alpha must be in "
+                                 f"(0, 2] (got {alpha!r})")
+            if prm.get("k", DAMPER_DEFAULT_K) <= 0.0:
+                raise ValueError(f"Link {lk.uid} (damper): k must be > 0")
+        elif ltype in ("gap", "hook"):
+            if prm["k"] <= 0.0:
+                raise ValueError(f"Link {lk.uid} ({ltype}): k must be > 0")
+            open_key = "gap" if ltype == "gap" else "slack"
+            if prm[open_key] < 0.0:
+                raise ValueError(f"Link {lk.uid} ({ltype}): {open_key} must "
+                                 "be >= 0")
+        else:  # isolator
+            if prm["k1"] <= 0.0:
+                raise ValueError(f"Link {lk.uid} (isolator): k1 must be > 0")
+            if prm["k2"] < 0.0 or prm["k2"] >= prm["k1"]:
+                raise ValueError(f"Link {lk.uid} (isolator): k2 must satisfy "
+                                 "0 <= k2 < k1")
+            if prm["Fy"] <= 0.0:
+                raise ValueError(f"Link {lk.uid} (isolator): Fy must be > 0")
+            if prm.get("kv", ISOLATOR_DEFAULT_KV) <= 0.0:
+                raise ValueError(f"Link {lk.uid} (isolator): kv must be > 0")
+            dx = abs(lk.pj[0] - lk.pi[0]) + abs(lk.pj[1] - lk.pi[1])
+            if length > 1e-9 and dx > 1e-6:
+                raise ValueError(f"Link {lk.uid} (isolator): the link axis "
+                                 "must be vertical (or zero length)")
+        if ltype in ("damper", "gap", "hook") and length < 1e-9:
+            raise ValueError(f"Link {lk.uid} ({ltype}): the link axis is "
+                             "undefined at zero length — the two points "
+                             "must be distinct")
 
     def effective_diaphragm(self, story_name: str) -> str:
         """Diaphragm mode ("rigid" | "none") that applies to a story (v0.5).
@@ -2071,6 +2188,7 @@ class BuildingModel:
                                    self.spectrum_functions.items()},
             "th_functions": {k: v.to_dict()
                              for k, v in self.th_functions.items()},
+            "auto_pier_walls": self.auto_pier_walls,
             "num_modes": self.num_modes,
         }
 
@@ -2145,7 +2263,8 @@ class BuildingModel:
                 story=rd.get("story", ""),
                 openings=[Opening(float(o["u0"]), float(o["v0"]),
                                   float(o["u1"]), float(o["v1"]))
-                          for o in (rd.get("openings") or [])]))
+                          for o in (rd.get("openings") or [])],
+                pier=str(rd.get("pier", ""))))
         mdl.base_fixity = d.get("base_fixity", "fixed")
         if mdl.base_fixity not in ("fixed", "pinned"):
             raise ValueError(f"base_fixity must be fixed|pinned, got "
@@ -2176,7 +2295,10 @@ class BuildingModel:
                 uid=ld["uid"],
                 pi=tuple(float(v) for v in ld["pi"]),
                 pj=tuple(float(v) for v in ld["pj"]),
-                stiffness=[float(k) for k in ld["stiffness"]]))
+                stiffness=[float(k) for k in ld["stiffness"]],
+                link_type=str(ld.get("link_type", "elastic")),
+                params={str(k): float(v)
+                        for k, v in (ld.get("params") or {}).items()}))
         mdl.story_masses = {k: float(v)
                             for k, v in (d.get("story_masses") or {}).items()}
         mdl.mass_from_patterns = {
@@ -2307,6 +2429,7 @@ class BuildingModel:
                 x_range=_rng(cd.get("x_range")),
                 y_range=_rng(cd.get("y_range")),
                 z_range=_rng(cd.get("z_range"))))
+        mdl.auto_pier_walls = bool(d.get("auto_pier_walls", False))
         mdl.num_modes = int(d.get("num_modes", 6))
         mdl.validate()
         return mdl

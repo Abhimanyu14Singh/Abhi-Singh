@@ -1495,3 +1495,130 @@ grid_systems: List[GridSystem] = []          # v0.14 full list
   exact round-trip; `quick_building()` plan extents/center are unchanged.
 * The engine is untouched: grid geometry never affects analysis (members carry
   global coordinates); the full pre-existing suite stays green.
+
+---
+
+# v0.15 additions — advanced link types (seismic devices), wall piers
+
+## Advanced link types (`skyframe/core/model.py`, engine)
+
+```python
+# LinkMember gains (both round-trip; absent keys / pre-v0.15 = elastic):
+#   link_type: str = "elastic"     # "elastic"|"damper"|"gap"|"hook"|"isolator"
+#   params: Dict[str, float] = {}  # device parameters (below)
+# add_link(pi, pj, stiffness=None, uid="", link_type="elastic", params=None)
+#   — `stiffness` is the v0.5 6-entry global spring vector, REQUIRED (at
+#   least one entry > 0) for "elastic" and unused for the device types.
+LINK_TYPES = ("elastic", "damper", "gap", "hook", "isolator")
+DAMPER_DEFAULT_ALPHA = 1.0; DAMPER_DEFAULT_K = 1e6; ISOLATOR_DEFAULT_KV = 1e7
+```
+
+Device parameter sets (validated for completeness — a missing required key,
+an unknown key, or an out-of-range value raises / `POST /api/model` 400s):
+
+* **damper** `{cd (kN*s/m, required > 0), alpha (default 1.0, in (0, 2]),
+  k (series spring, default 1e6 kN/m)}` — an AXIAL Maxwell viscous damper
+  along the link axis: `uniaxialMaterial('ViscousDamper', k, cd, alpha)` in
+  a `twoNodeLink` on the link axis (dir 1 = axial).  A damper carries **no
+  static force and no eigen stiffness** (verified empirically on openseespy
+  3.7.1.2: static results with/without the damper element are IDENTICAL and
+  the modal frequencies are unchanged), so damper elements exist in every
+  build and static/modal paths stay linear.  The two points must be
+  distinct (the axis defines the damper direction).
+* **gap** `{k (kN/m, > 0), gap (m, >= 0)}` — compression-only contact along
+  the link axis that engages once the pair CLOSES by more than `gap`:
+  `uniaxialMaterial('ElasticPPGap', k, -1e12, -gap)` (huge yield = the
+  closed contact stays elastic, force `k*(closing - gap)`).  **hook**
+  `{k, slack}` is the tension mirror: `ElasticPPGap(k, +1e12, +slack)`,
+  engaging after the pair OPENS by more than `slack`.  Sign conventions
+  verified empirically (twoNodeLink dir-1 strain = elongation).
+* **isolator** `{k1 (kN/m, > 0), k2 (0 <= k2 < k1), Fy (kN, > 0),
+  kv (vertical, default 1e7)}` — a base-isolation bearing: bilinear
+  `Steel01(Fy, k1, b=k2/k1)` shear in BOTH horizontal directions, elastic
+  vertical `kv`, rotations free (uncoupled rectangular yield surface —
+  the standard two-spring idealization).  The link axis must be VERTICAL:
+  finite length -> `twoNodeLink` (dir 1 = axial `kv`, dirs 2/3 = shear;
+  shear moments transfer in equilibrium), zero length -> `zeroLength` on
+  the global axes (1/2 = shear, 3 = vertical).  Static response: initial
+  stiffness `k1` below `Fy`, bilinear beyond; TH: hysteretic.
+
+**Solve routing:** a model containing any gap/hook/isolator link solves
+every static case with Newton (the v0.12 axial-only machinery,
+`NONLINEAR_STATIC_LINK_TYPES`); dampers alone keep the linear static path
+(no static force).  ANY device link makes every TH case run Newton
+(`NormDispIncr 1e-8, 25`, NewtonLineSearch retry per failed step) with
+committed-stiffness Rayleigh proportionality (`betaKcomm`), even with no
+hinges; pure-elastic-link models keep the exact pre-v0.15 behavior.
+
+**Ground anchors:** a node connected ONLY to device links (no frame/shell/
+elastic-link/grounded-spring stiffness) is a GROUNDED ANCHOR — fully fixed
+(never joins a rigid diaphragm or story node set) and reported as a
+support, so its reaction exposes the device force and enters the base
+totals (a gap link's contact force shows up as `reactions[anchor]`).
+
+Hand-checks (all verified in tests): free-vibration log-decrement damping
+`zeta_add = cd/(2 m wn)` recovered to ~0.1% at zeta = 0.08; gap/hook force
+zero at half-gap and `k*(delta - gap)` past it (1e-6 vs a numpy two-spring
+solve); isolator elastic period `2*pi*sqrt(m/(4 k1))` (1e-3), bilinear
+static law exact, and nonlinear-TH peak within 2% (measured ~0.0%) of an
+independent numpy bilinear-kinematic Newmark integrator.
+
+## Wall piers (per-story wall design forces)
+
+```python
+# ShellRegion gains: pier: str = ""    # pier label; round-trips
+# BuildingModel gains: auto_pier_walls: bool = False
+#   (True: every unlabeled wall is auto-labeled with its uid)
+```
+
+For each labeled meshed VERTICAL wall (kind "wall", behavior "shell"), each
+story it spans, and each static case + additive combo, the engine reports
+in-plane pier resultants integrated across a horizontal cut at the story
+bottom:
+
+```jsonc
+results["piers"]["<case|combo>"]["<pier label>"]["<story>"] =
+    {"P": 0.0, "V": 0.0, "M": 0.0}      // kN, kN, kN*m
+```
+
+**Method (EXACT free body, not gauss sampling):** at solve time the engine
+captures each shell element's 24-component global nodal resisting-force
+vector (ShellMITC4 `'forces'`).  The cut runs along the highest mesh node
+line at (or, for a non-aligned mesh, just below) the story-bottom
+elevation; summing the nodal forces of the wall elements ABOVE the line at
+the cut-line nodes gives the exact transmitted force.  Element local axes
+never enter (the wall-local orientation of the mesher's quads — element
+local x along the region's u direction — was verified empirically, but the
+nodal-force kernel is orientation-free; gauss-resultant integration was
+rejected: it missed the clamped-base shear by ~8%).
+
+* Axes: `hhat = ez x nhat` (`nhat` = the CCW-corner plane normal) — for the
+  natural bottom-edge-first corner ordering `hhat` follows corner 0 -> 1.
+* `P = +sum(fz)` — POSITIVE = COMPRESSION (documented sign).
+* `V = -sum(f . hhat)` — positive along `+hhat` (the sense of a lateral
+  load applied above the cut).
+* `M = sum((s - s_bar) * fz + m . (hhat x ez))` about the net-section
+  centroid `s_bar` (tributary-width-weighted mean of the cut-node
+  positions): the vertical-force couple PLUS the nodal drilling moments
+  (which close the balance exactly — verified: a V0 = 50 kN top load gives
+  M = 150.000000 kN*m at a 3 m cut).  Out-of-plane plate moments never
+  enter the in-plane M.  The moment is then transferred from the cut line
+  to the story-bottom elevation via `M += V*(z_line - z_bot)` (exact — no
+  nodes, hence no loads, exist between the two levels).
+* Walls sharing a pier label are summed per story (they should be
+  co-planar/parallel); membrane-behavior walls (no FE) and non-vertical
+  walls are skipped with a warning.  Top-level `"piers"` key is ALWAYS
+  present (may be `{}`); combo piers superpose exactly (nodal forces are
+  combined linearly first).
+
+Hand-checks: cantilever wall base pier V = V0 and P = P0 to 1e-9 (spec
+ceilings 2% / 1%), M = V0*h to 1e-9 (spec 4%) — cf. the v0.4 wall Nxy
+section-cut precedent, now exact; a 2-story wall carries V = V0 at both
+story cuts and M = V0*h2 / V0*(h1+h2) at the story-2 / base cuts.
+
+## API
+
+No new endpoints: `POST /api/model` round-trips `link_type`/`params` (400
+on a bad type or bad/incomplete params via `validate()`), `pier`, and
+`auto_pier_walls`; `POST /api/analyze` returns the `"piers"` block
+automatically.

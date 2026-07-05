@@ -37,6 +37,15 @@ conservation — handled in :mod:`skyframe.core.mesh`), the per-story
 slab), and LINK elements (zeroLength springs on global axes; link-only
 nodes get their zero-stiffness DOFs auto-restrained).
 
+v0.15 advanced link types (seismic protection devices): axial viscous
+DAMPERS (ViscousDamper Maxwell material — no static force, Newton transient),
+GAP/HOOK contact links (ElasticPPGap along the link axis), and bilinear
+base ISOLATORS (Steel01 shear both horizontal directions + elastic
+vertical).  gap/hook/isolator make static cases nonlinear (Newton, like
+v0.12 axial-only members); any device makes TH cases Newton.  v0.15 wall
+PIERS: labeled walls report per-story in-plane P/V/M from EXACT nodal
+free-body cuts of the shell elements (``results["piers"]``).
+
 v0.4 additions in results: frame stiffness modifiers (``FrameSection.mod_*``)
 and the shell modifier (``ShellSection.mod``, scales E) are applied when the
 elements are created; member local axes honour ``FrameMember.angle``
@@ -92,10 +101,12 @@ import openseespy.opensees as ops
 
 from skyframe.core.buckling import BucklingResult, buckling_analysis
 from skyframe.core.mesh import MeshedModel, Segment, mesh_model
-from skyframe.core.model import (G_ACCEL, BuildingModel, FrameMember,
-                                 FrameSection, LoadCase, LoadCombo,
-                                 LoadPattern, ResponseSpectrumCase,
-                                 SectionCut, ShellRegion)
+from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
+                                 G_ACCEL, ISOLATOR_DEFAULT_KV, BuildingModel,
+                                 FrameMember, FrameSection, LoadCase,
+                                 LoadCombo, LoadPattern,
+                                 ResponseSpectrumCase, SectionCut,
+                                 ShellRegion)
 
 # time-history step cap for engine.run(): if the model's TH cases together
 # exceed this many integration steps they are skipped in run() (a warning is
@@ -139,6 +150,18 @@ _N_STATIONS = 11
 # > 99.99% of its force in a redundant path (verified) while the active
 # direction is exact.  A case with any such member is solved with Newton.
 AXIAL_ONLY_RATIO = 1.0e-6
+
+# v0.15 gap/hook device links use ElasticPPGap with this (never-reached)
+# yield force so the closed contact stays elastic: F = k * (closing - gap).
+GAP_YIELD_HUGE = 1.0e12
+
+# v0.15 device link types that make a STATIC case nonlinear (Newton): their
+# tangent switches with the displacement state.  Dampers are excluded — a
+# Maxwell damper carries no static force and no static/eigen stiffness
+# (verified empirically on openseespy 3.7.1.2: a static solve with a
+# ViscousDamper element matches the damper-free solve exactly, and the eigen
+# frequencies are unchanged), so damper-only models keep the linear path.
+NONLINEAR_STATIC_LINK_TYPES = ("gap", "hook", "isolator")
 
 Vec3 = Tuple[float, float, float]
 
@@ -555,6 +578,10 @@ class _Assembly:
     spring_nodes: Dict[int, List[float]] = field(default_factory=dict)
     #   v0.8: real node tag -> 6 grounded-spring stiffnesses (0 where none);
     #   the spring reaction (-k*disp) is added to that node's case reactions
+    anchor_tags: set = field(default_factory=set)
+    #   v0.15: grounded anchors of advanced device links (fully fixed nodes
+    #   connected ONLY to damper/gap/hook/isolator links); reported as
+    #   supports, excluded from story node sets / diaphragm slaving
 
     def free_massed_dofs(self) -> int:
         """Number of massed (node, dof) pairs that are NOT restrained.
@@ -587,6 +614,11 @@ class CaseResults:
     #   v0.4: quad index (into shell_quads) -> 8 gauss-averaged stress
     #   resultants [Nxx, Nyy, Nxy, Mxx, Myy, Mxy, Vxz, Vyz] (kN/m, kN*m/m)
     minima: Optional["CaseResults"] = None      # v0.4 envelope combos: minima
+    shell_nodal: Dict[int, List[float]] = field(default_factory=dict)
+    #   v0.15 (internal, NOT serialised): quad index -> 24 global nodal
+    #   resisting-force components (6 dof x 4 nodes) captured at solve time
+    #   for the exact wall-pier free-body cuts; populated only when the
+    #   model has pier-labeled walls
 
     def to_dict(self) -> dict:
         d = {
@@ -769,6 +801,10 @@ class AnalysisResults:
     #   v0.11: per static case / additive combo gravity load takedown
     section_cuts: Dict[str, Dict[str, dict]] = field(default_factory=dict)
     #   v0.13: per static case / additive combo -> cut name -> resultant dict
+    piers: Dict[str, Dict[str, Dict[str, Dict[str, float]]]] = field(
+        default_factory=dict)
+    #   v0.15: per static case / additive combo -> pier label -> story ->
+    #   {"P", "V", "M"} in-plane wall pier design forces
     warning: str = ""                    # e.g. TH cases skipped (step cap)
 
     def to_dict(self) -> dict:
@@ -790,6 +826,9 @@ class AnalysisResults:
             "takedown": {n: dict(t) for n, t in self.takedown.items()},
             "section_cuts": {c: {n: dict(v) for n, v in cuts.items()}
                              for c, cuts in self.section_cuts.items()},
+            "piers": {c: {p: {s: dict(v) for s, v in by_story.items()}
+                          for p, by_story in by_pier.items()}
+                      for c, by_pier in self.piers.items()},
             "modal": self.modal.to_dict(),
         }
         if self.story_props:
@@ -927,6 +966,16 @@ class OpenSeesEngine:
                 section_cuts[cs_name] = {
                     cut.name: compute_section_cut(model, cut, cr)
                     for cut in model.section_cuts}
+        # v0.15 wall piers: exact free-body cuts of labeled walls per story,
+        # for static cases + additive combos (pure post-processing of the
+        # shell nodal forces captured at solve time).
+        piers: Dict[str, Dict[str, Dict[str, Dict[str, float]]]] = {}
+        if self._piers_enabled():
+            pier_src = dict(cases)
+            for cname, cb in model.combos.items():
+                if cb.combo_type == "add" and cname in combos:
+                    pier_src[cname] = combos[cname]
+            piers = self._compute_piers(asm, pier_src)
         members = [{"uid": m.uid, "kind": m.kind, "section": m.section,
                     "ni": asm.ele_nodes[m.uid][0], "nj": asm.ele_nodes[m.uid][1],
                     "story": m.story}
@@ -952,6 +1001,7 @@ class OpenSeesEngine:
             buckling=buckling,
             takedown=takedown,
             section_cuts=section_cuts,
+            piers=piers,
             warning=warning,
         )
 
@@ -959,6 +1009,25 @@ class OpenSeesEngine:
         """True if any member is tension/compression-only (v0.12)."""
         return any(getattr(m, "axial_limit", "both") != "both"
                    for m in self.model.members)
+
+    def _device_links_present(self) -> bool:
+        """True if any link is an advanced device (v0.15)."""
+        return any(getattr(lk, "link_type", "elastic") != "elastic"
+                   for lk in self.model.links)
+
+    def _nonlinear_static_links_present(self) -> bool:
+        """True if any link makes STATIC cases nonlinear (gap/hook/isolator;
+        dampers carry no static force — see NONLINEAR_STATIC_LINK_TYPES)."""
+        return any(getattr(lk, "link_type", "elastic")
+                   in NONLINEAR_STATIC_LINK_TYPES
+                   for lk in self.model.links)
+
+    def _piers_enabled(self) -> bool:
+        """True when any wall region gets pier-force output (v0.15)."""
+        model = self.model
+        auto = getattr(model, "auto_pier_walls", False)
+        return any(r.kind == "wall" and (getattr(r, "pier", "") or auto)
+                   for r in model.shells)
 
     def run_static(self, case_name: str) -> CaseResults:
         """Solve one static load case (cached per engine instance)."""
@@ -983,7 +1052,9 @@ class OpenSeesEngine:
 
         # v0.12: a model with any tension/compression-only member is nonlinear
         # (the Truss materials switch stiffness by strain sign) -> Newton.
-        if self._axial_only_present():
+        # v0.15: gap/hook/isolator device links likewise (state-dependent
+        # tangent); dampers alone keep the linear path (no static force).
+        if self._axial_only_present() or self._nonlinear_static_links_present():
             self._setup_nonlinear_analysis(asm)
         else:
             self._setup_analysis(asm)
@@ -998,10 +1069,13 @@ class OpenSeesEngine:
         member_forces, member_stations = self._member_outputs(asm)
         story = self._story_results(asm, case, node_disp)
         shell_forces = self._shell_outputs(asm)
+        shell_nodal = (self._shell_nodal(asm) if self._piers_enabled()
+                       else {})
 
         result = CaseResults(case_name, node_disp, reactions, base,
                              member_forces, story, member_stations,
-                             shell_forces=shell_forces)
+                             shell_forces=shell_forces,
+                             shell_nodal=shell_nodal)
         self._case_cache[case_name] = result
         return result
 
@@ -1372,30 +1446,100 @@ class OpenSeesEngine:
                 for n in quad.nodes:
                     rot_add(n, eye3)   # shells stiffen all three rotations
 
-        # --- link elements (v0.5) -------------------------------------------
-        # zeroLength with one elastic uniaxial material per non-zero
+        # --- link elements (v0.5 elastic, v0.15 devices) ---------------------
+        # elastic: zeroLength with one elastic uniaxial material per non-zero
         # stiffness entry; default orientation = GLOBAL axes (local axes ==
         # global for v0.5).  A pure spring: element length carries no
         # rigid-arm moment transfer.
+        # v0.15 device links (damper/gap/hook/isolator): a twoNodeLink along
+        # the link axis (dir 1 = axial; shear forces of a finite-length
+        # isolator transfer their moments in equilibrium), or a zeroLength on
+        # the global axes for a zero-length isolator.  Damper elements carry
+        # no static force and no eigen stiffness (verified), so they are
+        # created in every build.
         link_node_k: Dict[int, List[float]] = {}
+        device_nodes: set = set()
         for lk in model.links:
             ni = self._find_node(asm, lk.pi)
             nj = self._find_node(asm, lk.pj)
-            dirs = [d + 1 for d in range(6) if lk.stiffness[d] > 0.0]
-            mats: List[int] = []
-            for d in dirs:
+            ltype = getattr(lk, "link_type", "elastic")
+            if ltype == "elastic":
+                dirs = [d + 1 for d in range(6) if lk.stiffness[d] > 0.0]
+                mats: List[int] = []
+                for d in dirs:
+                    mtag += 1
+                    ops.uniaxialMaterial("Elastic", mtag,
+                                         float(lk.stiffness[d - 1]))
+                    mats.append(mtag)
+                etag += 1
+                ops.element("zeroLength", etag, ni, nj, "-mat", *mats,
+                            "-dir", *dirs)
+                asm.link_ele[lk.uid] = etag
+                for t in (ni, nj):
+                    acc = link_node_k.setdefault(t, [0.0] * 6)
+                    for d in range(6):
+                        acc[d] += float(lk.stiffness[d])
+                continue
+            # ---- v0.15 advanced device links -------------------------------
+            prm = getattr(lk, "params", {}) or {}
+            p_i = asm.node_coords[ni]
+            p_j = asm.node_coords[nj]
+            L_lk = math.dist(p_i, p_j)
+            if ltype == "damper":
+                # Maxwell viscous damper along the link axis
+                mtag += 1
+                ops.uniaxialMaterial(
+                    "ViscousDamper", mtag,
+                    float(prm.get("k", DAMPER_DEFAULT_K)),
+                    float(prm["cd"]),
+                    float(prm.get("alpha", DAMPER_DEFAULT_ALPHA)))
+                mats, dirs = [mtag], [1]
+            elif ltype in ("gap", "hook"):
+                # gap: compression-only contact, engages once the pair
+                # CLOSES (axial strain < -gap): ElasticPPGap(k, -huge, -gap).
+                # hook: tension mirror: ElasticPPGap(k, +huge, +slack).
+                # Sign conventions verified empirically (twoNodeLink dir 1
+                # strain = elongation).
+                mtag += 1
+                if ltype == "gap":
+                    ops.uniaxialMaterial("ElasticPPGap", mtag,
+                                         float(prm["k"]), -GAP_YIELD_HUGE,
+                                         -float(prm["gap"]))
+                else:
+                    ops.uniaxialMaterial("ElasticPPGap", mtag,
+                                         float(prm["k"]), GAP_YIELD_HUGE,
+                                         float(prm["slack"]))
+                mats, dirs = [mtag], [1]
+            else:  # isolator
+                k1 = float(prm["k1"])
+                b_iso = float(prm["k2"]) / k1
+                fy = float(prm["Fy"])
+                shear_tags = []
+                for _ in range(2):
+                    mtag += 1
+                    ops.uniaxialMaterial("Steel01", mtag, fy, k1, b_iso)
+                    shear_tags.append(mtag)
                 mtag += 1
                 ops.uniaxialMaterial("Elastic", mtag,
-                                     float(lk.stiffness[d - 1]))
-                mats.append(mtag)
+                                     float(prm.get("kv",
+                                                   ISOLATOR_DEFAULT_KV)))
+                kv_tag = mtag
+                if L_lk < _TOL:
+                    # zero length: global axes (1, 2 horizontal shear;
+                    # 3 vertical)
+                    mats, dirs = shear_tags + [kv_tag], [1, 2, 3]
+                else:
+                    # vertical axis: local 1 = axial (kv), 2/3 = shear
+                    mats, dirs = [kv_tag] + shear_tags, [1, 2, 3]
             etag += 1
-            ops.element("zeroLength", etag, ni, nj, "-mat", *mats,
-                        "-dir", *dirs)
+            if L_lk < _TOL:
+                ops.element("zeroLength", etag, ni, nj, "-mat", *mats,
+                            "-dir", *dirs)
+            else:
+                ops.element("twoNodeLink", etag, ni, nj, "-mat", *mats,
+                            "-dir", *dirs)
             asm.link_ele[lk.uid] = etag
-            for t in (ni, nj):
-                acc = link_node_k.setdefault(t, [0.0] * 6)
-                for d in range(6):
-                    acc[d] += float(lk.stiffness[d])
+            device_nodes.update((ni, nj))
 
         # --- grounded point springs (v0.8) ---------------------------------
         # Per spring: a co-located fully-fixed ground node and a zeroLength
@@ -1458,6 +1602,25 @@ class OpenSeesEngine:
                 ops.fix(t, *newfix)
                 record_fix(t, newfix)
 
+        # --- v0.15 device-link ground anchors --------------------------------
+        # A node connected ONLY to advanced device links (no frame/shell/
+        # elastic-link/grounded-spring stiffness) is a GROUNDED ANCHOR: it is
+        # fully fixed (even at a diaphragm elevation — it never joins the
+        # diaphragm or story node sets) and reported as a support, so its
+        # reaction exposes the device force.
+        for t in sorted(device_nodes):
+            if ((t - 1) in touched or t in link_node_k
+                    or t in spring_cover):
+                continue
+            prev = asm.node_restraints.get(t, (0,) * 6)
+            newfix = [0 if prev[d] else 1 for d in range(6)]
+            if any(newfix):
+                ops.fix(t, *newfix)
+                record_fix(t, newfix)
+            asm.anchor_tags.add(t)
+            if t not in asm.support_tags:
+                asm.support_tags.append(t)
+
         # --- auto-restrain rotations left unstiffened by releases ----------
         # A node attached ONLY through moment-released member ends has zero
         # stiffness about axes perpendicular to those members: OpenSees would
@@ -1510,10 +1673,12 @@ class OpenSeesEngine:
         # --- story node sets ----------------------------------------------
         # All FE nodes in the story plane join the set: frame nodes, slab
         # mesh nodes, and wall nodes lying exactly at the story elevation.
-        # Wall interior nodes (between story elevations) are excluded by z.
+        # Wall interior nodes (between story elevations) are excluded by z;
+        # device-link ground anchors (v0.15) never join a story.
         for s in model.stories:
             asm.story_nodes[s.name] = [t for t, c in asm.struct_coords.items()
-                                       if abs(c[2] - s.elevation) < _TOL]
+                                       if abs(c[2] - s.elevation) < _TOL
+                                       and t not in asm.anchor_tags]
 
         # --- rigid diaphragms (v0.5: per-story "rigid" | "none") ------------
         cx, cy = model.plan_center()
@@ -2017,6 +2182,189 @@ class OpenSeesEngine:
             out[qi] = [float(v) for v in avg]
         return out
 
+    @staticmethod
+    def _shell_nodal(asm: _Assembly,
+                     baseline: Optional[Dict[int, List[float]]] = None
+                     ) -> Dict[int, List[float]]:
+        """Global nodal resisting-force vector per shell quad (v0.15).
+
+        ShellMITC4 'forces' returns 24 values (6 global dof x 4 nodes): the
+        element's resisting forces at its nodes.  Summing them over the
+        elements on ONE side of a cut line, at the cut-line nodes, gives the
+        EXACT force/moment transmitted through the wall across that line
+        (the free-body kernel of the pier post-processing).  ``baseline``
+        (P-Delta two-stage runs) is subtracted so the case reports its own
+        increment.  Captured only when the model has pier-labeled walls.
+        """
+        out: Dict[int, List[float]] = {}
+        for qi, etag in enumerate(asm.quad_ele):
+            vals = ops.eleResponse(etag, "forces")
+            if len(vals) != 24:                  # pragma: no cover
+                continue
+            arr = [float(v) for v in vals]
+            if baseline is not None and qi in baseline:
+                arr = [a - b for a, b in zip(arr, baseline[qi])]
+            out[qi] = arr
+        return out
+
+    # ------------------------------------------------ v0.15 wall pier forces
+    def _pier_regions(self) -> List[Tuple[ShellRegion, str]]:
+        """(region, pier label) pairs for every wall that reports piers.
+
+        A wall reports when it carries an explicit ``pier`` label, or when
+        ``model.auto_pier_walls`` is set (label = the wall uid).  Membrane-
+        behavior walls have no FE and are skipped with a warning.
+        """
+        model = self.model
+        auto = getattr(model, "auto_pier_walls", False)
+        out: List[Tuple[ShellRegion, str]] = []
+        for r in model.shells:
+            if r.kind != "wall":
+                continue
+            label = getattr(r, "pier", "") or (r.uid if auto else "")
+            if not label:
+                continue
+            if r.behavior != "shell":
+                warnings.warn(
+                    f"Wall {r.uid!r} (pier {label!r}): pier forces need "
+                    "meshed shell behavior; membrane wall skipped")
+                continue
+            out.append((r, label))
+        return out
+
+    def _pier_cuts(self, asm: _Assembly) -> List[dict]:
+        """Geometry of every (pier region, story) cut — case independent.
+
+        Per labeled VERTICAL wall region and story it spans, the cut runs
+        along the highest mesh node line at (or, when the mesh does not
+        align with the story boundary, just below) the story-bottom
+        elevation.  Each cut record carries the region's in-plane axes, the
+        cut-line elements/nodes and the net-section centroid.
+        """
+        model = self.model
+        ez = np.array([0.0, 0.0, 1.0])
+        cuts: List[dict] = []
+        for region, label in self._pier_regions():
+            quads = [(qi, [np.asarray(asm.node_coords[t], float)
+                           for t in q["nodes"]])
+                     for qi, q in enumerate(asm.shell_quads)
+                     if q["region"] == region.uid]
+            if not quads:
+                warnings.warn(f"Wall {region.uid!r} (pier {label!r}): no "
+                              "meshed elements; skipped")
+                continue
+            c = [np.asarray(p, float) for p in region.corners]
+            n_vec = np.cross(c[1] - c[0], c[3] - c[0])
+            n_len = float(np.linalg.norm(n_vec))
+            if n_len < 1e-12 or abs(n_vec[2]) / n_len > 1e-3:
+                warnings.warn(f"Wall {region.uid!r} (pier {label!r}): not a "
+                              "vertical wall; pier forces skipped")
+                continue
+            nhat = n_vec / n_len
+            # in-plane horizontal axis: hhat = ez x nhat, so for the natural
+            # corner ordering (bottom edge first, CCW) hhat follows the
+            # corner-0 -> corner-1 direction; V is positive along +hhat.
+            hhat = np.cross(ez, nhat)
+            hhat = hhat / np.linalg.norm(hhat)
+            n_inplane = np.cross(hhat, ez)      # in-plane moment axis
+            all_z = sorted({round(float(p[2]), 6)
+                            for _, pts in quads for p in pts})
+            z_lo, z_hi = all_z[0], all_z[-1]
+            for s in model.stories:
+                z_bot = s.elevation - s.height
+                if z_lo >= s.elevation - _TOL or z_hi <= z_bot + _TOL:
+                    continue                     # wall does not span story
+                below = [z for z in all_z if z <= z_bot + _TOL]
+                z_line = max(below) if below else z_lo
+                cut_elems: List[Tuple[int, List[int], list]] = []
+                for qi, pts in quads:
+                    zc = float(np.mean([p[2] for p in pts]))
+                    if zc <= z_line + 1e-9:
+                        continue
+                    ks = [k for k, p in enumerate(pts)
+                          if abs(float(p[2]) - z_line) < _TOL]
+                    if ks:
+                        cut_elems.append((qi, ks, pts))
+                if not cut_elems:
+                    continue
+                # net-section centroid along hhat (tributary-width weighted)
+                s_vals = sorted({round(float(p @ hhat), 6)
+                                 for _, ks, pts in cut_elems
+                                 for k, p in enumerate(pts) if k in ks})
+                if len(s_vals) > 1:
+                    trib = [(s_vals[min(i + 1, len(s_vals) - 1)]
+                             - s_vals[max(i - 1, 0)]) / 2.0
+                            for i in range(len(s_vals))]
+                    sbar = (sum(sv * tw for sv, tw in zip(s_vals, trib))
+                            / sum(trib))
+                else:
+                    sbar = s_vals[0]
+                cuts.append({"label": label, "story": s.name,
+                             "region": region.uid, "hhat": hhat,
+                             "n_inplane": n_inplane, "z_line": z_line,
+                             "z_bot": z_bot, "sbar": sbar,
+                             "elems": cut_elems})
+        return cuts
+
+    @staticmethod
+    def _pier_cut_forces(cut: dict,
+                         shell_nodal: Dict[int, List[float]]
+                         ) -> Tuple[float, float, float]:
+        """(P, V, M) transmitted through one pier cut (exact free body).
+
+        Sums the global nodal resisting forces of the wall elements ABOVE
+        the cut line at the cut-line nodes.  Conventions (CONTRACT v0.15):
+        P = +sum(fz) (compression positive), V = -sum(f . hhat) (positive
+        along +hhat, the sense of a lateral load applied above the cut),
+        M = sum((s - sbar)*fz + m . (hhat x ez)) about the net-section
+        centroid (drilling nodal moments included — they close the moment
+        balance exactly), then transferred from the cut line down to the
+        story-bottom elevation with M += V*(z_line - z_bot) (exact when no
+        in-plane load acts between the two levels — no nodes exist there).
+        """
+        hhat = cut["hhat"]
+        n_ip = cut["n_inplane"]
+        sbar = cut["sbar"]
+        P = V = M = 0.0
+        for qi, ks, pts in cut["elems"]:
+            f = shell_nodal.get(qi)
+            if f is None:
+                continue
+            for k in ks:
+                F = f[6 * k: 6 * k + 3]
+                Mv = f[6 * k + 3: 6 * k + 6]
+                P += F[2]
+                V -= float(F[0] * hhat[0] + F[1] * hhat[1] + F[2] * hhat[2])
+                s_n = float(pts[k] @ hhat)
+                M += (s_n - sbar) * F[2]
+                M += float(Mv[0] * n_ip[0] + Mv[1] * n_ip[1]
+                           + Mv[2] * n_ip[2])
+        M += V * (cut["z_line"] - cut["z_bot"])
+        return P, V, M
+
+    def _compute_piers(self, asm: _Assembly,
+                       sources: Dict[str, CaseResults]
+                       ) -> Dict[str, Dict[str, Dict[str, Dict[str, float]]]]:
+        """results['piers']: case/combo -> pier label -> story -> P/V/M."""
+        cuts = self._pier_cuts(asm)
+        if not cuts:
+            return {}
+        piers: Dict[str, Dict[str, Dict[str, Dict[str, float]]]] = {}
+        for cname, cr in sources.items():
+            if not cr.shell_nodal:
+                continue
+            by_pier: Dict[str, Dict[str, Dict[str, float]]] = {}
+            for cut in cuts:
+                P, V, M = self._pier_cut_forces(cut, cr.shell_nodal)
+                entry = by_pier.setdefault(cut["label"], {}).setdefault(
+                    cut["story"], {"P": 0.0, "V": 0.0, "M": 0.0})
+                entry["P"] += P
+                entry["V"] += V
+                entry["M"] += M
+            if by_pier:
+                piers[cname] = by_pier
+        return piers
+
     # ------------------------------------------------------------- analysis
     @staticmethod
     def _setup_analysis(asm: _Assembly) -> None:
@@ -2512,6 +2860,12 @@ class OpenSeesEngine:
             shell_forces[qi] = [
                 sum(f * res.shell_forces[qi][i] for res, f in parts)
                 for i in range(len(v0))]
+        # v0.15: shell nodal forces (pier free-body kernel) likewise
+        shell_nodal: Dict[int, List[float]] = {}
+        for qi, v0 in parts[0][0].shell_nodal.items():
+            shell_nodal[qi] = [
+                sum(f * res.shell_nodal[qi][i] for res, f in parts)
+                for i in range(len(v0))]
         return CaseResults(
             name=name,
             node_disp=comb_vecs(lambda r: r.node_disp),
@@ -2522,6 +2876,7 @@ class OpenSeesEngine:
             member_stations=member_stations,
             warning=warning,
             shell_forces=shell_forces,
+            shell_nodal=shell_nodal,
         )
 
     def _envelope(self, name: str, factors: Dict[str, float]) -> CaseResults:
@@ -2612,7 +2967,9 @@ class OpenSeesEngine:
         snap_reac: Dict[int, List[float]] = {}
         snap_ele: Dict[Tuple[str, int], List[float]] = {}
         snap_shell: Dict[int, List[float]] = {}
+        snap_nodal: Dict[int, List[float]] = {}
         two_stage = case.pdelta_gravity is not None
+        piers_on = self._piers_enabled()
 
         if two_stage:
             ops.timeSeries("Linear", 1)
@@ -2634,6 +2991,8 @@ class OpenSeesEngine:
                 snap_ele[key] = [float(v)
                                  for v in ops.eleResponse(etag, "localForce")]
             snap_shell = self._shell_outputs(asm)
+            if piers_on:
+                snap_nodal = self._shell_nodal(asm)
             # stage-1 span-load bookkeeping must not leak into the case's
             # reported member forces/stations (they belong to gravity)
             self._seg_span_loads = {}
@@ -2667,9 +3026,13 @@ class OpenSeesEngine:
         story = self._story_results(asm, case, node_disp)
         shell_forces = self._shell_outputs(
             asm, baseline=snap_shell if two_stage else None)
+        shell_nodal = (self._shell_nodal(
+            asm, baseline=snap_nodal if two_stage else None)
+            if piers_on else {})
         return CaseResults(case.name, node_disp, reactions, base,
                            member_forces, story, member_stations,
-                           shell_forces=shell_forces)
+                           shell_forces=shell_forces,
+                           shell_nodal=shell_nodal)
 
     @staticmethod
     def _setup_nonlinear_analysis(asm: _Assembly) -> None:
@@ -3082,6 +3445,11 @@ class OpenSeesEngine:
         th = model.th_cases[name]
         accel, dt = self._resolve_th_record(th)
         nonlinear = bool(getattr(th, "nonlinear", False))
+        # v0.15: any advanced device link (damper/gap/hook/isolator) makes
+        # the transient solve implicit-nonlinear (Newton), even without
+        # hinges — device element forces are state/velocity dependent.
+        devices = self._device_links_present()
+        use_newton = nonlinear or devices
 
         modal = self.run_modal()      # INITIAL elastic modes (no hinges)
         if not modal.periods:
@@ -3097,12 +3465,15 @@ class OpenSeesEngine:
         asm = self._build(hinge_case=th if nonlinear else None)
         self._seg_span_loads = {}
         self._seg_fef = {}
-        if nonlinear:
+        if use_newton:
             # committed-stiffness proportionality (betaKcomm): the a0/a1
             # FIT comes from the initial elastic modes, but C follows the
             # committed stiffness so the stiff hinge springs cannot
             # generate spurious post-yield damping moments (the well-known
-            # betaKinit artifact: a1*k_theta*theta_dot can exceed My)
+            # betaKinit artifact: a1*k_theta*theta_dot can exceed My).
+            # v0.15 device links use the same choice: a gap/isolator whose
+            # tangent switches state should not carry current-tangent
+            # damping from mid-iteration stiffness.
             ops.rayleigh(a0, 0.0, 0.0, a1)
         else:
             ops.rayleigh(a0, a1, 0.0, 0.0)     # elastic: K == Kinit
@@ -3169,7 +3540,7 @@ class OpenSeesEngine:
                         else "Plain")
         ops.numberer("RCM")
         ops.system("BandGeneral")
-        if nonlinear:
+        if use_newton:
             ops.test("NormDispIncr", 1.0e-8, 25)
             ops.algorithm("Newton")
         else:
@@ -3193,7 +3564,7 @@ class OpenSeesEngine:
         yielded: set = set()
         for k in range(n):
             ok = ops.analyze(1, dt)
-            if ok != 0 and nonlinear:
+            if ok != 0 and use_newton:
                 ops.algorithm("NewtonLineSearch")
                 ok = ops.analyze(1, dt)
                 ops.algorithm("Newton")

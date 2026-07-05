@@ -36,6 +36,15 @@ carries every new field, see CONTRACT.md "v0.5 additions"):
   (skipped with a top-level ``"warning"`` when the combined pushover steps
   exceed 2000).
 
+v0.15 additions (no new endpoints):
+
+* ``POST /api/model`` round-trips the LinkMember ``link_type``/``params``
+  fields (advanced device links: damper / gap / hook / isolator — 400 on a
+  bad ``link_type`` or incomplete/unknown ``params``), the ShellRegion
+  ``pier`` label, and ``auto_pier_walls``;
+* ``POST /api/analyze`` results carry the ``"piers"`` block automatically
+  (per static case + additive combo -> pier label -> story -> {P, V, M}).
+
 Saved models live as ``<name>.skyframe.json`` files in ``~/.skyframe/models``
 (override with the ``SKYFRAME_MODELS_DIR`` environment variable; the
 directory is created on demand).  Names must match ``[A-Za-z0-9 _-]{1,60}``.
