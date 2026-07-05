@@ -835,19 +835,19 @@
       </header>
       <div class="modal-body grid-modal-body">
         <section class="grid-pane">
-          <h3 class="ge-title">Grid lines <span class="muted">positions in m</span></h3>
-          <p class="muted ge-note">Members are never moved by grid edits — anything outside the grid is kept.</p>
-          <div class="ge-cols">
-            <div>
-              <div class="ge-col-head"><b>X lines</b>
-                <button class="btn btn-small" id="addGridX">+ Line</button></div>
-              <div class="ge-lines" id="gridXRows"></div>
+          <h3 class="ge-title">Grid systems <span class="muted">multiple grids · global coords</span></h3>
+          <p class="muted ge-note">The primary grid (G1) is the legacy single grid. Add rotated orthogonal wings or radial grids — each is placed by origin + rotation. Members are never moved by grid edits.</p>
+          <div class="grid-sys-bar">
+            <div class="grid-sys-list" id="gridSysList"></div>
+            <div class="grid-sys-add">
+              <button class="btn btn-small" id="addGridSysOrtho" title="Add an orthogonal grid system">+ Orthogonal</button>
+              <button class="btn btn-small" id="addGridSysRadial" title="Add a radial grid system">+ Radial</button>
             </div>
-            <div>
-              <div class="ge-col-head"><b>Y lines</b>
-                <button class="btn btn-small" id="addGridY">+ Line</button></div>
-              <div class="ge-lines" id="gridYRows"></div>
-            </div>
+          </div>
+          <div class="grid-sys-editor" id="gridSysEditor"></div>
+          <div class="grid-preview-wrap">
+            <div class="ge-col-head"><b>Live preview</b><span class="muted">selected grid highlighted · global plan</span></div>
+            <svg class="grid-preview" id="gridPreview" preserveAspectRatio="xMidYMid meet"></svg>
           </div>
         </section>
         <section class="story-pane-edit">

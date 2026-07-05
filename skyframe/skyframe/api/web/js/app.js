@@ -47,6 +47,7 @@ const store = {
   envSide: "max",        // envelope-combo tables: "max" | "min"
   thCase: null,          // selected time-history case
   thStory: null,         // selected story for the TH displacement trace
+  gridSel: 0,            // v0.14 — selected grid system in the Grid/Stories editor
   // v0.5 — elevation view, pushover
   view: "plan",          // model-mode editor: "plan" | "elev"
   elevLine: null,        // elevation grid line, e.g. "x:0" | "y:2"
@@ -1613,50 +1614,234 @@ function afterGeometryEdit() {
   renderGridEditor();
 }
 
+/* v0.14 — per-grid-system chip / preview tints (match draw.js order) */
+const GRID_TINT_CSS = ["#8aa0b8", "#e0a020", "#34c384", "#a78bfa", "#35b5e5"];
+
 function renderGridEditor() {
   const m = store.model;
   if (!m || !m.grid) return;
+  ME.ensureGridSystems(m);
+  const systems = ME.gridSystems(m);
+  if (store.gridSel == null || store.gridSel < 0 || store.gridSel >= systems.length)
+    store.gridSel = 0;
+  renderGridSysList(systems);
+  renderGridSysEditor(systems[store.gridSel]);
+  renderGridPreview(systems);
+  renderStoryRows();
+}
 
-  const mkLines = (axis, box) => {
-    box.textContent = "";
-    const lines = axis === "x" ? m.grid.x_lines : m.grid.y_lines;
-    const labels = axis === "x" ? m.grid.x_labels : m.grid.y_labels;
+/** Geometry changed inside a grid SYSTEM (position/origin/rotation/radii). */
+function afterGridSysEdit() {
+  ME.ensureGridSystems(store.model);
+  markDirty();
+  refreshDrawViews();
+  renderSummary();
+  renderGridEditor();
+}
+
+function renderGridSysList(systems) {
+  const box = $("gridSysList");
+  box.textContent = "";
+  systems.forEach((sys, i) => {
+    const chip = document.createElement("button");
+    chip.className = "grid-sys-chip" + (i === store.gridSel ? " is-active" : "");
+    chip.style.setProperty("--gs-tint", GRID_TINT_CSS[i % GRID_TINT_CSS.length]);
+    const name = document.createElement("span");
+    name.className = "gs-name"; name.textContent = sys.name;
+    const kind = document.createElement("span");
+    kind.className = "gs-kind"; kind.textContent = sys.kind === "radial" ? "radial" : "ortho";
+    chip.append(name, kind);
+    if (i === 0) { const p = document.createElement("span"); p.className = "gs-primary"; p.textContent = "primary"; p.title = "Legacy single grid"; chip.appendChild(p); }
+    if (i > 0) {
+      const x = document.createElement("span");
+      x.className = "gs-del"; x.textContent = "✕"; x.title = "Delete grid system";
+      x.addEventListener("click", ev => {
+        ev.stopPropagation();
+        if (ME.removeGridSystem(store.model, i)) {
+          store.gridSel = Math.min(store.gridSel, ME.gridSystems(store.model).length - 1);
+          afterGridSysEdit();
+          toast("Grid system removed", `“${sys.name}” deleted`, "info", 3000);
+        }
+      });
+      chip.appendChild(x);
+    }
+    chip.addEventListener("click", () => { store.gridSel = i; renderGridEditor(); });
+    box.appendChild(chip);
+  });
+}
+
+function renderGridSysEditor(sys) {
+  const box = $("gridSysEditor");
+  box.textContent = "";
+  if (!sys) return;
+
+  const field = (label, input) => {
+    const wrap = document.createElement("label");
+    wrap.className = "gs-field";
+    const span = document.createElement("span"); span.textContent = label;
+    wrap.append(span, input);
+    return wrap;
+  };
+  const numInput = (val, step, onChange) => {
+    const inp = document.createElement("input");
+    inp.type = "number"; inp.step = String(step); inp.value = String(val);
+    inp.addEventListener("change", () => {
+      const nv = parseFloat(inp.value);
+      if (isFinite(nv)) onChange(nv); else inp.value = String(val);
+    });
+    return inp;
+  };
+
+  /* name + origin + rotation */
+  const meta = document.createElement("div");
+  meta.className = "gs-meta";
+  const nameIn = document.createElement("input");
+  nameIn.type = "text"; nameIn.value = sys.name; nameIn.spellcheck = false;
+  nameIn.addEventListener("change", () => {
+    const nu = nameIn.value.trim();
+    if (nu) { sys.name = nu; afterGridSysEdit(); } else nameIn.value = sys.name;
+  });
+  meta.append(
+    field("Name", nameIn),
+    field("Origin X (m)", numInput(sys.origin[0], 0.5, v => { sys.origin[0] = v; afterGridSysEdit(); })),
+    field("Origin Y (m)", numInput(sys.origin[1], 0.5, v => { sys.origin[1] = v; afterGridSysEdit(); })),
+    field("Rotation (° CCW)", numInput(sys.rotation, 5, v => { sys.rotation = v; afterGridSysEdit(); })),
+  );
+  box.appendChild(meta);
+
+  if (sys.kind === "orthogonal") box.appendChild(orthoLineEditor(sys));
+  else box.appendChild(radialEditor(sys));
+}
+
+/** Orthogonal system: the X/Y line-position lists (reuses the ge-cols look). */
+function orthoLineEditor(sys) {
+  const wrap = document.createElement("div");
+  wrap.className = "ge-cols";
+  const mkCol = (axis, title) => {
+    const col = document.createElement("div");
+    const head = document.createElement("div");
+    head.className = "ge-col-head";
+    const b = document.createElement("b"); b.textContent = title;
+    const add = document.createElement("button");
+    add.className = "btn btn-small"; add.textContent = "+ Line";
+    add.addEventListener("click", () => { ME.addSysLine(sys, axis); afterGridSysEdit(); });
+    head.append(b, add);
+    const rows = document.createElement("div");
+    rows.className = "ge-lines";
+    const lines = axis === "x" ? sys.x_lines : sys.y_lines;
+    const labels = axis === "x" ? sys.x_labels : sys.y_labels;
     lines.forEach((v, i) => {
-      const row = document.createElement("div");
-      row.className = "ge-line";
+      const row = document.createElement("div"); row.className = "ge-line";
       const lab = document.createElement("span");
-      lab.className = "ge-label";
-      lab.textContent = (labels && labels[i]) || String(i + 1);
+      lab.className = "ge-label"; lab.textContent = (labels && labels[i]) || String(i + 1);
       const inp = document.createElement("input");
-      inp.type = "number"; inp.step = "0.5";
-      inp.value = String(v);
+      inp.type = "number"; inp.step = "0.5"; inp.value = String(v);
       inp.addEventListener("change", () => {
         const nv = parseFloat(inp.value);
-        if (ME.setGridLine(m, axis, i, nv)) afterGeometryEdit();
-        else {
-          inp.value = String(v);
-          toast("Grid edit rejected", "Positions must be numbers and can't collide with another line", "error", 4500);
-        }
+        if (ME.setSysLine(sys, axis, i, nv)) afterGridSysEdit();
+        else { inp.value = String(v); toast("Grid edit rejected", "Positions must be numbers and can't collide with another line", "error", 4500); }
       });
       const del = document.createElement("button");
       del.className = "del"; del.textContent = "✕";
-      const blocked = lines.length <= 2;
-      del.disabled = blocked;
-      del.title = blocked ? "A grid keeps at least two lines per direction"
-        : "Remove line — members outside the grid are kept";
-      del.addEventListener("click", () => {
-        if (ME.removeGridLine(m, axis, i)) {
-          afterGeometryEdit();
-          toast("Grid line removed", "Members outside the grid are kept", "info", 3500);
-        }
-      });
+      del.disabled = lines.length <= 2;
+      del.title = del.disabled ? "A grid keeps at least two lines per direction" : "Remove line";
+      del.addEventListener("click", () => { if (ME.removeSysLine(sys, axis, i)) afterGridSysEdit(); });
       row.append(lab, inp, del);
-      box.appendChild(row);
+      rows.appendChild(row);
     });
+    col.append(head, rows);
+    return col;
   };
-  mkLines("x", $("gridXRows"));
-  mkLines("y", $("gridYRows"));
+  wrap.append(mkCol("x", "X lines"), mkCol("y", "Y lines"));
+  return wrap;
+}
 
+/** Radial system: radii list + spoke-angle list. */
+function radialEditor(sys) {
+  const wrap = document.createElement("div");
+  wrap.className = "ge-cols";
+  const mkList = (title, arr, unit, addFn, setFn, delFn) => {
+    const col = document.createElement("div");
+    const head = document.createElement("div");
+    head.className = "ge-col-head";
+    const b = document.createElement("b"); b.textContent = title;
+    const add = document.createElement("button");
+    add.className = "btn btn-small"; add.textContent = "+";
+    add.title = `Add ${title.toLowerCase()}`;
+    add.addEventListener("click", () => { addFn(sys); afterGridSysEdit(); });
+    head.append(b, add);
+    const rows = document.createElement("div");
+    rows.className = "ge-lines";
+    arr.forEach((v, i) => {
+      const row = document.createElement("div"); row.className = "ge-line";
+      const lab = document.createElement("span");
+      lab.className = "ge-label"; lab.textContent = unit;
+      const inp = document.createElement("input");
+      inp.type = "number"; inp.step = "0.5"; inp.value = String(v);
+      inp.addEventListener("change", () => {
+        const nv = parseFloat(inp.value);
+        if (isFinite(nv) && setFn(sys, i, nv)) afterGridSysEdit();
+        else inp.value = String(v);
+      });
+      const del = document.createElement("button");
+      del.className = "del"; del.textContent = "✕";
+      del.disabled = arr.length <= 1;
+      del.addEventListener("click", () => { if (delFn(sys, i)) afterGridSysEdit(); });
+      row.append(lab, inp, del);
+      rows.appendChild(row);
+    });
+    col.append(head, rows);
+    return col;
+  };
+  wrap.append(
+    mkList("Radii", sys.radii, "m", ME.addSysRadius, ME.setSysRadius, ME.removeSysRadius),
+    mkList("Spoke angles", sys.theta_deg, "°", ME.addSysTheta, ME.setSysTheta, ME.removeSysTheta),
+  );
+  return wrap;
+}
+
+/** Live plan preview of all systems (global coords), selected one highlighted. */
+function renderGridPreview(systems) {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = $("gridPreview");
+  if (!svg) return;
+  svg.textContent = "";
+  // gather bounds from every system's intersections + circle extents
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  const geos = systems.map(s => ME.gridSystemGeometry(s));
+  geos.forEach((geo) => {
+    for (const [x, y] of geo.intersections) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    for (const [cx, cy, r] of geo.circles) { x0 = Math.min(x0, cx - r); x1 = Math.max(x1, cx + r); y0 = Math.min(y0, cy - r); y1 = Math.max(y1, cy + r); }
+  });
+  if (!isFinite(x0)) return;
+  const pad = Math.max((x1 - x0), (y1 - y0)) * 0.08 + 1;
+  x0 -= pad; x1 += pad; y0 -= pad; y1 += pad;
+  const W = 340, H = 220;
+  const sc = Math.min(W / (x1 - x0 || 1), H / (y1 - y0 || 1));
+  const ox = (W - (x1 - x0) * sc) / 2, oy = (H - (y1 - y0) * sc) / 2;
+  const SX = x => ox + (x - x0) * sc;
+  const SY = y => H - (oy + (y - y0) * sc);   // flip Y (north up)
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const mk = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
+
+  geos.forEach((geo, si) => {
+    const sel = si === store.gridSel;
+    const tint = GRID_TINT_CSS[si % GRID_TINT_CSS.length];
+    const g = mk("g", { opacity: sel ? "1" : "0.4" });
+    for (const [ax, ay, bx, by] of geo.segments)
+      g.appendChild(mk("line", { x1: SX(ax), y1: SY(ay), x2: SX(bx), y2: SY(by), stroke: tint, "stroke-width": sel ? 1.4 : 1 }));
+    for (const [cx, cy, r] of geo.circles)
+      g.appendChild(mk("circle", { cx: SX(cx), cy: SY(cy), r: r * sc, fill: "none", stroke: tint, "stroke-width": sel ? 1.4 : 1 }));
+    if (geo.center)
+      g.appendChild(mk("circle", { cx: SX(geo.center[0]), cy: SY(geo.center[1]), r: 2.4, fill: tint }));
+    if (sel) for (const [x, y] of geo.intersections)
+      g.appendChild(mk("circle", { cx: SX(x), cy: SY(y), r: 1.6, fill: tint }));
+    svg.appendChild(g);
+  });
+}
+
+function renderStoryRows() {
+  const m = store.model;
   /* stories — top → bottom, like the story selector */
   const box = $("storyRows");
   box.textContent = "";
@@ -4115,13 +4300,18 @@ function wire() {
   $("gridModal").addEventListener("click", e => {
     if (e.target === $("gridModal")) closeGridEditor();
   });
-  $("addGridX").addEventListener("click", () => {
-    ME.addGridLine(store.model, "x");
-    afterGeometryEdit();
+  /* ---- v0.14: grid-system manager (add orthogonal / radial systems) */
+  $("addGridSysOrtho").addEventListener("click", () => {
+    const sys = ME.addGridSystem(store.model, "orthogonal");
+    store.gridSel = ME.gridSystems(store.model).indexOf(sys);
+    afterGridSysEdit();
+    toast("Grid system added", `“${sys.name}” · orthogonal`, "info", 3000);
   });
-  $("addGridY").addEventListener("click", () => {
-    ME.addGridLine(store.model, "y");
-    afterGeometryEdit();
+  $("addGridSysRadial").addEventListener("click", () => {
+    const sys = ME.addGridSystem(store.model, "radial");
+    store.gridSel = ME.gridSystems(store.model).indexOf(sys);
+    afterGridSysEdit();
+    toast("Grid system added", `“${sys.name}” · radial`, "info", 3000);
   });
 
   /* ---- v0.2: mode switch, draw tools, save/discard, member panel */

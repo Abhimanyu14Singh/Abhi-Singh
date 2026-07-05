@@ -63,6 +63,22 @@ const COLORS = {
   axisZ: "#35b5e5",
 };
 
+// v0.14 — per-grid-system ground-line + label tints (index 0 = primary grid)
+const GRID3D_TINTS = [
+  "rgba(120, 140, 165, 0.18)",
+  "rgba(201, 133, 0, 0.26)",
+  "rgba(52, 195, 132, 0.24)",
+  "rgba(167, 139, 250, 0.26)",
+  "rgba(53, 181, 229, 0.22)",
+];
+const GRID3D_LABEL_TINTS = [
+  "rgba(140, 160, 185, 0.55)",
+  "rgba(201, 133, 0, 0.7)",
+  "rgba(52, 195, 132, 0.7)",
+  "rgba(167, 139, 250, 0.75)",
+  "rgba(53, 181, 229, 0.7)",
+];
+
 const v3 = {
   sub: (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]],
   add: (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]],
@@ -518,22 +534,26 @@ export class Viewer3D {
       return 1 - Math.min(Math.max(t, 0), 1) * 0.5;
     };
 
-    // ---- ground grid
+    // ---- ground grid (v0.14: multiple systems, batched by per-system colour)
     ctx.lineWidth = 1;
-    ctx.strokeStyle = COLORS.grid;
-    ctx.beginPath();
-    for (const [a, b] of this.gridLines) {
-      const s = this._projSeg(P, a, b);
+    let curColor = null;
+    for (const gl of this.gridLines) {
+      const color = gl.color || COLORS.grid;
+      if (color !== curColor) {
+        if (curColor !== null) ctx.stroke();
+        ctx.strokeStyle = color; ctx.beginPath(); curColor = color;
+      }
+      const s = this._projSeg(P, gl.a, gl.b);
       if (s) { ctx.moveTo(s.a.x, s.a.y); ctx.lineTo(s.b.x, s.b.y); }
     }
-    ctx.stroke();
-    ctx.fillStyle = COLORS.gridLabel;
+    if (curColor !== null) ctx.stroke();
     ctx.font = "600 11px -apple-system, 'Segoe UI', sans-serif";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     for (const gl of this.gridLabels) {
       const pc = P.toCam(gl.p);
       if (pc[2] > P.near) {
         const s = P.proj(pc);
+        ctx.fillStyle = gl.color || COLORS.gridLabel;
         ctx.fillText(gl.text, s.x, s.y);
       }
     }

@@ -29,7 +29,26 @@ export function mockModel(p = {}) {
     x_lines: xs, y_lines: ys,
     x_labels: xs.map((_, i) => XL(i)),
     y_labels: ys.map((_, j) => String(j + 1)),
+    // v0.14 — the legacy grid IS the primary orthogonal grid system
+    kind: "orthogonal", name: "G1", origin: [0, 0], rotation: 0,
   };
+  // v0.14 — multiple grid systems: the default grid + a wing rotated 30° off
+  // the building's +X edge + a radial grid to the west. Each system's lines
+  // are defined in LOCAL coords and transformed by origin + rotation (radial:
+  // circles at radii, spokes at theta) to GLOBAL — mirrored from the backend.
+  const xEnd = xs[xs.length - 1], yMid = (ys[0] + ys[ys.length - 1]) / 2;
+  const grid_systems = [
+    grid,
+    {
+      kind: "orthogonal", name: "Wing 30°", origin: [xEnd + 3, ys[0]], rotation: 30,
+      x_lines: [0, 5, 10], y_lines: [0, 5, 10],
+      x_labels: ["A'", "B'", "C'"], y_labels: ["1'", "2'", "3'"],
+    },
+    {
+      kind: "radial", name: "Radial", origin: [xs[0] - 11, yMid], rotation: 0,
+      radii: [3, 6, 9], theta_deg: [0, 45, 90, 135, 180, 225, 270, 315],
+    },
+  ];
   const stories = [];
   for (let s = 0; s < o.stories; s++) {
     stories.push({
@@ -234,7 +253,7 @@ export function mockModel(p = {}) {
         mod_A: 1, mod_I33: 1, mod_I22: 1, mod_J: 1 },
     },
     shell_sections, shells,
-    grid, stories, members,
+    grid, grid_systems, stories, members,
     base_fixity: o.base_fixity,
     supports: [], nodal_masses: [], rigid_diaphragms: true,
     story_masses,

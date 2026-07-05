@@ -1086,6 +1086,58 @@ select.combo-type {
 .ge-story .ge-ins { display: inline-flex; gap: 3px; }
 .ge-story .ge-ins .chip { padding: 1px 8px; font-size: 10px; }
 
+/* ---- v0.14: grid-system manager */
+.grid-sys-bar {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 8px; margin-bottom: 10px;
+}
+.grid-sys-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.grid-sys-chip {
+  --gs-tint: #8aa0b8;
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--surface-2); border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--gs-tint);
+  border-radius: 6px; padding: 4px 8px; cursor: pointer;
+  font-size: 11.5px; color: var(--text-2);
+}
+.grid-sys-chip:hover { border-color: var(--border); color: var(--text-1); }
+.grid-sys-chip.is-active {
+  background: color-mix(in srgb, var(--gs-tint) 14%, var(--surface-2));
+  border-color: var(--gs-tint); color: var(--text-1);
+}
+.grid-sys-chip .gs-name { font-weight: 650; }
+.grid-sys-chip .gs-kind {
+  font-size: 9px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--text-3); background: var(--surface-1);
+  border-radius: 4px; padding: 1px 5px;
+}
+.grid-sys-chip .gs-primary {
+  font-size: 8.5px; text-transform: uppercase; letter-spacing: .4px;
+  color: var(--gs-tint);
+}
+.grid-sys-chip .gs-del {
+  font-size: 11px; color: var(--text-3); border-radius: 4px;
+  width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center;
+}
+.grid-sys-chip .gs-del:hover { color: var(--red); background: rgba(230,103,103,.12); }
+.grid-sys-add { display: inline-flex; gap: 6px; flex: none; }
+.grid-sys-editor {
+  background: var(--surface-1); border: 1px solid var(--border-soft);
+  border-radius: 8px; padding: 10px; margin-bottom: 10px;
+}
+.gs-meta { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+.gs-field { display: flex; flex-direction: column; gap: 3px; }
+.gs-field span {
+  font-size: 9.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .4px;
+}
+.gs-field input { padding: 3px 7px; font-size: 12px; }
+@media (max-width: 640px) { .gs-meta { grid-template-columns: 1fr 1fr; } }
+.grid-preview-wrap { margin-top: 2px; }
+.grid-preview {
+  width: 100%; height: 220px; display: block; margin-top: 6px;
+  background: var(--surface-1); border: 1px solid var(--border-soft); border-radius: 8px;
+}
+
 /* ---- section manager: stiffness modifiers */
 details.mgr-mods {
   background: var(--surface-2); border: 1px solid var(--border-soft);
