@@ -224,9 +224,9 @@ def check_punching(model, results, case: Optional[str] = None, *,
     status "N/A" with a note.
     """
     if not (isinstance(cover, (int, float)) and not isinstance(cover, bool)
-            and math.isfinite(cover) and cover > 0.0):
-        raise ValueError(f"'cover' must be a finite value > 0 (m), "
-                         f"got {cover!r}")
+            and math.isfinite(cover) and 0.0 < cover < 1.0):
+        raise ValueError(f"'cover' must be in METRES, 0 < cover < 1 "
+                         f"(got {cover!r} — millimetres?)")
     if fc_prime is not None and not (
             isinstance(fc_prime, (int, float))
             and not isinstance(fc_prime, bool)

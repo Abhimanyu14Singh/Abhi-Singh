@@ -78,8 +78,8 @@ v0.18 additions:
 * ``POST /api/design/punching`` — ACI two-way (punching) shear checks at
   every column supporting a meshed shell slab (body: ``{case?: name
   (default: the first DEAD-classified case), fc_prime?, cover?}``); 400 on
-  an unknown case, EMPTY ``checks`` list (not an error) when the model has
-  no shell slabs;
+  an unknown case, EMPTY ``columns`` list (not an error) when the model
+  has no shell slabs;
 * ``POST /api/results/virtual-work`` — per-member unit-load virtual-work
   contributions to the roof displacement for a linear static case (body:
   ``{case: name, direction: "X"|"Y"}``); response ``{contributions:
@@ -812,7 +812,7 @@ def create_app() -> Flask:
         except Exception as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify({"preliminary": True, "combos": combos,
-                        "checks": [c.to_dict() for c in checks],
+                        "piers": [c.to_dict() for c in checks],
                         "summary": summarize_walls(checks)})
 
     @app.post("/api/design/punching")
@@ -820,9 +820,10 @@ def create_app() -> Flask:
         """ACI two-way (punching) shear checks at slab columns (runs
         analysis when the model has meshed shell slabs).
 
-        Body: ``{case?: name, fc_prime?, cover?}`` — the case defaults to
-        the first DEAD-classified case.  400 on an unknown case; an empty
-        ``checks`` list (not an error) when the model has no shell slabs.
+        Body: ``{case?: name, fc_prime?, cover? (m)}`` — the case defaults
+        to the first DEAD-classified case.  400 on an unknown case; an
+        empty ``columns`` list (not an error) when the model has no shell
+        slabs.
         """
         if not _OPENSEES_OK:
             return jsonify({"error": "OpenSeesPy is not available"}), 400
@@ -849,7 +850,7 @@ def create_app() -> Flask:
                         and case not in model.combos:
                     raise KeyError(f"case/combo {case!r} not found")
                 return jsonify({"preliminary": True, "case": case,
-                                "checks": []})
+                                "columns": []})
             results = OpenSeesEngine(model).run()
             checks = check_punching(model, results, case, **kw)
         except (ValueError, TypeError, KeyError) as exc:
@@ -858,7 +859,7 @@ def create_app() -> Flask:
             return jsonify({"error": str(exc)}), 400
         return jsonify({"preliminary": True,
                         "case": checks[0].case if checks else case,
-                        "checks": [c.to_dict() for c in checks]})
+                        "columns": [c.to_dict() for c in checks]})
 
     @app.post("/api/results/virtual-work")
     def results_virtual_work():

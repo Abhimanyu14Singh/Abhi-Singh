@@ -352,6 +352,7 @@ def test_check_wall_piers_demands_and_shear_ratio():
                 "phiVn", "capacity_point", "boundary_required", "sigma_max",
                 "status", "governing_combo", "pm_points"):
         assert key in d
+    assert d["combo"] == d["governing_combo"]    # documented alias
     s = summarize_walls(checks)
     assert s["n"] == 1 and s["ok"] == 1 and s["preliminary"]
 
@@ -553,6 +554,9 @@ def test_punching_defaults_and_errors():
         check_punching(mdl, res, "NOPE")
     with pytest.raises(ValueError, match="cover"):
         check_punching(mdl, res, "GRAV", cover=0.0)
+    # cover is METRES: a millimetre-looking value fails loudly
+    with pytest.raises(ValueError, match="METRES"):
+        check_punching(mdl, res, "GRAV", cover=40.0)
     # no slabs -> []
     mdl2 = BuildingModel(name="noslab")
     mdl2.rigid_diaphragms = False
@@ -765,12 +769,13 @@ def test_api_design_wall(api_client):
     assert r.status_code == 200
     d = r.get_json()
     assert d["preliminary"] is True
-    assert len(d["checks"]) == 1
-    c = d["checks"][0]
+    assert len(d["piers"]) == 1
+    c = d["piers"][0]
     assert c["pier"] == "P1" and c["story"] == "Story1"
     assert c["P"] == pytest.approx(120.0, rel=1e-6)
     assert c["V"] == pytest.approx(50.0, rel=1e-6)
     assert c["status"] == "OK" and c["governing_combo"] == "U"
+    assert c["combo"] == "U"                     # web-table alias
     assert d["summary"]["n"] == 1
     # default combos (none on a combo-less model) -> clear 400
     r2 = api_client.post("/api/design/wall", json={"combos": ["NOPE"]})
@@ -798,18 +803,21 @@ def test_api_design_punching(api_client):
     assert r.status_code == 200
     d = r.get_json()
     assert d["case"] == "GRAV"                   # DEAD-classified default
-    assert len(d["checks"]) == 4
+    assert len(d["columns"]) == 4
     vc_hand = 0.33 * math.sqrt(30.0) * 1000.0
-    for c in d["checks"]:
+    for c in d["columns"]:
         assert c["Vu"] == pytest.approx(90.0, rel=1e-9)
         assert c["ratio"] == pytest.approx(
             (90.0 / (2.28 * 0.17)) / (0.75 * vc_hand), rel=1e-9)
     r2 = api_client.post("/api/design/punching", json={"case": "NOPE"})
     assert r2.status_code == 400 and "NOPE" in r2.get_json()["error"]
-    # slab-free model: empty checks, 200 (not an error)
+    # millimetre-looking cover -> loud 400 (cover is METRES)
+    r2b = api_client.post("/api/design/punching", json={"cover": 40.0})
+    assert r2b.status_code == 400 and "METRES" in r2b.get_json()["error"]
+    # slab-free model: empty columns, 200 (not an error)
     api_client.post("/api/model", json=_cantilever().to_dict())
     r3 = api_client.post("/api/design/punching", json={})
-    assert r3.status_code == 200 and r3.get_json()["checks"] == []
+    assert r3.status_code == 200 and r3.get_json()["columns"] == []
     # ... but an explicit unknown case still 400s
     r4 = api_client.post("/api/design/punching", json={"case": "NOPE"})
     assert r4.status_code == 400

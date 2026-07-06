@@ -1880,3 +1880,198 @@ pre-v0.17 results.
 non-finite / non-numeric) and forwards it to the combo generator.
 `POST /api/model` round-trips ``panel_zones`` ("none" | "rigid" |
 "scissors"; 400 on any other value via ``validate()``).
+
+---
+
+# v0.18 additions — shear wall design, punching shear, virtual-work diagrams
+
+No new model fields: all three features are request-driven post-processing
+(design preferences travel in the request, ETABS-style; the model dict is
+byte-identical to v0.17).
+
+## Shear wall design (`skyframe/design/wall.py`)
+
+Uniform-reinforcing pier checks driven by the EXISTING v0.15 per-story pier
+P/V/M free-body forces (``results["piers"]``).  Geometry per pier label from
+the labeled wall regions (``pier_geometry``): ``Lw`` = horizontal in-plane
+extent (corner projections onto ``hhat = ez x nhat``; walls sharing a label
+SUM their extents per story), ``t`` = the first region's shell-section
+thickness (mixed thickness noted), ``hs`` = story height, ``hw`` = TOTAL
+stack height (z extent over the label's regions).  ``fc'`` = explicit
+``fc_prime`` (kPa) or DERIVED from the wall concrete's modulus by inverting
+ACI 19.2.2.1 (``fc_from_E``: ``fc'[MPa] = (E[MPa]/4700)^2``, conversions
+explicit).  Defaults: ``rho_v = rho_h = 0.0025`` (ACI 11.6.1 minimum web
+ratios), ``fy = 420_000`` kPa.
+
+* **PMM** (``wall_interaction`` / ``wall_section_forces``) — rectangular
+  section ``Lw x t``, UNIFORMLY DISTRIBUTED vertical steel ``Ast =
+  rho_v*Lw*t`` split into ``N_STRIPS = 240`` midpoint strips (spec floor
+  200; midpoint is exact on the linear strain ramp, the two yield-kink
+  cells err at O(1/n^2) — measured ~3e-7 vs the exact smeared closed
+  form).  Strain compatibility with the ACI rectangular block (``a =
+  beta1*c``, beta1 per Table 22.2.2.4.3 via ``concrete.beta1``); phi per
+  ACI 21.2 from the EXTREME-bar strain (outermost strip centroid,
+  ``d_t = Lw*(1 - 0.5/n)``) via ``concrete.phi_from_strain``.  Diagram
+  polyline: capped pure compression ``phiPn_max = 0.80*0.65*(0.85*fc'*
+  (Ag - Ast) + fy*Ast)`` (tied cap, displaced concrete ignored at the
+  sweep points — the same documented approximations as the v0.6 column),
+  a 30-point descending-c sweep with the balanced point inserted, the
+  bisected ``Pn = 0`` pure-bending point, and pure tension ``-fy*Ast``.
+  ``ratio_pmm`` = RADIAL D/C in (|M|, P) space via the SAME
+  ``_radial_ratio`` the column check uses; ``capacity_point`` =
+  ``[|M|, P]/ratio``, the boundary crossing.  IN-PLANE bending only —
+  out-of-plane wall bending is OUT OF SCOPE in v0.18.
+* **Shear** (``wall_shear_strength``) — ACI 318-19 Eq. 11.5.4.3::
+
+      alpha_c(psi) = 3.0 (hw/lw <= 1.5) | 2.0 (>= 2.0) | linear between
+      vc [kPa] = alpha_c * 0.083 * lambda * sqrt(fc'[MPa]) * 1000
+      Vn [kN]  = Acv * (vc + rho_h*fy),  Acv = Lw*t,  phi_v = 0.75
+      cap (§18.10.4.4): Vn <= 0.66*sqrt(fc'[MPa])*1000*Acv
+
+  (0.083/0.66 are the standard SI transcriptions of the 1/8 sqrt-psi
+  coefficients; ``hw`` = the pier STACK height, ``lw`` = that story's Lw).
+* **Boundary trigger** (``boundary_element_check``) — ACI §18.10.6.3:
+  ``sigma = P/Ag + |M|*(Lw/2)/(t*Lw^3/12)``; required where ``sigma >
+  0.2*fc'``.  Enveloped over ALL supplied combos (``sigma_max`` +
+  ``sigma_combo``) — an "under any combo" condition, while the reported
+  P/V/M/ratios come from the GOVERNING combo (largest
+  max(ratio_pmm, ratio_shear)), exactly like the other design envelopes.
+
+```python
+check_wall_piers(model, results, combos=None, *, rho_v=0.0025,
+                 rho_h=0.0025, fy=420000.0, fc_prime=None, ...)
+    -> List[WallPierCheck]     # combos default: all ADDITIVE combos;
+                               # static case names are accepted too (the
+                               # piers block carries both); ValueError on
+                               # no pier forces / unknown name / bad param
+```
+
+`WallPierCheck.to_dict()` (one entry per pier per story, story order):
+
+```jsonc
+{"pier": "P1", "story": "Story1", "Lw": 3.0, "t": 0.2, "hs": 3.0,
+ "hw": 3.0, "hw_over_lw": 1.0, "alpha_c": 3.0, "fc": 28293.3,
+ "fy": 420000.0, "rho_v": 0.0025, "rho_h": 0.0025,
+ "P": 120.0, "V": 50.0, "M": 150.0,          // governing combo's (P +compr)
+ "ratio_pmm": 0.02, "ratio_shear": 0.046, "phiVn": 1086.2,
+ "shear_capped": false,
+ "capacity_point": [7500.0, 6000.0],         // [phiMn, phiPn] on the ray
+ "pm_points": [[0.0, 8263.7], ...],          // design polyline
+ "boundary_required": false, "sigma_max": 700.0, "sigma_limit": 5658.7,
+ "sigma_combo": "U", "status": "OK", "governing_combo": "U",
+ "combo": "U",                    // ALIAS of governing_combo (web tables)
+ "notes": [...], "preliminary": true}
+```
+
+Hand-checks (tests/test_wave19.py): P0/cap/pure-tension longhand exact;
+balanced + pure-bending + general-c strip results vs an INDEPENDENT
+closed-form smeared-steel integration (1e-3 spec, ~3e-7 measured); phi
+transition band vs the ACI linear interpolation exact; both alpha_c
+plateaus, the 1.75 midpoint (2.5) and the 0.66 cap longhand; sigma both
+sides of 0.2fc'; engine-driven combo envelope P = 120 / V = 50 / M = 150
+on the exact Wave-16 cantilever pier.
+
+## Punching shear (`skyframe/design/punching.py`)
+
+Two-way shear at every column supporting a MESHED SHELL slab (horizontal
+``kind == "slab", behavior == "shell"`` region; membrane slabs have no FE
+and are not checked).  Support detection: a column END node in the slab
+plane (z within 1e-6) and inside its plan polygon (boundary INCLUSIVE);
+columns drawn THROUGH a plane are not detected (split at stories, the
+ETABS practice).
+
+* ``Vu`` = the axial STEP at the level: ``C_below(top) - C_above(bottom)``
+  from the member STATIONS (station N is tension-positive -> ``C = -N``;
+  member end forces are +compression — CONTRACT v0.2/v0.6 signs).
+  Positive = the floor delivers load DOWNWARD into the column stack; a
+  transfer/mat gives a negative step (noted) and the check rates ``|Vu|``.
+* Critical section (§22.6.4.1): ``c1, c2`` = the column section's drawing
+  ``h, b``; ``d = t_slab - cover`` (``cover`` in METRES, default 0.03 m =
+  25 mm clear + half a 16 mm bar, documented simplification; validated
+  ``0 < cover < 1`` so an accidental millimetre value fails loudly);
+  ``b0 = 2*(c1+d) + 2*(c2+d)``.
+* ``vc`` = min of the three Table 22.6.5.2 formulas, SI transcriptions of
+  the psi originals (4 | 2+4/beta | 2+alpha_s*d/b0)::
+
+      vc1 = 0.33*lam*sqrt(fc'[MPa]);  vc2 = 0.17*(1 + 2/beta)*lam*sqrt(fc')
+      vc3 = 0.083*(2 + alpha_s*d/b0)*lam*sqrt(fc')      [MPa -> kPa *1000]
+
+  ``alpha_s = 40`` — INTERIOR columns only in v0.18 (edge/corner
+  classification OUT of scope; every supported column is rated interior,
+  noted on each result).  Unbalanced-moment transfer (gamma_v) and the
+  318-19 size factor lambda_s are OUT of scope (318-14 forms).
+  ``vu = |Vu|/(b0*d)``; ``ratio = vu/(0.75*vc)``.  fc' from ``fc_prime``
+  or the SLAB material's E via ``fc_from_E``.
+
+```python
+check_punching(model, results, case=None, *, fc_prime=None, cover=0.03,
+               phi=0.75, lam=1.0) -> List[PunchingCheck]
+# case default: the first DEAD-classified case (default_gravity_case);
+# unknown case -> KeyError; NO shell slabs -> [] (empty, not an error)
+```
+
+`PunchingCheck.to_dict()`:
+
+```jsonc
+{"uid": "C1", "story": "Story1", "slab": "S1", "case": "GRAV",
+ "Vu": 90.0, "vu": 232.2, "vc": 1807.5, "phi_vc": 1355.6,
+ "b0": 2.28, "d": 0.17, "c1": 0.4, "c2": 0.4, "beta": 1.0,
+ "fc": 30000.0, "ratio": 0.1713, "status": "OK",   // "N/A": no b/h or d<=0
+ "notes": [...], "preliminary": true}
+```
+
+Hand-checks: 4-column flat plate — ``Vu = q*B^2/4 = 90`` by statics +
+symmetry alone (1e-9); b0/d/vu/min-of-three/ratio longhand; beta = 4
+column makes vc2 govern; 2-story stack reports the STEP (90), not the
+accumulated axial (180).
+
+## Virtual-work drift diagrams (engine)
+
+```python
+OpenSeesEngine(model).run_virtual_work(case_name, direction="X"|"Y") ->
+  {"case", "direction", "contributions": {uid: e}, "total", "roof_disp"}
+```
+
+Solves the REAL linear static case and a UNIT virtual lateral load at the
+TOP story (a copy of the model gains a ``__VW_UNIT__`` pattern/case — the
+user's model is NEVER mutated; the unit load flows through the standard
+story-force path: the rigid-diaphragm master when the top story has one,
+else an equal split over the top-story nodes).  Per frame member::
+
+    e_uid = int_0^L [ N_r*N_v/EA + M3_r*M3_v/EI33 + M2_r*M2_v/EI22
+                      + T_r*T_v/GJ ] dx
+
+over the 11 stations (effective = modifier-scaled section properties; NO
+shear term — the Euler elasticBeamColumn has no shear flexibility, so a
+V^2/GAs term would break the identity).  Quadrature: composite SIMPSON on
+the 11 equally-spaced stations — EXACT whenever the station fields are
+piecewise-cubic, i.e. nodal/point-at-station loads (linear x linear) and
+full-span UDLs on the real case (quadratic x linear = cubic); partial/
+trapezoid records with off-station breakpoints, split members and rigid
+end offsets integrate approximately (documented).  ``roof_disp`` = the
+virtual load's work on the REAL displacements (master ux/uy, or the mean
+over the equally-loaded top-story nodes); by the unit-load theorem
+``total == roof_disp`` for frame-only models — contributions are NOT
+rescaled, the identity IS the correctness check; shells/links/springs
+deform without a station integral, so their share appears as
+``roof_disp - total`` (documented limitation).  Raises ``ValueError`` on
+an unknown case, bad direction, P-Delta case, or a nonlinear model
+(tension/compression-only members, gap/hook/isolator links).
+
+Hand-checks: cantilever ``total == roof_disp == F*L^3/3EI`` at rel 1e-12;
+two tied cantilevers (I2 = 2*I1) split e_i/total = k_i/(k1+k2) = 1/3, 2/3
+(fixed-free k_i = 3EI_i/h^3: e_i = (F*k_i/K)(k_i/K)h^3/3EI_i = F*k_i/K^2);
+asymmetric UDL portal holds the identity to machine precision (cubic
+products — Simpson exact).
+
+## API additions
+
+| Method | Path                        | Body / Response |
+|--------|-----------------------------|-----------------|
+| POST   | `/api/design/wall`          | `{combos?: [names] (default: all additive combos), rho_v?, rho_h?, fy?, fc_prime?}` → `{"preliminary": true, "combos", "piers": [WallPierCheck...], "summary": {n, ok, ng, na, max_ratio, governing, boundary_stories, preliminary}}`; 400 on bad params / unknown combo / no pier forces (label walls or set `auto_pier_walls`) |
+| POST   | `/api/design/punching`      | `{case?: name (default: first DEAD-classified case), fc_prime?, cover? (m)}` → `{"preliminary": true, "case", "columns": [PunchingCheck...]}`; 400 on an unknown case / a `cover` outside (0, 1) m; `columns: []` (200) when the model has no shell slabs |
+| POST   | `/api/results/virtual-work` | `{case: name, direction: "X"\|"Y"}` → `{"contributions": {uid: e}, "total", "roof_disp", "case", "direction"}`; 400 on unknown case / bad direction / P-Delta or nonlinear model |
+
+All three run the engine on the CURRENT model server-side (the design
+endpoints call ``run()`` like ``/api/design/steel``); no analysis results
+travel in the request.

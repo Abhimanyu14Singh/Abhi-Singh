@@ -429,6 +429,9 @@ class WallPierCheck:
             "sigma_max": self.sigma_max, "sigma_limit": self.sigma_limit,
             "sigma_combo": self.sigma_combo,
             "status": self.status, "governing_combo": self.governing_combo,
+            # "combo" is a documented ALIAS of governing_combo (the web UI
+            # tables key on it); both always carry the same value
+            "combo": self.governing_combo,
             "notes": list(self.notes), "preliminary": True,
         }
 
