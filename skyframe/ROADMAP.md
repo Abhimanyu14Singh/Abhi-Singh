@@ -143,9 +143,9 @@ scrutinized benchmark tests.
 - [x] 6. Wall/slab openings; elevation-view drawing (Wave 6)
 - [x] 7. Nonlinear static pushover (OpenSees fiber hinges) (Wave 6)
 
-## Status — v1.5 released 🎉
+## Status — v1.6 released 🎉
 All waves above are complete with engine + REST API + UI, pinned by a
-458-test suite. The app builds standalone locally (`packaging/build.sh`).
+481-test suite. The app builds standalone locally (`packaging/build.sh`).
 
 ## Scheduled waves toward ETABS v23 parity
 Driven by `docs/ETABS23_GAP_MATRIX.md` (compiled from CSI ETABS v23 docs
@@ -165,9 +165,11 @@ and release notes). No gap is skipped — everything below is scheduled.
 - [ ] Fiber PMM hinges → moved to Wave 22 (built on the Section Designer
       fiber-section infrastructure — not skipped, rescheduled)
 
-### Wave 21 — composite & slab flexure
-- [ ] Composite beam design (studs, partial composite, camber, DG11 vibration)
-- [ ] RC slab strip flexural design; walking-vibration check
+### Wave 21 — composite & slab flexure  ✅ done (v1.6)
+- [x] Composite beam design (studs, partial composite, DG11 vibration)
+- [x] RC slab strip flexural design; walking-vibration check
+- [ ] Camber recommendation → moved to Wave 24 (steel design depth —
+      not skipped, rescheduled)
 
 ### Wave 22 — sections & devices
 - [ ] Section Designer (arbitrary fiber sections, PMM surface)
@@ -180,9 +182,10 @@ and release notes). No gap is skipped — everything below is scheduled.
 - [ ] Nonlinear layered shell walls; line springs / nonlinear area springs
 - [ ] Semi-rigid diaphragm auto lateral-load distribution
 
-### Wave 24 — code breadth
+### Wave 24 — code breadth & steel design depth
 - [ ] ASCE 7-22 updates; EC2/EC3 frame design; NBCC wind/seismic
 - [ ] Wind exposure from shell objects (Cp); AISC 341 seismic checks
+- [ ] Composite beam camber recommendation (from Wave 21)
 
 ### Wave 25 — speed, API & tables ("better speed" goal)
 - [ ] Engine profiling + multithreaded solver wiring; UI render profiling

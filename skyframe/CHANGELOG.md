@@ -1,5 +1,24 @@
 # SkyFrame changelog
 
+## 1.6.0
+
+### Wave 21 — composite floors & slab design
+- **Composite beam design** (AISC 360-16 Ch. I3): effective width per
+  I3.1a from the real floor geometry, full and partial composite
+  strength through all three plastic-neutral-axis cases, I8.2a stud
+  strengths, unshored pre-composite checks, and lower-bound-inertia
+  live-load deflections — per-beam D/C tables with stud counts and
+  percent-composite.
+- **RC slab strip design**: ETABS-style column/middle strips derived
+  from the support lines, strip moments integrated from the shell
+  results, and required reinforcement from an exact closed-form
+  inversion of the Whitney block (with 0.0018bh minimums and spacing
+  caps), with per-region strip diagrams.
+- **Walking vibration** (AISC Design Guide 11): fn = 0.18√(g/Δ) on the
+  sustained-load deflection and the Eq. 4-1 peak-acceleration check
+  with selectable occupancy limits; failing beams pulse in the 3D view.
+- 481 tests (22 new).
+
 ## 1.5.0
 
 ### Wave 20 — nonlinear production tools
