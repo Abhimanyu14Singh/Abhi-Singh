@@ -143,19 +143,19 @@ scrutinized benchmark tests.
 - [x] 6. Wall/slab openings; elevation-view drawing (Wave 6)
 - [x] 7. Nonlinear static pushover (OpenSees fiber hinges) (Wave 6)
 
-## Status — v1.3 released 🎉
+## Status — v1.4 released 🎉
 All waves above are complete with engine + REST API + UI, pinned by a
-403-test suite. The app builds standalone locally (`packaging/build.sh`).
+435-test suite. The app builds standalone locally (`packaging/build.sh`).
 
 ## Scheduled waves toward ETABS v23 parity
 Driven by `docs/ETABS23_GAP_MATRIX.md` (compiled from CSI ETABS v23 docs
 and release notes). No gap is skipped — everything below is scheduled.
 
-### Wave 19 — concrete wall & slab design (top-2 gaps)
-- [ ] Shear wall design: pier PMM (uniform reinforcing), ACI 318 shear,
+### Wave 19 — concrete wall & slab design (top-2 gaps)  ✅ done (v1.4)
+- [x] Shear wall design: pier PMM (uniform reinforcing), ACI 318 shear,
       §18.10.6.3 boundary-element check, D/C table
-- [ ] Punching shear checks at columns (ACI 318 two-way shear, b0 at d/2)
-- [ ] Energy / virtual-work drift-optimization diagram
+- [x] Punching shear checks at columns (ACI 318 two-way shear, b0 at d/2)
+- [x] Energy / virtual-work drift-optimization diagram
 
 ### Wave 20 — nonlinear production tools
 - [ ] Auto ASCE 41-17 frame hinges (M3/PMM tables) + fiber PMM hinges

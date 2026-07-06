@@ -4391,7 +4391,7 @@ function renderWallTable() {
    v0.18 — PUNCHING CHECK (Design → Punching)
    POST /api/design/punching {case?, fc_prime?, cover?} → {columns:
    [{uid, story, Vu, vu, phi_vc, b0, d, ratio, status, case}]}.
-   cover ENTERED and SENT in mm. Row click highlights the column in the
+   cover ENTERED in mm, SENT in metres. Row click highlights the column in the
    2D plan (selection) and the 3D view; D/C > 1 columns get a red halo
    at their plan position while this card is active.
    ================================================================ */
@@ -4447,7 +4447,8 @@ async function runPunchCheck() {
   try {
     store.punchResult = await designPunching({
       case: store.punchCase,
-      fc_prime: store.punchParams.fc, cover: store.punchParams.cover,
+      // form units are mm; the API validates cover in METRES (0 < cover < 1)
+      fc_prime: store.punchParams.fc, cover: store.punchParams.cover / 1000,
     });
     store.punchSel = null;
     renderPunchPanel();                       // re-renders table + plan halos

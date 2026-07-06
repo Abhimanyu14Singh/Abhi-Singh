@@ -1,5 +1,22 @@
 # SkyFrame changelog
 
+## 1.4.0
+
+### Wave 19 — concrete wall & slab design, drift optimization
+- **Shear wall design** (ACI 318): uniform-reinforcing pier PMM check by
+  strip strain compatibility, §11.5.4.3 shear strength with both α_c
+  branches and the 0.66√f'c cap, and §18.10.6.3 stress-based
+  boundary-element triggers — per-pier D/C tables with boundary badges
+  and CSV export.
+- **Punching shear checks**: two-way shear at every column supporting a
+  meshed slab (critical section b0 at d/2, min-of-three ACI Table
+  22.6.5.2 stresses), with plan halo glyphs on failing columns.
+- **Drift optimizer**: unit-load virtual-work diagrams rank each
+  member's contribution to roof drift (verified by the unit-load
+  theorem to machine precision), colored in the 3D viewer with a
+  top-10 table.
+- 435 tests (32 new).
+
 ## 1.3.0
 
 ### Wave 18 — vertical seismic component & panel zones

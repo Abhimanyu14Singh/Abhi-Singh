@@ -7,7 +7,7 @@ An ETABS-style structural analysis application:
   * story drifts, story shears, base reactions, member forces, mode shapes
 """
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 from .core.model import (  # noqa: F401
     BuildingModel,

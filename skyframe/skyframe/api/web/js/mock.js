@@ -2220,7 +2220,7 @@ export function mockDesignWall(model, body = {}) {
 }
 
 /** POST /api/design/punching — two-way (punching) shear at slab–column
-    connections. body {case?, fc_prime? (kPa), cover? (mm)} →
+    connections. body {case?, fc_prime? (kPa), cover? (m)} →
     {columns: [{uid, story, Vu, vu, phi_vc, b0, d, ratio, status, case}]}.
     Four columns of the slab story; the interior one lands at D/C ≈ 1.15.
     φvc = 0.75·0.33·√f'c (MPa→kPa); b0 = 4(c+d) at d/2 from the face. */
@@ -2228,7 +2228,7 @@ export function mockDesignPunching(model, body = {}) {
   const rnd = mulberry32(1717);
   const jit = a => 1 + (rnd() - 0.5) * 2 * a;
   const fc = body.fc_prime > 0 ? body.fc_prime : 30000;   // kPa
-  const coverMm = body.cover > 0 ? body.cover : 40;       // mm
+  const coverMm = body.cover > 0 ? body.cover * 1000 : 40;   // m → mm
   const caseName = body.case || Object.keys(model.combos || {})[0] ||
     Object.keys(model.cases || {})[0] || "DEAD";
 
