@@ -112,6 +112,27 @@ v0.19 additions:
   pattern): wraps ``add_staged_case`` (per-story sequential gravity);
   returns the model dict.
 
+v0.20 additions:
+
+* ``POST /api/design/composite`` — AISC 360-16 I3 composite beam checks
+  for every horizontal W-shape beam supporting a meshed shell slab (body:
+  ``{combos?: [names] (default: all additive combos), fc_prime?, t_slab?,
+  hr?, stud_d?, stud_Fu?, rib_spacing?, shored?: bool}``); response
+  ``{preliminary, combos, params, beams: [CompositeBeamCheck...],
+  summary}`` — ``beams: []`` (not an error) when the model has no beam
+  members; 400 on bad parameters / unknown combo names;
+* ``POST /api/design/slab`` — ETABS-style column/middle strip flexural
+  design of every meshed shell slab (body: ``{case?: name (default: the
+  first DEAD-classified case), fc_prime?, bar_d?, cover?}``); response
+  ``{preliminary, case, regions: [...]}`` — ``regions: []`` (not an
+  error) when the model has no shell slabs; 400 on an unknown case / bad
+  parameters;
+* ``POST /api/results/vibration`` — AISC Design Guide 11 walking-
+  vibration screen per slab-supporting beam (body: ``{case?: dead case,
+  live_case?, live_factor?, beta?, ap_limit?}``); response
+  ``{preliminary, case, live_case, beams: [VibrationCheck...]}``; 400 on
+  unknown case names / bad parameters.
+
 Saved models live as ``<name>.skyframe.json`` files in ``~/.skyframe/models``
 (override with the ``SKYFRAME_MODELS_DIR`` environment variable; the
 directory is created on demand).  Names must match ``[A-Za-z0-9 _-]{1,60}``.
@@ -1021,6 +1042,149 @@ def create_app() -> Flask:
         except (ValueError, TypeError) as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify(model.to_dict())
+
+    # -------------------------------- v0.20: composite / slab / vibration
+    @app.post("/api/design/composite")
+    def design_composite():
+        """AISC 360-16 I3 composite beam checks (runs analysis).
+
+        Body: ``{combos?: [names], fc_prime?, t_slab?, hr?, stud_d?,
+        stud_Fu?, rib_spacing?, shored?: bool}`` — combos default to
+        every additive combo; slab thickness / fc' default from the slab
+        the beam supports.  ``beams: []`` (not an error) when the model
+        has no beam members.
+        """
+        if not _OPENSEES_OK:
+            return jsonify({"error": "OpenSeesPy is not available"}), 400
+        from skyframe.design.composite import (check_composite_beams,
+                                               summarize_composite)
+        body = request.get_json(silent=True) or {}
+        combos = body.get("combos")
+        if combos is not None and (
+                not isinstance(combos, list)
+                or not all(isinstance(c, str) and c for c in combos)):
+            return jsonify({"error": "'combos' must be a list of combo/"
+                                     "case name strings"}), 400
+        shored = body.get("shored", False)
+        if not isinstance(shored, bool):
+            return jsonify({"error": "'shored' must be a boolean"}), 400
+        model = _state["model"]
+        try:
+            kw = {}
+            for key in ("fc_prime", "t_slab", "hr", "stud_d", "stud_Fu",
+                        "rib_spacing"):
+                v = _num(body, key, default=None)
+                if v is not None:
+                    kw[key] = v
+            params = {"shored": shored, **kw}
+            if not any(m.kind == "beam" for m in model.members):
+                # no beams: nothing to check by definition — but an
+                # explicitly named unknown combo is still a caller error
+                for c in combos or []:
+                    if c not in model.cases and c not in model.combos:
+                        raise KeyError(f"case/combo {c!r} not found")
+                return jsonify({"preliminary": True, "combos": combos,
+                                "params": params, "beams": [],
+                                "summary": summarize_composite([])})
+            results = OpenSeesEngine(model).run()
+            checks = check_composite_beams(model, results, combos,
+                                           shored=shored, **kw)
+        except (ValueError, TypeError, KeyError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"preliminary": True, "combos": combos,
+                        "params": params,
+                        "beams": [c.to_dict() for c in checks],
+                        "summary": summarize_composite(checks)})
+
+    @app.post("/api/design/slab")
+    def design_slab():
+        """ETABS-style slab strip flexural design (runs analysis when the
+        model has meshed shell slabs).
+
+        Body: ``{case?: name, fc_prime?, bar_d?, cover? (m)}`` — the case
+        defaults to the first DEAD-classified case.  400 on an unknown
+        case; ``regions: []`` (not an error) when the model has no shell
+        slabs.
+        """
+        if not _OPENSEES_OK:
+            return jsonify({"error": "OpenSeesPy is not available"}), 400
+        from skyframe.design.slab import check_slab_strips
+        body = request.get_json(silent=True) or {}
+        case = body.get("case")
+        if case is not None and (not isinstance(case, str) or not case):
+            return jsonify({"error": "'case' must be a case/combo name "
+                                     "string"}), 400
+        model = _state["model"]
+        has_slabs = any(r.kind == "slab" and r.behavior == "shell"
+                        for r in model.shells)
+        try:
+            kw = {}
+            for key in ("fc_prime", "bar_d", "cover"):
+                v = _num(body, key, default=None)
+                if v is not None:
+                    kw[key] = v
+            if not has_slabs:
+                # no slabs: no strips by definition — but an explicitly
+                # named unknown case is still a caller error
+                if case is not None and case not in model.cases \
+                        and case not in model.combos:
+                    raise KeyError(f"case/combo {case!r} not found")
+                return jsonify({"preliminary": True, "case": case,
+                                "regions": []})
+            results = OpenSeesEngine(model).run()
+            regions = check_slab_strips(model, results, case, **kw)
+        except (ValueError, TypeError, KeyError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"preliminary": True,
+                        "case": regions[0]["case"] if regions else case,
+                        "regions": regions})
+
+    @app.post("/api/results/vibration")
+    def results_vibration():
+        """DG11 walking-vibration screen per slab-supporting beam (runs
+        analysis).
+
+        Body: ``{case?: dead case, live_case?, live_factor?, beta?,
+        ap_limit?}`` — the case defaults to the first DEAD-classified
+        case, the live case to the first LIVE-classified one.
+        """
+        if not _OPENSEES_OK:
+            return jsonify({"error": "OpenSeesPy is not available"}), 400
+        from skyframe.design.vibration import check_vibration
+        body = request.get_json(silent=True) or {}
+        model = _state["model"]
+        names = {}
+        for key in ("case", "live_case"):
+            v = body.get(key)
+            if v is not None and (not isinstance(v, str) or not v):
+                return jsonify({"error": f"{key!r} must be a case/combo "
+                                         "name string"}), 400
+            if v is not None and v not in model.cases \
+                    and v not in model.combos:
+                return jsonify({"error": f"case/combo {v!r} not found"}), 400
+            names[key] = v
+        try:
+            kw = {}
+            for key in ("live_factor", "beta", "ap_limit"):
+                v = _num(body, key, default=None)
+                if v is not None:
+                    kw[key] = v
+            results = OpenSeesEngine(model).run()
+            checks = check_vibration(model, results, names["case"],
+                                     names["live_case"], **kw)
+        except (ValueError, TypeError, KeyError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 400
+        case = names["case"]
+        live = names["live_case"]
+        return jsonify({"preliminary": True, "case": case,
+                        "live_case": live,
+                        "beams": [c.to_dict() for c in checks]})
 
     # --------------------------------------------- v0.12: steel optimization
     @app.post("/api/design/optimize")
