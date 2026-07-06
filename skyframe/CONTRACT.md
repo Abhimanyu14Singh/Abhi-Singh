@@ -1782,3 +1782,101 @@ paths) and the response carries the ``"live_reduction"`` factors; 400 on an
 unknown live case.  `POST /api/model` round-trips ``deflection_limit``;
 `POST /api/analyze` returns ``member_deflections`` (per static case /
 additive combo) and the top-level ``deflection_checks`` block automatically.
+
+# v0.17 additions — vertical seismic component (Ev), panel zones
+
+## Vertical seismic component Ev (`skyframe/core/codes.py`)
+
+```python
+def asce7_combinations(model, standard="LRFD", SDS=None): ...
+# SDS: Optional[float], finite >= 0 (bool rejected); None (default)
+#   reproduces the pre-v0.17 output EXACTLY, name-for-name.
+```
+
+When ``SDS`` is given, the SEISMIC combinations fold the vertical seismic
+component ``Ev = 0.2 * SDS * D`` (ASCE 7-16 §12.4.2.2 Eq. 12.4-4a) into the
+DEAD factor per §12.4.2.3, redundancy ``rho = 1``:
+
+* LRFD (basic combos 6 / 7)::
+
+      (1.2 + 0.2*SDS) D + 1.0 L ± 1.0 QE     # E = Eh + Ev
+      (0.9 - 0.2*SDS) D ± 1.0 QE             # E = Eh - Ev
+
+* ASD (§2.4.5 combos 8 / 9 / 10)::
+
+      (1.0 + 0.14*SDS)  D ± 0.7 QE
+      (1.0 + 0.105*SDS) D ± 0.525 QE + 0.75 L
+      (0.6 - 0.14*SDS)  D ± 0.7 QE
+
+The ``±`` sign variants reverse only the HORIZONTAL component; Ev's sign is
+fixed by the combination form (additive in gravity-heavy combos, subtractive
+in uplift combos).  WIND and gravity-only combinations are UNCHANGED (Ev is
+seismic-only).  Combo names carry the effective dead factor via ``%g``
+formatting (e.g. ``SDS=1.0`` → ``1.4D+1.0L+1.0EQX``, ``0.7D+1.0EQX``).
+``apply_asce7_combinations`` forwards ``SDS`` unchanged.
+
+Hand-checks: SDS=1.0 LRFD dead factors 1.4/0.7 exact; SDS=0.5 ASD
+1.07/1.0525/0.53; SDS=0 ≡ SDS=None bit-identical.
+
+## Panel zones (`skyframe/core/model.py`, `skyframe/engine/opensees_engine.py`)
+
+```python
+PANEL_ZONE_OPTIONS = ("none", "rigid", "scissors")
+# BuildingModel gains (round-trips; absent key = "none"; validate() raises
+# ValueError on any other value):
+#   panel_zones: str = "none"
+```
+
+Model-level ETABS-style beam-column joint assumption, applied INTERNALLY by
+the engine at build time — the user's model data is NEVER mutated:
+
+* ``"none"`` — centerline modeling; the exact pre-v0.17 behavior.
+* ``"rigid"`` — automatic rigid end zones at every interior beam-column
+  joint (a deduped point where >= 1 column end and >= 1 beam end meet;
+  axial-only members never participate).  Rule (``compute_panel_zone_offsets``,
+  returns ``{uid: (off_i, off_j)}`` for EVERY member):
+  each COLUMN end at the joint gets ``max(connecting beam h) / 2``; each
+  BEAM end gets ``max(connecting column h) / 2``.  USER-SET explicit
+  offsets (``rigid_i/rigid_j > 0``) win per member end; sections with
+  ``h == 0`` contribute nothing; if the combined offsets would consume the
+  whole member length, or the mesher split the member (shell-edge /
+  Winkler discretization — the v0.9 offset machinery is single-segment
+  only), the member reverts to its user offsets with a ``UserWarning``.
+  Offsets flow through the EXACT v0.9 rigid-offset transform.
+* ``"scissors"`` — elastic scissors panel-zone spring (Krawinkler/Charney
+  idealization).  Per interior joint (``compute_panel_zone_springs``):
+
+      K_theta = G * d_c * d_b * t_p
+
+  ``G`` = governing column material shear modulus (kPa); ``d_c``/``t_p`` =
+  that column section's ``h``/``b`` (rectangular web IS the panel — no
+  doubler term in v0.17); ``d_b`` = deepest connecting beam ``h``.  The
+  governing column is the deepest VERTICAL column at the joint.  In the
+  built model the joint node is DUPLICATED: beams connect to the duplicate,
+  a zeroLength rotational spring (global rx AND ry) of stiffness K_theta
+  plus an equalDOF tie on ux/uy/uz/rz bridges original <-> duplicate.
+  Fixed-end member-load moments on a redirected beam end land on the
+  duplicate (else they would bypass the spring).  Skipped with a
+  ``UserWarning``: joints with no vertical column, sections without
+  drawing dimensions (b/h == 0), and support/restrained joints (the
+  equalDOF tie would hide beam shear from the reaction).  ELASTIC panel
+  stiffness only — Krawinkler's trilinear panel yielding is out of scope.
+
+```python
+engine.panel_zone_joints() -> List[dict]
+#   [{"point": [x,y,z], "orig": tag, "dup": tag, "K": K_theta}, ...];
+#   empty unless model.panel_zones == "scissors".
+```
+
+Hand-checks: rigid mode on a portal frame matches the SAME model with the
+equivalent explicit rigid_i/rigid_j offsets to machine precision; scissors
+K_theta hand-computed G*d_c*d_b*t_p exact; a stiff-spring scissors model
+converges to the centerline model as K -> inf; "none" is bit-identical to
+pre-v0.17 results.
+
+## API additions
+
+`POST /api/combos/asce7` accepts optional ``SDS`` (>= 0; 400 on negative /
+non-finite / non-numeric) and forwards it to the combo generator.
+`POST /api/model` round-trips ``panel_zones`` ("none" | "rigid" |
+"scissors"; 400 on any other value via ``validate()``).

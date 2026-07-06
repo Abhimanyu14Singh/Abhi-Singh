@@ -244,6 +244,141 @@ def _local_axes(member: FrameMember) -> Tuple[Vec3, Vec3, Vec3, Vec3, bool]:
 
 
 # --------------------------------------------------------------------------- #
+# v0.17 panel zones (beam-column joint modeling)
+# --------------------------------------------------------------------------- #
+def _panel_zone_joints(model: BuildingModel
+                       ) -> Dict[Vec3, Dict[str, list]]:
+    """Interior beam-column joints: coordinate key -> member ends meeting it.
+
+    A joint is any deduped point where at least one COLUMN end and one BEAM
+    end connect.  Axial-only (Truss) members never participate (they carry
+    no bending, so a joint model is meaningless on them).  Returns
+    ``{_pkey(point): {"column": [(member, "i"|"j"), ...], "beam": [...]}}``
+    for qualifying joints only.
+    """
+    ends: Dict[Vec3, Dict[str, list]] = {}
+    for m in model.members:
+        if m.kind not in ("column", "beam"):
+            continue
+        if getattr(m, "axial_limit", "both") != "both":
+            continue
+        for end, p in (("i", m.pi), ("j", m.pj)):
+            ends.setdefault(_pkey(p), {"column": [], "beam": []}
+                            )[m.kind].append((m, end))
+    return {key: kinds for key, kinds in ends.items()
+            if kinds["column"] and kinds["beam"]}
+
+
+def compute_panel_zone_offsets(model: BuildingModel
+                               ) -> Dict[str, Tuple[float, float]]:
+    """Effective rigid end-zone lengths per member for panel_zones "rigid".
+
+    v0.17 automatic rigid end zones (ETABS-style rigid panel-zone
+    assumption), computed from the joint geometry — the model is NEVER
+    mutated; the engine applies these internally through the v0.9
+    rigid-offset machinery:
+
+    * at every interior beam-column joint (see :func:`_panel_zone_joints`),
+      each COLUMN end connecting there gets a rigid offset equal to HALF THE
+      DEEPEST CONNECTING BEAM depth (``max(beam section h) / 2``), and each
+      BEAM end gets HALF THE DEEPEST CONNECTING COLUMN depth
+      (``max(column section h) / 2``) — the simple documented rule (the
+      column depth perpendicular to each beam is not resolved per direction
+      in v0.17);
+    * USER-SET explicit offsets win PER MEMBER END: an end with
+      ``rigid_i > 0`` (resp. ``rigid_j > 0``) keeps its own effective offset
+      ``rigid_factor * rigid_i`` untouched;
+    * sections without a drawing depth (``h == 0``) contribute no offset;
+    * if the combined offsets would consume a member's whole length the
+      member reverts to its user-set offsets with a ``UserWarning``.
+
+    Returns ``{uid: (offset_i, offset_j)}`` (m) for EVERY member (members
+    away from joints simply carry their user offsets).
+    """
+    out: Dict[str, Tuple[float, float]] = {
+        m.uid: (m.rigid_offset_i, m.rigid_offset_j) for m in model.members}
+    computed: Dict[Tuple[str, str], float] = {}
+    for key, kinds in _panel_zone_joints(model).items():
+        max_beam_h = max((model.sections[m.section].h
+                          for m, _ in kinds["beam"]), default=0.0)
+        max_col_h = max((model.sections[m.section].h
+                         for m, _ in kinds["column"]), default=0.0)
+        for m, end in kinds["column"]:
+            if max_beam_h > 0.0:
+                computed[(m.uid, end)] = max(
+                    computed.get((m.uid, end), 0.0), max_beam_h / 2.0)
+        for m, end in kinds["beam"]:
+            if max_col_h > 0.0:
+                computed[(m.uid, end)] = max(
+                    computed.get((m.uid, end), 0.0), max_col_h / 2.0)
+    for m in model.members:
+        off_i, off_j = out[m.uid]
+        if m.rigid_i <= 0.0 and (m.uid, "i") in computed:
+            off_i = computed[(m.uid, "i")]
+        if m.rigid_j <= 0.0 and (m.uid, "j") in computed:
+            off_j = computed[(m.uid, "j")]
+        if (off_i, off_j) == out[m.uid]:
+            continue
+        if off_i + off_j >= m.length - 1e-9:
+            warnings.warn(
+                f"panel zones: member {m.uid!r} rigid end zones "
+                f"({off_i + off_j:.4g} m) would leave no clear span "
+                f"(length {m.length:.4g} m); centerline kept", UserWarning)
+            continue
+        out[m.uid] = (off_i, off_j)
+    return out
+
+
+def compute_panel_zone_springs(model: BuildingModel) -> Dict[Vec3, dict]:
+    """Elastic scissors panel-zone spring per interior beam-column joint.
+
+    v0.17 scissors (Krawinkler/Charney-style ELASTIC panel idealization):
+    the joint's panel-shear stiffness is condensed into one rotational
+    spring
+
+        K_theta = G * d_c * d_b * t_p
+
+    with ``G`` the governing column material's shear modulus (kPa), ``d_c``
+    the governing column depth (section ``h``), ``d_b`` the DEEPEST
+    connecting beam depth, and ``t_p`` the panel thickness taken as the
+    governing column section ``b`` (for rectangular sections the full web
+    IS the panel; a doubler-plate term is out of scope in v0.17).  The
+    governing column at a joint is the deepest VERTICAL column connecting
+    there; joints with no vertical column, or with any of d_c/d_b/t_p == 0
+    (sections without drawing dimensions), are skipped with a
+    ``UserWarning``.  This is the ELASTIC panel stiffness only — yielding
+    of the panel (Krawinkler's trilinear law) is not modeled.
+
+    Returns ``{_pkey(point): {"point", "K", "G", "d_c", "d_b", "t_p"}}``.
+    """
+    out: Dict[Vec3, dict] = {}
+    for key, kinds in _panel_zone_joints(model).items():
+        vcols = []
+        for m, _end in kinds["column"]:
+            d = (m.pj[0] - m.pi[0], m.pj[1] - m.pi[1])
+            if math.hypot(d[0], d[1]) < _TOL:
+                vcols.append(m)
+        if not vcols:
+            warnings.warn(f"scissors panel zone at {tuple(key)} skipped: "
+                          "no vertical column at the joint", UserWarning)
+            continue
+        col = max(vcols, key=lambda m: model.sections[m.section].h)
+        csec = model.sections[col.section]
+        d_c, t_p = csec.h, csec.b
+        d_b = max(model.sections[m.section].h for m, _ in kinds["beam"])
+        if d_c <= 0.0 or d_b <= 0.0 or t_p <= 0.0:
+            warnings.warn(
+                f"scissors panel zone at {tuple(key)} skipped: section "
+                "drawing dimensions (b/h) are required to size the panel",
+                UserWarning)
+            continue
+        G = model.materials[csec.material].G
+        out[key] = {"point": tuple(key), "K": G * d_c * d_b * t_p,
+                    "G": G, "d_c": d_c, "d_b": d_b, "t_p": t_p}
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # exact member-load mechanics (Euler-Bernoulli, prismatic)
 # --------------------------------------------------------------------------- #
 def _local_stiffness(E: float, G: float, A: float, Iy: float, Iz: float,
@@ -632,6 +767,17 @@ class _Assembly:
     #   v0.15: grounded anchors of advanced device links (fully fixed nodes
     #   connected ONLY to damper/gap/hook/isolator links); reported as
     #   supports, excluded from story node sets / diaphragm slaving
+    pz_joints: Dict[int, dict] = field(default_factory=dict)
+    #   v0.17 scissors panel zones: original joint node tag ->
+    #   {"dup": duplicate tag, "K": spring stiffness, "ele": zeroLength tag}.
+    #   Beams connect to the duplicate; a rotational spring (global rx/ry)
+    #   plus an equalDOF tie (ux/uy/uz/rz) bridges original <-> duplicate.
+    pz_load_tag: Dict[Tuple[str, int], int] = field(default_factory=dict)
+    #   v0.17: (member uid, mesh point index) -> panel-zone duplicate tag —
+    #   nodal loads of the exact FEF/thermal member-load paths on a
+    #   redirected beam end must land on the node the element actually
+    #   connects to (else the fixed-end MOMENT share would bypass the
+    #   panel spring)
 
     def free_massed_dofs(self) -> int:
         """Number of massed (node, dof) pairs that are NOT restrained.
@@ -939,6 +1085,9 @@ class OpenSeesEngine:
         # per-case span-load bookkeeping, keyed by (parent uid, segment index)
         self._seg_span_loads: Dict[Tuple[str, int], List[SpanLoad]] = {}
         self._seg_fef: Dict[Tuple[str, int], np.ndarray] = {}
+        # v0.17 panel_zones == "rigid": effective per-member rigid offsets
+        # (computed lazily; the user's model is never mutated)
+        self._pz_offsets: Optional[Dict[str, Tuple[float, float]]] = None
 
     # ------------------------------------------------------------------ API
     def run(self) -> AnalysisResults:
@@ -1141,6 +1290,51 @@ class OpenSeesEngine:
         auto = getattr(model, "auto_pier_walls", False)
         return any(r.kind == "wall" and (getattr(r, "pier", "") or auto)
                    for r in model.shells)
+
+    # ------------------------------------------- v0.17 panel zones
+    def _panel_offsets(self) -> Dict[str, Tuple[float, float]]:
+        """Effective member offsets for ``panel_zones == "rigid"`` (cached).
+
+        Starts from :func:`compute_panel_zone_offsets` and reverts any
+        member whose offsets were AUTO-computed but which the mesher split
+        (shell-edge compatibility / Winkler discretization) back to its
+        user offsets with a warning — the v0.9 offset machinery supports
+        single-segment members only.  Empty for other panel_zones modes.
+        """
+        if self._pz_offsets is None:
+            if getattr(self.model, "panel_zones", "none") == "rigid":
+                off = compute_panel_zone_offsets(self.model)
+                if self._mesh is None:
+                    self._mesh = mesh_model(self.model)
+                for m in self.model.members:
+                    user = (m.rigid_offset_i, m.rigid_offset_j)
+                    if (off[m.uid] != user
+                            and len(self._mesh.segments[m.uid]) != 1):
+                        warnings.warn(
+                            f"panel zones: member {m.uid!r} is split into "
+                            "multiple segments; automatic rigid end zones "
+                            "skipped (centerline kept)", UserWarning)
+                        off[m.uid] = user
+                self._pz_offsets = off
+            else:
+                self._pz_offsets = {}
+        return self._pz_offsets
+
+    def _member_offsets(self, m: FrameMember) -> Tuple[float, float]:
+        """(offset_i, offset_j) the engine actually applies to a member."""
+        return self._panel_offsets().get(
+            m.uid, (m.rigid_offset_i, m.rigid_offset_j))
+
+    def panel_zone_joints(self) -> List[dict]:
+        """Scissors panel-zone joints of the built model (v0.17).
+
+        Each entry is ``{"point": [x, y, z], "orig": tag, "dup": tag,
+        "K": K_theta}``; empty unless ``model.panel_zones == "scissors"``.
+        """
+        asm = self._asm if self._asm is not None else self._build()
+        return [{"point": list(asm.node_coords[orig]), "orig": orig,
+                 "dup": info["dup"], "K": info["K"]}
+                for orig, info in asm.pz_joints.items()]
 
     def run_static(self, case_name: str) -> CaseResults:
         """Solve one static load case (cached per engine instance)."""
@@ -1362,6 +1556,32 @@ class OpenSeesEngine:
             if rt not in asm.support_tags:
                 asm.support_tags.append(rt)
 
+        # --- v0.17 scissors panel zones: duplicate the joint nodes ----------
+        # Beams at an interior beam-column joint connect to a DUPLICATE node;
+        # a rotational spring K_theta (about global rx AND ry) plus an
+        # equalDOF tie on ux/uy/uz/rz bridges original <-> duplicate (the
+        # spring elements are created after the members, once the material
+        # tag counter is live).  Restrained/support joints are skipped (the
+        # equalDOF tie would hide the beam shear from the support reaction).
+        pz_map: Dict[Vec3, Tuple[int, int, dict]] = {}
+        if getattr(model, "panel_zones", "none") == "scissors":
+            key_tag = {_pkey(c): t for t, c in asm.struct_coords.items()}
+            for key, spec in compute_panel_zone_springs(model).items():
+                orig = key_tag.get(key)
+                if orig is None:                       # pragma: no cover
+                    continue
+                if (orig in asm.support_tags
+                        or any(asm.node_restraints.get(orig, (0,) * 6))):
+                    warnings.warn(
+                        f"scissors panel zone at {tuple(key)} skipped: the "
+                        "joint node is a support/restrained node",
+                        UserWarning)
+                    continue
+                tag += 1
+                ops.node(tag, *asm.node_coords[orig])
+                asm.node_coords[tag] = asm.node_coords[orig]
+                pz_map[key] = (orig, tag, spec)
+
         # --- frame elements (one per mesh segment) -------------------------
         # rot_presence accumulates each node's 3x3 rotational-stiffness
         # pattern so rotations left unstiffened by moment releases can be
@@ -1393,8 +1613,10 @@ class OpenSeesEngine:
             my_j = hinge_plan.get((m.uid, "j"))
             # v0.9 rigid-end offsets: elastic element over the CLEAR span,
             # stiff rigid-link arms to the real end nodes.  Only single-segment
-            # members (no shell-edge split) may carry offsets.
-            off_i, off_j = m.rigid_offset_i, m.rigid_offset_j
+            # members (no shell-edge split) may carry offsets.  v0.17: with
+            # panel_zones == "rigid" the effective offsets fold in the
+            # automatic joint end zones (user-set offsets win per end).
+            off_i, off_j = self._member_offsets(m)
             has_offset = (off_i + off_j) > _TOL
             if has_offset and len(segs) != 1:
                 raise ValueError(
@@ -1446,17 +1668,33 @@ class OpenSeesEngine:
                 code = (1 if rel_i else 0) + (2 if rel_j else 0)
                 extra = ["-releasez", code, "-releasey", code] if code else []
                 ni_tag, nj_tag = seg.ni + 1, seg.nj + 1
+                # v0.17 scissors panel zones: a BEAM end at a panel-zone
+                # joint connects to the joint's duplicate node instead
+                # (columns keep the original node — the spring between the
+                # pair is the panel flexibility).  FEF/thermal nodal loads
+                # of this end are redirected too (asm.pz_load_tag).
+                if pz_map and m.kind == "beam":
+                    if seg.index == 0:
+                        ent = pz_map.get(_pkey(mesh.points[seg.ni]))
+                        if ent is not None:
+                            ni_tag = ent[1]
+                            asm.pz_load_tag[(m.uid, seg.ni)] = ent[1]
+                    if seg.index == last:
+                        ent = pz_map.get(_pkey(mesh.points[seg.nj]))
+                        if ent is not None:
+                            nj_tag = ent[1]
+                            asm.pz_load_tag[(m.uid, seg.nj)] = ent[1]
                 # v0.5 pushover hinges: the member end connects to a
                 # duplicated node; the spring bridges original <-> duplicate
                 if my_i is not None and seg.index == 0:
                     tag += 1
                     ops.node(tag, *mesh.points[seg.ni])
-                    hinge_dups.append((m.uid, "i", m, seg.ni + 1, tag, my_i))
+                    hinge_dups.append((m.uid, "i", m, ni_tag, tag, my_i))
                     ni_tag = tag
                 if my_j is not None and seg.index == last:
                     tag += 1
                     ops.node(tag, *mesh.points[seg.nj])
-                    hinge_dups.append((m.uid, "j", m, seg.nj + 1, tag, my_j))
+                    hinge_dups.append((m.uid, "j", m, nj_tag, tag, my_j))
                     nj_tag = tag
                 # rigid arms: insert an offset node inboard of each offset end
                 # and a very-stiff beam from the real/hinge node to it; the
@@ -1535,6 +1773,25 @@ class OpenSeesEngine:
             asm.hinge_ele[(uid, end)] = etag
             asm.hinge_dup_of[dup_tag] = orig_tag
             asm.hinge_rot_yield[(uid, end)] = (my / k22, my / k33)
+
+        # --- v0.17 scissors panel-zone springs -------------------------------
+        # zeroLength rotational spring K_theta about BOTH horizontal global
+        # axes (rx, ry — the bending axes of the two frame planes; a joint
+        # framed in one plane simply never strains the other spring) between
+        # the original (column-side) node and the beam-side duplicate; the
+        # remaining DOFs are tied rigid with equalDOF (translations + rz).
+        for key, (orig, dup, spec) in pz_map.items():
+            k_theta = float(spec["K"])
+            mats_pz: List[int] = []
+            for _ in range(2):
+                mtag += 1
+                ops.uniaxialMaterial("Elastic", mtag, k_theta)
+                mats_pz.append(mtag)
+            etag += 1
+            ops.element("zeroLength", etag, orig, dup,
+                        "-mat", *mats_pz, "-dir", 4, 5)
+            ops.equalDOF(orig, dup, 1, 2, 3, 6)
+            asm.pz_joints[orig] = {"dup": dup, "K": k_theta, "ele": etag}
 
         # --- shell elements -------------------------------------------------
         if mesh.quads:
@@ -1813,7 +2070,8 @@ class OpenSeesEngine:
             asm.masters[s.name] = tag
             asm.node_coords[tag] = (cx, cy, elev)
             asm.node_restraints[tag] = (0, 0, 1, 1, 1, 0)
-        asm.use_transformation = bool(asm.masters) or bool(hinge_dups)
+        asm.use_transformation = (bool(asm.masters) or bool(hinge_dups)
+                                  or bool(pz_map))
 
         # --- zero-free-DOF guard --------------------------------------------
         # A model whose every node is fully restrained (e.g. a single
@@ -2086,7 +2344,8 @@ class OpenSeesEngine:
         if xi < _TOL or xi > seg.length - _TOL:
             # load lands on a node: apply it there directly (global coords)
             node = seg.ni if xi < _TOL else seg.nj
-            ops.load(node + 1, dvec[0] * p, dvec[1] * p, dvec[2] * p,
+            ops.load(asm.pz_load_tag.get((member.uid, node), node + 1),
+                     dvec[0] * p, dvec[1] * p, dvec[2] * p,
                      0.0, 0.0, 0.0)
             return
         rec: SpanLoad = ("point", (comps[0] * p, comps[1] * p, comps[2] * p),
@@ -2121,7 +2380,11 @@ class OpenSeesEngine:
         for node, ofs in ((seg.ni, 0), (seg.nj, 6)):
             fg = to_global(-f0[ofs], -f0[ofs + 1], -f0[ofs + 2])
             mg = to_global(-f0[ofs + 3], -f0[ofs + 4], -f0[ofs + 5])
-            ops.load(node + 1, *fg, *mg)
+            # v0.17 scissors: a redirected beam end loads its panel-zone
+            # duplicate (the element's actual node) so the fixed-end moment
+            # share does not bypass the panel spring
+            ops.load(asm.pz_load_tag.get((member.uid, node), node + 1),
+                     *fg, *mg)
 
         key = (member.uid, seg.index)
         self._seg_fef[key] = self._seg_fef.get(key, np.zeros(12)) + f0
@@ -2165,7 +2428,8 @@ class OpenSeesEngine:
             f0[6] = -N
             for node, ofs in ((seg.ni, 0), (seg.nj, 6)):
                 fg = to_global(-f0[ofs], -f0[ofs + 1], -f0[ofs + 2])
-                ops.load(node + 1, *fg, 0.0, 0.0, 0.0)
+                ops.load(asm.pz_load_tag.get((member.uid, node), node + 1),
+                         *fg, 0.0, 0.0, 0.0)
             key = (member.uid, seg.index)
             self._seg_fef[key] = self._seg_fef.get(key, np.zeros(12)) + f0
 
@@ -2286,10 +2550,11 @@ class OpenSeesEngine:
                     cols[key].append(float(v))
             member_stations[m.uid] = {"x": xs, **cols}
             # v0.16 exact transverse deflection stations (static cases only;
-            # members with rigid end offsets are skipped — their elastic
-            # element spans untracked offset nodes)
+            # members with rigid end offsets — user-set OR v0.17 panel-zone
+            # computed — are skipped: their elastic element spans untracked
+            # offset nodes)
             if (node_disp is not None
-                    and (m.rigid_offset_i + m.rigid_offset_j) <= _TOL):
+                    and sum(self._member_offsets(m)) <= _TOL):
                 md = self._member_deflection(m, segs, corrected, xs,
                                              node_disp)
                 if md is not None:
@@ -3485,6 +3750,7 @@ class OpenSeesEngine:
                                model.story_diaphragm.items() if s2 in names}
         sub.links = [lk for lk in model.links
                      if max(lk.pi[2], lk.pj[2]) <= elev_k + _TOL]
+        sub.panel_zones = getattr(model, "panel_zones", "none")   # v0.17
         sub.num_modes = 0
         return sub
 

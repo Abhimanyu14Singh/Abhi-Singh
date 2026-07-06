@@ -224,7 +224,8 @@ def _classify_cases(model: BuildingModel
 _SIGNS = ((1.0, "+"), (-1.0, "-"))
 
 
-def asce7_combinations(model: BuildingModel, standard: str = "LRFD"
+def asce7_combinations(model: BuildingModel, standard: str = "LRFD",
+                       SDS: Optional[float] = None
                        ) -> Dict[str, Dict[str, float]]:
     """Generate the ASCE 7-16 strength (LRFD) or ASD load combinations.
 
@@ -233,11 +234,40 @@ def asce7_combinations(model: BuildingModel, standard: str = "LRFD"
     term whose kind has no matching case is dropped and a ``UserWarning`` is
     emitted (e.g. a model without a LIVE case omits every live term).
     Returns ``{combo name -> {case name -> factor}}``.
+
+    ``SDS`` (v0.17, optional): when provided, the SEISMIC combinations
+    include the vertical seismic component ``Ev = 0.2 * SDS * D`` (ASCE 7-16
+    §12.4.2.2, Eq. 12.4-4a) folded into the DEAD factor per the §12.4.2.3
+    seismic load combinations, with the redundancy factor ``rho = 1``:
+
+    * LRFD (§12.4.2.3 basic combinations 6 / 7)::
+
+          (1.2 + 0.2*SDS) D + rho*QE + L        # E = Eh + Ev
+          (0.9 - 0.2*SDS) D + rho*QE            # E = Eh - Ev
+
+    * ASD (§2.4.5 / §12.4.2.3 combinations 8 / 9 / 10)::
+
+          (1.0 + 0.14*SDS)  D + 0.7 rho*QE
+          (1.0 + 0.105*SDS) D + 0.525 rho*QE + 0.75 L
+          (0.6 - 0.14*SDS)  D + 0.7 rho*QE
+
+    ``+QE``/``-QE`` sign variants reverse only the HORIZONTAL component; the
+    vertical component's sign is fixed by the combination form (additive in
+    the gravity-heavy combos, subtractive in the uplift combos).  Wind and
+    gravity-only combinations are unchanged.  ``SDS = None`` (default)
+    reproduces the pre-v0.17 output exactly; ``SDS`` must be finite and
+    >= 0.
     """
     std = str(standard).upper()
     if std not in LOAD_STANDARDS:
         raise ValueError(f"standard must be one of {LOAD_STANDARDS}, "
                          f"got {standard!r}")
+    if SDS is not None:
+        if (isinstance(SDS, bool) or not isinstance(SDS, (int, float))
+                or not math.isfinite(SDS) or SDS < 0.0):
+            raise ValueError(f"SDS must be a finite value >= 0 (or None), "
+                             f"got {SDS!r}")
+    sds = 0.0 if SDS is None else float(SDS)
     dead, live, quakes, winds = _classify_cases(model)
     combos: Dict[str, Dict[str, float]] = {}
     if dead is None:
@@ -256,13 +286,20 @@ def asce7_combinations(model: BuildingModel, standard: str = "LRFD"
             c[live] = 1.6
         combos["1.2D+1.6L"] = c
         for lat, plabel in [(q, q) for q in quakes] + [(w, w) for w in winds]:
+            # v0.17 vertical seismic component (§12.4.2.3 combos 6/7): the
+            # DEAD factor absorbs Ev = 0.2*SDS*D — quake combos only.
+            if lat in quakes and sds:
+                d_add, d_min = 1.2 + 0.2 * sds, 0.9 - 0.2 * sds
+            else:
+                d_add, d_min = 1.2, 0.9
             for sgn, sl in _SIGNS:
-                c1 = {D: 1.2}
+                c1 = {D: d_add}
                 if live is not None:
                     c1[live] = 1.0
                 c1[lat] = sgn * 1.0
-                combos[f"1.2D+1.0L{sl}1.0{plabel}"] = c1
-                combos[f"0.9D{sl}1.0{plabel}"] = {D: 0.9, lat: sgn * 1.0}
+                combos[f"{d_add:g}D+1.0L{sl}1.0{plabel}"] = c1
+                combos[f"{d_min:g}D{sl}1.0{plabel}"] = {D: d_min,
+                                                        lat: sgn * 1.0}
     else:  # ASD
         combos["D"] = {D: 1.0}
         c = {D: 1.0}
@@ -272,6 +309,22 @@ def asce7_combinations(model: BuildingModel, standard: str = "LRFD"
         for lat, plabel in [(q, q) for q in quakes] + [(w, w) for w in winds]:
             e = 0.7 if lat in quakes else 0.6      # seismic vs wind ASD factor
             e34 = round(0.75 * e, 6)               # 0.75*0.7 = 0.525 exactly
+            if lat in quakes and sds:
+                # v0.17 §2.4.5 / §12.4.2.3 ASD combos 8/9/10: Ev on the DEAD
+                # factor at 0.7*0.2 = 0.14 and 0.525*0.2 = 0.105 per SDS.
+                for sgn, sl in _SIGNS:
+                    da, da34, dm = (1.0 + 0.14 * sds, 1.0 + 0.105 * sds,
+                                    0.6 - 0.14 * sds)
+                    combos[f"{da:g}D{sl}{e:g}{plabel}"] = {D: da,
+                                                           lat: sgn * e}
+                    c1 = {D: da34}
+                    if live is not None:
+                        c1[live] = 0.75
+                    c1[lat] = sgn * e34
+                    combos[f"{da34:g}D+0.75L{sl}{e34:g}{plabel}"] = c1
+                    combos[f"{dm:g}D{sl}{e:g}{plabel}"] = {D: dm,
+                                                           lat: sgn * e}
+                continue
             for sgn, sl in _SIGNS:
                 combos[f"D{sl}{e:g}{plabel}"] = {D: 1.0, lat: sgn * e}
                 c1 = {D: 1.0}
@@ -283,13 +336,15 @@ def asce7_combinations(model: BuildingModel, standard: str = "LRFD"
     return combos
 
 
-def apply_asce7_combinations(model: BuildingModel, standard: str = "LRFD"
+def apply_asce7_combinations(model: BuildingModel, standard: str = "LRFD",
+                             SDS: Optional[float] = None
                              ) -> Dict[str, Dict[str, float]]:
     """Generate and ADD the ASCE 7 combinations to ``model.combos``.
 
-    Returns the same dict as :func:`asce7_combinations`.
+    Returns the same dict as :func:`asce7_combinations` (``SDS``: see there —
+    v0.17 vertical seismic component on the seismic combos).
     """
-    combos = asce7_combinations(model, standard)
+    combos = asce7_combinations(model, standard, SDS=SDS)
     for name, cases in combos.items():
         model.add_combo(name, cases)
     return combos

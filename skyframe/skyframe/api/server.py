@@ -58,6 +58,14 @@ v0.16 additions:
   case/additive combo and the top-level ``deflection_checks`` block;
   ``POST /api/model`` round-trips ``model.deflection_limit``.
 
+v0.17 additions:
+
+* ``POST /api/combos/asce7`` accepts optional ``SDS`` (>= 0): the vertical
+  seismic component Ev = 0.2*SDS*D enters the seismic combinations per
+  ASCE 7-16 §12.4.2.3 ((1.2+0.2*SDS)D / (0.9-0.2*SDS)D, ASD analogues);
+* ``POST /api/model`` round-trips ``model.panel_zones``
+  ("none" | "rigid" | "scissors"; 400 on any other value).
+
 Saved models live as ``<name>.skyframe.json`` files in ``~/.skyframe/models``
 (override with the ``SKYFRAME_MODELS_DIR`` environment variable; the
 directory is created on demand).  Names must match ``[A-Za-z0-9 _-]{1,60}``.
@@ -396,6 +404,12 @@ def create_app() -> Flask:
 
     @app.post("/api/combos/asce7")
     def combos_asce7():
+        """Apply the ASCE 7-16 combinations to the current model.
+
+        Body: ``{standard?: "LRFD"|"ASD", SDS?: number}`` — ``SDS`` (v0.17,
+        optional, >= 0) folds the vertical seismic component Ev = 0.2*SDS*D
+        into the seismic combos per §12.4.2.3 (e.g. (1.2+0.2*SDS)D).
+        """
         body = request.get_json(silent=True)
         if body is None:
             body = {}
@@ -403,7 +417,9 @@ def create_app() -> Flask:
             return jsonify({"error": "Request body must be a JSON object"}), 400
         standard = body.get("standard", "LRFD")
         try:
-            apply_asce7_combinations(_state["model"], standard=standard)
+            sds = _num(body, "SDS", default=None)
+            apply_asce7_combinations(_state["model"], standard=standard,
+                                     SDS=sds)
         except (ValueError, TypeError) as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify(_state["model"].to_dict())

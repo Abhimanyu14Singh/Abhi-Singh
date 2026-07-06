@@ -946,6 +946,20 @@ class LinkMember:
 
 DIAPHRAGM_OPTIONS = ("rigid", "none")
 
+# v0.17 panel-zone (beam-column joint) modeling assumption, ETABS-style:
+#   "none"     — centerline modeling (default; pre-v0.17 behavior, unchanged)
+#   "rigid"    — automatic rigid end zones at every interior beam-column
+#                joint: columns get max_connecting_beam_h/2 at the joint end,
+#                beams get max_connecting_column_h/2 (computed at build time
+#                by the engine; user-set explicit rigid_i/rigid_j win per
+#                member end; the model itself is never mutated)
+#   "scissors" — elastic scissors panel-zone spring (Krawinkler/Charney
+#                idealization): the joint node is duplicated, beams connect
+#                to the duplicate, and a rotational spring
+#                K_theta = G * d_c * d_b * t_p bridges the pair (t_p = column
+#                section b as the panel thickness for rectangular sections)
+PANEL_ZONE_OPTIONS = ("none", "rigid", "scissors")
+
 COMBO_TYPES = ("add", "envelope")
 
 
@@ -1110,6 +1124,11 @@ class BuildingModel:
     # transverse deflection exceeds L / deflection_limit (default L/360,
     # the classic live-load floor-beam limit).  Finite and > 0.
     deflection_limit: float = 360.0
+    # v0.17 panel zones: model-level beam-column joint assumption (see
+    # PANEL_ZONE_OPTIONS).  "none" keeps the exact pre-v0.17 centerline
+    # behavior; "rigid"/"scissors" are applied INTERNALLY by the engine at
+    # build time (the model data is never mutated).
+    panel_zones: str = "none"
     num_modes: int = 6
 
     # ---------------- convenience API ----------------
@@ -2115,6 +2134,9 @@ class BuildingModel:
                 and self.deflection_limit > 0.0):
             raise ValueError(f"deflection_limit must be a finite value > 0 "
                              f"(got {self.deflection_limit!r})")
+        if self.panel_zones not in PANEL_ZONE_OPTIONS:
+            raise ValueError(f"panel_zones must be one of "
+                             f"{PANEL_ZONE_OPTIONS}, got {self.panel_zones!r}")
         self._validate_diaphragm()
         for g in self.effective_grids():
             self._validate_grid(g)
@@ -2200,6 +2222,7 @@ class BuildingModel:
                              for k, v in self.th_functions.items()},
             "auto_pier_walls": self.auto_pier_walls,
             "deflection_limit": self.deflection_limit,
+            "panel_zones": self.panel_zones,
             "num_modes": self.num_modes,
         }
 
@@ -2443,6 +2466,8 @@ class BuildingModel:
         mdl.auto_pier_walls = bool(d.get("auto_pier_walls", False))
         # v0.16: serviceability deflection limit (absent = pre-v0.16 default)
         mdl.deflection_limit = float(d.get("deflection_limit", 360.0))
+        # v0.17: panel-zone assumption (absent = pre-v0.17 centerline model)
+        mdl.panel_zones = str(d.get("panel_zones", "none"))
         mdl.num_modes = int(d.get("num_modes", 6))
         mdl.validate()
         return mdl
