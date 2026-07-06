@@ -1784,3 +1784,31 @@ tr.cm-active td { background: var(--accent-ghost) !important; }
   background: var(--c, var(--accent)); border-radius: 4px;
 }
 .vw-row td, .wall-row td { font-variant-numeric: tabular-nums; }
+
+/* ================= v0.19 — performance point & hinge states ============= */
+.perf-card {
+  margin: 14px 0 4px; padding: 12px 14px;
+  background: var(--surface-2, #151b23); border: 1px solid var(--border, #232c38);
+  border-radius: 8px;
+}
+.perf-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
+.perf-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.perf-form .rs-field input, .perf-form .rs-field select { width: 84px; }
+.perf-out {
+  display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px;
+  font-size: 12px; color: var(--text-dim, #9aa7b4);
+  font-variant-numeric: tabular-nums;
+}
+.perf-out b { color: var(--text, #dce3ea); }
+.perf-out .perf-dt b { color: #e05d5d; }
+.perf-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
+.hstate {
+  display: inline-block; padding: 1px 8px; border-radius: 999px;
+  font-size: 10.5px; font-weight: 650; letter-spacing: .02em;
+  border: 1px solid transparent;
+}
+.hstate-elastic { background: #1d3a2a; color: #7fd8a2; border-color: #2a5540; }
+.hstate-IO { background: #16324a; color: #7cc0ee; border-color: #234a68; }
+.hstate-LS { background: #4a3a12; color: #e5c25a; border-color: #6b5520; }
+.hstate-CP { background: #4a2a12; color: #eda05a; border-color: #6b4020; }
+.hstate-collapse { background: #4a1616; color: #ee7c7c; border-color: #682323; }

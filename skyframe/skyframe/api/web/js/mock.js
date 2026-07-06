@@ -1037,8 +1037,41 @@ export function mockResults(model) {
     const over = Object.values(hinge_rotations).filter(r => r > 0.01).length;
     if (over) warnings.push(
       `${over} hinge${over > 1 ? "s" : ""} exceed${over > 1 ? "" : "s"} 0.010 rad plastic rotation at target drift`);
-    if (!uids.length) warnings.push("no hinges defined — curve is elastic only");
-    pushover[name] = { roof_disp, base_shear, roof_drift, hinge_rotations, warnings };
+    if (!uids.length && pc.hinges !== "asce41")
+      warnings.push("no hinges defined — curve is elastic only");
+    /* v0.19 — asce41 mode: per-hinge trilinear histories + acceptance
+       states for every member flagged hinges === "auto_m3" (both ends).
+       thy ~ 6 mrad, plastic bands 1/9/11 thy (compact steel row). */
+    const hinges = [];
+    if (pc.hinges === "asce41") {
+      const flagged = model.members.filter(mm => mm.hinges === "auto_m3");
+      for (const mm of flagged) {
+        const thy = 0.006 * jit(0.1);
+        const My = 600 * jit(0.2);
+        const bands = { IO: 1 * thy, LS: 9 * thy, CP: 11 * thy };
+        for (const end of ["i", "j"]) {
+          const share = end === "i" ? 1.0 : 0.55;    // base end rotates more
+          const rot = [], moment = [], state = [];
+          for (let i = 0; i <= steps; i++) {
+            const r = (target / H) * 2.2 * thy / 0.006 * (i / steps) * share;
+            rot.push(+r.toFixed(6));
+            moment.push(+Math.min(My * r / thy, My * (1 + 0.05 * (r - thy) / thy)).toFixed(2));
+            const p = Math.max(r - thy, 0);
+            state.push(p <= 0 ? "elastic" : p <= bands.IO ? "IO"
+              : p <= bands.LS ? "LS" : p <= bands.CP ? "CP" : "collapse");
+          }
+          hinges.push({ uid: mm.uid, end, My: +My.toFixed(1),
+            thy: +thy.toFixed(6), a: +(9 * thy).toFixed(6),
+            b: +(11 * thy).toFixed(6), c: 0.6, IO: +bands.IO.toFixed(6),
+            LS: +bands.LS.toFixed(6), CP: +bands.CP.toFixed(6),
+            kind: "steel", rot, moment, state });
+          if (!(mm.uid in hinge_rotations))
+            hinge_rotations[mm.uid] = rot[rot.length - 1];
+        }
+      }
+    }
+    pushover[name] = { roof_disp, base_shear, roof_drift, hinge_rotations,
+                       warnings, hinges };
   }
 
   /* ---- v0.10: linearized buckling — critical load factors λ per mode and
@@ -2306,4 +2339,147 @@ export function mockVirtualWork(model, body = {}) {
   });
   const total = +Object.values(contributions).reduce((a, b) => a + b, 0).toFixed(7);
   return { contributions, total, roof_disp: total };
+}
+
+/* ==========================================================================
+   v0.19 — pattern live loading, auto sequence, performance point
+   ========================================================================== */
+
+/** POST /api/loads/pattern-live — local mirror of the backend split:
+    beams grouped by line + chained spans, odd/even member loads, PLL_*
+    factored cases (1.2D + 1.6L) and the PATTERN-LL envelope combo. */
+export function mockPatternLive(model, livePattern) {
+  const pat = (model.patterns || {})[livePattern];
+  if (!pat || pat.kind !== "live") throw new Error(`no live pattern ${livePattern}`);
+  // span indices along collinear chained runs (matches core/patterning.py)
+  const beams = model.members.filter(mm => mm.kind === "beam");
+  const lines = new Map();
+  for (const mm of beams) {
+    const dx = mm.pj.map((v, i) => v - mm.pi[i]);
+    const L = Math.hypot(...dx);
+    let u = dx.map(v => v / L);
+    if (u[0] < 0 || (Math.abs(u[0]) < 1e-9 && u[1] < 0)) u = u.map(v => -v);
+    const proj = mm.pi.reduce((a, p, i) => a + p * u[i], 0);
+    const off = mm.pi.map((p, i) => +(p - proj * u[i]).toFixed(6)).join(",");
+    const key = u.map(v => +v.toFixed(6)).join(",") + "|" + off;
+    if (!lines.has(key)) lines.set(key, []);
+    lines.get(key).push([proj, mm, L]);
+  }
+  const span = {};
+  for (const entries of lines.values()) {
+    entries.sort((a, b) => a[0] - b[0]);
+    let idx = 0, prevEnd = null;
+    for (const [proj, mm, L] of entries) {
+      if (prevEnd !== null && Math.abs(proj - prevEnd) > 1e-6) idx = 0;
+      span[mm.uid] = idx++;
+      prevEnd = proj + L;
+    }
+  }
+  const odd = { name: `${livePattern}__ODD`, kind: "live", member_loads: [],
+    member_udls: [], nodal_loads: [], story_forces: [], area_loads: [], thermal_loads: [] };
+  const even = { ...JSON.parse(JSON.stringify(odd)), name: `${livePattern}__EVEN` };
+  for (const ml of (pat.member_loads || [])) {
+    const s = span[ml.member_uid];
+    if (s === undefined) continue;
+    (s % 2 === 0 ? odd : even).member_loads.push({ ...ml });
+  }
+  model.patterns[odd.name] = odd;
+  model.patterns[even.name] = even;
+  // factored cases + envelope combo (needs a dead-classified case)
+  const deadCase = Object.values(model.cases || {}).find(cc => {
+    const ps = Object.keys(cc.patterns || {});
+    return ps.length === 1 && (model.patterns[ps[0]] || {}).kind === "dead";
+  });
+  if (deadCase) {
+    for (const [cname, lp] of [["PLL_ALL", livePattern],
+        ["PLL_ODD", odd.name], ["PLL_EVEN", even.name]]) {
+      const pats = {};
+      for (const [p, f] of Object.entries(deadCase.patterns)) pats[p] = 1.2 * f;
+      pats[lp] = (pats[lp] || 0) + 1.6;
+      model.cases[cname] = { name: cname, patterns: pats, pdelta: false };
+    }
+    model.combos["PATTERN-LL"] = { name: "PATTERN-LL", combo_type: "envelope",
+      cases: { PLL_ALL: 1.0, PLL_ODD: 1.0, PLL_EVEN: 1.0 } };
+  }
+  return model;
+}
+
+/** POST /api/case/auto-sequence — staged per-story case, local mirror. */
+export function mockAutoSequence(model, name = "SEQ", pattern) {
+  const dead = pattern || (Object.values(model.patterns || {})
+    .find(p => p.kind === "dead") || {}).name;
+  if (!dead) throw new Error("no dead pattern");
+  model.staged_cases = model.staged_cases || {};
+  model.staged_cases[name] = { name, pattern: dead, stages: "per_story",
+                               include_live: {} };
+  return model;
+}
+
+/** POST /api/results/performance-point — ASCE 41-17 §7.4.3 on the MOCK
+    capacity curve: real bilinearization (equal-area + 0.6Vy secant, exact
+    on piecewise-linear curves) and the real coefficient formulas, with
+    Ti taken from the mock modal results' dominant mode. */
+export function mockPerformancePoint(model, pd, body) {
+  // drop any leading zero point before re-anchoring at the origin (the
+  // mock curve includes u = 0; the live engine curve starts at step 1)
+  let rd = pd.roof_disp || [], bs = pd.base_shear || [];
+  while (rd.length && rd[0] <= 0) { rd = rd.slice(1); bs = bs.slice(1); }
+  const disp = [0, ...rd], shear = [0, ...bs];
+  if (disp.length < 3) throw new Error("capacity curve too short");
+  let ip = 0;
+  for (let i = 0; i < shear.length; i++) if (shear[i] >= shear[ip]) ip = i;
+  const d = disp.slice(0, ip + 1), v = shear.slice(0, ip + 1);
+  const du = d[d.length - 1], Vu = v[v.length - 1];
+  const Ki = v[1] / d[1];
+  const area = d.slice(1).reduce((a, x, i) => a + (v[i] + v[i + 1]) * (x - d[i]) / 2, 0);
+  const interpD = vq => {
+    for (let i = 0; i + 1 < d.length; i++)
+      if ((v[i] - vq) * (v[i + 1] - vq) <= 0 && v[i + 1] !== v[i])
+        return d[i] + (d[i + 1] - d[i]) * (vq - v[i]) / (v[i + 1] - v[i]);
+    return du * vq / Vu;
+  };
+  let Vy = Vu, Ke = Ki;
+  for (let it = 0; it < 100; it++) {
+    Ke = 0.6 * Vy / interpD(0.6 * Vy);
+    const den = du / 2 - Vu / (2 * Ke);
+    const next = (area - du * Vu / 2) / den;
+    if (Math.abs(next - Vy) < 1e-9 * Math.max(1, Vy)) { Vy = next; break; }
+    Vy = next;
+  }
+  Ke = 0.6 * Vy / interpD(0.6 * Vy);
+  const SDS = body.SDS || 1.0, SD1 = body.SD1 || 0.6;
+  const site = (body.site_class || "D").toUpperCase();
+  const dir = ((model.pushover_cases || {})[body.case] || {}).direction || "X";
+  const key = dir === "X" ? "ux" : "uy";
+  const modes = mockResults(model).modal?.participation || [];
+  const Ti = modes.length
+    ? modes.reduce((a, b) => ((b[key] || 0) > (a[key] || 0) ? b : a)).T : 0.5;
+  const Te = Ti * Math.sqrt(Ki / Ke);
+  const Ts = SD1 / SDS, T0 = 0.2 * Ts;
+  const Sa = Te < T0 ? SDS * (0.4 + 0.6 * Te / T0) : Te <= Ts ? SDS : SD1 / Te;
+  const stories = (model.stories || []).length || 1;
+  const C0T = [[1, 1.0], [2, 1.2], [3, 1.3], [5, 1.4], [10, 1.5]];
+  let C0 = 1.5;
+  for (let i = 0; i + 1 < C0T.length; i++) {
+    const [n1, c1] = C0T[i], [n2, c2] = C0T[i + 1];
+    if (stories <= n2) { C0 = stories <= n1 ? c1 : c1 + (c2 - c1) * (stories - n1) / (n2 - n1); break; }
+  }
+  const W = (model.stories || []).length * 500 * 9.81;   // mock seismic weight
+  const mu = Sa / (Vy / W);
+  const aF = { A: 130, B: 130, C: 90, D: 60, E: 60, F: 60 }[site] || 60;
+  const C1 = Te >= 1 ? 1 : 1 + (mu - 1) / (aF * Math.max(Te, 0.2) ** 2);
+  const C2 = Te > 0.7 ? 1 : 1 + ((mu - 1) / Te) ** 2 / 800;
+  const delta_t = C0 * C1 * C2 * Sa * (Te / (2 * Math.PI)) ** 2 * 9.81;
+  let step = 0, bd = Infinity;
+  (pd.roof_disp || []).forEach((u, i) => {
+    const e = Math.abs(u - delta_t);
+    if (e < bd) { bd = e; step = i; }
+  });
+  const summary = { elastic: 0, IO: 0, LS: 0, CP: 0, collapse: 0 };
+  for (const h of (pd.hinges || []))
+    summary[h.state[Math.min(step, h.state.length - 1)] || "elastic"]++;
+  return { Ki, Ke, Vy, dy: Vy / Ke, du, Vu, area, Te, Ti, Sa, mu, Cm: 1,
+    C0, C1, C2, W, site_class: site, delta_t, case: body.case,
+    direction: dir, step, roof_disp_at_step: (pd.roof_disp || [])[step],
+    hinge_summary: summary };
 }

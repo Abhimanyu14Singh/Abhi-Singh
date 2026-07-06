@@ -754,6 +754,28 @@
           </div>
           <div class="po-warnings hidden" id="poWarnings"></div>
           <div class="th-charts" id="poChart"></div>
+          <!-- v0.19: ASCE 41 performance point (coefficient method) -->
+          <div class="perf-card" id="perfCard">
+            <div class="perf-head">
+              <b>Performance point</b>
+              <span class="muted">ASCE 41-17 §7.4.3 coefficient method — bilinear idealization + target displacement δ<sub>t</sub></span>
+            </div>
+            <div class="perf-form">
+              <label class="rs-field"><span>S<sub>DS</sub> <span class="unit">g</span></span>
+                <input id="perfSds" type="number" min="0.05" max="3" step="0.05" value="1.0"></label>
+              <label class="rs-field"><span>S<sub>D1</sub> <span class="unit">g</span></span>
+                <input id="perfSd1" type="number" min="0.05" max="2" step="0.05" value="0.6"></label>
+              <label class="rs-field"><span>Site class</span>
+                <select id="perfSite">
+                  <option>A</option><option>B</option><option>C</option>
+                  <option selected>D</option><option>E</option><option>F</option>
+                </select></label>
+              <button class="btn btn-primary" id="perfRunBtn">Compute δt</button>
+              <span class="spinner hidden" id="perfSpinner"></span>
+            </div>
+            <div class="perf-out hidden" id="perfOut"></div>
+            <div class="perf-chips hidden" id="perfChips"></div>
+          </div>
           <div class="pane-tools">
             <span class="muted" id="poHingeNote">Hinge plastic rotations at target drift — sorted descending</span>
           </div>

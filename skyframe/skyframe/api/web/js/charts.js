@@ -681,6 +681,35 @@ export function pushoverChart(disp, shear, opts = {}) {
     "stroke-linejoin": "round", "stroke-linecap": "round",
   }));
 
+  // v0.19 — ASCE 41 overlays: bilinear idealization + target displacement
+  // opts.bilinear = {dy, Vy, du, Vu} (m, kN); opts.marker = {x (m), label}
+  if (opts.bilinear && isFinite(opts.bilinear.Vy)) {
+    const b = opts.bilinear;
+    const pts = [[0, 0], [b.dy * 1000, b.Vy], [b.du * 1000, b.Vu]]
+      .map(([x, y]) => `${xOf(Math.min(x, dMax)).toFixed(1)},` +
+                       `${yOf(Math.min(y, vMax)).toFixed(1)}`);
+    svg.appendChild(el("path", {
+      d: `M${pts.join(" L")}`, fill: "none", stroke: S.amber,
+      "stroke-width": 1.6, "stroke-dasharray": "6 4", "stroke-opacity": 0.9,
+    }));
+    svg.appendChild(txt("text", {
+      x: xOf(Math.min(b.dy * 1000, dMax)) + 5,
+      y: yOf(Math.min(b.Vy, vMax)) + 12,
+      fill: S.amber, "font-size": 9, "font-weight": 650,
+    }, `Vy ${fmt(b.Vy, 0)} kN`));
+  }
+  if (opts.marker && isFinite(opts.marker.x)) {
+    const mx = xOf(Math.min(opts.marker.x * 1000, dMax));
+    svg.appendChild(el("line", {
+      x1: mx, x2: mx, y1: M.t, y2: M.t + ph, stroke: "#e05d5d",
+      "stroke-width": 1.6, "stroke-dasharray": "4 3",
+    }));
+    svg.appendChild(txt("text", {
+      x: Math.min(mx + 4, M.l + pw - 44), y: M.t + 12,
+      fill: "#e05d5d", "font-size": 9, "font-weight": 650,
+    }, opts.marker.label || `δt ${fmt(opts.marker.x * 1000, 0)} mm`));
+  }
+
   // yield-point markers (slope drop > 20%)
   for (const i of yieldPointIndices(disp, shear)) {
     svg.appendChild(el("circle", {

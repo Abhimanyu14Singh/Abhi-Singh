@@ -16,6 +16,9 @@ export function normalizeModel(m) {
   m.patterns = m.patterns || {};
   m.members = m.members || [];
   for (const mm of m.members) if (mm.releases == null) mm.releases = "";
+  // v0.19 — ASCE 41 auto-hinge assignment (absent = "none")
+  for (const mm of m.members)
+    if (mm.hinges !== "auto_m3") mm.hinges = "none";
   for (const p of Object.values(m.patterns)) {
     p.member_loads = p.member_loads || [];
     p.area_loads = p.area_loads || [];

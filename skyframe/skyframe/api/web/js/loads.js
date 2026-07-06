@@ -388,6 +388,8 @@ export class LoadsEditor {
       this._autoCombosCard(m),
       this._codeRsCard(m),
       this._elfCard(m),
+      this._patternLiveCard(m),
+      this._autoSequenceCard(m),
     );
     sec.appendChild(grid);
     return sec;
@@ -503,6 +505,78 @@ export class LoadsEditor {
         "Combo generation failed"));
     if (!this.onAutoCombos) $("acGen").disabled = true;
     evNote();
+    return card;
+  }
+
+  /* ---- v0.19: pattern (skip) live loading (POST /api/loads/pattern-live) */
+  _patternLiveCard(m) {
+    const card = document.createElement("div");
+    card.className = "wind-card code-card";
+    card.id = "patternLiveCard";
+    const lives = Object.values(m.patterns || {})
+      .filter(p => p.kind === "live" && !p.name.includes("__"))
+      .map(p => p.name);
+    card.innerHTML = `
+      <div class="wind-head">
+        <b>Pattern live loading</b>
+        <span class="muted">skip loading · continuous-beam envelopes</span>
+      </div>
+      <div class="wind-fields">
+        <label class="rs-field"><span>live pattern</span>
+          <select id="pllPattern">${lives.map(n =>
+            `<option>${n}</option>`).join("") ||
+            `<option value="" disabled selected>— no live pattern —</option>`}
+          </select></label>
+        <button class="btn btn-small" id="pllGen">Generate skip patterns</button>
+      </div>
+      <p class="code-note muted">Splits the live member loads into
+        <b>__ODD</b> / <b>__EVEN</b> span patterns along each continuous
+        beam run and adds a <b>PATTERN-LL</b> envelope combo
+        (1.2D + 1.6L<sub>all|odd|even</sub>) — beam design reads the worst
+        arrangement automatically. Non-beam loads stay in the all-spans
+        pattern.</p>`;
+    const $ = id => card.querySelector("#" + id);
+    $("pllGen").addEventListener("click", () =>
+      this._runTool($("pllGen"), this.onPatternLive,
+        { live_pattern: $("pllPattern").value },
+        "Pattern live generation failed"));
+    if (!this.onPatternLive || !lives.length) $("pllGen").disabled = true;
+    return card;
+  }
+
+  /* ---- v0.19: auto construction sequence (POST /api/case/auto-sequence) */
+  _autoSequenceCard(m) {
+    const card = document.createElement("div");
+    card.className = "wind-card code-card";
+    card.id = "autoSequenceCard";
+    const deads = Object.values(m.patterns || {})
+      .filter(p => p.kind === "dead").map(p => p.name);
+    card.innerHTML = `
+      <div class="wind-head">
+        <b>Auto construction sequence</b>
+        <span class="muted">story-by-story staged gravity</span>
+      </div>
+      <div class="wind-fields">
+        <label class="rs-field"><span>case name</span>
+          <input id="seqName" type="text" value="SEQ" maxlength="24"></label>
+        <label class="rs-field"><span>gravity pattern</span>
+          <select id="seqPattern">${deads.map(n =>
+            `<option>${n}</option>`).join("") ||
+            `<option value="" disabled selected>— no dead pattern —</option>`}
+          </select></label>
+        <button class="btn btn-small" id="seqGen">Create sequence case</button>
+      </div>
+      <p class="code-note muted">One-click staged-construction case: the
+        building is analysed bottom-up, one story per stage, under that
+        story's share of the gravity pattern (rebuild-and-accumulate) — the
+        results tab compares it against the one-shot solve.</p>`;
+    const $ = id => card.querySelector("#" + id);
+    $("seqGen").addEventListener("click", () =>
+      this._runTool($("seqGen"), this.onAutoSequence,
+        { name: $("seqName").value || "SEQ",
+          pattern: $("seqPattern").value },
+        "Sequence case creation failed"));
+    if (!this.onAutoSequence || !deads.length) $("seqGen").disabled = true;
     return card;
   }
 

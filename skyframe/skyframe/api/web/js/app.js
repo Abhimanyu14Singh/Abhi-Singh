@@ -7,7 +7,8 @@ import { mockModel, mockResults, mockSectionLibrary, mockModelFiles, mockWindPat
   mockDesignSteel, mockDesignConcrete, mockImport,
   mockSelfWeightPattern, mockAsce7Combos, mockCodeRsCase, mockElfPattern,
   mockRsDirectional, mockNotionalPattern, mockOptimize, mockLiveReduction,
-  mockDesignWall, mockDesignPunching, mockVirtualWork } from "./mock.js";
+  mockDesignWall, mockDesignPunching, mockVirtualWork,
+  mockPatternLive, mockAutoSequence, mockPerformancePoint } from "./mock.js";
 import { PlanEditor } from "./draw.js";
 import { ElevEditor } from "./elev.js";
 import { LoadsEditor } from "./loads.js";
@@ -53,6 +54,8 @@ const store = {
   view: "plan",          // model-mode editor: "plan" | "elev"
   elevLine: null,        // elevation grid line, e.g. "x:0" | "y:2"
   poCase: null,          // selected pushover case (results tab)
+  perf: {},              // v0.19: pushover case -> performance-point result
+  perfParams: { SDS: 1.0, SD1: 0.6, site: "D" },
   buckCase: null,        // v0.10 — selected buckling case (results tab)
   tdCase: null,          // v0.11 — selected gravity case for the load-takedown tab
   cutCase: null,         // v0.13 — selected case for the section-cut-forces tab
@@ -342,6 +345,44 @@ async function addSelfWeightPattern(params) {
   markDirty();
   toast("Self-weight pattern added",
     `“${params.name}” computed locally (${store.mock ? "mock mode" : "backend lacks endpoint"})`, "info", 5000);
+  return store.model;
+}
+
+/* v0.19 — pattern (skip) live loading: POST /api/loads/pattern-live
+   {live_pattern} → server derives __ODD/__EVEN patterns, PLL_* cases and
+   the PATTERN-LL envelope combo; mock computes the same split locally. */
+async function generatePatternLive(params) {
+  if (!store.mock) {
+    try {
+      await codeToolLive("/api/loads/pattern-live", params);
+      toast("Skip patterns generated",
+        `${params.live_pattern}__ODD / __EVEN + PATTERN-LL envelope via POST /api/loads/pattern-live`,
+        "info", 6000);
+      return store.model;
+    } catch (e) { console.warn("pattern-live endpoint unavailable, computing locally:", e.message); }
+  }
+  mockPatternLive(store.model, params.live_pattern);
+  ME.normalizeModel(store.model);
+  markDirty();
+  toast("Skip patterns generated",
+    `${params.live_pattern}__ODD / __EVEN + PATTERN-LL envelope computed locally`, "info", 6000);
+  return store.model;
+}
+
+/* v0.19 — auto construction sequence: POST /api/case/auto-sequence */
+async function createAutoSequence(params) {
+  if (!store.mock) {
+    try {
+      await codeToolLive("/api/case/auto-sequence", params);
+      toast("Sequence case created",
+        `“${params.name}” — one stage per story via POST /api/case/auto-sequence`, "info", 5000);
+      return store.model;
+    } catch (e) { console.warn("auto-sequence endpoint unavailable, computing locally:", e.message); }
+  }
+  mockAutoSequence(store.model, params.name, params.pattern);
+  ME.normalizeModel(store.model);
+  markDirty();
+  toast("Sequence case created", `“${params.name}” computed locally`, "info", 5000);
   return store.model;
 }
 
@@ -1057,6 +1098,17 @@ function renderProps() {
       ${axl && axl !== "both"
         ? `<p class="muted axial-note" style="font-size:11px">Tension/compression-only members carry a <b>${axl === "tension" ? "T-only" : "C-only"}</b> glyph in plan &amp; 3D and make the analysis <b>nonlinear</b>.</p>`
         : `<p class="muted" style="font-size:11px">Restricting a member to tension- or compression-only makes the analysis nonlinear.</p>`}`;
+    // v0.19 — automatic ASCE 41 plastic hinges (pushover asce41 mode)
+    const hng = commonVal(members, x => x.hinges || "none");
+    html += `
+      <div class="field"><label for="propHinges">Plastic hinges <span class="unit">ASCE 41 · pushover</span></label>
+        <select id="propHinges">
+          ${hng === undefined ? `<option value="" selected disabled>— mixed —</option>` : ""}
+          <option value="none"${hng === "none" ? " selected" : ""}>None (elastic)</option>
+          <option value="auto_m3"${hng === "auto_m3" ? " selected" : ""}>Auto M3 (ASCE 41-17)</option>
+        </select>
+      </div>
+      <p class="muted" style="font-size:11px">Auto M3 members get trilinear ASCE 41-17 hinge backbones at both ends in a pushover case with hinge mode <b>asce41</b> (Table 9-7.1 steel / Table 10-7 concrete).</p>`;
     // v0.4: orientation angle for columns & braces (FrameMember.angle)
     const angMembers = [...columns, ...braces];
     if (angMembers.length) {
@@ -1296,6 +1348,15 @@ function renderProps() {
     store.modelEdited = true;
     refreshDrawViews();     // T-only/C-only glyphs live in the label layer
     renderProps();          // refresh the nonlinear note
+  });
+  // v0.19 — plastic hinge assignment
+  on("propHinges", "change", e => {
+    const v = e.target.value;
+    if (v !== "none" && v !== "auto_m3") return;
+    for (const mm of members) mm.hinges = v;
+    markDirty();
+    store.modelEdited = true;
+    renderProps();
   });
   // v0.9 — rigid end offsets + rigid factor
   const setRigid = (key, raw, hi) => {
@@ -3223,32 +3284,115 @@ function renderPoTab() {
 
   const box = $("poChart");
   box.textContent = "";
+  const perf = store.perf[store.poCase];
   box.appendChild(pushoverChart(pd.roof_disp || [], pd.base_shear || [], {
     title: `Capacity curve — ${store.poCase}`, H,
+    // v0.19: ASCE 41 overlays when the performance point has been computed
+    bilinear: perf ? { dy: perf.dy, Vy: perf.Vy, du: perf.du, Vu: perf.Vu }
+                   : null,
+    marker: perf ? { x: perf.delta_t,
+                     label: `δt ${fmt(perf.delta_t * 1000, 0)} mm` } : null,
   }));
+  renderPerfOut();
 
-  /* hinge rotations, sorted descending */
+  /* hinge rotations, sorted descending. v0.19: asce41 pushovers carry a
+     per-hinge state history — show the FINAL acceptance state per member
+     (worst of the two ends) as a colored chip. */
   const memBy = {};
   for (const mm of (store.results.members || [])) memBy[mm.uid] = mm;
+  const ORDER = ["elastic", "IO", "LS", "CP", "collapse"];
+  const finalState = {};
+  const myOf = {};
+  for (const h of (pd.hinges || [])) {
+    const st = h.state && h.state.length ? h.state[h.state.length - 1] : "elastic";
+    const cur = finalState[h.uid];
+    if (cur === undefined || ORDER.indexOf(st) > ORDER.indexOf(cur))
+      finalState[h.uid] = st;
+    myOf[h.uid] = h.My;
+  }
+  const hasStates = !!(pd.hinges || []).length;
   const rows = Object.entries(pd.hinge_rotations || {}).sort((a, b) => b[1] - a[1]);
   const head = `<thead><tr>
     <th class="txt">Member</th><th class="txt">Kind</th><th class="txt">Story</th>
-    <th>θ mrad</th><th>My kN·m</th></tr></thead>`;
+    <th>θ mrad</th><th>My kN·m</th>${hasStates ? `<th class="txt">State</th>` : ""}</tr></thead>`;
   const body = rows.map(([uid, rot]) => {
     const mm = memBy[uid] || {};
     const my = (pc.My && pc.My[uid] != null) ? fmt(pc.My[uid], 0)
+      : myOf[uid] != null ? fmt(myOf[uid], 0)
       : (pc.default_My != null ? `${fmt(pc.default_My, 0)} (default)` : "—");
+    const st = finalState[uid];
+    const stCell = hasStates
+      ? `<td class="txt">${st ? `<span class="hstate hstate-${st}">${st}</span>` : `<span class="dim">—</span>`}</td>`
+      : "";
     return `<tr>
       <td class="txt">${esc(uid)}</td>
       <td class="txt dim">${esc(mm.kind || "—")}</td>
       <td class="txt dim">${esc(mm.story || "—")}</td>
       <td>${fmt(rot * 1000, 2)}</td>
-      <td class="dim">${my}</td></tr>`;
+      <td class="dim">${my}</td>${stCell}</tr>`;
   }).join("");
   $("poHingeTable").innerHTML = head +
     `<tbody>${body || `<tr><td class="txt dim">No hinge rotations reported</td></tr>`}</tbody>`;
   $("poHingeNote").textContent =
-    `${rows.length} hinges · ${store.poCase} — plastic rotations at target drift, sorted descending`;
+    `${rows.length} hinges · ${store.poCase} — plastic rotations at target drift, sorted descending` +
+    (hasStates ? " · ASCE 41 acceptance states at the final step" : "");
+}
+
+/* v0.19 — ASCE 41 performance point (POST /api/results/performance-point) */
+async function runPerformancePoint() {
+  const btn = $("perfRunBtn");
+  if (!btn || btn.disabled || !store.poCase) return;
+  const p = store.perfParams;
+  p.SDS = parseFloat($("perfSds").value) || p.SDS;
+  p.SD1 = parseFloat($("perfSd1").value) || p.SD1;
+  p.site = $("perfSite").value || p.site;
+  btn.disabled = true;
+  $("perfSpinner").classList.remove("hidden");
+  const body = { case: store.poCase, SDS: p.SDS, SD1: p.SD1,
+                 site_class: p.site };
+  try {
+    let out;
+    if (!store.mock) {
+      try {
+        out = await api("/api/results/performance-point", body);
+      } catch (e) {
+        console.warn("performance-point endpoint unavailable, mock:", e.message);
+      }
+    }
+    if (!out) out = mockPerformancePoint(store.model, poData(), body);
+    store.perf[store.poCase] = out;
+    renderPoTab();                       // redraw curve with overlays
+  } catch (err) {
+    toast("Performance point failed", err.message, "error", 8000);
+  } finally {
+    btn.disabled = false;
+    $("perfSpinner").classList.add("hidden");
+  }
+}
+
+function renderPerfOut() {
+  const out = $("perfOut"), chips = $("perfChips");
+  if (!out) return;
+  const perf = store.perf[store.poCase];
+  out.classList.toggle("hidden", !perf);
+  chips.classList.toggle("hidden", !perf || !perf.hinge_summary);
+  if (!perf) return;
+  const f = (v, d = 3) => fmt(v, d);
+  out.innerHTML =
+    `<span>T<sub>e</sub> <b>${f(perf.Te)} s</b></span>
+     <span>K<sub>e</sub> <b>${f(perf.Ke, 0)} kN/m</b></span>
+     <span>V<sub>y</sub> <b>${f(perf.Vy, 0)} kN</b></span>
+     <span>S<sub>a</sub> <b>${f(perf.Sa)} g</b></span>
+     <span>μ <b>${f(perf.mu, 2)}</b></span>
+     <span>C<sub>0</sub> <b>${f(perf.C0, 2)}</b></span>
+     <span>C<sub>1</sub> <b>${f(perf.C1, 3)}</b></span>
+     <span>C<sub>2</sub> <b>${f(perf.C2, 3)}</b></span>
+     <span class="perf-dt">δ<sub>t</sub> <b>${f(perf.delta_t * 1000, 1)} mm</b>
+       <span class="dim">@ step ${perf.step ?? "—"}</span></span>`;
+  const hs = perf.hinge_summary || {};
+  chips.innerHTML = ["elastic", "IO", "LS", "CP", "collapse"]
+    .map(s => `<span class="hstate hstate-${s}">${s} ${hs[s] || 0}</span>`)
+    .join("") + `<span class="muted" style="font-size:11px;margin-left:6px">hinge acceptance states at δt</span>`;
 }
 
 /* ================================================================
@@ -5296,6 +5440,7 @@ async function doRun() {
     store.wallResult = null;                        // v0.18 — forces changed
     store.punchResult = null;
     store.vwResult = null;
+    store.perf = {};                                // v0.19 — curves changed
     viewer.setMemberColors(null);
     if (!caseNames().includes(store.caseName)) store.caseName = null;
     rebuildCaseSelect();
@@ -5361,6 +5506,7 @@ function wire() {
   $("csvForces").addEventListener("click", () => downloadCsv("forces"));
   $("csvTh").addEventListener("click", () => downloadCsv("th"));
   $("csvPo").addEventListener("click", () => downloadCsv("pushover"));   // v0.5
+  $("perfRunBtn").addEventListener("click", runPerformancePoint);        // v0.19
 
   /* ---- v0.4: time-history tab controls */
   $("thCaseSelect").addEventListener("change", e => {
@@ -5792,6 +5938,9 @@ async function boot() {
     // v0.10 — RS directional combination + notional loads
     onRsDirectional: createRsDirectional,
     onNotional: createNotionalPattern,
+    // v0.19 — pattern live loading + auto construction sequence
+    onPatternLive: generatePatternLive,
+    onAutoSequence: createAutoSequence,
   });
   wire();
   try {
@@ -5867,6 +6016,10 @@ async function boot() {
     designPunching, renderDriftPanel, runVirtualWork, clearVwColors, vwRows,
     applyVwColors, vwColor, fetchVirtualWork,
     mockDesignWall, mockDesignPunching, mockVirtualWork,
+    // v0.19 — ASCE 41 hinges, performance point, pattern live, sequence
+    runPerformancePoint, renderPerfOut, generatePatternLive,
+    createAutoSequence, mockPatternLive, mockAutoSequence,
+    mockPerformancePoint,
   };
 }
 
