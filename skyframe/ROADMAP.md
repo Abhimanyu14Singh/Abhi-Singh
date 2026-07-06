@@ -130,6 +130,10 @@ scrutinized benchmark tests.
 - [x] ASCE 7-16 §4.7 live-load reduction (design-stage, per-column)
 - [x] Biaxial concrete columns (Bresler / load contour)
 
+## Wave 18 — vertical seismic & panel zones  ✅ done (v1.3)
+- [x] Vertical seismic component Ev = 0.2·SDS·D in ASCE 7 auto-combos
+- [x] Panel zones: automatic rigid joint zones + elastic scissors springs
+
 ## Phase 4 — Parity increment 2  ✅ done
 - [x] 1. Model save/open (.skyframe JSON files) with File menu + gallery
 - [x] 2. Load pattern / case / combo editor UI (with per-case P-Delta toggle)
@@ -139,9 +143,9 @@ scrutinized benchmark tests.
 - [x] 6. Wall/slab openings; elevation-view drawing (Wave 6)
 - [x] 7. Nonlinear static pushover (OpenSees fiber hinges) (Wave 6)
 
-## Status — v1.2 released 🎉
+## Status — v1.3 released 🎉
 All waves above are complete with engine + REST API + UI, pinned by a
-378-test suite. The app builds standalone locally (`packaging/build.sh`).
+403-test suite. The app builds standalone locally (`packaging/build.sh`).
 
 ## Possible future waves (not yet scheduled)
 - Native Windows local build (same build.sh on a Windows host)

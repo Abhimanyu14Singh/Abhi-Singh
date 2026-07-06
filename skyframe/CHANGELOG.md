@@ -1,5 +1,20 @@
 # SkyFrame changelog
 
+## 1.3.0
+
+### Wave 18 — vertical seismic component & panel zones
+- **Vertical seismic component Ev**: the ASCE 7 auto-combination
+  generator accepts SDS and folds Ev = 0.2·SDS·D into the seismic
+  combos per §12.4.2.3 ((1.2+0.2·SDS)D / (0.9−0.2·SDS)D and the ASD
+  analogues), with a live factor preview in the auto-combos card.
+- **Panel zones**: ETABS-style beam-column joint modeling — automatic
+  rigid end zones (half the deepest connecting member depth) or an
+  elastic scissors panel spring (Krawinkler K = G·dc·db·tp via a
+  duplicated joint node), selectable per model with joint glyphs in
+  the plan and 3D views. Centerline remains the default and is
+  bit-identical to prior releases.
+- 403 tests (25 new).
+
 ## 1.2.0
 
 ### Wave 17 — serviceability & design depth

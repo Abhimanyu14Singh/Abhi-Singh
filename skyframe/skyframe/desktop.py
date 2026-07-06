@@ -23,7 +23,7 @@ import urllib.request
 
 from .api.server import create_app
 
-WINDOW_TITLE = "SkyFrame 1.2 — Building Analysis Studio"
+WINDOW_TITLE = "SkyFrame 1.3 — Building Analysis Studio"
 
 
 def _free_port() -> int:
