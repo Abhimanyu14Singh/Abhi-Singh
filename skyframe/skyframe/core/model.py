@@ -302,6 +302,9 @@ class Story:
 
 AXIAL_LIMITS = ("both", "tension", "compression")
 
+# v0.19 automatic plastic-hinge assignment (see FrameMember.hinges)
+MEMBER_HINGE_OPTIONS = ("none", "auto_m3")
+
 
 @dataclass
 class FrameMember:
@@ -345,6 +348,12 @@ class FrameMember:
     # bending frame element.  A case that contains any non-"both" member is
     # solved NONLINEARLY (Newton).
     axial_limit: str = "both"
+    # v0.19 automatic plastic hinges (ASCE 41-17): "none" (default,
+    # elastic — the exact pre-v0.19 behavior) or "auto_m3" — a pushover
+    # case with hinges == "asce41" inserts trilinear M3 hinge springs at
+    # BOTH ends with backbones from skyframe.design.hinges (steel Table
+    # 9-7.1 / concrete-beam Table 10-7).  Ignored by every other analysis.
+    hinges: str = "none"
 
     @property
     def length(self) -> float:
@@ -380,6 +389,7 @@ class FrameMember:
                 "foundation_ks": self.foundation_ks,
                 "foundation_width": self.foundation_width,
                 "axial_limit": self.axial_limit,
+                "hinges": self.hinges,
                 "length": self.length}
 
 
@@ -804,17 +814,25 @@ class PushoverCase:
     gravity: Dict[str, float] = field(default_factory=dict)
     target_drift: float = 0.02                  # roof drift ratio
     steps: int = 100
-    hinges: str = "column_base"                 # "column_base" | "all_ends"
+    hinges: str = "column_base"       # "column_base" | "all_ends" | "asce41"
     My: Dict[str, float] = field(default_factory=dict)   # uid -> kN*m
     default_My: Optional[float] = None          # kN*m, eligible members
     hardening: float = 0.02                     # post-yield stiffness ratio
+    # v0.19 "asce41" mode: My/default_My/hardening are IGNORED; hinges go
+    # at BOTH ends of every member with FrameMember.hinges == "auto_m3",
+    # with trilinear ASCE 41-17 backbones from skyframe.design.hinges.
+    # hinge_params tunes the generator (keys: expected_factor — Fye/Fy,
+    # default 1.1; rho / rho_prime — concrete steel ratios, defaults
+    # 0.01 / 0.0; fy_bar — rebar fy in kPa, default 420000).
+    hinge_params: Dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {"name": self.name, "direction": self.direction,
                 "gravity": dict(self.gravity),
                 "target_drift": self.target_drift, "steps": self.steps,
                 "hinges": self.hinges, "My": dict(self.My),
-                "default_My": self.default_My, "hardening": self.hardening}
+                "default_My": self.default_My, "hardening": self.hardening,
+                "hinge_params": dict(self.hinge_params)}
 
 
 STAGED_MODES = ("per_story",)
@@ -1174,7 +1192,8 @@ class BuildingModel:
                    rigid_factor: float = 1.0,
                    foundation_ks: float = 0.0,
                    foundation_width: float = 0.0,
-                   axial_limit: str = "both") -> FrameMember:
+                   axial_limit: str = "both",
+                   hinges: str = "none") -> FrameMember:
         if section not in self.sections:
             raise ValueError(f"Unknown section {section}")
         uid = uid or f"{kind[0].upper()}{len(self.members) + 1}"
@@ -1186,7 +1205,8 @@ class BuildingModel:
                         rigid_factor=float(rigid_factor),
                         foundation_ks=float(foundation_ks),
                         foundation_width=float(foundation_width),
-                        axial_limit=str(axial_limit))
+                        axial_limit=str(axial_limit),
+                        hinges=str(hinges))
         if m.length < 1e-9:
             raise ValueError(f"Member {uid} has zero length")
         if not m.release_tokens() <= {"Mi", "Mj"}:
@@ -1195,6 +1215,7 @@ class BuildingModel:
         self._validate_rigid_offsets(m)
         self._validate_foundation(m)
         self._validate_axial_limit(m)
+        self._validate_member_hinges(m)
         self.members.append(m)
         return m
 
@@ -1203,6 +1224,12 @@ class BuildingModel:
         if m.axial_limit not in AXIAL_LIMITS:
             raise ValueError(f"Member {m.uid}: axial_limit must be one of "
                              f"{AXIAL_LIMITS}, got {m.axial_limit!r}")
+
+    @staticmethod
+    def _validate_member_hinges(m: FrameMember) -> None:
+        if m.hinges not in MEMBER_HINGE_OPTIONS:
+            raise ValueError(f"Member {m.uid}: hinges must be one of "
+                             f"{MEMBER_HINGE_OPTIONS}, got {m.hinges!r}")
 
     @staticmethod
     def _validate_foundation(m: FrameMember) -> None:
@@ -1630,14 +1657,18 @@ class BuildingModel:
                           hinges: str = "column_base",
                           My: Optional[Dict[str, float]] = None,
                           default_My: Optional[float] = None,
-                          hardening: float = 0.02) -> PushoverCase:
+                          hardening: float = 0.02,
+                          hinge_params: Optional[Dict[str, float]] = None
+                          ) -> PushoverCase:
         po = PushoverCase(
             name, direction, gravity=dict(gravity or {}),
             target_drift=float(target_drift), steps=int(steps),
             hinges=hinges,
             My={k: float(v) for k, v in (My or {}).items()},
             default_My=(None if default_My is None else float(default_My)),
-            hardening=float(hardening))
+            hardening=float(hardening),
+            hinge_params={k: float(v)
+                          for k, v in (hinge_params or {}).items()})
         self._validate_pushover_case(po)
         self.pushover_cases[name] = po
         return po
@@ -1646,9 +1677,21 @@ class BuildingModel:
         if po.direction not in PUSHOVER_DIRECTIONS:
             raise ValueError(f"Pushover case {po.name}: direction must be "
                              f"X|Y, got {po.direction!r}")
-        if po.hinges not in PUSHOVER_HINGE_MODES:
+        if po.hinges not in PUSHOVER_HINGE_MODES + ("asce41",):
             raise ValueError(f"Pushover case {po.name}: hinges must be "
-                             f"column_base|all_ends, got {po.hinges!r}")
+                             f"column_base|all_ends|asce41, got "
+                             f"{po.hinges!r}")
+        _HP_KEYS = ("expected_factor", "rho", "rho_prime", "fy_bar")
+        for k, v in po.hinge_params.items():
+            if k not in _HP_KEYS:
+                raise ValueError(f"Pushover case {po.name}: unknown "
+                                 f"hinge_params key {k!r} (allowed: "
+                                 f"{_HP_KEYS})")
+            if not (isinstance(v, (int, float)) and math.isfinite(v)
+                    and v > 0.0 and not isinstance(v, bool)):
+                raise ValueError(f"Pushover case {po.name}: "
+                                 f"hinge_params[{k!r}] must be a finite "
+                                 "value > 0")
         if not (math.isfinite(po.target_drift) and po.target_drift > 0.0):
             raise ValueError(f"Pushover case {po.name}: target_drift must "
                              "be > 0")
@@ -2045,6 +2088,7 @@ class BuildingModel:
             self._validate_rigid_offsets(m)
             self._validate_foundation(m)
             self._validate_axial_limit(m)
+            self._validate_member_hinges(m)
         region_uids = set()
         for r in self.shells:
             if r.uid in region_uids:
@@ -2287,7 +2331,8 @@ class BuildingModel:
                 rigid_factor=float(md.get("rigid_factor", 1.0)),
                 foundation_ks=float(md.get("foundation_ks", 0.0)),
                 foundation_width=float(md.get("foundation_width", 0.0)),
-                axial_limit=str(md.get("axial_limit", "both"))))
+                axial_limit=str(md.get("axial_limit", "both")),
+                hinges=str(md.get("hinges", "none"))))
         for rd in d.get("shells") or []:
             mdl.shells.append(ShellRegion(
                 uid=rd["uid"], kind=rd["kind"], behavior=rd["behavior"],
@@ -2436,7 +2481,9 @@ class BuildingModel:
                 hinges=pd.get("hinges", "column_base"),
                 My={u: float(v) for u, v in (pd.get("My") or {}).items()},
                 default_My=(None if dmy is None else float(dmy)),
-                hardening=float(pd.get("hardening", 0.02)))
+                hardening=float(pd.get("hardening", 0.02)),
+                hinge_params={k: float(v) for k, v in
+                              (pd.get("hinge_params") or {}).items()})
         for name, sd in (d.get("staged_cases") or {}).items():
             mdl.staged_cases[name] = StagedCase(
                 name=sd.get("name", name),

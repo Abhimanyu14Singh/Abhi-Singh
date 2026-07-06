@@ -147,6 +147,11 @@ BUCKLING_CASE_CAP = 25
 # stiffness ratio exactly the case's ``hardening`` h.
 HINGE_STIFFNESS_FACTOR = 10.0
 
+# v0.19 asce41 hinges: post-capping hardening slope of the trilinear
+# backbone as a fraction of the member-end rotational stiffness 6EI/L
+# (ASCE 41-17 §9.4.2.2 permits ~3% strain hardening on the plastic branch).
+HINGE_HARDENING_RATIO = 0.03
+
 # v0.9 rigid-end offsets: the rigid arm connecting a member's real end node to
 # the offset (flexible-element) node is a very-stiff elasticBeamColumn whose
 # E/G are the member's scaled by this factor (a "stiff element" rigid link —
@@ -764,6 +769,10 @@ class _Assembly:
     #   v0.5 pushover: (member uid, "i"|"j") -> zeroLength hinge element tag
     hinge_dup_of: Dict[int, int] = field(default_factory=dict)
     #   v0.5 pushover: duplicated hinge node tag -> original node tag
+    hinge_backbone: Dict[Tuple[str, str], dict] = field(default_factory=dict)
+    #   v0.19 asce41 hinges: (uid, end) -> {"bb": backbone dict from
+    #   design.hinges, "k33": spring elastic stiffness about the strong
+    #   axis} — feeds per-step acceptance-state classification.
     hinge_rot_yield: Dict[Tuple[str, str], Tuple[float, float]] = field(
         default_factory=dict)
     #   v0.6: (uid, end) -> (My/k22, My/k33) yield rotations of the hinge
@@ -942,6 +951,10 @@ class PushoverResults:
     roof_drift: List[float]
     hinge_rotations: Dict[str, float]
     warnings: List[str] = field(default_factory=list)
+    # v0.19 asce41 mode only: per-hinge histories + acceptance states —
+    # [{uid, end, My, thy, a, b, c, IO, LS, CP, rot: [per step],
+    #   moment: [per step], state: [per step]}]; empty otherwise.
+    hinge_detail: List[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -951,6 +964,7 @@ class PushoverResults:
             "hinge_rotations": {u: float(r)
                                 for u, r in self.hinge_rotations.items()},
             "warnings": list(self.warnings),
+            "hinges": [dict(hd) for hd in self.hinge_detail],
         }
 
 
@@ -1434,8 +1448,42 @@ class OpenSeesEngine:
         member is eligible when ``case.My`` names it or ``default_My`` is
         set (columns only for ``column_base``); all other members stay
         elastic — no hinge is inserted.
+
+        v0.19 ``asce41``: the plan value is a BACKBONE DICT (not a float)
+        from :func:`skyframe.design.hinges.auto_backbone` for BOTH ends of
+        every member with ``FrameMember.hinges == "auto_m3"``; members the
+        generator cannot size (no library section AND no drawing dims) and
+        axial-only members are skipped with a ``UserWarning``.
         """
         plan: Dict[Tuple[str, str], float] = {}
+        if getattr(case, "hinges", "") == "asce41":
+            from skyframe.design.hinges import auto_backbone
+            hp = dict(getattr(case, "hinge_params", {}) or {})
+            kw = {}
+            if "expected_factor" in hp:
+                kw["expected_factor"] = hp["expected_factor"]
+            for key in ("rho", "rho_prime", "fy_bar"):
+                if key in hp:
+                    kw[key] = hp[key]
+            for m in self.model.members:
+                if getattr(m, "hinges", "none") != "auto_m3":
+                    continue
+                if getattr(m, "axial_limit", "both") != "both":
+                    warnings.warn(
+                        f"asce41 hinges: member {m.uid!r} is axial-only; "
+                        "hinge skipped (Truss members carry no moment)",
+                        UserWarning)
+                    continue
+                bb = auto_backbone(self.model, m, **kw)
+                if bb is None:
+                    warnings.warn(
+                        f"asce41 hinges: member {m.uid!r} has neither a "
+                        "library steel section nor rectangular drawing "
+                        "dims; left elastic", UserWarning)
+                    continue
+                plan[(m.uid, "i")] = bb
+                plan[(m.uid, "j")] = bb
+            return plan
         for m in self.model.members:
             my = case.My.get(m.uid, case.default_My)
             if my is None:
@@ -1768,12 +1816,41 @@ class OpenSeesEngine:
             mtag += 1
             ops.uniaxialMaterial("Elastic", mtag, kt)
             t_tag = mtag
-            mtag += 1
-            ops.uniaxialMaterial("Steel01", mtag, my, k22, b)
-            y_tag = mtag
-            mtag += 1
-            ops.uniaxialMaterial("Steel01", mtag, my, k33, b)
-            z_tag = mtag
+            if isinstance(my, dict):
+                # v0.19 asce41 M3 hinge: trilinear Hysteretic backbone
+                # about the STRONG axis only (M3 = major-axis flexure);
+                # the weak axis stays elastic at the stiff-spring k22.
+                # Points (see design.hinges module docstring):
+                #   1: yield          (My,   ty)        ty = My / k33
+                #   2: capping        (Mc,   ty + a)    3% of 6EI/L slope
+                #   3: residual       (c My, ty + b)
+                # Beyond point 3 OpenSees Hysteretic keeps the last
+                # degrading branch (documented in CONTRACT v0.19).
+                bb = my
+                My_bb = bb["My"]
+                ty = My_bb / k33
+                Mc = My_bb + (HINGE_HARDENING_RATIO
+                              * 6.0 * mat.E * I33_eff / L) * bb["a"]
+                Mr = max(bb["c"] * My_bb, 1e-6 * My_bb)
+                mtag += 1
+                ops.uniaxialMaterial("Elastic", mtag, k22)
+                y_tag = mtag
+                mtag += 1
+                ops.uniaxialMaterial(
+                    "Hysteretic", mtag,
+                    My_bb, ty, Mc, ty + bb["a"], Mr, ty + bb["b"],
+                    -My_bb, -ty, -Mc, -(ty + bb["a"]), -Mr, -(ty + bb["b"]),
+                    1.0, 1.0, 0.0, 0.0)
+                z_tag = mtag
+                asm.hinge_backbone[(uid, end)] = {"bb": bb, "k33": k33}
+                my = My_bb        # for the shared yield-rotation record
+            else:
+                mtag += 1
+                ops.uniaxialMaterial("Steel01", mtag, my, k22, b)
+                y_tag = mtag
+                mtag += 1
+                ops.uniaxialMaterial("Steel01", mtag, my, k33, b)
+                z_tag = mtag
             etag += 1
             ops.element("zeroLength", etag, orig_tag, dup_tag,
                         "-mat", t_tag, y_tag, z_tag, "-dir", 4, 5, 6,
@@ -3756,6 +3833,11 @@ class OpenSeesEngine:
         roof_disp: List[float] = []
         base_shear: List[float] = []
         hinge_rot: Dict[str, float] = {}
+        # v0.19 asce41 hinge histories: (uid, end) -> rot/moment/state lists
+        hinge_hist: Dict[Tuple[str, str], dict] = {
+            key: {"rot": [], "moment": [], "state": []}
+            for key in asm.hinge_backbone}
+        from skyframe.design.hinges import hinge_state as _hstate
         for k in range(case.steps):
             ok = ops.analyze(1)
             if ok != 0:
@@ -3773,16 +3855,38 @@ class OpenSeesEngine:
             v = -(sum(ops.nodeReaction(t)[dof - 1]
                       for t in base_tags) - base0)
             base_shear.append(float(v))
-            for (uid, _end), etag in asm.hinge_ele.items():
+            for (uid, end), etag in asm.hinge_ele.items():
                 defo = ops.eleResponse(etag, "deformation")
                 rot = (max(abs(defo[1]), abs(defo[2]))
                        if len(defo) >= 3 else 0.0)
                 if rot > hinge_rot.get(uid, 0.0):
                     hinge_rot[uid] = float(rot)
+                spec = asm.hinge_backbone.get((uid, end))
+                if spec is not None:
+                    # strong-axis (M3) spring: material 3 of dirs (4, 5, 6)
+                    r33 = float(defo[2]) if len(defo) >= 3 else 0.0
+                    frc = ops.eleResponse(etag, "force")
+                    m33 = float(frc[2]) if len(frc) >= 3 else 0.0
+                    hh = hinge_hist[(uid, end)]
+                    hh["rot"].append(r33)
+                    hh["moment"].append(m33)
+                    hh["state"].append(
+                        _hstate(r33, spec["bb"], spec["k33"]))
+
+        hinge_detail: List[dict] = []
+        for (uid, end), spec in asm.hinge_backbone.items():
+            bb = spec["bb"]
+            hh = hinge_hist[(uid, end)]
+            hinge_detail.append({
+                "uid": uid, "end": end, "My": bb["My"], "thy": bb["thy"],
+                "a": bb["a"], "b": bb["b"], "c": bb["c"], "IO": bb["IO"],
+                "LS": bb["LS"], "CP": bb["CP"], "kind": bb["kind"],
+                "rot": hh["rot"], "moment": hh["moment"],
+                "state": hh["state"]})
 
         result = PushoverResults(
             name, roof_disp, base_shear, [u / H for u in roof_disp],
-            hinge_rot, warn_list)
+            hinge_rot, warn_list, hinge_detail)
         self._po_cache[name] = result
         return result
 

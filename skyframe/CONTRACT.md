@@ -2075,3 +2075,123 @@ products — Simpson exact).
 All three run the engine on the CURRENT model server-side (the design
 endpoints call ``run()`` like ``/api/design/steel``); no analysis results
 travel in the request.
+
+# v0.19 additions — ASCE 41 hinges, performance point, pattern live loading, auto construction sequence
+
+## Automatic ASCE 41-17 plastic hinges (`skyframe/design/hinges.py`)
+
+```python
+MEMBER_HINGE_OPTIONS = ("none", "auto_m3")
+# FrameMember gains (round-trips; absent key = "none"; validate() raises):
+#   hinges: str = "none"
+# PushoverCase.hinges gains the "asce41" option; PushoverCase gains
+#   hinge_params: Dict[str, float] = {}     # keys: expected_factor (1.1),
+#                                           # rho (0.01), rho_prime (0.0),
+#                                           # fy_bar (420000 kPa); > 0,
+#                                           # unknown keys raise
+```
+
+In ``hinges == "asce41"`` pushover mode, ``My``/``default_My``/``hardening``
+are IGNORED; every member with ``FrameMember.hinges == "auto_m3"`` gets a
+trilinear M3 hinge at BOTH ends (axial-only members and members with
+neither a library steel section nor rectangular drawing dims are skipped
+with a ``UserWarning``).  Backbones (all PRELIMINARY-flagged):
+
+* STEEL (section name resolves in the design-property library) —
+  Table 9-7.1 beam-flexure ladders::
+
+      compact  (bf/2tf <= 0.30 rt, h/tw <= 2.45 rt):  a=9thy  b=11thy c=0.6
+                                                       IO=1thy LS=9 CP=11thy
+      slender  (bf/2tf >= 0.38 rt OR h/tw >= 3.76 rt): a=4thy  b=6thy  c=0.2
+                                                       IO=.25  LS=3  CP=4thy
+
+  (rt = sqrt(E/Fy); LINEAR interpolation, the WORSE of flange/web governs,
+  reported as ``slenderness_t`` in [0, 1]; h = d - 2tf).  ``My = Zx Fye``,
+  ``thy = Zx Fye L / (6 E I)`` (Eq. 9-1), ``Fye = expected_factor * Fy``
+  (Fy = material.fy if present else 345 MPa A992).  COLUMNS use the same
+  beam ladder with NO axial interaction (documented v0.19 idealization).
+* CONCRETE (drawing dims b/h > 0) — Table 10-7 conforming/low-shear rows,
+  ABSOLUTE plastic rotations:: (rho-rho')/rho_bal <= 0: a=.025 b=.05 c=.2
+  IO=.010 LS=.025 CP=.05;  >= 0.5: a=.020 b=.04 c=.2 IO=.005 LS=.020
+  CP=.04 (linear between).  ``My = Mn`` from `beam_flexure` with
+  ``As = rho * b * (0.9 h)``; fc from material.fc else inverted ACI
+  19.2.2.1 E = 4700 sqrt(fc') MPa.
+
+Engine wiring: the v0.5 duplicated-node zeroLength machinery, but the
+STRONG-axis spring is a ``Hysteretic`` trilinear envelope (weak axis stays
+elastic at k22 — an M3 hinge)::
+
+    k = HINGE_STIFFNESS_FACTOR * 6EI33/L        (n = 10 stiff-hinge series)
+    1: ( My,     ty = My/k )
+    2: ( My + HINGE_HARDENING_RATIO*(6EI33/L)*a,  ty + a )   # 3% hardening
+    3: ( c*My,   ty + b )                        # then OpenSees' last branch
+
+Per-step acceptance states from `hinge_state(rot, backbone, k)`: bands are
+PLASTIC rotations shifted by ty — "elastic" | "IO" | "LS" | "CP" |
+"collapse" (beyond CP).  ``PushoverResults`` gains ``hinge_detail``
+(serialized as ``"hinges"``): ``[{uid, end, My, thy, a, b, c, IO, LS, CP,
+kind, rot: [per step], moment: [per step], state: [per step]}]``; empty
+outside asce41 mode — legacy modes are BIT-IDENTICAL to v0.18.
+
+Hand-checks: W18x50 compactness longhand -> compact row exact; synthetic
+slender/midpoint sections pin the other ladder + interpolation; cantilever
+initial stiffness == 1/(L^3/3EI + L^2/k) to 1e-6; first yield bracketed by
+V*L crossing My within one displacement step; hardening-branch moments ==
+My + 0.03(6EI/L)(rot-ty) at every step on the branch; recorded states ==
+hinge_state() re-applied.  NOTE the engine axes convention: a VERTICAL
+member's local z is global X, so its M3 hinge yields under a Y push.
+
+## Performance point (`skyframe/design/performance.py`)
+
+Pure functions, ASCE 41-17 §7.4.3 coefficient method:
+
+* ``bilinearize(disp, shear)`` — §7.4.3.2.4: curve used to PEAK shear;
+  ``Ke`` = secant at 0.6Vy, ``Vy`` from the equal-area identity (linear in
+  Vy at frozen Ke — the Vy^2 terms cancel), fixed-point iterated; EXACT on
+  a bilinear input.  Returns {Ki, Ke, Vy, dy, du, Vu, area}.
+* ``target_displacement(disp, shear, Ti, W, SDS, SD1, site_class="D",
+  num_stories=1)`` — Eq. 7-28 ``delta_t = C0 C1 C2 Sa (Te/2pi)^2 g``:
+  ``Te = Ti sqrt(Ki/Ke)``; C0 from Table 7-5 "Other buildings"
+  (1/1.2/1.3/1.4/1.5 at 1/2/3/5/10+ stories, interpolated); ``mu = Sa /
+  (Vy/W)`` (Cm = 1); ``C1 = 1 + (mu-1)/(a Te^2)`` (a = 130/90/60 by site
+  class, Te clamped at 0.2 s, = 1 beyond 1 s); ``C2 = 1 +
+  ((mu-1)/Te)^2/800`` (= 1 beyond 0.7 s); Sa from the SDS/SD1 two-branch
+  design spectrum (TL branch omitted).  g = 9.81.
+
+Hand-checks: exact-bilinear recovery (Ke/Vy/dy 1e-9), every coefficient
+longhand at Ti = 0.5 s (delta_t to 1e-9), C0 midpoints, Sa branches,
+site-class a-factors, degenerate-curve errors.
+
+## Pattern (skip) live loading (`skyframe/core/patterning.py`)
+
+* ``beam_spans(model) -> {beam uid: span index}`` — beams grouped by LINE
+  (unit direction + perpendicular offset), chained through shared
+  endpoints; a geometric gap restarts numbering; isolated beams are span 0.
+* ``generate_pattern_live(model, live_pattern)`` — derives
+  ``<name>__ODD`` (spans 0, 2, ...) / ``<name>__EVEN`` (spans 1, 3, ...)
+  live patterns from the member_loads/member_udls; loads not on beams and
+  nodal/story/area/thermal/self-weight loads stay ONLY in the all-spans
+  pattern (``UserWarning``).  Idempotent; ValueError on unknown/non-live.
+* ``pattern_live_envelope(model, live_pattern, dead_factor=1.2,
+  live_factor=1.6)`` — also creates factored CASES ``PLL_ALL/ODD/EVEN``
+  (the dead-classified case's patterns * 1.2 + that live pattern * 1.6)
+  and the ``PATTERN-LL`` ENVELOPE combo over them (envelope combos take
+  scaled CASES, so each case must be a complete gravity sum).  Requires a
+  dead-classified case.
+
+Hand-checks: 3-span run indices 0/1/2, gap restart, odd/even load split;
+fixed-fixed decoupled spans give |M| = wL^2/24 midspan / wL^2/12 ends on
+the loaded-middle case, ~0 on the skip case, and the envelope equals the
+per-station max/min over the three cases to machine precision.
+
+## API additions
+
+| Method | Path | Body / Response |
+|--------|------|-----------------|
+| POST | `/api/results/performance-point` | `{case, SDS, SD1, site_class?, W?}` → bilinearization + Te/Sa/mu/C0/C1/C2/delta_t + `step` (nearest converged step) + `roof_disp_at_step` + `hinge_summary` {elastic/IO/LS/CP/collapse counts}; Ti = dominant modal period in the push direction; W defaults to (story + nodal masses) * g; 400 unknown case / missing SDS/SD1 / degenerate curve |
+| POST | `/api/loads/pattern-live` | `{live_pattern?}` (default: the live-classified pattern) → model dict; 400 no live pattern / unknown |
+| POST | `/api/case/auto-sequence` | `{name? ("SEQ"), pattern? (dead-classified), include_live?}` → model dict (wraps `add_staged_case` per-story); 400 unknown pattern |
+
+`POST /api/model` round-trips ``FrameMember.hinges`` and
+``PushoverCase.hinge_params``; `POST /api/analyze` pushover blocks carry
+the ``hinges`` array (asce41 mode).

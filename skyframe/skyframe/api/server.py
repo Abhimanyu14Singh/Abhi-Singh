@@ -86,6 +86,32 @@ v0.18 additions:
   {uid: e}, total, roof_disp, case, direction}``; 400 on an unknown case /
   bad direction / nonlinear or P-Delta case.
 
+v0.19 additions:
+
+* ``POST /api/model`` round-trips ``FrameMember.hinges`` ("none" |
+  "auto_m3"; 400 on any other value) and
+  ``PushoverCase.hinges == "asce41"`` + ``hinge_params``;
+* ``POST /api/analyze`` pushover blocks gain ``hinges`` (asce41 mode
+  only): per hinge ``{uid, end, My, thy, a, b, c, IO, LS, CP, kind,
+  rot: [per step], moment: [per step], state: [per step]}`` with state in
+  elastic | IO | LS | CP | collapse;
+* ``POST /api/results/performance-point`` — ASCE 41-17 §7.4.3 coefficient
+  method (body ``{case: pushover name, SDS, SD1, site_class?, W?}``):
+  bilinearizes the capacity curve (§7.4.3.2.4 equal-area / 0.6Vy secant),
+  ``Te = Ti sqrt(Ki/Ke)`` with Ti the dominant modal period in the push
+  direction, W defaults to the seismic weight (story + nodal masses * g);
+  response carries Ki/Ke/Vy/dy/Te/Sa/mu/C0/C1/C2/delta_t, the nearest
+  pushover ``step`` index and that step's ``hinge_summary`` state counts;
+* ``POST /api/loads/pattern-live`` — ETABS-style skip live loading (body
+  ``{live_pattern?: name (default: the live-classified pattern)}``):
+  creates ``<live>__ODD`` / ``<live>__EVEN`` patterns by continuous-run
+  span parity, factored cases ``PLL_ALL/ODD/EVEN`` (1.2D + 1.6L) and the
+  ``PATTERN-LL`` envelope combo; returns the model dict;
+* ``POST /api/case/auto-sequence`` — one-click staged-construction case
+  (body ``{name?, pattern?, include_live?}``, defaults SEQ / the dead
+  pattern): wraps ``add_staged_case`` (per-story sequential gravity);
+  returns the model dict.
+
 Saved models live as ``<name>.skyframe.json`` files in ``~/.skyframe/models``
 (override with the ``SKYFRAME_MODELS_DIR`` environment variable; the
 directory is created on demand).  Names must match ``[A-Za-z0-9 _-]{1,60}``.
@@ -888,6 +914,113 @@ def create_app() -> Flask:
         except Exception as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify(out)
+
+    # ------------------------------------------ v0.19: performance point
+    @app.post("/api/results/performance-point")
+    def results_performance_point():
+        """ASCE 41-17 coefficient-method target displacement (docstring).
+
+        Body: ``{case: pushover case name, SDS: g, SD1: g,
+        site_class?: "A".."F" (default "D"), W?: kN (default: seismic
+        weight from story + nodal masses)}``.
+        """
+        if not _OPENSEES_OK:
+            return jsonify({"error": "OpenSeesPy is not available"}), 400
+        body = request.get_json(silent=True) or {}
+        model = _state["model"]
+        case = body.get("case")
+        if case not in model.pushover_cases:
+            return jsonify({"error": f"Unknown pushover case {case!r}"}), 400
+        try:
+            sds = float(body["SDS"])
+            sd1 = float(body["SD1"])
+        except (KeyError, TypeError, ValueError):
+            return jsonify({"error": "'SDS' and 'SD1' (design spectral "
+                                     "parameters, g) are required"}), 400
+        site = str(body.get("site_class", "D"))
+        try:
+            engine = OpenSeesEngine(model)
+            po = engine.run_pushover(case)
+            if len(po.roof_disp) < 2:
+                return jsonify({"error": "pushover produced fewer than 2 "
+                                         "converged steps"}), 400
+            direction = model.pushover_cases[case].direction
+            key = "ux" if direction == "X" else "uy"
+            modal = engine.run_modal()
+            mode = max(modal.participation, key=lambda p: p.get(key, 0.0))
+            Ti = mode["T"]
+            W = body.get("W")
+            if W is None:
+                masses = model.compute_story_masses()
+                mass_t = (sum(masses.values())
+                          + sum(nm.mx for nm in model.nodal_masses))
+                W = mass_t * 9.81
+            W = float(W)
+            from skyframe.design.performance import target_displacement
+            out = target_displacement(
+                po.roof_disp, po.base_shear, Ti=Ti, W=W, SDS=sds, SD1=sd1,
+                site_class=site,
+                num_stories=len(model.stories))
+        except (ValueError, TypeError, KeyError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        # nearest converged step to delta_t + its hinge state counts
+        step = min(range(len(po.roof_disp)),
+                   key=lambda i: abs(po.roof_disp[i] - out["delta_t"]))
+        summary = {"elastic": 0, "IO": 0, "LS": 0, "CP": 0, "collapse": 0}
+        for hd in po.hinge_detail:
+            if step < len(hd["state"]):
+                summary[hd["state"][step]] += 1
+        out.update({"case": case, "direction": direction, "step": step,
+                    "roof_disp_at_step": po.roof_disp[step],
+                    "hinge_summary": summary})
+        return jsonify(out)
+
+    # ------------------------------------------ v0.19: pattern live loading
+    @app.post("/api/loads/pattern-live")
+    def loads_pattern_live():
+        """Skip live loading: derived patterns + PATTERN-LL envelope."""
+        body = request.get_json(silent=True) or {}
+        model = _state["model"]
+        live = body.get("live_pattern")
+        if live is None:
+            live = next((p.name for p in model.patterns.values()
+                         if p.kind == "live"), None)
+            if live is None:
+                return jsonify({"error": "the model has no live "
+                                         "pattern"}), 400
+        try:
+            from skyframe.core.patterning import pattern_live_envelope
+            pattern_live_envelope(model, live)
+            model.validate()
+        except (ValueError, TypeError, KeyError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(model.to_dict())
+
+    # ------------------------------------------ v0.19: auto sequence case
+    @app.post("/api/case/auto-sequence")
+    def case_auto_sequence():
+        """One-click per-story staged-construction (sequential) case."""
+        body = request.get_json(silent=True) or {}
+        model = _state["model"]
+        pattern = body.get("pattern")
+        if pattern is None:
+            pattern = next((p.name for p in model.patterns.values()
+                            if p.kind == "dead"), None)
+            if pattern is None:
+                return jsonify({"error": "the model has no dead "
+                                         "pattern"}), 400
+        name = str(body.get("name") or "SEQ")
+        live = body.get("include_live") or {}
+        if not isinstance(live, dict):
+            return jsonify({"error": "'include_live' must be a "
+                                     "{pattern: factor} object"}), 400
+        try:
+            model.add_staged_case(
+                name, pattern=pattern,
+                include_live={str(p): float(f) for p, f in live.items()})
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(model.to_dict())
 
     # --------------------------------------------- v0.12: steel optimization
     @app.post("/api/design/optimize")
