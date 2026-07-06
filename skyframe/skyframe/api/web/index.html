@@ -942,6 +942,39 @@
           <div class="pane-tools">
             <span class="muted" id="svcNote"></span>
           </div>
+
+          <!-- v0.20: floor vibration screening (AISC DG11 walking excitation) -->
+          <div class="vib-card" id="vibCard">
+            <div class="perf-head">
+              <b>Floor vibration</b>
+              <span class="muted">AISC DG11 walking excitation — a<sub>p</sub>/g vs the occupancy comfort limit (POST /api/results/vibration)</span>
+              <span class="toolbar-spacer"></span>
+              <button class="chip csv-btn hidden" id="csvVib" title="Download the vibration screening as CSV (unrounded)">⬇ CSV</button>
+            </div>
+            <div class="perf-form vib-form">
+              <label class="rs-field"><span>live factor</span>
+                <input id="vibLive" type="number" min="0" max="1" step="0.05" value="0.5"
+                  title="Fraction of the live load included in the participating weight W"></label>
+              <label class="rs-field"><span>damping β</span>
+                <input id="vibBeta" type="number" min="0.005" max="0.2" step="0.005" value="0.03"
+                  title="Modal damping ratio — 0.02 bare floors, 0.03 offices, 0.05 full-height partitions"></label>
+              <label class="rs-field"><span>a<sub>p</sub>/g limit</span>
+                <select id="vibLimitSel" title="Peak-acceleration comfort limit by occupancy (AISC DG11 Table 4.1)">
+                  <option value="0.005" selected>0.5 % — office / residential / church</option>
+                  <option value="0.015">1.5 % — shopping / dining (quiet paper 0.5 %)</option>
+                  <option value="custom">custom…</option>
+                </select></label>
+              <label class="rs-field hidden" id="vibCustomWrap"><span>custom limit <span class="unit">%</span></span>
+                <input id="vibLimitCustom" type="number" min="0.05" max="10" step="0.05" value="0.5"></label>
+              <button class="btn btn-run design-check" id="vibRunBtn" title="POST /api/results/vibration">
+                <span class="spinner hidden" id="vibSpinner"></span><span>Run</span></button>
+            </div>
+            <div class="design-summary vib-summary hidden" id="vibSummary"></div>
+            <div class="table-scroll">
+              <table class="data-table" id="vibTable"></table>
+            </div>
+            <p class="muted design-note" id="vibNote"></p>
+          </div>
         </div>
       </section>
     </main>
