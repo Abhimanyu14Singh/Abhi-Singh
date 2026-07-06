@@ -147,5 +147,48 @@ scrutinized benchmark tests.
 All waves above are complete with engine + REST API + UI, pinned by a
 403-test suite. The app builds standalone locally (`packaging/build.sh`).
 
+## Scheduled waves toward ETABS v23 parity
+Driven by `docs/ETABS23_GAP_MATRIX.md` (compiled from CSI ETABS v23 docs
+and release notes). No gap is skipped — everything below is scheduled.
+
+### Wave 19 — concrete wall & slab design (top-2 gaps)
+- [ ] Shear wall design: pier PMM (uniform reinforcing), ACI 318 shear,
+      §18.10.6.3 boundary-element check, D/C table
+- [ ] Punching shear checks at columns (ACI 318 two-way shear, b0 at d/2)
+- [ ] Energy / virtual-work drift-optimization diagram
+
+### Wave 20 — nonlinear production tools
+- [ ] Auto ASCE 41-17 frame hinges (M3/PMM tables) + fiber PMM hinges
+- [ ] Pushover performance point (ASCE 41 coefficient method)
+- [ ] Pattern (skip) live loading + auto construction-sequence case
+
+### Wave 21 — composite & slab flexure
+- [ ] Composite beam design (studs, partial composite, camber, DG11 vibration)
+- [ ] RC slab strip flexural design; walking-vibration check
+
+### Wave 22 — sections & devices
+- [ ] Section Designer (arbitrary fiber sections, PMM surface)
+- [ ] Friction-pendulum isolators (single/triple), elastomeric bearings,
+      multilinear links
+
+### Wave 23 — meshing & advanced shells
+- [ ] Auto edge constraints (mismatched-mesh zipper)
+- [ ] Nonlinear layered shell walls; line springs / nonlinear area springs
+- [ ] Semi-rigid diaphragm auto lateral-load distribution
+
+### Wave 24 — code breadth
+- [ ] ASCE 7-22 updates; EC2/EC3 frame design; NBCC wind/seismic
+- [ ] Wind exposure from shell objects (Cp); AISC 341 seismic checks
+
+### Wave 25 — speed, API & tables ("better speed" goal)
+- [ ] Engine profiling + multithreaded solver wiring; UI render profiling
+- [ ] Public documented Python API; interactive database tables
+- [ ] Model templates + Similar Stories; report generator upgrade
+
+### Wave 26 — long-horizon
+- [ ] PT tendons (equivalent-load) + PT slab stress checks
+- [ ] Cracked/long-term slab deflections (creep & shrinkage)
+- [ ] Ritz/FNA feasibility study; DXF/IFC export; Towers
+
 ## Possible future waves (not yet scheduled)
 - Native Windows local build (same build.sh on a Windows host)
