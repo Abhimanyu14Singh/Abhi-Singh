@@ -46,6 +46,15 @@ v0.12 axial-only members); any device makes TH cases Newton.  v0.15 wall
 PIERS: labeled walls report per-story in-plane P/V/M from EXACT nodal
 free-body cuts of the shell elements (``results["piers"]``).
 
+v0.18 virtual-work drift diagrams (``run_virtual_work``): for a linear
+static lateral case and a direction, each frame member's unit-load
+virtual-work contribution ``e = int(N n/EA + M3 m3/EI33 + M2 m2/EI22
++ T t/GJ) dx`` is integrated over the 11 stations of the real case and a
+unit-top-story-load virtual case (composite Simpson — exact for the
+point-load / full-span-UDL fields the stations carry); the contribution
+sum equals the roof virtual displacement by the unit-load theorem for
+frame-only models.
+
 v0.16 beam deflection recovery: every static case / additive combo reports
 ``member_deflections`` — EXACT closed-form transverse deflection stations
 (local y/z) recovered per segment from the end node displacements plus the
@@ -113,7 +122,7 @@ from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
                                  FrameMember, FrameSection, LoadCase,
                                  LoadCombo, LoadPattern,
                                  ResponseSpectrumCase, SectionCut,
-                                 ShellRegion)
+                                 ShellRegion, StoryForce)
 
 # time-history step cap for engine.run(): if the model's TH cases together
 # exceed this many integration steps they are skipped in run() (a warning is
@@ -2840,6 +2849,121 @@ class OpenSeesEngine:
             if by_pier:
                 piers[cname] = by_pier
         return piers
+
+    # ------------------------------------------- v0.18 virtual-work diagram
+    def run_virtual_work(self, case_name: str,
+                         direction: str = "X") -> dict:
+        """Per-member virtual-work (unit-load) contributions to roof drift.
+
+        For a LINEAR static ``case_name`` and a unit VIRTUAL lateral load
+        at the top story (applied through the standard story-force path:
+        the rigid-diaphragm master node when the top story has one, else
+        split equally over the top-story nodes), every frame member's
+        contribution to the roof displacement is the unit-load-theorem
+        integral over its 11 stations::
+
+            e_uid = int_0^L [ N_r*N_v/(EA) + M3_r*M3_v/(E*I33)
+                              + M2_r*M2_v/(E*I22) + T_r*T_v/(G*J) ] dx
+
+        (effective section properties, i.e. stiffness modifiers applied —
+        the same EA/EI/GJ the elements carry; the Euler elasticBeamColumn
+        has NO shear flexibility, so there is no V^2/GAs term — including
+        one would break the identity).  Quadrature: composite SIMPSON over
+        the 11 equally-spaced stations — exact whenever both fields are
+        piecewise-cubic between stations, i.e. for nodal/point-at-station
+        loading (both moment fields linear -> product quadratic) and for
+        full-span UDLs on the real case (quadratic x linear -> cubic);
+        partial/trapezoid span loads with breakpoints off the stations
+        integrate approximately (documented).
+
+        Returns ``{"case", "direction", "contributions": {uid: e},
+        "total": sum(e), "roof_disp"}`` where ``roof_disp`` is the REAL
+        case's displacement worked by the virtual load (master-node ux/uy,
+        or the mean over the equally-loaded top-story nodes).  By the
+        unit-load theorem ``total == roof_disp`` exactly for frame-only
+        models; shells, links and grounded springs deform too but carry no
+        station integral, so their share appears as ``roof_disp - total``
+        (documented limitation).
+
+        Raises ``ValueError`` on an unknown case, a bad direction, a
+        P-Delta case, or a nonlinear model (tension/compression-only
+        members, gap/hook/isolator links) — superposition of the real and
+        virtual states requires linearity.
+        """
+        model = self.model
+        if direction not in ("X", "Y"):
+            raise ValueError(f"direction must be 'X' or 'Y', "
+                             f"got {direction!r}")
+        if case_name not in model.cases:
+            raise ValueError(f"Unknown load case {case_name!r}")
+        if model.cases[case_name].pdelta:
+            raise ValueError("virtual-work diagrams need a LINEAR static "
+                             f"case; {case_name!r} is a P-Delta case")
+        if self._axial_only_present() or self._nonlinear_static_links_present():
+            raise ValueError(
+                "virtual-work diagrams need a linear model (no tension/"
+                "compression-only members, no gap/hook/isolator links)")
+        if not model.stories:
+            raise ValueError("model has no stories")
+        top = model.stories[-1].name
+
+        # rebuild the model with one extra unit-load pattern/case; the
+        # user's model is never mutated (deep copy via the dict round trip)
+        vm = BuildingModel.from_dict(model.to_dict())
+        uname = "__VW_UNIT__"
+        while uname in vm.patterns or uname in vm.cases:
+            uname += "_"
+        vpat = vm.pattern(uname, "other")
+        vpat.story_forces.append(StoryForce(
+            top, fx=1.0 if direction == "X" else 0.0,
+            fy=1.0 if direction == "Y" else 0.0))
+        vm.add_case(uname, {uname: 1.0})
+        eng = OpenSeesEngine(vm)
+        real = eng.run_static(case_name)
+        virt = eng.run_static(uname)
+        asm = eng._asm
+
+        dof = 0 if direction == "X" else 1
+        if top in asm.masters:
+            roof_disp = float(real.node_disp[asm.masters[top]][dof])
+        else:
+            nodes = asm.story_nodes.get(top) or []
+            if not nodes:
+                raise ValueError(f"top story {top!r} has no nodes to "
+                                 "receive the unit load")
+            # equal split (the story-force path): virtual work of the unit
+            # load on the real displacements = the mean displacement
+            roof_disp = sum(float(real.node_disp[t][dof])
+                            for t in nodes) / len(nodes)
+
+        contributions: Dict[str, float] = {}
+        for m in model.members:
+            st_r = real.member_stations.get(m.uid)
+            st_v = virt.member_stations.get(m.uid)
+            if not st_r or not st_v:
+                continue
+            sec = model.sections[m.section]
+            mat = model.materials[sec.material]
+            A, I22, I33, J = self._eff_props(sec)
+            EA = mat.E * A
+            EI33 = mat.E * I33
+            EI22 = mat.E * I22
+            GJ = mat.G * J
+            xs = st_r["x"]
+            f = [st_r["N"][k] * st_v["N"][k] / EA
+                 + st_r["M3"][k] * st_v["M3"][k] / EI33
+                 + st_r["M2"][k] * st_v["M2"][k] / EI22
+                 + st_r["T"][k] * st_v["T"][k] / GJ
+                 for k in range(len(xs))]
+            # composite Simpson on the 11 equally-spaced stations
+            # (10 intervals): h/3 * (f0 + 4f1 + 2f2 + ... + 4f9 + f10)
+            h = xs[1] - xs[0]
+            e = f[0] + f[-1] + 4.0 * sum(f[1:-1:2]) + 2.0 * sum(f[2:-1:2])
+            contributions[m.uid] = float(h / 3.0 * e)
+        return {"case": case_name, "direction": direction,
+                "contributions": contributions,
+                "total": float(sum(contributions.values())),
+                "roof_disp": roof_disp}
 
     # ------------------------------------------------------------- analysis
     @staticmethod

@@ -66,6 +66,26 @@ v0.17 additions:
 * ``POST /api/model`` round-trips ``model.panel_zones``
   ("none" | "rigid" | "scissors"; 400 on any other value).
 
+v0.18 additions:
+
+* ``POST /api/design/wall`` — ACI 318 uniform-reinforcing shear wall pier
+  checks driven by the v0.15 per-story pier P/V/M forces (body:
+  ``{combos?: [names] (default: all additive combos), rho_v?, rho_h?, fy?,
+  fc_prime?}``); per-pier-per-story PMM (strip-integrated interaction),
+  §11.5.4.3 shear, and the §18.10.6.3 boundary-element trigger.  400 on bad
+  parameters or when the model has no pier forces (label walls or set
+  ``auto_pier_walls``);
+* ``POST /api/design/punching`` — ACI two-way (punching) shear checks at
+  every column supporting a meshed shell slab (body: ``{case?: name
+  (default: the first DEAD-classified case), fc_prime?, cover?}``); 400 on
+  an unknown case, EMPTY ``checks`` list (not an error) when the model has
+  no shell slabs;
+* ``POST /api/results/virtual-work`` — per-member unit-load virtual-work
+  contributions to the roof displacement for a linear static case (body:
+  ``{case: name, direction: "X"|"Y"}``); response ``{contributions:
+  {uid: e}, total, roof_disp, case, direction}``; 400 on an unknown case /
+  bad direction / nonlinear or P-Delta case.
+
 Saved models live as ``<name>.skyframe.json`` files in ``~/.skyframe/models``
 (override with the ``SKYFRAME_MODELS_DIR`` environment variable; the
 directory is created on demand).  Names must match ``[A-Za-z0-9 _-]{1,60}``.
@@ -756,6 +776,117 @@ def create_app() -> Flask:
         if factors is not None:
             payload["live_reduction"] = factors
         return jsonify(payload)
+
+    # -------------------------------- v0.18: wall / punching / virtual work
+    @app.post("/api/design/wall")
+    def design_wall():
+        """ACI 318 shear wall pier checks (runs analysis).
+
+        Body: ``{combos?: [names], rho_v?, rho_h?, fy?, fc_prime?}`` —
+        combos default to every additive combo; reinforcement/material
+        parameters default to rho 0.0025 / fy 420 MPa / fc' from the wall
+        concrete's E (ACI 19.2.2.1).  400 on bad parameters or when the
+        model carries no pier forces.
+        """
+        if not _OPENSEES_OK:
+            return jsonify({"error": "OpenSeesPy is not available"}), 400
+        from skyframe.design.wall import check_wall_piers, summarize_walls
+        body = request.get_json(silent=True) or {}
+        combos = body.get("combos")
+        if combos is not None and (
+                not isinstance(combos, list)
+                or not all(isinstance(c, str) and c for c in combos)):
+            return jsonify({"error": "'combos' must be a list of combo/"
+                                     "case name strings"}), 400
+        try:
+            kw = {}
+            for key in ("rho_v", "rho_h", "fy", "fc_prime"):
+                v = _num(body, key, default=None)
+                if v is not None:
+                    kw[key] = v
+            results = OpenSeesEngine(_state["model"]).run()
+            checks = check_wall_piers(_state["model"], results,
+                                      combos=combos, **kw)
+        except (ValueError, TypeError, KeyError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"preliminary": True, "combos": combos,
+                        "checks": [c.to_dict() for c in checks],
+                        "summary": summarize_walls(checks)})
+
+    @app.post("/api/design/punching")
+    def design_punching():
+        """ACI two-way (punching) shear checks at slab columns (runs
+        analysis when the model has meshed shell slabs).
+
+        Body: ``{case?: name, fc_prime?, cover?}`` — the case defaults to
+        the first DEAD-classified case.  400 on an unknown case; an empty
+        ``checks`` list (not an error) when the model has no shell slabs.
+        """
+        if not _OPENSEES_OK:
+            return jsonify({"error": "OpenSeesPy is not available"}), 400
+        from skyframe.design.punching import (check_punching,
+                                              default_gravity_case)
+        body = request.get_json(silent=True) or {}
+        case = body.get("case")
+        if case is not None and (not isinstance(case, str) or not case):
+            return jsonify({"error": "'case' must be a case/combo name "
+                                     "string"}), 400
+        model = _state["model"]
+        has_slabs = any(r.kind == "slab" and r.behavior == "shell"
+                        for r in model.shells)
+        try:
+            kw = {}
+            for key in ("fc_prime", "cover"):
+                v = _num(body, key, default=None)
+                if v is not None:
+                    kw[key] = v
+            if not has_slabs:
+                # no slabs: no punching joints by definition — but an
+                # explicitly named unknown case is still a caller error
+                if case is not None and case not in model.cases \
+                        and case not in model.combos:
+                    raise KeyError(f"case/combo {case!r} not found")
+                return jsonify({"preliminary": True, "case": case,
+                                "checks": []})
+            results = OpenSeesEngine(model).run()
+            checks = check_punching(model, results, case, **kw)
+        except (ValueError, TypeError, KeyError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"preliminary": True,
+                        "case": checks[0].case if checks else case,
+                        "checks": [c.to_dict() for c in checks]})
+
+    @app.post("/api/results/virtual-work")
+    def results_virtual_work():
+        """Per-member virtual-work (unit-load) drift contributions.
+
+        Body: ``{case: name, direction: "X"|"Y"}``.  Response:
+        ``{contributions: {uid: e}, total, roof_disp, case, direction}``.
+        400 on an unknown case, a bad direction, or a nonlinear/P-Delta
+        model (the unit-load theorem needs linearity).
+        """
+        if not _OPENSEES_OK:
+            return jsonify({"error": "OpenSeesPy is not available"}), 400
+        body = request.get_json(silent=True) or {}
+        case = body.get("case")
+        if not isinstance(case, str) or not case:
+            return jsonify({"error": "'case' (a static case name) is "
+                                     "required"}), 400
+        direction = body.get("direction", "X")
+        if direction not in ("X", "Y"):
+            return jsonify({"error": "'direction' must be 'X' or 'Y'"}), 400
+        try:
+            out = OpenSeesEngine(_state["model"]).run_virtual_work(
+                case, direction)
+        except (ValueError, TypeError, KeyError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(out)
 
     # --------------------------------------------- v0.12: steel optimization
     @app.post("/api/design/optimize")
