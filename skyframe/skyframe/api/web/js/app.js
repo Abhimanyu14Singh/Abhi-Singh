@@ -6,7 +6,8 @@ import { renderStoryCharts, stationDiagram, timeSeriesChart, pushoverChart } fro
 import { mockModel, mockResults, mockSectionLibrary, mockModelFiles, mockWindPattern,
   mockDesignSteel, mockDesignConcrete, mockImport,
   mockSelfWeightPattern, mockAsce7Combos, mockCodeRsCase, mockElfPattern,
-  mockRsDirectional, mockNotionalPattern, mockOptimize, mockLiveReduction } from "./mock.js";
+  mockRsDirectional, mockNotionalPattern, mockOptimize, mockLiveReduction,
+  mockDesignWall, mockDesignPunching, mockVirtualWork } from "./mock.js";
 import { PlanEditor } from "./draw.js";
 import { ElevEditor } from "./elev.js";
 import { LoadsEditor } from "./loads.js";
@@ -84,6 +85,17 @@ const store = {
   importText: "",
   importFileName: "",
   importStories: [3.2, 3.2],
+  // v0.18 — wall design, punching check, drift optimizer (virtual work)
+  wallResult: null,        // last POST /api/design/wall response
+  wallParams: { rho_v: 0.25, rho_h: 0.25, fy: 420000, fc: 30000 },  // % · % · kPa · kPa
+  wallCombos: null,        // selected combo names (null → default all)
+  punchResult: null,       // last POST /api/design/punching response
+  punchParams: { fc: 30000, cover: 40 },   // kPa · mm
+  punchCase: null,         // case/combo for the punching check
+  punchSel: null,          // clicked punching column uid (plan + 3D highlight)
+  vwResult: null,          // last POST /api/results/virtual-work response
+  vwCase: null,            // drift-optimizer case/combo
+  vwDir: "X",              // drift-optimizer direction
 };
 
 const $ = id => document.getElementById(id);
@@ -193,6 +205,52 @@ async function designOptimize(body) {
   }
   await new Promise(r => setTimeout(r, 250));
   return mockOptimize(store.model, body);
+}
+
+/* ---- v0.18: wall-pier design + slab punching check. Same convention as
+   designCheck — the live path syncs the working model (the backend re-analyses
+   the CURRENT model), then POSTs; mock / missing endpoint synthesizes. */
+async function designWall(body) {
+  if (!store.mock) {
+    try {
+      const payload = JSON.parse(JSON.stringify(store.model));
+      delete payload._mock_params;
+      await postModel(payload);
+      return await api("/api/design/wall", body);
+    } catch (e) {
+      console.warn("Wall design endpoint unavailable, using mock:", e.message);
+    }
+  }
+  await new Promise(r => setTimeout(r, 250));
+  return mockDesignWall(store.model, body);
+}
+
+async function designPunching(body) {
+  if (!store.mock) {
+    try {
+      const payload = JSON.parse(JSON.stringify(store.model));
+      delete payload._mock_params;
+      await postModel(payload);
+      return await api("/api/design/punching", body);
+    } catch (e) {
+      console.warn("Punching endpoint unavailable, using mock:", e.message);
+    }
+  }
+  await new Promise(r => setTimeout(r, 250));
+  return mockDesignPunching(store.model, body);
+}
+
+/* ---- v0.18: virtual-work drift decomposition (results already solved on the
+   backend — no model sync needed). POST /api/results/virtual-work. */
+async function fetchVirtualWork(body) {
+  if (!store.mock) {
+    try { return await api("/api/results/virtual-work", body); }
+    catch (e) {
+      console.warn("Virtual-work endpoint unavailable, using mock:", e.message);
+    }
+  }
+  await new Promise(r => setTimeout(r, 250));
+  return mockVirtualWork(store.model, body);
 }
 
 /* ---- v0.16: live-load reduction factors (ASCE 7 §4.7). GET /api/live-reduction
@@ -2596,12 +2654,19 @@ function renderSummary() {
 }
 
 function setResultsAvailable(on) {
-  for (const t of ["story", "modal", "reactions", "forces", "design"]) {
+  for (const t of ["story", "modal", "reactions", "forces", "design", "drift"]) {
     $(`empty-${t}`).classList.toggle("hidden", on);
     $(`content-${t}`).classList.toggle("hidden", !on);
   }
-  if (on) { renderDesignForm(); renderDesignTable(); renderOptimizePanel(); renderLlrPanel(); }
-  else if (store.tab === "design") switchTab("view3d");
+  if (on) {
+    renderDesignForm(); renderDesignTable(); renderOptimizePanel(); renderLlrPanel();
+    renderWallPanel(); renderPunchPanel(); renderDriftPanel();       // v0.18
+  }
+  else if (store.tab === "design" || store.tab === "drift") switchTab("view3d");
+  if (!on) {                                                         // v0.18
+    viewer.setMemberColors(null);
+    $("driftLegend").classList.add("hidden");
+  }
   $("chipDeformed").disabled = !on;
   $("chipMode").disabled = !on;
   $("reportBtn").disabled = !on;                                  // v0.4
@@ -3800,18 +3865,28 @@ function designCaseOptions() {
 }
 
 function setDesignKind(kind) {
-  store.designKind = kind === "concrete" ? "concrete" : "steel";
+  store.designKind = ["concrete", "wall", "punching"].includes(kind) ? kind : "steel";
   document.querySelectorAll("#designKindToggle .seg-btn").forEach(b =>
     b.classList.toggle("is-active", b.dataset.dk === store.designKind));
-  renderDesignForm();
-  renderDesignTable();
+  // v0.18 — Wall / Punching sub-tabs swap out the whole steel/concrete block
+  const frame = store.designKind === "steel" || store.designKind === "concrete";
+  $("designFrameWrap").classList.toggle("hidden", !frame);
+  $("csvDesign").classList.toggle("hidden", !frame);
+  if (frame) {
+    renderDesignForm();
+    renderDesignTable();
+  }
   renderOptimizePanel();          // v0.12 — Steel sub-tab only
+  renderWallPanel();              // v0.18
+  renderPunchPanel();             // v0.18 (also refreshes plan halos)
 }
 
 /** The check control form: case selector, params (Fy or rebar), Check button. */
 function renderDesignForm() {
   const form = $("designForm");
   if (!store.results) { form.innerHTML = ""; return; }
+  // v0.18 — the wall/punching sub-tabs render their own forms
+  if (store.designKind !== "steel" && store.designKind !== "concrete") return;
   const opts = designCaseOptions();
   if (!store.designCase || !opts.includes(store.designCase)) store.designCase = opts[0] || null;
   const nCombos = Object.keys((store.results && store.results.combos) || {}).length;
@@ -4143,6 +4218,483 @@ function selectMemberFrom3D(uid) {
   viewer.setHighlight([uid], "#35b5e5");
   switchTab("view3d");
   renderMemberPanel();
+}
+
+/* ================================================================
+   v0.18 — WALL PIER DESIGN (Design → Wall)
+   POST /api/design/wall {combos?, rho_v?, rho_h?, fy?, fc_prime?} →
+   {piers: [{pier, story, P, V, M, ratio_pmm, ratio_shear, phiVn,
+   boundary_required, sigma_max, status, combo}], params}.
+   ρ is ENTERED in % and SENT as a ratio; fy / f'c in kPa (app units).
+   ================================================================ */
+const wallGovRatio = r => Math.max(r.ratio_pmm || 0, r.ratio_shear || 0);
+
+function renderWallPanel() {
+  const panel = $("wallPanel");
+  const on = store.designKind === "wall" && !!store.results;
+  panel.classList.toggle("hidden", !on);
+  if (!on) return;
+  const combos = Object.keys((store.results && store.results.combos) || {});
+  if (!store.wallCombos) store.wallCombos = [...combos];       // default: all
+  store.wallCombos = store.wallCombos.filter(n => combos.includes(n));
+  const p = store.wallParams;
+  $("wallForm").innerHTML = `<div class="design-form-row">
+    <label class="rs-field wall-combo-field"><span>combos <span class="unit">multi-select · default all</span></span>
+      <select id="wallComboSelect" multiple size="${Math.min(4, Math.max(2, combos.length || 2))}"
+        title="Load combinations to check — ctrl/cmd-click to pick several">${combos.map(n =>
+        `<option value="${esc(n)}"${store.wallCombos.includes(n) ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
+    <label class="rs-field"><span>ρv <span class="unit">% vertical</span></span>
+      <input id="wallRhoV" type="number" min="0.1" max="4" step="0.05" value="${p.rho_v}"
+        title="Vertical (flexural) reinforcement ratio — sent as rho_v = %/100"></label>
+    <label class="rs-field"><span>ρh <span class="unit">% horizontal</span></span>
+      <input id="wallRhoH" type="number" min="0.1" max="4" step="0.05" value="${p.rho_h}"
+        title="Horizontal (shear) reinforcement ratio — sent as rho_h = %/100"></label>
+    <label class="rs-field"><span>fy <span class="unit">kPa</span></span>
+      <input id="wallFy" type="number" min="1" step="5000" value="${p.fy}"></label>
+    <label class="rs-field"><span>f'c <span class="unit">kPa</span></span>
+      <input id="wallFc" type="number" min="1" step="5000" value="${p.fc}"></label>
+    <button class="btn btn-run design-check" id="wallCheckBtn" title="POST /api/design/wall">
+      <span class="spinner hidden" id="wallSpinner"></span><span>Run wall checks</span></button>
+    <button class="chip csv-btn${store.wallResult ? "" : " hidden"}" id="csvWall"
+      title="Download the wall-pier checks as CSV (unrounded)">⬇ CSV</button>
+  </div>
+  <p class="muted design-note">RC wall-pier screening — PMM interaction and in-plane shear φVn
+    per pier story; boundary elements flagged where σ<sub>max</sub> &gt; 0.2·f'c
+    (ACI 318 §18.10.6 stress screen). Label walls with piers in Model mode → wall properties.</p>`;
+  const bindNum = (id, key) => $(id).addEventListener("change", e => {
+    const v = parseFloat(e.target.value);
+    if (isFinite(v) && v > 0) store.wallParams[key] = v;
+  });
+  bindNum("wallRhoV", "rho_v"); bindNum("wallRhoH", "rho_h");
+  bindNum("wallFy", "fy"); bindNum("wallFc", "fc");
+  $("wallComboSelect").addEventListener("change", e => {
+    store.wallCombos = [...e.target.selectedOptions].map(o => o.value);
+  });
+  $("wallCheckBtn").addEventListener("click", runWallCheck);
+  const csv = $("csvWall");
+  if (csv) csv.addEventListener("click", () => downloadCsv("wall"));
+  renderWallTable();
+}
+
+async function runWallCheck() {
+  const btn = $("wallCheckBtn");
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  $("wallSpinner").classList.remove("hidden");
+  try {
+    const p = store.wallParams;
+    store.wallResult = await designWall({
+      combos: store.wallCombos && store.wallCombos.length ? store.wallCombos : undefined,
+      rho_v: p.rho_v / 100, rho_h: p.rho_h / 100,          // % → ratio
+      fy: p.fy, fc_prime: p.fc,
+    });
+    renderWallPanel();
+    const rows = (store.wallResult && store.wallResult.piers) || [];
+    const ng = rows.filter(r => r.status === "NG").length;
+    const nb = rows.filter(r => r.boundary_required).length;
+    toast("Wall checks complete",
+      `${rows.length} pier stories · ${ng} NG · ${nb} boundary element${nb === 1 ? "" : "s"}`,
+      ng ? "error" : "info", 5000);
+  } catch (err) {
+    toast("Wall check failed", err.message, "error", 8000);
+  } finally {
+    const b = $("wallCheckBtn"), s = $("wallSpinner");
+    if (b) b.disabled = false;
+    if (s) s.classList.add("hidden");
+  }
+}
+
+/** Rows grouped by pier, stories top-first (matching the Wall Piers tab). */
+function wallRows() {
+  const rows = (store.wallResult && store.wallResult.piers) || [];
+  const elev = (store.results && store.results.story_elev) || {};
+  const groups = new Map();
+  for (const r of rows) {
+    if (!groups.has(r.pier)) groups.set(r.pier, []);
+    groups.get(r.pier).push(r);
+  }
+  return [...groups.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))
+    .map(([pier, stories]) => ({
+      pier,
+      stories: [...stories].sort((a, b) => (elev[b.story] ?? 0) - (elev[a.story] ?? 0)),
+    }));
+}
+
+function renderWallTable() {
+  const table = $("wallTable"), summary = $("wallSummary");
+  const res = store.wallResult;
+  $("wallNote").textContent =
+    "Wall-pier design screening — P axial (compression +), V / M in-plane at the story bottom. " +
+    "PMM D/C is the axial-flexure interaction, Shear D/C is V / φVn. BOUNDARY marks lifts whose " +
+    "extreme-fiber stress exceeds 0.2·f'c — confined boundary elements required. Screening only.";
+  if (!res || !res.piers || !res.piers.length) {
+    summary.classList.add("hidden");
+    table.innerHTML = `<tbody><tr><td class="txt dim">No wall checks yet — pick combos, set ρ / fy / f'c and press “Run wall checks”.</td></tr></tbody>`;
+    return;
+  }
+  const rows = res.piers;
+  const worst = rows.reduce((a, r) => (wallGovRatio(r) > wallGovRatio(a) ? r : a), rows[0]);
+  const ng = rows.filter(r => r.status === "NG").length;
+  const nb = rows.filter(r => r.boundary_required).length;
+  const nCombos = (res.params && res.params.combos && res.params.combos.length) ||
+    Object.keys((store.results && store.results.combos) || {}).length;
+  summary.classList.remove("hidden");
+  summary.innerHTML =
+    `<span class="ds-item"><b>${rows.length}</b> pier stories</span>` +
+    `<span class="ds-item ds-ok"><b>${rows.length - ng}</b> OK</span>` +
+    `<span class="ds-item ds-ng"><b>${ng}</b> NG</span>` +
+    `<span class="ds-item"><b class="${nb ? "wall-bnd" : ""}">${nb}</b> boundary</span>` +
+    `<span class="ds-item">worst <b class="${wallGovRatio(worst) > 1 ? "ds-over" : ""}">` +
+      `${esc(worst.pier)} · ${esc(worst.story)} · ${fmt(wallGovRatio(worst), 3)}</b> ` +
+      `<span class="dim">(${(worst.ratio_pmm || 0) >= (worst.ratio_shear || 0) ? "PMM" : "shear"} · ${esc(worst.combo || "")})</span></span>` +
+    `<span class="ds-item ds-prelim">PRELIMINARY · ${nCombos} combo${nCombos === 1 ? "" : "s"}</span>`;
+
+  const dcChip = r => {
+    const cls = r > 1 ? "rc-over" : r > 0.85 ? "rc-near" : "rc-ok";
+    return `<span class="ratio-chip ${cls}">${fmt(r, 3)}</span>`;
+  };
+  const chip = st => `<span class="status-chip st-${st === "NG" ? "ng" : "ok"}">${esc(st)}</span>`;
+  const bnd = x => x.boundary_required
+    ? `<span class="status-chip st-warn boundary-badge" title="σmax ${fmt(x.sigma_max, 0)} kPa > 0.2·f'c — confined boundary element required">BOUNDARY</span>`
+    : `<span class="dim">—</span>`;
+  const head = `<thead><tr>
+    <th class="txt">Pier</th><th class="txt">Story</th>
+    <th>P kN</th><th>V kN</th><th>M kN·m</th>
+    <th title="Axial-flexure interaction demand/capacity">PMM D/C</th>
+    <th title="V / φVn">Shear D/C</th>
+    <th title="In-plane shear capacity">φVn kN</th>
+    <th title="σmax > 0.2·f'c ⇒ confined boundary elements">Boundary?</th>
+    <th class="txt">Status</th></tr></thead>`;
+  const body = wallRows().map(g => {
+    const header = `<tr class="pier-group">
+      <td class="txt pier-name" colspan="10">▮ ${esc(g.pier)}
+        <span class="pier-count">· ${g.stories.length} stor${g.stories.length === 1 ? "y" : "ies"}</span></td></tr>`;
+    const rws = g.stories.map(x => `<tr class="wall-row${x.status === "NG" ? " over" : ""}"
+        title="governing combo ${esc(x.combo || "—")} · σmax ${fmt(x.sigma_max, 0)} kPa">
+      <td class="txt dim"></td>
+      <td class="txt">${esc(x.story)}</td>
+      <td>${fmt(x.P, 1)}</td>
+      <td>${fmt(x.V, 1)}</td>
+      <td>${fmt(x.M, 1)}</td>
+      <td>${dcChip(x.ratio_pmm || 0)}</td>
+      <td>${dcChip(x.ratio_shear || 0)}</td>
+      <td class="dim">${fmt(x.phiVn, 1)}</td>
+      <td class="txt">${bnd(x)}</td>
+      <td class="txt">${chip(x.status)}</td></tr>`).join("");
+    return header + rws;
+  }).join("");
+  table.innerHTML = head + `<tbody>${body}</tbody>`;
+}
+
+/* ================================================================
+   v0.18 — PUNCHING CHECK (Design → Punching)
+   POST /api/design/punching {case?, fc_prime?, cover?} → {columns:
+   [{uid, story, Vu, vu, phi_vc, b0, d, ratio, status, case}]}.
+   cover ENTERED and SENT in mm. Row click highlights the column in the
+   2D plan (selection) and the 3D view; D/C > 1 columns get a red halo
+   at their plan position while this card is active.
+   ================================================================ */
+function renderPunchPanel() {
+  const panel = $("punchPanel");
+  const on = store.designKind === "punching" && !!store.results;
+  panel.classList.toggle("hidden", !on);
+  syncPunchHalos();
+  if (!on) return;
+  const opts = designCaseOptions();
+  if (!store.punchCase || !opts.includes(store.punchCase)) {
+    // prefer a gravity combo (punching is gravity-governed)
+    store.punchCase = opts.find(n =>
+      store.results.combos && store.results.combos[n] && !/E[XY]|EQ/i.test(n)) ||
+      opts[0] || null;
+  }
+  const p = store.punchParams;
+  $("punchForm").innerHTML = `<div class="design-form-row">
+    <label class="rs-field"><span>case / combo</span>
+      <select id="punchCaseSelect">${opts.map(n =>
+        `<option value="${esc(n)}"${n === store.punchCase ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
+    <label class="rs-field"><span>f'c <span class="unit">kPa</span></span>
+      <input id="punchFc" type="number" min="1" step="5000" value="${p.fc}"></label>
+    <label class="rs-field"><span>cover <span class="unit">mm</span></span>
+      <input id="punchCover" type="number" min="5" max="100" step="5" value="${p.cover}"
+        title="Slab cover — effective depth d = slab thickness − cover − bar allowance"></label>
+    <button class="btn btn-run design-check" id="punchCheckBtn" title="POST /api/design/punching">
+      <span class="spinner hidden" id="punchSpinner"></span><span>Run punching check</span></button>
+    <button class="chip csv-btn${store.punchResult ? "" : " hidden"}" id="csvPunch"
+      title="Download the punching checks as CSV (unrounded)">⬇ CSV</button>
+  </div>
+  <p class="muted design-note">Two-way (punching) shear at slab–column connections —
+    v<sub>u</sub> vs φv<sub>c</sub> = 0.75·0.33√f'c on the critical perimeter b0 at d/2 from the
+    column face. Click a row to highlight the column in plan &amp; 3D; failing columns pulse red
+    in the plan editor while this card is active.</p>`;
+  $("punchCaseSelect").addEventListener("change", e => { store.punchCase = e.target.value; });
+  const bindNum = (id, key) => $(id).addEventListener("change", e => {
+    const v = parseFloat(e.target.value);
+    if (isFinite(v) && v > 0) store.punchParams[key] = v;
+  });
+  bindNum("punchFc", "fc"); bindNum("punchCover", "cover");
+  $("punchCheckBtn").addEventListener("click", runPunchCheck);
+  const csv = $("csvPunch");
+  if (csv) csv.addEventListener("click", () => downloadCsv("punching"));
+  renderPunchTable();
+}
+
+async function runPunchCheck() {
+  const btn = $("punchCheckBtn");
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  $("punchSpinner").classList.remove("hidden");
+  try {
+    store.punchResult = await designPunching({
+      case: store.punchCase,
+      fc_prime: store.punchParams.fc, cover: store.punchParams.cover,
+    });
+    store.punchSel = null;
+    renderPunchPanel();                       // re-renders table + plan halos
+    const cols = (store.punchResult && store.punchResult.columns) || [];
+    const ng = cols.filter(c => c.status === "NG").length;
+    toast("Punching check complete",
+      `${cols.length} columns · ${ng} NG${ng ? " · red halos mark them in the plan editor" : ""}`,
+      ng ? "error" : "info", 5000);
+  } catch (err) {
+    toast("Punching check failed", err.message, "error", 8000);
+  } finally {
+    const b = $("punchCheckBtn"), s = $("punchSpinner");
+    if (b) b.disabled = false;
+    if (s) s.classList.add("hidden");
+  }
+}
+
+function punchRows() {
+  const cols = (store.punchResult && store.punchResult.columns) || [];
+  return [...cols].sort((a, b) => (b.ratio || 0) - (a.ratio || 0));
+}
+
+/** Plan halo positions for failing punching columns (D/C > 1) — only while
+    the Punching card is the active design sub-tab, on the drawn story. */
+function punchHalos() {
+  if (store.designKind !== "punching") return [];
+  const cols = (store.punchResult && store.punchResult.columns) || [];
+  if (!cols.length || !store.model) return [];
+  const memBy = {};
+  for (const mm of store.model.members || []) memBy[mm.uid] = mm;
+  return cols.filter(c => (c.ratio || 0) > 1)
+    .map(c => ({ c, mm: memBy[c.uid] }))
+    .filter(x => x.mm && x.mm.story === store.story)
+    .map(x => ({ uid: x.c.uid, x: x.mm.pi[0], y: x.mm.pi[1], r: 0.65 }));
+}
+function syncPunchHalos() { if (planEditor) planEditor.renderStatic(); }
+
+function renderPunchTable() {
+  const table = $("punchTable"), summary = $("punchSummary");
+  const res = store.punchResult;
+  $("punchNote").textContent =
+    "Punching screening — Vu the transferred shear, vu = Vu / (b0·d) the factored shear stress " +
+    "on the critical section, φvc the two-way concrete capacity (no shear reinforcement). " +
+    "D/C > 1 needs a thicker slab, a drop panel / column capital, or stud rails.";
+  if (!res || !res.columns || !res.columns.length) {
+    summary.classList.add("hidden");
+    table.innerHTML = `<tbody><tr><td class="txt dim">No punching check yet — pick a gravity case/combo and press “Run punching check”.</td></tr></tbody>`;
+    return;
+  }
+  const rows = punchRows();
+  const ng = rows.filter(c => c.status === "NG").length;
+  const worst = rows[0];
+  summary.classList.remove("hidden");
+  summary.innerHTML =
+    `<span class="ds-item"><b>${rows.length}</b> columns</span>` +
+    `<span class="ds-item ds-ok"><b>${rows.length - ng}</b> OK</span>` +
+    `<span class="ds-item ds-ng"><b>${ng}</b> NG</span>` +
+    `<span class="ds-item">worst <b class="${(worst.ratio || 0) > 1 ? "ds-over" : ""}">` +
+      `${esc(worst.uid)} · ${fmt(worst.ratio, 3)}</b></span>` +
+    `<span class="ds-item ds-prelim">PRELIMINARY · ${esc(worst.case || store.punchCase || "")}</span>`;
+
+  const dcChip = r => {
+    const cls = r > 1 ? "rc-over" : r > 0.85 ? "rc-near" : "rc-ok";
+    return `<span class="ratio-chip ${cls}">${fmt(r, 3)}</span>`;
+  };
+  const chip = st => `<span class="status-chip st-${st === "NG" ? "ng" : "ok"}">${esc(st)}</span>`;
+  const head = `<thead><tr>
+    <th class="txt">Column</th><th class="txt">Story</th>
+    <th title="Transferred shear">Vu kN</th>
+    <th title="Factored shear stress on the critical section">vu kPa</th>
+    <th title="φ·0.33·√f'c two-way capacity">φvc kPa</th>
+    <th title="Critical perimeter at d/2">b0 m</th>
+    <th title="Average effective depth">d m</th>
+    <th>D/C</th><th class="txt">Status</th></tr></thead>`;
+  const body = rows.map(x => `<tr data-uid="${esc(x.uid)}"
+      class="design-row punch-row${(x.ratio || 0) > 1 ? " over" : ""}${store.punchSel === x.uid ? " is-active" : ""}"
+      title="Click to highlight ${esc(x.uid)} in the 2D plan and 3D view">
+    <td class="txt">${esc(x.uid)}${(x.ratio || 0) > 1 ? ` <span class="punch-halo-glyph" title="red halo shown at this column's plan position">◎</span>` : ""}</td>
+    <td class="txt dim">${esc(x.story || "—")}</td>
+    <td>${fmt(x.Vu, 1)}</td>
+    <td>${fmt(x.vu, 1)}</td>
+    <td class="dim">${fmt(x.phi_vc, 1)}</td>
+    <td class="dim">${fmt(x.b0, 2)}</td>
+    <td class="dim">${fmt(x.d, 3)}</td>
+    <td>${dcChip(x.ratio || 0)}</td>
+    <td class="txt">${chip(x.status)}</td></tr>`).join("");
+  table.innerHTML = head + `<tbody>${body}</tbody>`;
+
+  // row → member-highlight hooks: 2D plan selection + 3D highlight (no tab jump)
+  table.querySelectorAll("tr.punch-row").forEach(tr =>
+    tr.addEventListener("click", () => {
+      const uid = tr.dataset.uid;
+      store.punchSel = uid;
+      handleSelect([{ type: "member", uid }], false);      // 2D plan highlight
+      store.selectedMemberUid = uid;                       // 3D member panel target
+      viewer.setHighlight([uid], "#e66767");               // 3D highlight (red)
+      renderMemberPanel();
+      renderPunchTable();
+    }));
+}
+
+/* ================================================================
+   v0.18 — DRIFT OPTIMIZER (Results → Drift)
+   POST /api/results/virtual-work {case, direction} → {contributions:
+   {uid: m}, total, roof_disp}. Members are colored in the 3D viewer by
+   their drift energy share (normalized 0…max); top-10 table below.
+   ================================================================ */
+const VW_STOPS = ["#3a4a5d", "#2c7fd6", "#e5a50a", "#e05252"];
+/** t ∈ [0,1] → sequential slate → blue → amber → red. */
+function vwColor(t) {
+  t = Math.max(0, Math.min(1, isFinite(t) ? t : 0));
+  const seg = Math.min(Math.floor(t * (VW_STOPS.length - 1)), VW_STOPS.length - 2);
+  const f = t * (VW_STOPS.length - 1) - seg;
+  const h = c => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
+  const a = h(VW_STOPS[seg]), b = h(VW_STOPS[seg + 1]);
+  return `rgb(${Math.round(a[0] + (b[0] - a[0]) * f)},${Math.round(a[1] + (b[1] - a[1]) * f)},${Math.round(a[2] + (b[2] - a[2]) * f)})`;
+}
+
+function renderDriftPanel() {
+  if (!store.results) return;
+  const opts = designCaseOptions();
+  if (!store.vwCase || !opts.includes(store.vwCase))
+    store.vwCase = opts.find(n => /E[XY]|EQ|WIND|W[XY]/i.test(n)) || opts[0] || null;
+  $("vwCaseSelect").innerHTML = opts.map(n =>
+    `<option value="${esc(n)}"${n === store.vwCase ? " selected" : ""}>${esc(n)}</option>`).join("");
+  document.querySelectorAll("#vwDirToggle .seg-btn").forEach(b =>
+    b.classList.toggle("is-active", b.dataset.dir === store.vwDir));
+  renderVwTable();
+  applyVwColors();
+}
+
+async function runVirtualWork() {
+  const btn = $("vwRunBtn");
+  if (btn.disabled || !store.vwCase) return;
+  btn.disabled = true;
+  $("vwSpinner").classList.remove("hidden");
+  try {
+    const res = await fetchVirtualWork({ case: store.vwCase, direction: store.vwDir });
+    store.vwResult = { case: store.vwCase, direction: store.vwDir, ...res };
+    renderVwTable();
+    applyVwColors();
+    toast("Drift shares computed",
+      `${Object.keys(res.contributions || {}).length} members · roof ${fmt((res.roof_disp || 0) * 1000, 1)} mm · 3D members colored`,
+      "info", 5000);
+  } catch (err) {
+    toast("Virtual-work run failed", err.message, "error", 8000);
+  } finally {
+    btn.disabled = false;
+    $("vwSpinner").classList.add("hidden");
+  }
+}
+
+function clearVwColors() {
+  store.vwResult = null;
+  renderVwTable();
+  applyVwColors();
+}
+
+/** Contributions sorted descending, annotated with kind/story and % of total. */
+function vwRows() {
+  const res = store.vwResult;
+  if (!res || !res.contributions) return [];
+  const total = res.total ||
+    Object.values(res.contributions).reduce((a, b) => a + b, 0) || 1;
+  const memBy = {};
+  for (const mm of (store.model && store.model.members) || []) memBy[mm.uid] = mm;
+  return Object.entries(res.contributions)
+    .map(([uid, v]) => ({
+      uid, v, pct: (v / total) * 100,
+      kind: (memBy[uid] || {}).kind || "—",
+      story: (memBy[uid] || {}).story || "—",
+    }))
+    .sort((a, b) => b.v - a.v);
+}
+
+function renderVwTable() {
+  const table = $("vwTable"), summary = $("vwSummary");
+  const res = store.vwResult;
+  $("vwClearBtn").disabled = !res;
+  if (!res) {
+    summary.classList.add("hidden");
+    table.innerHTML = `<tbody><tr><td class="txt dim">No virtual-work run yet — pick a lateral case + direction and press “Run”.</td></tr></tbody>`;
+    $("vwNote").textContent =
+      "Members are ranked by how much of the roof displacement they cause — " +
+      "stiffening the top rows buys the most drift for the least material.";
+    return;
+  }
+  const rows = vwRows();
+  const top = rows.slice(0, 10);
+  const total = res.total || rows.reduce((a, r) => a + r.v, 0);
+  const roof = res.roof_disp || 0;
+  const match = Math.abs(total - roof) <= Math.max(1e-9, Math.abs(roof) * 0.02);
+  summary.classList.remove("hidden");
+  summary.innerHTML =
+    `<span class="ds-item"><b>${rows.length}</b> contributing members</span>` +
+    `<span class="ds-item">Σ contributions <b>${fmt(total * 1000, 2)} mm</b></span>` +
+    `<span class="ds-item">roof displacement <b>${fmt(roof * 1000, 2)} mm</b></span>` +
+    `<span class="ds-item"><b class="${match ? "vw-match" : "ds-over"}" title="Σ member virtual-work contributions vs the analysis roof displacement — the two should match">${match ? "✓ totals match" : "≠ totals differ"}</b></span>` +
+    `<span class="ds-item ds-prelim">${esc(caseLabel(res.case || ""))} · ${esc(res.direction || store.vwDir)}</span>`;
+
+  const vmax = rows.length ? rows[0].v : 1;
+  const head = `<thead><tr>
+    <th>#</th><th class="txt">Member</th><th class="txt">Kind</th><th class="txt">Story</th>
+    <th title="Contribution to the roof displacement">δ mm</th>
+    <th title="Share of the total roof drift">% of total</th>
+    <th class="txt">share</th></tr></thead>`;
+  const body = top.map((x, i) => `<tr data-uid="${esc(x.uid)}" class="design-row vw-row"
+      title="Click to show ${esc(x.uid)} in 3D">
+    <td class="dim">${i + 1}</td>
+    <td class="txt">${esc(x.uid)}</td>
+    <td class="txt dim">${esc(x.kind)}</td>
+    <td class="txt dim">${esc(x.story)}</td>
+    <td>${fmt(x.v * 1000, 3)}</td>
+    <td><b>${fmt(x.pct, 1)} %</b></td>
+    <td class="txt"><span class="vw-bar-wrap"><span class="vw-bar"
+      style="--w:${((x.v / (vmax || 1)) * 100).toFixed(1)}%; --c:${vwColor(x.v / (vmax || 1))}"></span></span></td>
+  </tr>`).join("");
+  table.innerHTML = head + `<tbody>${body}</tbody>`;
+  table.querySelectorAll("tr.vw-row").forEach(tr =>
+    tr.addEventListener("click", () => selectMemberFrom3D(tr.dataset.uid)));
+
+  $("vwNote").textContent =
+    `Top ${top.length} of ${rows.length} members by virtual-work share of the ` +
+    `${res.direction || store.vwDir}-direction roof displacement under ${caseLabel(res.case || "")}. ` +
+    `Σ contributions ${fmt(total * 1000, 2)} mm vs roof displacement ${fmt(roof * 1000, 2)} mm — ` +
+    "the two should match. The 3D view colors every contributing member (legend: drift energy share).";
+}
+
+/** Push the drift-share colors + legend to the 3D viewer (falsy result clears). */
+function applyVwColors() {
+  const res = store.vwResult;
+  const legend = $("driftLegend");
+  if (!res || !res.contributions || !Object.keys(res.contributions).length) {
+    viewer.setMemberColors(null);
+    legend.classList.add("hidden");
+    return;
+  }
+  const vals = Object.values(res.contributions);
+  const vmax = Math.max(...vals) || 1;
+  const map = {};
+  for (const [uid, v] of Object.entries(res.contributions)) map[uid] = vwColor(v / vmax);
+  viewer.setMemberColors(map);
+  const total = res.total || vals.reduce((a, b) => a + b, 0) || 1;
+  $("vwLegendMax").textContent = `${fmt((vmax / total) * 100, 1)} %`;
+  $("vwLegendCase").textContent =
+    `${caseLabel(res.case || "")} · ${res.direction || store.vwDir}`;
+  legend.classList.remove("hidden");
 }
 
 /* ================================================================
@@ -4504,6 +5056,25 @@ function csvRows(kind) {
         ...(env ? [x.governing_combo || ""] : []), x.status, x.notes]),
     ];
   }
+  if (kind === "wall") {
+    const res = store.wallResult;
+    if (!res || !res.piers) return null;
+    const out = [["pier", "story", "P_kN", "V_kN", "M_kNm", "ratio_pmm",
+      "ratio_shear", "phiVn_kN", "sigma_max_kPa", "boundary_required", "status", "combo"]];
+    for (const g of wallRows())
+      for (const x of g.stories)
+        out.push([g.pier, x.story, x.P, x.V, x.M, x.ratio_pmm, x.ratio_shear,
+          x.phiVn, x.sigma_max, x.boundary_required ? "true" : "false", x.status, x.combo || ""]);
+    return out;
+  }
+  if (kind === "punching") {
+    if (!store.punchResult || !store.punchResult.columns) return null;
+    return [
+      ["column", "story", "Vu_kN", "vu_kPa", "phi_vc_kPa", "b0_m", "d_m", "ratio", "status", "case"],
+      ...punchRows().map(x => [x.uid, x.story, x.Vu, x.vu, x.phi_vc,
+        x.b0, x.d, x.ratio, x.status, x.case || ""]),
+    ];
+  }
   if (kind === "svc") {
     const list = svcData();
     if (!list) return null;
@@ -4602,6 +5173,8 @@ function csvFileName(kind) {
     : kind === "cuts" ? store.cutCase
     : kind === "piers" ? store.pierCase
     : kind === "optimize" ? `${store.optResult?.case || store.optCase || ""}`
+    : kind === "wall" ? `${store.wallResult?.params?.combos?.length ?? "all"}combos`
+    : kind === "punching" ? `${store.punchResult?.columns?.[0]?.case || store.punchCase || ""}`
     : kind === "design" ? `${store.designKind}-${designResult()?.case || ""}`
     : caseLabel(store.caseName) + (caseData()?.min ? `-${store.envSide}` : "");
   return `skyframe-${slug(store.model?.name)}-${kind}` +
@@ -4719,6 +5292,10 @@ async function doRun() {
     store.lastSolveMs = performance.now() - t0;
     store.steelResult = null;                       // v0.6 — forces changed
     store.concreteResult = null;
+    store.wallResult = null;                        // v0.18 — forces changed
+    store.punchResult = null;
+    store.vwResult = null;
+    viewer.setMemberColors(null);
     if (!caseNames().includes(store.caseName)) store.caseName = null;
     rebuildCaseSelect();
     rebuildModeSelect();
@@ -5084,6 +5661,17 @@ function wire() {
   $("llrToggle").addEventListener("change", e => { toggleLlr(e.target.checked); });
   $("csvLlr").addEventListener("click", () => downloadCsv("livered"));
 
+  // v0.18 — drift-optimizer controls (case, direction, run, clear)
+  $("vwCaseSelect").addEventListener("change", e => { store.vwCase = e.target.value; });
+  document.querySelectorAll("#vwDirToggle .seg-btn").forEach(b =>
+    b.addEventListener("click", () => {
+      store.vwDir = b.dataset.dir === "Y" ? "Y" : "X";
+      document.querySelectorAll("#vwDirToggle .seg-btn").forEach(x =>
+        x.classList.toggle("is-active", x === b));
+    }));
+  $("vwRunBtn").addEventListener("click", runVirtualWork);
+  $("vwClearBtn").addEventListener("click", clearVwColors);
+
   // drift limit
   $("driftLimitInput").addEventListener("change", e => {
     const v = parseFloat(e.target.value);
@@ -5109,7 +5697,7 @@ function wire() {
   });
 
   // keyboard
-  const TABS = ["view3d", "story", "modal", "reactions", "forces", "design", "th", "pushover", "buckling", "takedown", "cuts", "piers"];
+  const TABS = ["view3d", "story", "modal", "reactions", "forces", "design", "drift", "th", "pushover", "buckling", "takedown", "cuts", "piers"];
   const TOOL_KEYS = { v: "select", c: "column", b: "beam", x: "brace", w: "wall", s: "slab", l: "link", g: "spring", e: "erase" };
   document.addEventListener("keydown", e => {
     const tag = (e.target.tagName || "").toLowerCase();
@@ -5179,6 +5767,7 @@ async function boot() {
     onErase: handleErase,
     onSelect: handleSelect,
     onReadout: t => { $("planReadout").textContent = t; },
+    getHalos: () => punchHalos(),                  // v0.18 punching D/C > 1 rings
   });
   elevEditor = new ElevEditor($("elevSvg"), {          // v0.5
     getModel: () => store.model,
@@ -5271,6 +5860,12 @@ async function boot() {
     designGovRatio,
     // v0.17 — vertical seismic Ev in auto-combos + panel zones
     syncPanelZoneUI, mockAsce7Combos,
+    // v0.18 — wall design, punching check, drift optimizer
+    renderWallPanel, runWallCheck, wallRows, wallGovRatio, designWall,
+    renderPunchPanel, runPunchCheck, punchRows, punchHalos, syncPunchHalos,
+    designPunching, renderDriftPanel, runVirtualWork, clearVwColors, vwRows,
+    applyVwColors, vwColor, fetchVirtualWork,
+    mockDesignWall, mockDesignPunching, mockVirtualWork,
   };
 }
 

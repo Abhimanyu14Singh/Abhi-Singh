@@ -2137,3 +2137,173 @@ export function mockImport(fmt, body = {}) {
   }
   throw new Error(`unknown import format “${fmt}”`);
 }
+
+/* ================================================================
+   v0.18 — mock POST /api/design/wall · /api/design/punching ·
+   /api/results/virtual-work
+   ================================================================ */
+
+/** POST /api/design/wall — RC wall-pier PMM + in-plane shear screening.
+    body {combos?: [names], rho_v?, rho_h? (reinforcement RATIOS, not %),
+    fy?, fc_prime? (kPa)} →
+    {piers: [{pier, story, P, V, M, ratio_pmm, ratio_shear, phiVn,
+      boundary_required, sigma_max, status, combo}], params: {…echo}}.
+    Deterministic demo intent: two piers × up to 3 stories — the second
+    (squat) pier's base lift lands NG on PMM and the first pier's base
+    needs boundary elements (σmax > 0.2·f'c per the ACI 318 §18.10.6
+    stress screen). Everything scales with the ρ / fy / f'c inputs. */
+export function mockDesignWall(model, body = {}) {
+  const rnd = mulberry32(4242);
+  const jit = a => 1 + (rnd() - 0.5) * 2 * a;
+  const rho_v = body.rho_v > 0 ? body.rho_v : 0.0025;
+  const rho_h = body.rho_h > 0 ? body.rho_h : 0.0025;
+  const fy = body.fy > 0 ? body.fy : 420000;              // kPa
+  const fc = body.fc_prime > 0 ? body.fc_prime : 30000;   // kPa
+  const all = Object.keys(model.combos || {});
+  const combos = Array.isArray(body.combos) && body.combos.length
+    ? body.combos.filter(n => all.includes(n)) : all;
+  const eqCombo = combos.find(n => /E[XY]|EQ/i.test(n)) || combos[0] ||
+    Object.keys(model.cases || {})[0] || "EQX";
+  const grvCombo = combos.find(n => !/E[XY]|EQ|W\b/i.test(n)) || eqCombo;
+
+  const wallShells = (model.shells || []).filter(s => s.kind === "wall");
+  const pierNames = [...new Set(wallShells.filter(s => s.pier).map(s => s.pier))];
+  if (!pierNames.length) pierNames.push("P1");
+  if (pierNames.length < 2) pierNames.push(pierNames.includes("P2") ? "P2b" : "P2");
+  pierNames.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+  const stories = (model.stories || []).slice(0, 3);      // bottom → up
+  const n = stories.length || 1;
+  const Htot = stories.length ? stories[stories.length - 1].elevation : 9.6;
+
+  const geomOf = (pier, pi) => {
+    const sh = wallShells.find(s => s.pier === pier);
+    const t = sh ? (((model.shell_sections || {})[sh.section] || {}).thickness || 0.2) : 0.2;
+    let Lw = sh ? (Math.hypot(sh.corners[1][0] - sh.corners[0][0],
+      sh.corners[1][1] - sh.corners[0][1]) || 6) : 6;
+    if (pi > 0) Lw = Math.max(Lw * 0.45, 2.4);            // fabricated squat pier
+    return { t, Lw };
+  };
+
+  const piers = [];
+  pierNames.slice(0, 2).forEach((pier, pi) => {
+    const { t, Lw } = geomOf(pier, pi);
+    const Ag = t * Lw, S = t * Lw * Lw / 6;               // m², m³
+    const As = rho_v * Ag;
+    // capacities (screening-level): φPn axial, φMn in-plane with axial assist,
+    // φVn = φ(0.17√f'c + ρh·fy)·0.8Lw·t  (kPa·m² → kN)
+    const phiPn = 0.65 * (0.85 * fc * (Ag - As) + fy * As);
+    const phiVn = +(0.75 * (0.17 * Math.sqrt(fc / 1000) * 1000 + rho_h * fy)
+      * 0.8 * Lw * t).toFixed(1);
+    stories.forEach((st, si) => {
+      const hFac = (n - si) / n;                          // 1 at base → 1/n at top
+      const P = 2200 * Ag * hFac * jit(0.04);             // kN (compression +)
+      const V = (pi === 0 ? 520 : 515) * Ag * hFac * jit(0.05);
+      let M = V * 0.62 * Htot * hFac * jit(0.04);         // kN·m
+      if (pi === 0 && si === 0) M *= 1.35;                // P1 base: boundary screen trips
+      const phiMn = 0.9 * (fy * (As / 2) + 0.5 * P) * 0.8 * Lw;
+      const ratio_pmm = +(P / phiPn + M / (phiMn || 1)).toFixed(3);
+      const ratio_shear = +(V / (phiVn || 1)).toFixed(3);
+      const sigma_max = +(P / Ag + M / (S || 1)).toFixed(0);          // kPa
+      const boundary_required = sigma_max > 0.2 * fc;
+      piers.push({
+        pier, story: st.name,
+        P: +P.toFixed(1), V: +V.toFixed(1), M: +M.toFixed(1),
+        ratio_pmm, ratio_shear, phiVn,
+        boundary_required, sigma_max,
+        status: (ratio_pmm > 1 || ratio_shear > 1) ? "NG" : "OK",
+        combo: si === n - 1 ? grvCombo : eqCombo,
+      });
+    });
+  });
+  return { piers, params: { combos, rho_v, rho_h, fy, fc_prime: fc } };
+}
+
+/** POST /api/design/punching — two-way (punching) shear at slab–column
+    connections. body {case?, fc_prime? (kPa), cover? (mm)} →
+    {columns: [{uid, story, Vu, vu, phi_vc, b0, d, ratio, status, case}]}.
+    Four columns of the slab story; the interior one lands at D/C ≈ 1.15.
+    φvc = 0.75·0.33·√f'c (MPa→kPa); b0 = 4(c+d) at d/2 from the face. */
+export function mockDesignPunching(model, body = {}) {
+  const rnd = mulberry32(1717);
+  const jit = a => 1 + (rnd() - 0.5) * 2 * a;
+  const fc = body.fc_prime > 0 ? body.fc_prime : 30000;   // kPa
+  const coverMm = body.cover > 0 ? body.cover : 40;       // mm
+  const caseName = body.case || Object.keys(model.combos || {})[0] ||
+    Object.keys(model.cases || {})[0] || "DEAD";
+
+  const slab = (model.shells || []).find(s => s.kind === "slab");
+  const th = slab ? (((model.shell_sections || {})[slab.section] || {}).thickness || 0.15) : 0.15;
+  const story = (slab && slab.story) || ((model.stories || [])[0] || {}).name;
+  const cols = (model.members || []).filter(m => m.kind === "column" && m.story === story);
+  if (!cols.length) return { columns: [] };
+  // interior columns first: sort by distance to the plan centroid
+  const cx = cols.reduce((a, m) => a + m.pi[0], 0) / cols.length;
+  const cy = cols.reduce((a, m) => a + m.pi[1], 0) / cols.length;
+  const picked = [...cols].sort((a, b) =>
+    Math.hypot(a.pi[0] - cx, a.pi[1] - cy) - Math.hypot(b.pi[0] - cx, b.pi[1] - cy))
+    .slice(0, 4);
+
+  const d = Math.max(th - coverMm / 1000 - 0.008, 0.06);  // avg effective depth, m
+  const phi_vc = +(0.75 * 0.33 * Math.sqrt(fc / 1000) * 1000).toFixed(1);   // kPa
+  // interior column deliberately over (≈1.15); the rest comfortably under
+  const targets = [1.15, 0.86, 0.71, 0.58];
+  const columns = picked.map((mm, i) => {
+    const sec = (model.sections || {})[mm.section] || {};
+    const c = sec.b || 0.5;                               // square column, m
+    const b0 = +(4 * (c + d)).toFixed(3);                 // m
+    const ratio = +(targets[i % targets.length] * jit(0.03)).toFixed(3);
+    const vu = +(ratio * phi_vc).toFixed(1);              // kPa
+    const Vu = +(vu * b0 * d).toFixed(1);                 // kN
+    return {
+      uid: mm.uid, story: mm.story, Vu, vu, phi_vc, b0, d: +d.toFixed(3),
+      ratio, status: ratio > 1 ? "NG" : "OK", case: caseName,
+    };
+  });
+  return { columns };
+}
+
+/** POST /api/results/virtual-work — member contributions to the roof drift
+    (virtual work of a unit roof load). body {case, direction "X"|"Y"} →
+    {contributions: {uid: m}, total, roof_disp} with total = Σ contributions
+    = roof_disp exactly. Twelve members with descending shares — lower-story
+    columns dominate, braces next, drift-direction beams after that. */
+export function mockVirtualWork(model, body = {}) {
+  const rnd = mulberry32(31415);
+  const jit = a => 1 + (rnd() - 0.5) * 2 * a;
+  const dirY = body.direction === "Y";
+  const r = mockResults(model);
+  const caseName = body.case &&
+    ((r.cases && r.cases[body.case]) || (r.combos && r.combos[body.case]))
+    ? body.case : (dirY ? "EQY" : "EQX");
+  const cd = (r.cases && r.cases[caseName]) || (r.combos && r.combos[caseName]) || {};
+  const top = r.story_order[r.story_order.length - 1];
+  const st = (cd.story && cd.story[top]) || {};
+  let roof = Math.abs(dirY ? st.uy || 0 : st.ux || 0);
+  if (!(roof > 1e-9)) roof = Math.abs(st.ux || 0) + Math.abs(st.uy || 0) || 0.02;
+
+  const storyIdx = {};
+  (model.stories || []).forEach((s, i) => { storyIdx[s.name] = i; });
+  const weighted = (model.members || []).map(mm => {
+    const si = storyIdx[mm.story] ?? 0;                    // 0 = bottom
+    const hFac = Math.pow(0.55, si);
+    const kFac = mm.kind === "column" ? 1 : mm.kind === "brace" ? 0.8 : 0.28;
+    const dx = Math.abs(mm.pj[0] - mm.pi[0]), dy = Math.abs(mm.pj[1] - mm.pi[1]);
+    const dirFac = mm.kind === "beam"
+      ? (dirY ? (dy > dx ? 1 : 0.3) : (dx > dy ? 1 : 0.3)) : 1;
+    return [mm.uid, hFac * kFac * dirFac * jit(0.25)];
+  }).sort((a, b) => b[1] - a[1]).slice(0, 12);
+
+  const wSum = weighted.reduce((a, [, w]) => a + w, 0) || 1;
+  const contributions = {};
+  let acc = 0;
+  weighted.forEach(([uid, w], i) => {
+    let v = i === weighted.length - 1
+      ? roof - acc                                         // exact closure
+      : +(w / wSum * roof).toFixed(7);
+    contributions[uid] = +v.toFixed(7);
+    acc = +(acc + contributions[uid]).toFixed(7);
+  });
+  const total = +Object.values(contributions).reduce((a, b) => a + b, 0).toFixed(7);
+  return { contributions, total, roof_disp: total };
+}

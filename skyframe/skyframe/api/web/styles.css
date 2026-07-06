@@ -1740,3 +1740,47 @@ tr.cm-active td { background: var(--accent-ghost) !important; }
   padding: 8px 16px 14px; font-size: 11px; line-height: 1.55; max-width: 900px;
 }
 .design-footnote b { color: var(--text-2); }
+
+/* ================================================================
+   v0.18 — wall pier design, punching check, drift optimizer
+   ================================================================ */
+
+/* ---- wall design card (Design → Wall) */
+.wall-panel .design-form, .punch-panel .design-form {
+  border-bottom: 1px solid var(--border-soft);
+}
+#wallComboSelect {
+  min-width: 180px; font-size: 12px; padding: 4px 7px;
+}
+#wallComboSelect option { padding: 1px 4px; }
+.boundary-badge {
+  color: #a78bfa !important; background: rgba(167, 139, 250, 0.13) !important;
+  border: 1px solid rgba(167, 139, 250, 0.45) !important;
+}
+.wall-bnd { color: #a78bfa !important; }
+
+/* ---- punching check card (Design → Punching) */
+.punch-row.is-active td { background: var(--accent-ghost); }
+.punch-halo-glyph { color: var(--red); font-weight: 700; }
+
+/* plan-editor halo rings at failing punching columns */
+#planSvg .punch-halo { animation: punchPulse 1.5s ease-in-out infinite; }
+@keyframes punchPulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+/* ---- drift optimizer (Results → Drift) */
+.drift-legend .cl-bar {
+  background: linear-gradient(90deg, #3a4a5d, #2c7fd6, #e5a50a, #e05252);
+}
+.vw-match { color: var(--green) !important; }
+.vw-bar-wrap {
+  display: inline-block; width: 130px; height: 7px; vertical-align: middle;
+  background: var(--surface-3); border-radius: 4px; overflow: hidden;
+}
+.vw-bar {
+  display: block; height: 100%; width: var(--w, 0%);
+  background: var(--c, var(--accent)); border-radius: 4px;
+}
+.vw-row td, .wall-row td { font-variant-numeric: tabular-nums; }

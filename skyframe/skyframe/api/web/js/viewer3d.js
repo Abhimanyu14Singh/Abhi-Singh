@@ -105,6 +105,7 @@ export class Viewer3D {
     this.contours = { on: false, comp: "M11", caseName: null };   // v0.4
     this.labelsOn = true;
     this.highlight = { uids: null, color: "#e0a020" };            // v0.6
+    this.memberColors = null;                                     // v0.18 {uid: css}
 
     // camera
     this.yaw = 0.7; this.pitch = 0.42; this.dist = 40;
@@ -185,6 +186,13 @@ export class Viewer3D {
       uids: (uids && uids.length) ? new Set(uids) : null,
       color: color || "#e0a020",
     };
+    this._dirty = true;
+  }
+
+  /** v0.18 — per-member color override map {uid: cssColor} (drift-optimizer
+      virtual-work shares). Highlight/hover still win. Falsy/empty clears. */
+  setMemberColors(map) {
+    this.memberColors = (map && Object.keys(map).length) ? map : null;
     this._dirty = true;
   }
 
@@ -747,11 +755,13 @@ export class Viewer3D {
         const { s, seg } = it;
         const hovered = this._hover && this._hover.uid === seg.uid;
         const hl = this.highlight.uids && this.highlight.uids.has(seg.uid);
+        // v0.18 — drift-optimizer per-member color override (below hover/highlight)
+        const mc = this.memberColors && this.memberColors[seg.uid];
         const alpha = overlayActive ? COLORS.ghost : depthAlpha(it.z);
-        ctx.globalAlpha = (hovered || hl) ? 1 : alpha;
+        ctx.globalAlpha = (hovered || hl) ? 1 : (mc && !overlayActive) ? Math.max(alpha, 0.95) : alpha;
         ctx.strokeStyle = hovered ? "#ffffff"
-          : hl ? this.highlight.color : (COLORS[seg.kind] || COLORS.beam);
-        ctx.lineWidth = (hovered || hl) ? 2.6 : (seg.kind === "column" ? 1.8 : 1.3);
+          : hl ? this.highlight.color : (mc || COLORS[seg.kind] || COLORS.beam);
+        ctx.lineWidth = (hovered || hl) ? 2.6 : mc ? 2.3 : (seg.kind === "column" ? 1.8 : 1.3);
         ctx.lineCap = "round";
         ctx.beginPath();
         ctx.moveTo(s.a.x, s.a.y); ctx.lineTo(s.b.x, s.b.y);

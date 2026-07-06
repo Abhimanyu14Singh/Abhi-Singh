@@ -330,6 +330,7 @@
         <button class="tab" data-tab="reactions" role="tab">Reactions</button>
         <button class="tab" data-tab="forces" role="tab">Member Forces</button>
         <button class="tab" data-tab="design" role="tab" id="designTabBtn">Design</button>
+        <button class="tab" data-tab="drift" role="tab" id="driftTabBtn" title="Drift optimizer — virtual-work member contributions to the roof drift (after a solve)">Drift</button>
         <button class="tab hidden" data-tab="th" role="tab" id="thTabBtn">Time History</button>
         <button class="tab hidden" data-tab="pushover" role="tab" id="poTabBtn">Pushover</button>
         <button class="tab hidden" data-tab="buckling" role="tab" id="buckTabBtn">Buckling</button>
@@ -405,6 +406,14 @@
               <div class="cl-bar"></div>
               <div class="cl-labels">
                 <span id="clMin">−1</span><span>0</span><span id="clMax">+1</span>
+              </div>
+            </div>
+            <!-- v0.18: drift-optimizer member coloring legend -->
+            <div class="contour-legend drift-legend hidden" id="driftLegend">
+              <div class="cl-title">drift energy share <span class="unit" id="vwLegendCase"></span></div>
+              <div class="cl-bar"></div>
+              <div class="cl-labels">
+                <span>0 %</span><span id="vwLegendMax">max</span>
               </div>
             </div>
           </div>
@@ -556,14 +565,19 @@
         </div>
         <div class="pane-content hidden" id="content-design">
           <div class="design-head">
-            <div class="seg-toggle" id="designKindToggle" title="Steel (AISC-style) or concrete (P-M / flexure) screening">
+            <div class="seg-toggle" id="designKindToggle" title="Steel (AISC-style), concrete (P-M / flexure), RC wall pier or slab punching-shear screening">
               <button class="seg-btn is-active" data-dk="steel">Steel</button>
               <button class="seg-btn" data-dk="concrete">Concrete</button>
+              <button class="seg-btn" data-dk="wall" title="RC wall-pier PMM + in-plane shear checks (v0.18)">Wall</button>
+              <button class="seg-btn" data-dk="punching" title="Slab punching (two-way) shear at columns (v0.18)">Punching</button>
             </div>
             <span class="prelim-badge" title="These checks are screening-level only — not a substitute for a full code design">PRELIMINARY — screening only</span>
             <span class="toolbar-spacer"></span>
             <button class="chip csv-btn" id="csvDesign" title="Download the check table as CSV (unrounded)">⬇ CSV</button>
           </div>
+          <!-- v0.18: everything steel/concrete-specific lives in this wrap so the
+               Wall / Punching sub-tabs can swap it out wholesale -->
+          <div id="designFrameWrap">
           <div class="design-form" id="designForm"></div>
 
           <!-- ---- v0.16: live-load reduction (ASCE 7 §4.7) ---- -->
@@ -617,6 +631,73 @@
             <div class="table-scroll">
               <table class="data-table optimize-table" id="optimizeTable"></table>
             </div>
+          </div>
+          </div><!-- /designFrameWrap -->
+
+          <!-- ---- v0.18: RC wall-pier design (Wall sub-tab) ---- -->
+          <div class="wall-panel hidden" id="wallPanel">
+            <div class="design-form" id="wallForm"></div>
+            <div class="design-summary hidden" id="wallSummary"></div>
+            <div class="table-scroll">
+              <table class="data-table design-table" id="wallTable"></table>
+            </div>
+            <div class="pane-tools">
+              <span class="muted" id="wallNote"></span>
+            </div>
+          </div>
+
+          <!-- ---- v0.18: slab punching-shear check (Punching sub-tab) ---- -->
+          <div class="punch-panel hidden" id="punchPanel">
+            <div class="design-form" id="punchForm"></div>
+            <div class="design-summary hidden" id="punchSummary"></div>
+            <div class="table-scroll">
+              <table class="data-table design-table" id="punchTable"></table>
+            </div>
+            <div class="pane-tools">
+              <span class="muted" id="punchNote"></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ DRIFT OPTIMIZER (v0.18) ============ -->
+      <section class="tabpane" id="pane-drift" role="tabpanel">
+        <div class="empty-state" id="empty-drift">
+          <div class="empty-art">⇢</div>
+          <p>Run analysis to use the drift optimizer</p>
+        </div>
+        <div class="pane-content hidden" id="content-drift">
+          <div class="design-head">
+            <span class="opt-title">Drift optimizer
+              <span class="unit">virtual-work member contributions to the roof drift</span></span>
+            <span class="prelim-badge nl-badge"
+              title="POST /api/results/virtual-work — each member's share of the roof displacement under a unit roof load">VIRTUAL WORK</span>
+          </div>
+          <div class="design-form">
+            <div class="design-form-row">
+              <label class="rs-field"><span>case / combo</span>
+                <select id="vwCaseSelect" title="Lateral case or combo whose drift is decomposed"></select></label>
+              <label class="rs-field"><span>direction</span>
+                <div class="seg-toggle" id="vwDirToggle" title="Drift direction — X or Y">
+                  <button class="seg-btn is-active" data-dir="X">X</button>
+                  <button class="seg-btn" data-dir="Y">Y</button>
+                </div></label>
+              <button class="btn btn-run design-check" id="vwRunBtn" title="Compute the virtual-work drift shares and color the 3D members">
+                <span class="spinner hidden" id="vwSpinner"></span><span>Run</span></button>
+              <button class="btn design-check" id="vwClearBtn" disabled
+                title="Clear the 3D member coloring and the table">Clear</button>
+            </div>
+            <p class="muted design-note">Colors every member in the 3D view by its share of the
+              roof displacement (drift energy share, normalized 0…max) — the hottest members are the
+              best stiffening candidates. The top-10 table lists the biggest contributors;
+              Σ contributions should match the roof displacement.</p>
+          </div>
+          <div class="design-summary hidden" id="vwSummary"></div>
+          <div class="table-scroll">
+            <table class="data-table" id="vwTable"></table>
+          </div>
+          <div class="pane-tools">
+            <span class="muted" id="vwNote"></span>
           </div>
         </div>
       </section>

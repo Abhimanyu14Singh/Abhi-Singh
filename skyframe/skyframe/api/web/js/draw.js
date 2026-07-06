@@ -66,7 +66,8 @@ export class PlanEditor {
   /**
    * opts: { getModel, getStory, getSelection (Set of "type:uid"),
    *         onDraw(tool, payload), onErase(ref), onSelect(refs, additive),
-   *         onReadout(text) }
+   *         onReadout(text),
+   *         getHalos? () → [{uid, x, y, r}]  (v0.18 punching-check rings) }
    */
   constructor(svg, opts) {
     this.svg = svg;
@@ -366,6 +367,26 @@ export class PlanEditor {
         "stroke-linejoin": "round", "stroke-linecap": "round",
         "vector-effect": "non-scaling-stroke",
         "data-ref": `spring:${springKey(sp.point)}`,
+      }));
+    }
+
+    // v0.18: punching-check halos — red pulsing rings at failing column
+    // positions (opts.getHalos → [{uid, x, y, r}]) while the card is active.
+    for (const hp of (this.opts.getHalos ? this.opts.getHalos() || [] : [])) {
+      this.gElems.appendChild(el("circle", {
+        cx: hp.x, cy: hp.y, r: hp.r || 0.6,
+        class: "punch-halo",
+        fill: "rgba(230,103,103,0.10)", stroke: "rgba(230,103,103,0.95)",
+        "stroke-width": 2, "vector-effect": "non-scaling-stroke",
+        "pointer-events": "none", "data-ref": `punchhalo:${hp.uid || ""}`,
+      }));
+      this.gElems.appendChild(el("circle", {
+        cx: hp.x, cy: hp.y, r: (hp.r || 0.6) * 0.45,
+        class: "punch-halo",
+        fill: "none", stroke: "rgba(230,103,103,0.8)",
+        "stroke-width": 1.2, "stroke-dasharray": "3 2.4",
+        "vector-effect": "non-scaling-stroke",
+        "pointer-events": "none", "data-ref": `punchhalo:${hp.uid || ""}`,
       }));
     }
   }
