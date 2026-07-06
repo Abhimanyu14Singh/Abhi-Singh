@@ -143,9 +143,9 @@ scrutinized benchmark tests.
 - [x] 6. Wall/slab openings; elevation-view drawing (Wave 6)
 - [x] 7. Nonlinear static pushover (OpenSees fiber hinges) (Wave 6)
 
-## Status — v1.4 released 🎉
+## Status — v1.5 released 🎉
 All waves above are complete with engine + REST API + UI, pinned by a
-435-test suite. The app builds standalone locally (`packaging/build.sh`).
+458-test suite. The app builds standalone locally (`packaging/build.sh`).
 
 ## Scheduled waves toward ETABS v23 parity
 Driven by `docs/ETABS23_GAP_MATRIX.md` (compiled from CSI ETABS v23 docs
@@ -157,10 +157,13 @@ and release notes). No gap is skipped — everything below is scheduled.
 - [x] Punching shear checks at columns (ACI 318 two-way shear, b0 at d/2)
 - [x] Energy / virtual-work drift-optimization diagram
 
-### Wave 20 — nonlinear production tools
-- [ ] Auto ASCE 41-17 frame hinges (M3/PMM tables) + fiber PMM hinges
-- [ ] Pushover performance point (ASCE 41 coefficient method)
-- [ ] Pattern (skip) live loading + auto construction-sequence case
+### Wave 20 — nonlinear production tools  ✅ done (v1.5)
+- [x] Auto ASCE 41-17 frame hinges (steel Table 9-7.1 / concrete Table
+      10-7 M3 backbones, per-step acceptance states)
+- [x] Pushover performance point (ASCE 41 coefficient method)
+- [x] Pattern (skip) live loading + auto construction-sequence case
+- [ ] Fiber PMM hinges → moved to Wave 22 (built on the Section Designer
+      fiber-section infrastructure — not skipped, rescheduled)
 
 ### Wave 21 — composite & slab flexure
 - [ ] Composite beam design (studs, partial composite, camber, DG11 vibration)
@@ -168,6 +171,7 @@ and release notes). No gap is skipped — everything below is scheduled.
 
 ### Wave 22 — sections & devices
 - [ ] Section Designer (arbitrary fiber sections, PMM surface)
+- [ ] Fiber PMM hinges (from Wave 20, on the fiber-section machinery)
 - [ ] Friction-pendulum isolators (single/triple), elastomeric bearings,
       multilinear links
 

@@ -1,5 +1,26 @@
 # SkyFrame changelog
 
+## 1.5.0
+
+### Wave 20 — nonlinear production tools
+- **Automatic ASCE 41-17 plastic hinges**: flag members "Auto M3" and a
+  pushover case in asce41 mode builds trilinear moment-rotation
+  backbones from the code tables (steel Table 9-7.1 with compactness
+  interpolation, concrete beams Table 10-7), tracks every hinge's
+  rotation, moment, and acceptance state (IO/LS/CP/collapse) per step,
+  and shows state chips in the pushover results.
+- **Performance point**: ASCE 41 §7.4.3 coefficient method — equal-area
+  bilinear idealization and target displacement δt overlaid on the
+  capacity curve with the full C0/C1/C2 coefficient readout and hinge
+  state counts at δt.
+- **Pattern (skip) live loading**: one click derives odd/even-span live
+  patterns along every continuous beam run plus a PATTERN-LL envelope
+  combo (1.2D + 1.6L arrangements) so beam design reads the worst
+  arrangement automatically.
+- **Auto construction sequence**: one-click story-by-story staged
+  gravity case.
+- 458 tests (23 new).
+
 ## 1.4.0
 
 ### Wave 19 — concrete wall & slab design, drift optimization
