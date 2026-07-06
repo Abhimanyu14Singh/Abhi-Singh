@@ -120,10 +120,19 @@ def bilinearize(disp: Sequence[float], shear: Sequence[float],
         #   A = du*Vy/2 + du*Vu/2 - Vu*Vy/(2 Ke)
         # solved for Vy with Ke frozen (then Ke is refreshed):
         den = du / 2.0 - Vu / (2.0 * Ke)
-        if abs(den) < 1e-30:
-            raise ValueError("bilinearize: degenerate (purely elastic) "
-                             "capacity curve — no yield point to idealize")
+        # ELASTIC fallback: a (near-)linear curve has den ~ 0, or puts the
+        # equal-area yield point at/beyond the curve end (Vy >= Vu) — the
+        # pushover never yielded.  ASCE 41's idealization degenerates to
+        # the elastic line: Ke = Ki, Vy = Vu (the strongest point actually
+        # reached — conservative in the C1/C2 strength ratio).  Flagged
+        # ``elastic: True`` so callers can annotate.
+        if abs(den) < 1e-12 * du:
+            Vy = Vu
+            break
         Vy_new = (area - du * Vu / 2.0) / den
+        if Vy_new >= Vu:
+            Vy = Vu
+            break
         if Vy_new <= 0.0:
             raise ValueError("bilinearize: no positive equal-area yield "
                              "point (degenerate capacity curve)")
@@ -131,9 +140,10 @@ def bilinearize(disp: Sequence[float], shear: Sequence[float],
             Vy = Vy_new
             break
         Vy = Vy_new
-    Ke = 0.6 * Vy / _interp_d(0.6 * Vy)
+    elastic = Vy >= Vu * (1.0 - 1e-12)
+    Ke = Ki if elastic else 0.6 * Vy / _interp_d(0.6 * Vy)
     return {"Ki": Ki, "Ke": Ke, "Vy": Vy, "dy": Vy / Ke,
-            "du": du, "Vu": Vu, "area": area}
+            "du": du, "Vu": Vu, "area": area, "elastic": elastic}
 
 
 def target_displacement(disp: Sequence[float], shear: Sequence[float], *,

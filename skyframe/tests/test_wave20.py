@@ -270,6 +270,41 @@ def test_asce41_without_flagged_members_is_pure_elastic():
                                                              rel=1e-9)
 
 
+def test_diaphragm_support_hinge_base_shear_closed_form():
+    """Regression for the v0.19 base-shear fix (load factor, not
+    reactions): TWO hinged-base columns under a RIGID diaphragm.
+
+    The diaphragm constrains ux/uy/rz only, so each column top is free to
+    rotate — each column is a base-spring cantilever and they act in
+    PARALLEL: K = 2 / (L^3/3EI + L^2/k), k = n 6EI/L.  The old
+    reaction-sum recording read ~0 kN on exactly this configuration
+    (Transformation handler + support hinge duplicates).
+    """
+    m = BuildingModel("dia")
+    m.add_material(Material("steel", E_STEEL, 0.3, 77.0))
+    m.add_section(FrameSection.from_library("W18x50", "steel"))
+    m.set_stories([3.0])
+    for x in (0.0, 6.0):
+        m.add_member("column", "W18x50", (x, 0, 0), (x, 0, 3), story="S1",
+                     hinges="auto_m3")
+        m.supports.append(PointSupport((x, 0, 0), FIX))
+    m.stories[0].diaphragm = "rigid"
+    m.patterns["DEAD"] = LoadPattern("DEAD", "dead")
+    m.add_pushover_case("PUSH", "Y", gravity={}, target_drift=0.002,
+                        steps=10, hinges="asce41")
+    m.validate()
+    sec = m.sections["W18x50"]
+    L, E, I = 3.0, E_STEEL, sec.I33
+    k = HINGE_STIFFNESS_FACTOR * 6.0 * E * I / L
+    K_hand = 2.0 / (L ** 3 / (3.0 * E * I) + L ** 2 / k)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        r = OpenSeesEngine(m).run_pushover("PUSH")
+    assert r.base_shear[0] > 0.0, "reaction-sum bug: zero base shear"
+    assert r.base_shear[0] / r.roof_disp[0] == pytest.approx(K_hand,
+                                                             rel=1e-6)
+
+
 def test_member_hinges_roundtrip_and_validation():
     m = _cantilever()
     d = m.to_dict()
@@ -373,12 +408,18 @@ def test_target_displacement_site_class_a_factor():
                             site_class="Z")
 
 
-def test_bilinearize_error_paths():
+def test_bilinearize_error_and_elastic_paths():
     with pytest.raises(ValueError):
         bilinearize([0.01], [100.0])
-    # purely elastic straight line: no yield point to idealize
-    with pytest.raises(ValueError):
-        bilinearize([0.01, 0.02, 0.03], [100.0, 200.0, 300.0])
+    # purely elastic straight line: degenerates to the elastic idealization
+    # Vy = Vu, Ke = Ki (the pushover never yielded), flagged elastic
+    bl = bilinearize([0.01, 0.02, 0.03], [100.0, 200.0, 300.0])
+    assert bl["elastic"] is True
+    assert bl["Vy"] == pytest.approx(300.0)
+    assert bl["Ke"] == pytest.approx(10_000.0)
+    # the truly bilinear curve must NOT be flagged elastic
+    disp, shear = _bilinear_curve()
+    assert bilinearize(disp, shear)["elastic"] is False
 
 
 # --------------------------------------------------------------------------- #

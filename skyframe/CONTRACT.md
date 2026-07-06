@@ -2195,3 +2195,32 @@ per-station max/min over the three cases to machine precision.
 `POST /api/model` round-trips ``FrameMember.hinges`` and
 ``PushoverCase.hinge_params``; `POST /api/analyze` pushover blocks carry
 the ``hinges`` array (asce41 mode).
+
+## v0.19 engine fixes (found by live probing, regression-tested)
+
+* **Pushover base shear = load factor.**  The push is a single unit
+  reference force at the control DOF, so the total base shear is EXACTLY
+  the pattern-2 load factor (statics).  The old v0.5 recording summed
+  ``nodeReaction()`` over supports + support hinge duplicates — the
+  Transformation handler leaves that meaningless on nodes whose
+  translations were condensed by the hinge equalDOF tie (it read ~0 kN on
+  diaphragm buildings; single-support models happened to work).
+* **Hinges in a rigid-diaphragm plane.**  A hinge duplicate whose original
+  is a diaphragm slave can be tied neither by equalDOF (CHAINS MP
+  constraints: dup -> orig -> master — Transformation cannot condense
+  chains; singular system) nor by slaving the dup to the diaphragm (a
+  node may be the constrained node of only ONE MP constraint; the
+  leftover uz equalDOF is dropped and the element-less original's uz
+  dangles — singular again).  Fix: slave originals get a STIFF zeroLength
+  ELEMENT translation tie, ``k_tie = HINGE_TIE_FACTOR (1e8) x the
+  member-end stiffness`` (relative softening ~1e-8, below every pinned
+  tolerance); everything else keeps the exact v0.5 equalDOF.  Regression:
+  two hinged-base columns under a rigid diaphragm (each a base-spring
+  cantilever, in parallel) match ``K = 2/(L^3/3EI + L^2/k)`` to 1e-6.
+  Panel-zone ties are UNCHANGED in v0.19 (their diaphragm interaction is
+  scheduled with the Wave 23 shell work).
+* **Elastic bilinearization fallback.**  A capacity curve that never
+  yields (near-linear, or the equal-area yield lands at/beyond the curve
+  end) degenerates to ``Ke = Ki, Vy = Vu`` with ``elastic: true`` in the
+  response instead of erroring — conservative in the C1/C2 strength
+  ratio, and the UI can annotate it.

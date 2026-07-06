@@ -152,6 +152,12 @@ HINGE_STIFFNESS_FACTOR = 10.0
 # (ASCE 41-17 §9.4.2.2 permits ~3% strain hardening on the plastic branch).
 HINGE_HARDENING_RATIO = 0.03
 
+# v0.19: stiffness factor of the stiff-ELEMENT translation tie used for a
+# hinge duplicate whose original is a rigid-diaphragm slave (equalDOF would
+# chain MP constraints there — see the tie-resolution note in _build).
+# Relative member-end softening introduced by the tie ~ 1/HINGE_TIE_FACTOR.
+HINGE_TIE_FACTOR = 1.0e8
+
 # v0.9 rigid-end offsets: the rigid arm connecting a member's real end node to
 # the offset (flexible-element) node is a very-stiff elasticBeamColumn whose
 # E/G are the member's scaled by this factor (a "stiff element" rigid link —
@@ -937,8 +943,8 @@ class PushoverResults:
     """Results of one nonlinear static pushover case (v0.5).
 
     Per converged step: roof (control DOF) displacement past the gravity
-    state (m), total base shear = -(sum of support reactions in the push
-    direction, gravity share subtracted) (kN), and the roof drift ratio
+    state (m), total base shear = the load factor of the unit reference
+    push (exact by statics; v0.19) (kN), and the roof drift ratio
     (roof displacement / roof elevation).  ``hinge_rotations`` holds the
     peak absolute hinge spring rotation per member uid across both bending
     axes and all steps (rad).  A non-converged step stops the run early:
@@ -1657,6 +1663,12 @@ class OpenSeesEngine:
             self._hinge_plan(hinge_case) if hinge_case is not None else {})
         # (uid, end, member, orig node tag, dup node tag, My)
         hinge_dups: List[tuple] = []
+        # v0.19: duplicate-node translation ties are DEFERRED until after
+        # the rigid diaphragms exist — a tie whose original is a diaphragm
+        # slave must NOT chain MP constraints (see the resolution loop).
+        # Entries: (orig, dup, equalDOF dofs, k_tie or None) — k_tie set
+        # (hinges) enables the stiff-element fallback for slave originals.
+        pending_ties: List[tuple] = []
         for m in model.members:
             sec = model.sections[m.section]
             mat = model.materials[sec.material]
@@ -1855,7 +1867,10 @@ class OpenSeesEngine:
             ops.element("zeroLength", etag, orig_tag, dup_tag,
                         "-mat", t_tag, y_tag, z_tag, "-dir", 4, 5, 6,
                         "-orient", *xax, *yax)
-            ops.equalDOF(orig_tag, dup_tag, 1, 2, 3)
+            k_tie = HINGE_TIE_FACTOR * (mat.E * A_eff / L
+                                        + 12.0 * mat.E
+                                        * max(I33_eff, I22_eff) / L ** 3)
+            pending_ties.append((orig_tag, dup_tag, (1, 2, 3), k_tie))
             asm.hinge_ele[(uid, end)] = etag
             asm.hinge_dup_of[dup_tag] = orig_tag
             asm.hinge_rot_yield[(uid, end)] = (my / k22, my / k33)
@@ -1876,7 +1891,7 @@ class OpenSeesEngine:
             etag += 1
             ops.element("zeroLength", etag, orig, dup,
                         "-mat", *mats_pz, "-dir", 4, 5)
-            ops.equalDOF(orig, dup, 1, 2, 3, 6)
+            pending_ties.append((orig, dup, (1, 2, 3, 6), None))
             asm.pz_joints[orig] = {"dup": dup, "K": k_theta, "ele": etag}
 
         # --- shell elements -------------------------------------------------
@@ -2140,6 +2155,7 @@ class OpenSeesEngine:
 
         # --- rigid diaphragms (v0.5: per-story "rigid" | "none") ------------
         cx, cy = model.plan_center()
+        dia_slave_master: Dict[int, int] = {}    # v0.19: slave -> master
         for s in model.stories:
             if model.effective_diaphragm(s.name) != "rigid":
                 continue
@@ -2154,8 +2170,35 @@ class OpenSeesEngine:
             ops.fix(tag, 0, 0, 1, 1, 1, 0)
             ops.rigidDiaphragm(3, tag, *slaves)
             asm.masters[s.name] = tag
+            for sl in slaves:
+                dia_slave_master[sl] = tag
             asm.node_coords[tag] = (cx, cy, elev)
             asm.node_restraints[tag] = (0, 0, 1, 1, 1, 0)
+
+        # --- v0.19: resolve the deferred duplicate-node ties ----------------
+        # A hinge duplicate whose ORIGINAL is a rigid-diaphragm slave must
+        # not be tied with equalDOF: that CHAINS multi-point constraints
+        # (dup -> orig -> master), which the Transformation handler cannot
+        # condense — the system goes singular and pushover base shear read
+        # ZERO on diaphragm buildings with hinges at member ends in a
+        # story plane.  (Slaving the dup to the diaphragm instead does not
+        # work either: the dup would then sit in TWO MP constraints —
+        # rigidDiaphragm + the residual uz equalDOF — and Transformation
+        # allows one constrained-node MP per node.)  Fix: for slave
+        # originals the translations are tied by a STIFF zeroLength
+        # ELEMENT (k_tie = 1e8 x the member's own end stiffness — relative
+        # softening ~1e-8, far below every validation tolerance), which
+        # involves no constraint at all; everything else keeps the exact
+        # v0.5 equalDOF (bit-identical legacy behavior).
+        for orig_t, dup_t, dofs, k_tie in pending_ties:
+            if k_tie is not None and orig_t in dia_slave_master:
+                mtag += 1
+                ops.uniaxialMaterial("Elastic", mtag, k_tie)
+                etag += 1
+                ops.element("zeroLength", etag, orig_t, dup_t,
+                            "-mat", mtag, mtag, mtag, "-dir", 1, 2, 3)
+            else:
+                ops.equalDOF(orig_t, dup_t, *dofs)
         asm.use_transformation = (bool(asm.masters) or bool(hinge_dups)
                                   or bool(pz_map))
 
@@ -3740,7 +3783,14 @@ class OpenSeesEngine:
     def _setup_pushover_analysis(asm: _Assembly, ctrl: Optional[int] = None,
                                  dof: int = 1, du: float = 0.0) -> None:
         """Newton (NormDispIncr 1e-6, 50) static analysis; LoadControl for
-        the gravity stage, DisplacementControl(ctrl, dof, du) for the push."""
+        the gravity stage, DisplacementControl(ctrl, dof, du) for the push.
+
+        (Chained MP constraints — a hinge/panel-zone duplicate whose
+        original is a rigid-diaphragm slave — are avoided at BUILD time by
+        slaving the duplicate to the diaphragm directly; see the v0.19
+        note at the constraint-tie creation.  The Transformation handler
+        therefore always sees a flat constraint graph.)
+        """
         ops.wipeAnalysis()
         ops.constraints("Transformation" if asm.use_transformation
                         else "Plain")
@@ -3767,7 +3817,8 @@ class OpenSeesEngine:
            ``target_drift * roof_elevation / steps`` equal increments.
 
         Per converged step the roof displacement (past the gravity state),
-        the total base shear (support reactions, gravity share subtracted)
+        the total base shear (= the pattern-2 load factor of the unit
+        reference push — exact by statics; v0.19 fix, see the inline note)
         and every hinge spring rotation are recorded.  On a step that fails
         to converge (Newton, then a NewtonLineSearch retry) the run stops
         early and returns the partial curve with a warning.
@@ -3798,15 +3849,16 @@ class OpenSeesEngine:
             raise ValueError(f"Pushover case {name!r}: roof elevation must "
                              "be > 0")
 
-        # base-shear nodes: supports PLUS hinge duplicates of supported
-        # nodes — the equalDOF translation tie routes the element shear to
-        # the duplicate's reaction record, not the retained support's
-        support_set = set(asm.support_tags)
-        base_tags = list(asm.support_tags) + [
-            d for d, o in asm.hinge_dup_of.items() if o in support_set]
-
+        # v0.19 base-shear fix: the push is a SINGLE concentrated reference
+        # force (1.0 at the control DOF), so by statics the total base
+        # shear in the push direction is EXACTLY the pattern-2 load factor
+        # lambda — no reaction summation.  The previous v0.5 recording
+        # summed nodeReaction() over supports + support hinge duplicates,
+        # which the Transformation constraint handler leaves meaningless
+        # on nodes whose translations were condensed away by the hinge
+        # equalDOF tie (it read ~0 on diaphragm buildings with hinges at
+        # supported column bases; single-support models happened to work).
         warn_list: List[str] = []
-        base0 = 0.0
         d0 = 0.0
         if case.gravity:
             ops.timeSeries("Linear", 1)
@@ -3818,8 +3870,6 @@ class OpenSeesEngine:
                 raise RuntimeError(f"Pushover case {name!r}: gravity stage "
                                    "failed to converge")
             ops.loadConst("-time", 0.0)
-            ops.reactions()
-            base0 = sum(ops.nodeReaction(t)[dof - 1] for t in base_tags)
             d0 = ops.nodeDisp(ctrl, dof)
 
         ops.timeSeries("Linear", 2)
@@ -3851,10 +3901,8 @@ class OpenSeesEngine:
                     "curve returned)")
                 break
             roof_disp.append(float(ops.nodeDisp(ctrl, dof)) - d0)
-            ops.reactions()
-            v = -(sum(ops.nodeReaction(t)[dof - 1]
-                      for t in base_tags) - base0)
-            base_shear.append(float(v))
+            # unit reference load at the control DOF -> V_base = lambda
+            base_shear.append(float(ops.getLoadFactor(2)))
             for (uid, end), etag in asm.hinge_ele.items():
                 defo = ops.eleResponse(etag, "deformation")
                 rot = (max(abs(defo[1]), abs(defo[2]))

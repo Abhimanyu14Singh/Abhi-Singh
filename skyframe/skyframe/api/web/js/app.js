@@ -3388,7 +3388,8 @@ function renderPerfOut() {
      <span>C<sub>1</sub> <b>${f(perf.C1, 3)}</b></span>
      <span>C<sub>2</sub> <b>${f(perf.C2, 3)}</b></span>
      <span class="perf-dt">δ<sub>t</sub> <b>${f(perf.delta_t * 1000, 1)} mm</b>
-       <span class="dim">@ step ${perf.step ?? "—"}</span></span>`;
+       <span class="dim">@ step ${perf.step ?? "—"}</span></span>
+     ${perf.elastic ? `<span class="hstate hstate-elastic" title="The capacity curve never yielded within the pushover — the idealization degenerates to the elastic line (Vy = Vu, conservative in C1/C2)">elastic response</span>` : ""}`;
   const hs = perf.hinge_summary || {};
   chips.innerHTML = ["elastic", "IO", "LS", "CP", "collapse"]
     .map(s => `<span class="hstate hstate-${s}">${s} ${hs[s] || 0}</span>`)
