@@ -2483,3 +2483,158 @@ export function mockPerformancePoint(model, pd, body) {
     direction: dir, step, roof_disp_at_step: (pd.roof_disp || [])[step],
     hinge_summary: summary };
 }
+
+/* ==========================================================================
+   v0.20 — composite beam design, slab flexural design, floor vibration
+   ========================================================================== */
+
+/** POST /api/design/composite — composite steel beam screening (AISC I3).
+    body {combos?: [names], fc_prime? (kPa), t_slab? (m), hr? (deck rib
+    height, m), stud_d? (m), rib_spacing? (m), shored?: bool} →
+    {beams: [{uid, story, applicable, reason?, beff, tc, phiMn_full,
+      n_studs, sumQn, ratio_composite, phiMn_partial, Mu, ratio,
+      precomp_ratio, I_equiv, defl_LL, defl_limit_ok, status}], params}.
+    Deterministic demo intent: six beams — five on slab stories (one lands
+    NG at D/C ≈ 1.08), one on a slab-less story reported n/a with reason
+    "no slab above". Stud strength ΣQn (and with it the % composite)
+    scales with the fc' / stud Ø / rib spacing inputs. */
+export function mockDesignComposite(model, body = {}) {
+  const rnd = mulberry32(2020);
+  const jit = a => 1 + (rnd() - 0.5) * 2 * a;
+  const fc = body.fc_prime > 0 ? body.fc_prime : 30000;          // kPa
+  const t_slab = body.t_slab > 0 ? body.t_slab : 0.13;           // m
+  const hr = body.hr >= 0 ? body.hr : 0.075;                     // m
+  const stud_d = body.stud_d > 0 ? body.stud_d : 0.019;          // m
+  const rib_s = body.rib_spacing > 0 ? body.rib_spacing : 0.3;   // m
+  const shored = !!body.shored;
+  const all = Object.keys(model.combos || {});
+  const combos = Array.isArray(body.combos) && body.combos.length
+    ? body.combos.filter(n => all.includes(n)) : all;
+
+  const slabStories = new Set((model.shells || [])
+    .filter(s => s.kind === "slab").map(s => s.story));
+  const beams = (model.members || []).filter(m => m.kind === "beam");
+  const withSlab = beams.filter(m => slabStories.has(m.story)).slice(0, 5);
+  const noSlab = beams.find(m => !slabStories.has(m.story));
+  const picked = [...withSlab, ...(noSlab ? [noSlab] : [])];
+
+  const Fy = 345000, Fu = 450000;                                // kPa
+  const Asa = Math.PI / 4 * stud_d * stud_d;                     // m²
+  const Ec = 4700 * Math.sqrt(fc / 1000) * 1000;                 // kPa
+  // one-stud strength — concrete leg scales with √fc', steel leg caps it
+  const Qn = Math.min(0.5 * Asa * Math.sqrt(fc * Ec), 0.75 * Asa * Fu);  // kN
+  const AsFy = 0.0076 * Fy;                                      // steel yield force, kN
+  const targets = [0.62, 0.71, 1.08, 0.55, 0.83];                // D/C intents
+  const E = model.E || 25_000_000;
+  const out = picked.map((mm, i) => {
+    if (!slabStories.has(mm.story))
+      return { uid: mm.uid, story: mm.story, applicable: false,
+        reason: "no slab above", status: "n/a" };
+    const L = mm.length || 6;
+    const beff = +Math.min(L / 4, 6).toFixed(3);                 // m
+    const tc = +Math.max(t_slab - hr, 0.05).toFixed(3);          // above-rib slab
+    const n_studs = Math.max(2, Math.floor(L / rib_s));
+    const sumQn = +(n_studs * Qn).toFixed(1);
+    const ratio_composite = +Math.min(1, sumQn / AsFy).toFixed(3);
+    const w = (model.dead_udl ?? 25) * 1.2 + (model.live_udl ?? 10) * 1.6;
+    const Mu = +(w * L * L / 8 * jit(0.06)).toFixed(1);
+    const ratio = +(targets[i % targets.length] * jit(0.02)).toFixed(3);
+    const phiMn_partial = +(Mu / ratio).toFixed(1);
+    const phiMn_full = +(phiMn_partial * (1.12 + 0.25 * (1 - ratio_composite))).toFixed(1);
+    const precomp_ratio = +((shored ? 0.32 : 0.74) * jit(0.10)).toFixed(3);
+    const I_equiv = +(1.8e-3 * (0.75 + 0.5 * ratio_composite) * jit(0.05)).toFixed(6);
+    const defl_LL = +(5 * (model.live_udl ?? 10) * L ** 4 / (384 * E * I_equiv)).toFixed(5);
+    const defl_limit_ok = defl_LL <= L / 360 + 1e-12;
+    return { uid: mm.uid, story: mm.story, applicable: true,
+      beff, tc, phiMn_full, n_studs, sumQn, ratio_composite,
+      phiMn_partial, Mu, ratio, precomp_ratio, I_equiv, defl_LL, defl_limit_ok,
+      status: (ratio > 1 || precomp_ratio > 1 || !defl_limit_ok) ? "NG" : "OK" };
+  });
+  return { beams: out, params: { combos, fc_prime: fc, t_slab, hr,
+    stud_d, rib_spacing: rib_s, shored } };
+}
+
+/** POST /api/design/slab — two-way slab flexural design (direct-design
+    strip method). body {case?, fc_prime? (kPa), bar_d? (m), cover? (m)} →
+    {regions: [{uid, directions: [{dir: "x"|"y", strips: [{strip:
+    "column"|"middle", sections: [{x, Mu, As_req, As_min, spacing,
+    status}]}]}]}], params}.
+    Mu in kN·m/m (negative at supports), As in mm²/m, spacing in mm.
+    One region × 2 directions × 2 strips × 3 sections; the x-direction
+    column-strip support section is deliberately under-reinforced (NG). */
+export function mockDesignSlab(model, body = {}) {
+  const rnd = mulberry32(808);
+  const jit = a => 1 + (rnd() - 0.5) * 2 * a;
+  const fc = body.fc_prime > 0 ? body.fc_prime : 30000;          // kPa
+  const bar_d = body.bar_d > 0 ? body.bar_d : 0.016;             // m
+  const cover = body.cover > 0 ? body.cover : 0.025;             // m
+  const caseName = body.case || Object.keys(model.combos || {})[0] ||
+    Object.keys(model.cases || {})[0] || "DEAD";
+  const slabs = (model.shells || []).filter(s => s.kind === "slab").slice(0, 1);
+  const fy = 420000;                                             // kPa
+  const barArea = Math.PI / 4 * (bar_d * 1000) ** 2;             // mm²
+  // cheap fc' respect — a-depth shrinks a little as fc' grows
+  const fcFac = 1 + 0.03 * (30000 / fc - 1);
+
+  const regions = slabs.map(sh => {
+    const c = sh.corners || [];
+    const Lx = c.length >= 2 ? (Math.abs(c[1][0] - c[0][0]) || 6) : 6;
+    const Ly = c.length >= 3 ? (Math.abs(c[2][1] - c[1][1]) || 6) : 6;
+    const th = (((model.shell_sections || {})[sh.section] || {}).thickness) || 0.15;
+    const d = Math.max(th - cover - bar_d / 2, 0.05);            // m
+    const As_min = +(0.0018 * 1000 * th * 1000).toFixed(0);      // mm²/m
+    const q = 1.2 * 5.6 + 1.6 * 3.0;                             // kPa demo panel load
+    const mkSections = (Lspan, share, bump) => [0, 0.5, 1].map((t, si) => {
+      const x = +(t * Lspan).toFixed(2);
+      const Mo = q * Lspan * Lspan / 8;                          // kN·m/m
+      let Mu = (si === 1 ? 0.35 : -0.65) * Mo * share * jit(0.05);
+      if (bump && si === 0) Mu *= 3.1;                           // trip the NG screen
+      Mu = +Mu.toFixed(2);
+      let As_req = +(Math.abs(Mu) / (0.9 * fy * 0.9 * d) * 1e6 * fcFac).toFixed(0);
+      const gov = Math.max(As_req, As_min);
+      const spacing = +Math.min(barArea / gov * 1000, 3 * th * 1000, 450).toFixed(0);
+      // mock ρmax screen — over ~1500 mm²/m the 150 slab is under-reinforced
+      const status = As_req > 1500 ? "NG" : "OK";
+      return { x, Mu, As_req, As_min, spacing, status };
+    });
+    return { uid: sh.uid, directions: ["x", "y"].map(dir => ({
+      dir,
+      strips: ["column", "middle"].map(strip => ({
+        strip,
+        sections: mkSections(dir === "x" ? Lx : Ly,
+          strip === "column" ? 0.72 : 0.38,
+          dir === "x" && strip === "column"),      // the deliberate NG
+      })),
+    })) };
+  });
+  return { regions, params: { case: caseName, fc_prime: fc, bar_d, cover } };
+}
+
+/** POST /api/results/vibration — floor vibration screening (AISC DG11
+    walking excitation). body {live_factor?, beta?, ap_limit?} →
+    {beams: [{uid, story, fn, delta_mid, W_eff, ap_over_g, limit,
+    status}], params}. fn = 0.18·√(g/Δ); ap/g = P0·e^(−0.35fn)/(β·W).
+    Six beams; one lands at ap/g ≈ 0.0062 (NG vs the 0.005 office limit).
+    β and the live factor feed the formula directly. */
+export function mockVibration(model, body = {}) {
+  const lf = (isFinite(body.live_factor) && body.live_factor >= 0)
+    ? body.live_factor : 0.5;
+  const beta = body.beta > 0 ? body.beta : 0.03;
+  const limit = body.ap_limit > 0 ? body.ap_limit : 0.005;
+  const beams = (model.members || []).filter(m => m.kind === "beam").slice(0, 6);
+  const Po = 0.29;                                               // kN walking force
+  // per-beam midspan deflection (mm) + participating weight (kN) at lf = 0.5
+  const specs = [{ d: 5.2, W: 260 }, { d: 8.35, W: 180 }, { d: 4.1, W: 320 },
+    { d: 6.3, W: 240 }, { d: 3.6, W: 350 }, { d: 7.1, W: 210 }];
+  const wFac = (25 + lf * 10) / 30;               // included live load adds mass
+  const rows = beams.map((mm, i) => {
+    const s = specs[i % specs.length];
+    const delta_mid = +(s.d * wFac / 1000).toFixed(5);           // m
+    const W_eff = +(s.W * wFac).toFixed(1);                      // kN
+    const fn = +(0.18 * Math.sqrt(9.81 / delta_mid)).toFixed(2); // Hz
+    const ap_over_g = +(Po * Math.exp(-0.35 * fn) / (beta * W_eff)).toFixed(5);
+    return { uid: mm.uid, story: mm.story, fn, delta_mid, W_eff,
+      ap_over_g, limit, status: ap_over_g > limit ? "NG" : "OK" };
+  });
+  return { beams: rows, params: { live_factor: lf, beta, ap_limit: limit } };
+}

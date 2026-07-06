@@ -8,7 +8,8 @@ import { mockModel, mockResults, mockSectionLibrary, mockModelFiles, mockWindPat
   mockSelfWeightPattern, mockAsce7Combos, mockCodeRsCase, mockElfPattern,
   mockRsDirectional, mockNotionalPattern, mockOptimize, mockLiveReduction,
   mockDesignWall, mockDesignPunching, mockVirtualWork,
-  mockPatternLive, mockAutoSequence, mockPerformancePoint } from "./mock.js";
+  mockPatternLive, mockAutoSequence, mockPerformancePoint,
+  mockDesignComposite, mockDesignSlab, mockVibration } from "./mock.js";
 import { PlanEditor } from "./draw.js";
 import { ElevEditor } from "./elev.js";
 import { LoadsEditor } from "./loads.js";
@@ -99,6 +100,16 @@ const store = {
   vwResult: null,          // last POST /api/results/virtual-work response
   vwCase: null,            // drift-optimizer case/combo
   vwDir: "X",              // drift-optimizer direction
+  // v0.20 — composite beams, slab design, floor vibration
+  compositeResult: null,   // last POST /api/design/composite response
+  compositeParams: { t_slab: 130, fc: 30000, hr: 75, stud_d: 19,
+    rib_spacing: 300, shored: false },   // mm · kPa · mm · mm · mm · bool
+  compositeCombos: null,   // selected combo names (null → default all)
+  slabResult: null,        // last POST /api/design/slab response
+  slabParams: { fc: 30000, bar_d: 16, cover: 25 },   // kPa · mm · mm
+  slabCase: null,          // case/combo for the slab design
+  vibResult: null,         // last POST /api/results/vibration response
+  vibParams: { live_factor: 0.5, beta: 0.03, ap_limit: 0.005 },
 };
 
 const $ = id => document.getElementById(id);
@@ -241,6 +252,53 @@ async function designPunching(body) {
   }
   await new Promise(r => setTimeout(r, 250));
   return mockDesignPunching(store.model, body);
+}
+
+/* ---- v0.20: composite beam design + slab flexural design. Same convention
+   as designCheck — the live path syncs the working model first (the backend
+   re-analyses the CURRENT model), then POSTs; mock / missing endpoint
+   synthesizes locally. */
+async function designComposite(body) {
+  if (!store.mock) {
+    try {
+      const payload = JSON.parse(JSON.stringify(store.model));
+      delete payload._mock_params;
+      await postModel(payload);
+      return await api("/api/design/composite", body);
+    } catch (e) {
+      console.warn("Composite design endpoint unavailable, using mock:", e.message);
+    }
+  }
+  await new Promise(r => setTimeout(r, 250));
+  return mockDesignComposite(store.model, body);
+}
+
+async function designSlab(body) {
+  if (!store.mock) {
+    try {
+      const payload = JSON.parse(JSON.stringify(store.model));
+      delete payload._mock_params;
+      await postModel(payload);
+      return await api("/api/design/slab", body);
+    } catch (e) {
+      console.warn("Slab design endpoint unavailable, using mock:", e.message);
+    }
+  }
+  await new Promise(r => setTimeout(r, 250));
+  return mockDesignSlab(store.model, body);
+}
+
+/* ---- v0.20: floor vibration screening (results already solved on the
+   backend — no model sync needed). POST /api/results/vibration. */
+async function fetchVibration(body) {
+  if (!store.mock) {
+    try { return await api("/api/results/vibration", body); }
+    catch (e) {
+      console.warn("Vibration endpoint unavailable, using mock:", e.message);
+    }
+  }
+  await new Promise(r => setTimeout(r, 250));
+  return mockVibration(store.model, body);
 }
 
 /* ---- v0.18: virtual-work drift decomposition (results already solved on the
@@ -2722,9 +2780,11 @@ function setResultsAvailable(on) {
   if (on) {
     renderDesignForm(); renderDesignTable(); renderOptimizePanel(); renderLlrPanel();
     renderWallPanel(); renderPunchPanel(); renderDriftPanel();       // v0.18
+    renderCompositePanel(); renderSlabPanel(); renderVibTable();     // v0.20
   }
   else if (store.tab === "design" || store.tab === "drift") switchTab("view3d");
   if (!on) {                                                         // v0.18
+    clearVibTimer();                                                 // v0.20
     viewer.setMemberColors(null);
     $("driftLegend").classList.add("hidden");
   }
@@ -4010,7 +4070,7 @@ function designCaseOptions() {
 }
 
 function setDesignKind(kind) {
-  store.designKind = ["concrete", "wall", "punching"].includes(kind) ? kind : "steel";
+  store.designKind = ["concrete", "wall", "punching", "composite", "slab"].includes(kind) ? kind : "steel";
   document.querySelectorAll("#designKindToggle .seg-btn").forEach(b =>
     b.classList.toggle("is-active", b.dataset.dk === store.designKind));
   // v0.18 — Wall / Punching sub-tabs swap out the whole steel/concrete block
@@ -4024,6 +4084,8 @@ function setDesignKind(kind) {
   renderOptimizePanel();          // v0.12 — Steel sub-tab only
   renderWallPanel();              // v0.18
   renderPunchPanel();             // v0.18 (also refreshes plan halos)
+  renderCompositePanel();         // v0.20
+  renderSlabPanel();              // v0.20
 }
 
 /** The check control form: case selector, params (Fy or rebar), Check button. */
@@ -4696,6 +4758,542 @@ function renderPunchTable() {
 }
 
 /* ================================================================
+   v0.20 — COMPOSITE BEAM DESIGN (Design → Composite)
+   POST /api/design/composite {combos?, fc_prime?, t_slab?, hr?, stud_d?,
+   rib_spacing?, shored?} → {beams: [{uid, story, applicable, reason?,
+   beff, tc, phiMn_full, n_studs, sumQn, ratio_composite, phiMn_partial,
+   Mu, ratio, precomp_ratio, I_equiv, defl_LL, defl_limit_ok, status}],
+   params}. Lengths ENTERED in mm, SENT in metres; fc' in kPa.
+   ================================================================ */
+const compGovRatio = b => Math.max(b.ratio || 0, b.precomp_ratio || 0);
+
+function renderCompositePanel() {
+  const panel = $("compositePanel");
+  if (!panel) return;
+  const on = store.designKind === "composite" && !!store.results;
+  panel.classList.toggle("hidden", !on);
+  if (!on) return;
+  const combos = Object.keys((store.results && store.results.combos) || {});
+  if (!store.compositeCombos) store.compositeCombos = [...combos];  // default: all
+  store.compositeCombos = store.compositeCombos.filter(n => combos.includes(n));
+  const p = store.compositeParams;
+  $("compositeForm").innerHTML = `<div class="design-form-row">
+    <label class="rs-field wall-combo-field"><span>combos <span class="unit">multi-select · default all</span></span>
+      <select id="compComboSelect" multiple size="${Math.min(4, Math.max(2, combos.length || 2))}"
+        title="Load combinations to check — ctrl/cmd-click to pick several">${combos.map(n =>
+        `<option value="${esc(n)}"${store.compositeCombos.includes(n) ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
+    <label class="rs-field"><span>slab t <span class="unit">mm</span></span>
+      <input id="compTslab" type="number" min="50" max="400" step="5" value="${p.t_slab}"
+        title="Total slab thickness incl. deck ribs — sent as t_slab in metres"></label>
+    <label class="rs-field"><span>f'c <span class="unit">kPa</span></span>
+      <input id="compFc" type="number" min="1" step="5000" value="${p.fc}"></label>
+    <label class="rs-field"><span>rib h <span class="unit">mm</span></span>
+      <input id="compHr" type="number" min="0" max="150" step="5" value="${p.hr}"
+        title="Metal deck rib height hr — sent in metres"></label>
+    <label class="rs-field"><span>stud ⌀ <span class="unit">mm</span></span>
+      <input id="compStudD" type="number" min="10" max="25" step="1" value="${p.stud_d}"></label>
+    <label class="rs-field"><span>stud s <span class="unit">mm</span></span>
+      <input id="compRibS" type="number" min="100" max="1000" step="25" value="${p.rib_spacing}"
+        title="Stud (deck rib) spacing along the beam — sent in metres"></label>
+    <label class="rs-field"><span>shored</span>
+      <label class="allcombos-check comp-shored"><input type="checkbox" id="compShored"${p.shored ? " checked" : ""}
+        title="Shored construction — the bare steel beam never carries the wet concrete alone"> shored</label></label>
+    <button class="btn btn-run design-check" id="compCheckBtn" title="POST /api/design/composite">
+      <span class="spinner hidden" id="compSpinner"></span><span>Run composite checks</span></button>
+    <button class="chip csv-btn${store.compositeResult ? "" : " hidden"}" id="csvComposite"
+      title="Download the composite checks as CSV (unrounded)">⬇ CSV</button>
+  </div>
+  <p class="muted design-note">Composite steel beam screening (AISC I3) — effective slab width
+    b<sub>eff</sub>, full/partial composite φMn from the stud shear ΣQn, pre-composite (wet concrete)
+    D/C for unshored construction and the live-load deflection of the transformed section.
+    Beams without a slab at their level report n/a. Click a row to highlight the beam in plan &amp; 3D.</p>`;
+  const bindNum = (id, key) => $(id).addEventListener("change", e => {
+    const v = parseFloat(e.target.value);
+    if (isFinite(v) && v > 0) store.compositeParams[key] = v;
+  });
+  bindNum("compTslab", "t_slab"); bindNum("compFc", "fc"); bindNum("compStudD", "stud_d");
+  bindNum("compRibS", "rib_spacing");
+  $("compHr").addEventListener("change", e => {      // rib height may be 0 (flat slab)
+    const v = parseFloat(e.target.value);
+    if (isFinite(v) && v >= 0) store.compositeParams.hr = v;
+  });
+  $("compShored").addEventListener("change", e => { store.compositeParams.shored = e.target.checked; });
+  $("compComboSelect").addEventListener("change", e => {
+    store.compositeCombos = [...e.target.selectedOptions].map(o => o.value);
+  });
+  $("compCheckBtn").addEventListener("click", runCompositeCheck);
+  const csv = $("csvComposite");
+  if (csv) csv.addEventListener("click", () => downloadCsv("composite"));
+  renderCompositeTable();
+}
+
+async function runCompositeCheck() {
+  const btn = $("compCheckBtn");
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  $("compSpinner").classList.remove("hidden");
+  try {
+    const p = store.compositeParams;
+    store.compositeResult = await designComposite({
+      combos: store.compositeCombos && store.compositeCombos.length ? store.compositeCombos : undefined,
+      fc_prime: p.fc,
+      // form units are mm; the API takes metres
+      t_slab: p.t_slab / 1000, hr: p.hr / 1000,
+      stud_d: p.stud_d / 1000, rib_spacing: p.rib_spacing / 1000,
+      shored: !!p.shored,
+    });
+    renderCompositePanel();
+    const rows = (store.compositeResult && store.compositeResult.beams) || [];
+    const ng = rows.filter(r => r.status === "NG").length;
+    const na = rows.filter(r => r.status === "n/a" || r.applicable === false).length;
+    toast("Composite checks complete",
+      `${rows.length} beams · ${ng} NG · ${na} n/a`,
+      ng ? "error" : "info", 5000);
+  } catch (err) {
+    toast("Composite check failed", err.message, "error", 8000);
+  } finally {
+    const b = $("compCheckBtn"), s = $("compSpinner");
+    if (b) b.disabled = false;
+    if (s) s.classList.add("hidden");
+  }
+}
+
+/** Applicable beams sorted worst-first; n/a rows last. */
+function compositeRows() {
+  const rows = (store.compositeResult && store.compositeResult.beams) || [];
+  return [...rows].sort((a, b) => {
+    const na = a.applicable === false, nb = b.applicable === false;
+    if (na !== nb) return na ? 1 : -1;
+    return compGovRatio(b) - compGovRatio(a);
+  });
+}
+
+function renderCompositeTable() {
+  const table = $("compositeTable"), summary = $("compositeSummary");
+  const res = store.compositeResult;
+  $("compositeNote").textContent =
+    "Composite screening — φMn (full) at 100 % composite action, D/C = Mu / φMn(partial) with " +
+    "ΣQn studs, pre-comp D/C the bare-steel wet-concrete check (unshored), Δ_LL the live-load " +
+    "deflection of the transformed section vs L/360. Screening only.";
+  if (!res || !res.beams || !res.beams.length) {
+    summary.classList.add("hidden");
+    table.innerHTML = `<tbody><tr><td class="txt dim">No composite checks yet — set the slab / stud parameters and press “Run composite checks”.</td></tr></tbody>`;
+    return;
+  }
+  const rows = compositeRows();
+  const app = rows.filter(r => r.applicable !== false);
+  const ng = app.filter(r => r.status === "NG").length;
+  const na = rows.length - app.length;
+  const worst = app[0];
+  const prm = res.params || {};
+  const nCombos = (prm.combos && prm.combos.length) ||
+    Object.keys((store.results && store.results.combos) || {}).length;
+  summary.classList.remove("hidden");
+  summary.innerHTML =
+    `<span class="ds-item"><b>${rows.length}</b> beams</span>` +
+    `<span class="ds-item ds-ok"><b>${app.length - ng}</b> OK</span>` +
+    `<span class="ds-item ds-ng"><b>${ng}</b> NG</span>` +
+    `<span class="ds-item ds-na"><b>${na}</b> n/a</span>` +
+    (worst ? `<span class="ds-item">worst <b class="${compGovRatio(worst) > 1 ? "ds-over" : ""}">` +
+      `${esc(worst.uid)} · ${fmt(compGovRatio(worst), 3)}</b> ` +
+      `<span class="dim">(${(worst.ratio || 0) >= (worst.precomp_ratio || 0) ? "composite" : "pre-comp"})</span></span>` : "") +
+    `<span class="ds-item ds-prelim">PRELIMINARY · ${prm.shored ? "shored" : "unshored"} · ${nCombos} combo${nCombos === 1 ? "" : "s"}</span>`;
+
+  const dcChip = r => {
+    const cls = r > 1 ? "rc-over" : r > 0.85 ? "rc-near" : "rc-ok";
+    return `<span class="ratio-chip ${cls}">${fmt(r, 3)}</span>`;
+  };
+  const chip = st => st === "n/a"
+    ? `<span class="status-chip st-na">n/a</span>`
+    : `<span class="status-chip st-${st === "NG" ? "ng" : "ok"}">${esc(st)}</span>`;
+  const head = `<thead><tr>
+    <th class="txt">Beam</th><th class="txt">Story</th>
+    <th title="Effective slab width">beff m</th>
+    <th title="Fully-composite design flexural strength">φMn full kN·m</th>
+    <th title="Shear studs on the span">studs</th>
+    <th title="Total stud shear strength">ΣQn kN</th>
+    <th title="ΣQn / As·Fy — degree of composite action">% comp</th>
+    <th>Mu kN·m</th>
+    <th title="Mu / φMn(partial)">D/C</th>
+    <th title="Bare steel beam under wet concrete (unshored construction)">pre-comp D/C</th>
+    <th title="Live-load deflection of the transformed section">Δ_LL mm</th>
+    <th class="txt">Status</th></tr></thead>`;
+  const body = rows.map(x => {
+    if (x.applicable === false) return `<tr data-uid="${esc(x.uid)}"
+        class="design-row comp-row comp-na" title="${esc(x.reason || "not applicable")}">
+      <td class="txt">${esc(x.uid)}</td>
+      <td class="txt dim">${esc(x.story || "—")}</td>
+      <td class="txt dim" colspan="9">n/a — ${esc(x.reason || "not applicable")}</td>
+      <td class="txt">${chip("n/a")}</td></tr>`;
+    return `<tr data-uid="${esc(x.uid)}" class="design-row comp-row${compGovRatio(x) > 1 ? " over" : ""}"
+        title="Click to highlight ${esc(x.uid)} in the 2D plan and 3D view">
+      <td class="txt">${esc(x.uid)}</td>
+      <td class="txt dim">${esc(x.story || "—")}</td>
+      <td class="dim">${fmt(x.beff, 2)}</td>
+      <td class="dim">${fmt(x.phiMn_full, 1)}</td>
+      <td>${fmt(x.n_studs, 0)}</td>
+      <td class="dim">${fmt(x.sumQn, 0)}</td>
+      <td>${fmt((x.ratio_composite || 0) * 100, 0)} %</td>
+      <td>${fmt(x.Mu, 1)}</td>
+      <td>${dcChip(x.ratio || 0)}</td>
+      <td>${dcChip(x.precomp_ratio || 0)}</td>
+      <td class="${x.defl_limit_ok === false ? "exceed" : "dim"}">${fmt((x.defl_LL || 0) * 1000, 1)}${x.defl_limit_ok === false ? " ✕" : ""}</td>
+      <td class="txt">${chip(x.status || "OK")}</td></tr>`;
+  }).join("");
+  table.innerHTML = head + `<tbody>${body}</tbody>`;
+
+  // row → member-highlight hooks: 2D plan selection + 3D highlight (no tab jump)
+  table.querySelectorAll("tr.comp-row").forEach(tr =>
+    tr.addEventListener("click", () => {
+      const uid = tr.dataset.uid;
+      handleSelect([{ type: "member", uid }], false);      // 2D plan highlight
+      store.selectedMemberUid = uid;                       // 3D member panel target
+      viewer.setHighlight([uid], "#35b5e5");               // 3D highlight
+      renderMemberPanel();
+    }));
+}
+
+/* ================================================================
+   v0.20 — SLAB FLEXURAL DESIGN (Design → Slab)
+   POST /api/design/slab {case?, fc_prime?, bar_d?, cover?} → {regions:
+   [{uid, directions: [{dir, strips: [{strip, sections: [{x, Mu, As_req,
+   As_min, spacing, status}]}]}]}], params}. bar Ø / cover ENTERED in mm,
+   SENT in metres. The response shape may drift — everything renders
+   through defensive accessors with graceful fallbacks.
+   ================================================================ */
+/** Defensive mm²/m: backends may send m²/m (tiny numbers) or mm²/m. */
+const asMm2 = v => !isFinite(v) ? null : (Math.abs(v) < 0.05 ? v * 1e6 : v);
+/** Defensive mm: metres (< 1) or already mm. */
+const asMm = v => !isFinite(v) ? null : (Math.abs(v) < 1 ? v * 1000 : v);
+
+function renderSlabPanel() {
+  const panel = $("slabPanel");
+  if (!panel) return;
+  const on = store.designKind === "slab" && !!store.results;
+  panel.classList.toggle("hidden", !on);
+  if (!on) return;
+  const opts = designCaseOptions();
+  if (!store.slabCase || !opts.includes(store.slabCase)) {
+    // prefer a gravity combo (slab flexure is gravity-governed)
+    store.slabCase = opts.find(n =>
+      store.results.combos && store.results.combos[n] && !/E[XY]|EQ/i.test(n)) ||
+      opts[0] || null;
+  }
+  const p = store.slabParams;
+  $("slabForm").innerHTML = `<div class="design-form-row">
+    <label class="rs-field"><span>case / combo</span>
+      <select id="slabCaseSelect">${opts.map(n =>
+        `<option value="${esc(n)}"${n === store.slabCase ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
+    <label class="rs-field"><span>f'c <span class="unit">kPa</span></span>
+      <input id="slabFc" type="number" min="1" step="5000" value="${p.fc}"></label>
+    <label class="rs-field"><span>bar ⌀ <span class="unit">mm</span></span>
+      <input id="slabBarD" type="number" min="8" max="32" step="2" value="${p.bar_d}"
+        title="Flexural bar diameter — sent as bar_d in metres"></label>
+    <label class="rs-field"><span>cover <span class="unit">mm</span></span>
+      <input id="slabCover" type="number" min="10" max="75" step="5" value="${p.cover}"
+        title="Clear cover — effective depth d = t − cover − ⌀/2, sent in metres"></label>
+    <button class="btn btn-run design-check" id="slabCheckBtn" title="POST /api/design/slab">
+      <span class="spinner hidden" id="slabSpinner"></span><span>Run slab design</span></button>
+    <button class="chip csv-btn${store.slabResult ? "" : " hidden"}" id="csvSlab"
+      title="Download the slab design sections as CSV (unrounded)">⬇ CSV</button>
+  </div>
+  <p class="muted design-note">Two-way slab flexural design by design strips — per region and
+    span direction, column / middle strip moments at the support and midspan sections with the
+    required steel A<sub>s</sub>, the code minimum and the resulting bar spacing.</p>`;
+  $("slabCaseSelect").addEventListener("change", e => { store.slabCase = e.target.value; });
+  const bindNum = (id, key) => $(id).addEventListener("change", e => {
+    const v = parseFloat(e.target.value);
+    if (isFinite(v) && v > 0) store.slabParams[key] = v;
+  });
+  bindNum("slabFc", "fc"); bindNum("slabBarD", "bar_d"); bindNum("slabCover", "cover");
+  $("slabCheckBtn").addEventListener("click", runSlabDesign);
+  const csv = $("csvSlab");
+  if (csv) csv.addEventListener("click", () => downloadCsv("slab"));
+  renderSlabRegions();
+}
+
+async function runSlabDesign() {
+  const btn = $("slabCheckBtn");
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  $("slabSpinner").classList.remove("hidden");
+  try {
+    store.slabResult = await designSlab({
+      case: store.slabCase, fc_prime: store.slabParams.fc,
+      // form units are mm; the API takes metres
+      bar_d: store.slabParams.bar_d / 1000, cover: store.slabParams.cover / 1000,
+    });
+    renderSlabPanel();
+    const secs = slabSectionRows();
+    const ng = secs.filter(s => s.status === "NG").length;
+    toast("Slab design complete",
+      `${(store.slabResult.regions || []).length} region${(store.slabResult.regions || []).length === 1 ? "" : "s"} · ${secs.length} sections · ${ng} NG`,
+      ng ? "error" : "info", 5000);
+  } catch (err) {
+    toast("Slab design failed", err.message, "error", 8000);
+  } finally {
+    const b = $("slabCheckBtn"), s = $("slabSpinner");
+    if (b) b.disabled = false;
+    if (s) s.classList.add("hidden");
+  }
+}
+
+/** Flat section rows (region/dir/strip annotated) — CSV + summary source.
+    Defensive against shape drift: missing arrays become empty. */
+function slabSectionRows() {
+  const out = [];
+  for (const rg of (store.slabResult && store.slabResult.regions) || []) {
+    for (const dd of rg.directions || []) {
+      for (const st of dd.strips || []) {
+        for (const sec of st.sections || []) {
+          out.push({ region: rg.uid || "—", dir: dd.dir || "?",
+            strip: st.strip || "?", ...sec });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** Plan sketch of a design region: column-strip bands (edges) + middle
+    strip shaded, quarter-lines dashed, span-direction arrow. */
+function slabStripSvg(rg) {
+  const shells = (store.model && store.model.shells) || [];
+  const sh = shells.find(s => s.uid === rg.uid);
+  let Lx = 6, Ly = 6;
+  if (sh && sh.corners && sh.corners.length >= 3) {
+    Lx = Math.abs(sh.corners[1][0] - sh.corners[0][0]) || 6;
+    Ly = Math.abs(sh.corners[2][1] - sh.corners[1][1]) || 6;
+  }
+  const W = 250, H = 170, P = 26;
+  const sc = Math.min((W - 2 * P) / Lx, (H - 2 * P) / Ly);
+  const w = Lx * sc, h = Ly * sc;
+  const x0 = (W - w) / 2, y0 = (H - h) / 2;
+  const band = Math.min(w, h) / 4;                       // column strip = ¼ span
+  const colF = "rgba(53,181,229,0.14)", midF = "rgba(120,140,165,0.10)";
+  const line = "rgba(120,140,165,0.45)", dash = "rgba(120,140,165,0.30)";
+  let s = `<svg viewBox="0 0 ${W} ${H}" class="slab-strip-svg" aria-label="Design strips — region ${esc(rg.uid || "")}">`;
+  // middle field then column-strip bands top/bottom (x-direction strips)
+  s += `<rect x="${x0}" y="${y0 + band}" width="${w}" height="${h - 2 * band}" fill="${midF}"/>`;
+  s += `<rect x="${x0}" y="${y0}" width="${w}" height="${band}" fill="${colF}"/>`;
+  s += `<rect x="${x0}" y="${y0 + h - band}" width="${w}" height="${band}" fill="${colF}"/>`;
+  s += `<rect x="${x0}" y="${y0}" width="${w}" height="${h}" fill="none" stroke="${line}" stroke-width="1.2"/>`;
+  s += `<line x1="${x0}" y1="${y0 + band}" x2="${x0 + w}" y2="${y0 + band}" stroke="${dash}" stroke-width="1" stroke-dasharray="4 3"/>`;
+  s += `<line x1="${x0}" y1="${y0 + h - band}" x2="${x0 + w}" y2="${y0 + h - band}" stroke="${dash}" stroke-width="1" stroke-dasharray="4 3"/>`;
+  // labels
+  s += `<text x="${x0 + w / 2}" y="${y0 + band / 2 + 3}" fill="var(--accent)" font-size="8.5" text-anchor="middle" font-family="inherit">column strip</text>`;
+  s += `<text x="${x0 + w / 2}" y="${y0 + h / 2 + 3}" fill="var(--text-3)" font-size="8.5" text-anchor="middle" font-family="inherit">middle strip</text>`;
+  s += `<text x="${x0 + w / 2}" y="${y0 + h - band / 2 + 3}" fill="var(--accent)" font-size="8.5" text-anchor="middle" font-family="inherit">column strip</text>`;
+  // span-direction arrow (x)
+  const ay = y0 + h + 13;
+  s += `<line x1="${x0 + w / 2 - 22}" y1="${ay}" x2="${x0 + w / 2 + 16}" y2="${ay}" stroke="${line}" stroke-width="1.2"/>`;
+  s += `<path d="M ${x0 + w / 2 + 16} ${ay - 3} l 6 3 l -6 3 z" fill="${line}"/>`;
+  s += `<text x="${x0 + w / 2 - 30}" y="${ay + 3}" fill="var(--text-3)" font-size="8.5" text-anchor="end" font-family="inherit">span x · ${fmt(Lx, 1)} m</text>`;
+  s += `<text x="${x0 - 8}" y="${y0 + h / 2 + 3}" fill="var(--text-3)" font-size="8.5" text-anchor="middle" font-family="inherit" transform="rotate(-90 ${x0 - 8} ${y0 + h / 2})">y · ${fmt(Ly, 1)} m</text>`;
+  return s + "</svg>";
+}
+
+function renderSlabRegions() {
+  const wrap = $("slabRegions"), summary = $("slabSummary");
+  const res = store.slabResult;
+  $("slabNote").textContent =
+    "Slab design strips — Mu the factored strip moment per metre (negative at supports), " +
+    "As req the flexural steel demand, As min the shrinkage/temperature floor, spacing the " +
+    "resulting bar spacing (≤ 3t, ≤ 450 mm). NG sections are under-reinforced — thicken the " +
+    "slab or use larger bars. Screening only.";
+  if (!res || !Array.isArray(res.regions) || !res.regions.length) {
+    summary.classList.add("hidden");
+    wrap.innerHTML = `<p class="muted slab-empty">No slab design yet — pick a gravity case/combo, set f'c and the bar, and press “Run slab design”.</p>`;
+    return;
+  }
+  const secs = slabSectionRows();
+  const ng = secs.filter(s => s.status === "NG").length;
+  const govern = secs.reduce((a, s) =>
+    (asMm2(s.As_req) || 0) > (asMm2(a && a.As_req) || 0) ? s : a, secs[0]);
+  summary.classList.remove("hidden");
+  summary.innerHTML =
+    `<span class="ds-item"><b>${res.regions.length}</b> region${res.regions.length === 1 ? "" : "s"}</span>` +
+    `<span class="ds-item"><b>${secs.length}</b> sections</span>` +
+    `<span class="ds-item ds-ok"><b>${secs.length - ng}</b> OK</span>` +
+    `<span class="ds-item ds-ng"><b>${ng}</b> NG</span>` +
+    (govern ? `<span class="ds-item">peak As <b>${fmt(asMm2(govern.As_req), 0)} mm²/m</b> <span class="dim">(${esc(govern.region)} · ${esc(govern.dir)} · ${esc(govern.strip)})</span></span>` : "") +
+    `<span class="ds-item ds-prelim">PRELIMINARY · ${esc((res.params && res.params.case) || store.slabCase || "")}</span>`;
+
+  const chip = st => `<span class="status-chip st-${st === "NG" ? "ng" : "ok"}">${esc(st || "OK")}</span>`;
+  const stripTable = st => {
+    const rows = (st.sections || []).map(sec => `<tr class="${sec.status === "NG" ? "over" : ""}">
+      <td class="txt dim">x = ${fmt(sec.x, 2)} m</td>
+      <td class="${(sec.Mu || 0) < 0 ? "dim" : ""}">${fmt(sec.Mu, 2)}</td>
+      <td class="${sec.status === "NG" ? "exceed" : ""}"><b>${fmt(asMm2(sec.As_req), 0)}</b></td>
+      <td class="dim">${fmt(asMm2(sec.As_min), 0)}</td>
+      <td>${fmt(asMm(sec.spacing), 0)}</td>
+      <td class="txt">${chip(sec.status)}</td></tr>`).join("");
+    return `<div class="slab-strip-block">
+      <div class="slab-strip-title">${esc(st.strip || "?")} strip</div>
+      <table class="data-table slab-table">
+        <thead><tr><th class="txt">Section</th><th>Mu kN·m/m</th>
+          <th title="Required flexural steel">As req mm²/m</th>
+          <th title="Minimum (shrinkage/temperature) steel">As min</th>
+          <th title="Resulting bar spacing">spacing mm</th>
+          <th class="txt">Status</th></tr></thead>
+        <tbody>${rows || `<tr><td class="txt dim">no sections</td></tr>`}</tbody>
+      </table></div>`;
+  };
+  wrap.innerHTML = res.regions.map((rg, i) => {
+    const n = slabSectionRows().filter(s => s.region === (rg.uid || "—"));
+    const rgNg = n.filter(s => s.status === "NG").length;
+    const dirs = (rg.directions || []).map(dd => `<div class="slab-dir-block">
+        <div class="slab-dir-title">direction <b>${esc(dd.dir || "?")}</b></div>
+        ${(dd.strips || []).map(stripTable).join("")}</div>`).join("") ||
+      `<p class="muted">no strip data returned for this region</p>`;
+    return `<details class="slab-region"${i === 0 ? " open" : ""}>
+      <summary>▮ ${esc(rg.uid || "region")} <span class="pier-count">· ${n.length} sections${rgNg ? ` · <b class="svc-ng-count">${rgNg} NG</b>` : ""}</span></summary>
+      <div class="slab-region-body">
+        <div class="slab-strip-diagram">${slabStripSvg(rg)}</div>
+        <div class="slab-dir-wrap">${dirs}</div>
+      </div></details>`;
+  }).join("");
+}
+
+/* ================================================================
+   v0.20 — FLOOR VIBRATION (Results → Serviceability card)
+   POST /api/results/vibration {live_factor?, beta?, ap_limit?} →
+   {beams: [{uid, story, fn, delta_mid, W_eff, ap_over_g, limit,
+   status}]}. Beams over the limit pulse amber in the 3D view
+   (setMemberColors alternated on a timer).
+   ================================================================ */
+let vibPulseTimer = null;
+let vibPulseUids = [];
+
+/** Stop the amber pulse timer without touching the member colors. */
+function clearVibTimer() {
+  if (vibPulseTimer) { clearInterval(vibPulseTimer); vibPulseTimer = null; }
+  vibPulseUids = [];
+}
+
+/** Stop pulsing and hand the member colors back to the drift optimizer. */
+function stopVibPulse() {
+  const had = !!vibPulseTimer;
+  clearVibTimer();
+  if (had) applyVwColors();      // restores vw colors, or clears when none
+}
+
+/** Pulse the given beams amber in 3D while the vibration result stands. */
+function startVibPulse(uids) {
+  clearVibTimer();
+  if (!uids || !uids.length) { applyVwColors(); return; }
+  vibPulseUids = [...uids];
+  let bright = true;
+  const paint = () => {
+    const c = bright ? "#e5a50a" : "#7a5c08";
+    const map = {};
+    for (const u of vibPulseUids) map[u] = c;
+    viewer.setMemberColors(map);
+    bright = !bright;
+  };
+  paint();
+  vibPulseTimer = setInterval(paint, 650);
+}
+
+const vibLimitValue = () => {
+  const sel = $("vibLimitSel");
+  if (sel && sel.value === "custom") {
+    const v = parseFloat($("vibLimitCustom").value);
+    return (isFinite(v) && v > 0) ? v / 100 : 0.005;     // entered in %
+  }
+  return parseFloat(sel ? sel.value : "0.005") || 0.005;
+};
+
+async function runVibration() {
+  const btn = $("vibRunBtn");
+  if (!btn || btn.disabled) return;
+  const p = store.vibParams;
+  const lv = parseFloat($("vibLive").value);
+  const bt = parseFloat($("vibBeta").value);
+  if (isFinite(lv) && lv >= 0) p.live_factor = lv;
+  if (isFinite(bt) && bt > 0) p.beta = bt;
+  p.ap_limit = vibLimitValue();
+  btn.disabled = true;
+  $("vibSpinner").classList.remove("hidden");
+  try {
+    store.vibResult = await fetchVibration({
+      live_factor: p.live_factor, beta: p.beta, ap_limit: p.ap_limit,
+    });
+    renderVibTable();
+    const rows = (store.vibResult && store.vibResult.beams) || [];
+    const bad = rows.filter(r => r.status === "NG");
+    startVibPulse(bad.map(r => r.uid));
+    toast("Vibration screening complete",
+      `${rows.length} beams · ${bad.length} over the ap/g limit${bad.length ? " · pulsing amber in 3D" : ""}`,
+      bad.length ? "error" : "info", 5000);
+  } catch (err) {
+    toast("Vibration screening failed", err.message, "error", 8000);
+  } finally {
+    const b = $("vibRunBtn"), s = $("vibSpinner");
+    if (b) b.disabled = false;
+    if (s) s.classList.add("hidden");
+  }
+}
+
+function vibRows() {
+  const rows = (store.vibResult && store.vibResult.beams) || [];
+  return [...rows].sort((a, b) => (b.ap_over_g || 0) - (a.ap_over_g || 0));
+}
+
+function renderVibTable() {
+  const table = $("vibTable"), summary = $("vibSummary"), csv = $("csvVib");
+  if (!table) return;
+  $("vibNote").textContent =
+    "Floor vibration screening (AISC DG11 walking excitation) — fn = 0.18·√(g/Δ) from the " +
+    "midspan deflection under D + (live factor)·L, peak acceleration ap/g = P0·e^(−0.35fn)/(β·W) " +
+    "vs the occupancy comfort limit. Beams over the limit pulse amber in the 3D view. " +
+    "Click a row to open the beam in 3D.";
+  const res = store.vibResult;
+  if (!res || !res.beams || !res.beams.length) {
+    summary.classList.add("hidden");
+    if (csv) csv.classList.add("hidden");
+    table.innerHTML = `<tbody><tr><td class="txt dim">No vibration screening yet — set the walking-excitation parameters and press “Run”.</td></tr></tbody>`;
+    return;
+  }
+  const rows = vibRows();
+  const ng = rows.filter(r => r.status === "NG").length;
+  const worst = rows[0];
+  const prm = res.params || store.vibParams;
+  summary.classList.remove("hidden");
+  if (csv) csv.classList.remove("hidden");
+  summary.innerHTML =
+    `<span class="ds-item"><b>${rows.length}</b> beams</span>` +
+    `<span class="ds-item ds-ok"><b>${rows.length - ng}</b> OK</span>` +
+    `<span class="ds-item ds-ng"><b>${ng}</b> NG</span>` +
+    `<span class="ds-item">worst <b class="${worst.status === "NG" ? "ds-over" : ""}">` +
+      `${esc(worst.uid)} · ap/g ${fmt((worst.ap_over_g || 0) * 100, 2)} %</b></span>` +
+    `<span class="ds-item ds-prelim">β ${fmt(prm.beta ?? store.vibParams.beta, 3)} · limit ${fmt((prm.ap_limit ?? store.vibParams.ap_limit) * 100, 2)} %</span>`;
+
+  const chip = st => `<span class="status-chip st-${st === "NG" ? "ng" : "ok"}">${esc(st || "OK")}</span>`;
+  const head = `<thead><tr>
+    <th class="txt">Beam</th><th class="txt">Story</th>
+    <th title="Natural frequency of the floor panel">fn Hz</th>
+    <th title="Midspan deflection under the participating weight">Δmid mm</th>
+    <th title="Effective panel weight">W_eff kN</th>
+    <th title="Peak walking acceleration ratio">ap/g %</th>
+    <th>limit %</th><th class="txt">Status</th></tr></thead>`;
+  const body = rows.map(x => `<tr data-uid="${esc(x.uid)}"
+      class="design-row vib-row${x.status === "NG" ? " over" : ""}"
+      title="Click to show ${esc(x.uid)} in 3D${x.status === "NG" ? " — pulsing amber" : ""}">
+    <td class="txt">${esc(x.uid)}${x.status === "NG" ? ` <span class="vib-pulse-glyph" title="pulsing amber in the 3D view">◉</span>` : ""}</td>
+    <td class="txt dim">${esc(x.story || "—")}</td>
+    <td>${fmt(x.fn, 2)}</td>
+    <td class="dim">${fmt((x.delta_mid || 0) * 1000, 2)}</td>
+    <td class="dim">${fmt(x.W_eff, 0)}</td>
+    <td class="${x.status === "NG" ? "exceed" : ""}"><b>${fmt((x.ap_over_g || 0) * 100, 2)}</b></td>
+    <td class="dim">${fmt((x.limit ?? prm.ap_limit ?? 0.005) * 100, 2)}</td>
+    <td class="txt">${chip(x.status)}</td></tr>`).join("");
+  table.innerHTML = head + `<tbody>${body}</tbody>`;
+  table.querySelectorAll("tr.vib-row").forEach(tr =>
+    tr.addEventListener("click", () => selectMemberFrom3D(tr.dataset.uid)));
+}
+
+/* ================================================================
    v0.18 — DRIFT OPTIMIZER (Results → Drift)
    POST /api/results/virtual-work {case, direction} → {contributions:
    {uid: m}, total, roof_disp}. Members are colored in the 3D viewer by
@@ -4827,10 +5425,12 @@ function applyVwColors() {
   const res = store.vwResult;
   const legend = $("driftLegend");
   if (!res || !res.contributions || !Object.keys(res.contributions).length) {
-    viewer.setMemberColors(null);
+    // v0.20 — an active vibration pulse owns the member colors
+    if (!vibPulseTimer) viewer.setMemberColors(null);
     legend.classList.add("hidden");
     return;
   }
+  clearVibTimer();                 // v0.20 — vw coloring supersedes the pulse
   const vals = Object.values(res.contributions);
   const vmax = Math.max(...vals) || 1;
   const map = {};
@@ -5221,6 +5821,38 @@ function csvRows(kind) {
         x.b0, x.d, x.ratio, x.status, x.case || ""]),
     ];
   }
+  if (kind === "composite") {
+    if (!store.compositeResult || !store.compositeResult.beams) return null;
+    return [
+      ["beam", "story", "applicable", "reason", "beff_m", "tc_m", "phiMn_full_kNm",
+        "n_studs", "sumQn_kN", "ratio_composite", "phiMn_partial_kNm", "Mu_kNm",
+        "ratio", "precomp_ratio", "I_equiv_m4", "defl_LL_m", "defl_limit_ok", "status"],
+      ...compositeRows().map(x => [x.uid, x.story ?? "",
+        x.applicable === false ? "false" : "true", x.reason || "",
+        x.beff ?? "", x.tc ?? "", x.phiMn_full ?? "", x.n_studs ?? "", x.sumQn ?? "",
+        x.ratio_composite ?? "", x.phiMn_partial ?? "", x.Mu ?? "", x.ratio ?? "",
+        x.precomp_ratio ?? "", x.I_equiv ?? "", x.defl_LL ?? "",
+        x.defl_limit_ok == null ? "" : String(!!x.defl_limit_ok), x.status ?? ""]),
+    ];
+  }
+  if (kind === "slab") {
+    if (!store.slabResult || !Array.isArray(store.slabResult.regions)) return null;
+    return [
+      ["region", "dir", "strip", "x_m", "Mu_kNm_per_m", "As_req_mm2_per_m",
+        "As_min_mm2_per_m", "spacing_mm", "status"],
+      ...slabSectionRows().map(s => [s.region, s.dir, s.strip, s.x ?? "",
+        s.Mu ?? "", asMm2(s.As_req) ?? "", asMm2(s.As_min) ?? "",
+        asMm(s.spacing) ?? "", s.status ?? ""]),
+    ];
+  }
+  if (kind === "vibration") {
+    if (!store.vibResult || !store.vibResult.beams) return null;
+    return [
+      ["beam", "story", "fn_Hz", "delta_mid_m", "W_eff_kN", "ap_over_g", "limit", "status"],
+      ...vibRows().map(x => [x.uid, x.story ?? "", x.fn ?? "", x.delta_mid ?? "",
+        x.W_eff ?? "", x.ap_over_g ?? "", x.limit ?? "", x.status ?? ""]),
+    ];
+  }
   if (kind === "svc") {
     const list = svcData();
     if (!list) return null;
@@ -5310,7 +5942,7 @@ function csvRows(kind) {
 }
 
 function csvFileName(kind) {
-  const caseless = kind === "modal" || kind === "livered";
+  const caseless = kind === "modal" || kind === "livered" || kind === "vibration";
   const caseTag = kind === "th" ? store.thCase
     : kind === "svc" ? store.svcCase
     : kind === "pushover" ? store.poCase
@@ -5321,6 +5953,8 @@ function csvFileName(kind) {
     : kind === "optimize" ? `${store.optResult?.case || store.optCase || ""}`
     : kind === "wall" ? `${store.wallResult?.params?.combos?.length ?? "all"}combos`
     : kind === "punching" ? `${store.punchResult?.columns?.[0]?.case || store.punchCase || ""}`
+    : kind === "composite" ? `${store.compositeResult?.params?.combos?.length ?? "all"}combos`
+    : kind === "slab" ? `${store.slabResult?.params?.case || store.slabCase || ""}`
     : kind === "design" ? `${store.designKind}-${designResult()?.case || ""}`
     : caseLabel(store.caseName) + (caseData()?.min ? `-${store.envSide}` : "");
   return `skyframe-${slug(store.model?.name)}-${kind}` +
@@ -5442,6 +6076,10 @@ async function doRun() {
     store.punchResult = null;
     store.vwResult = null;
     store.perf = {};                                // v0.19 — curves changed
+    store.compositeResult = null;                   // v0.20 — forces changed
+    store.slabResult = null;
+    store.vibResult = null;
+    clearVibTimer();
     viewer.setMemberColors(null);
     if (!caseNames().includes(store.caseName)) store.caseName = null;
     rebuildCaseSelect();
@@ -5805,6 +6443,13 @@ function wire() {
       "info", 5000);
   });
 
+  // v0.20 — floor-vibration card (Serviceability tab): params, run, CSV
+  $("vibRunBtn").addEventListener("click", runVibration);
+  $("csvVib").addEventListener("click", () => downloadCsv("vibration"));
+  $("vibLimitSel").addEventListener("change", e => {
+    $("vibCustomWrap").classList.toggle("hidden", e.target.value !== "custom");
+  });
+
   // v0.16 — live-load reduction toggle + factor CSV (Design tab)
   $("llrToggle").addEventListener("change", e => { toggleLlr(e.target.checked); });
   $("csvLlr").addEventListener("click", () => downloadCsv("livered"));
@@ -6021,6 +6666,12 @@ async function boot() {
     runPerformancePoint, renderPerfOut, generatePatternLive,
     createAutoSequence, mockPatternLive, mockAutoSequence,
     mockPerformancePoint,
+    // v0.20 — composite beams, slab design, floor vibration
+    renderCompositePanel, runCompositeCheck, compositeRows, compGovRatio,
+    designComposite, renderSlabPanel, runSlabDesign, slabSectionRows,
+    slabStripSvg, designSlab, renderVibTable, runVibration, vibRows,
+    fetchVibration, startVibPulse, stopVibPulse, clearVibTimer,
+    mockDesignComposite, mockDesignSlab, mockVibration,
   };
 }
 
