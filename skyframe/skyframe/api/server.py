@@ -1069,6 +1069,13 @@ def create_app() -> Flask:
         if not isinstance(shored, bool):
             return jsonify({"error": "'shored' must be a boolean"}), 400
         model = _state["model"]
+        from skyframe.design.composite import (DEFAULT_HR,
+                                               DEFAULT_RIB_SPACING,
+                                               DEFAULT_STUD_D,
+                                               DEFAULT_STUD_FU)
+        defaults = {"hr": DEFAULT_HR, "stud_d": DEFAULT_STUD_D,
+                    "stud_Fu": DEFAULT_STUD_FU,
+                    "rib_spacing": DEFAULT_RIB_SPACING}
         try:
             kw = {}
             for key in ("fc_prime", "t_slab", "hr", "stud_d", "stud_Fu",
@@ -1076,7 +1083,10 @@ def create_app() -> Flask:
                 v = _num(body, key, default=None)
                 if v is not None:
                     kw[key] = v
-            params = {"shored": shored, **kw}
+            # resolved parameter echo: request values over the defaults;
+            # fc_prime/t_slab None = derived per slab (see CONTRACT v0.20)
+            params = {"shored": shored, "fc_prime": None, "t_slab": None,
+                      **defaults, **kw}
             if not any(m.kind == "beam" for m in model.members):
                 # no beams: nothing to check by definition — but an
                 # explicitly named unknown combo is still a caller error

@@ -2224,3 +2224,219 @@ the ``hinges`` array (asce41 mode).
   end) degenerates to ``Ke = Ki, Vy = Vu`` with ``elastic: true`` in the
   response instead of erroring — conservative in the C1/C2 strength
   ratio, and the UI can annotate it.
+
+---
+
+# v0.20 additions — composite beams, slab strip design, walking vibration
+
+No new model fields: all three features are request-driven post-processing
+of the existing analysis outputs (design preferences travel in the request,
+ETABS-style; the model dict is byte-identical to v0.19).  Units: SI
+everywhere — kN, m, kPa (every MPa <-> kPa conversion explicit at the point
+of use); the ONE deliberate non-SI convenience is slab ``As`` in mm^2/m.
+
+## Composite beam design (`skyframe/design/composite.py`)
+
+AISC 360-16 Chapter I3 checks for simply-supported interior steel floor
+beams acting compositely with a concrete slab on steel deck (headed
+studs).  ``check_composite_beams(model, results, combos=None, *,
+fc_prime?, t_slab?, hr=0.075, stud_d=0.019, stud_Fu=450_000, rib_spacing=
+0.3, shored=False, Fy=345_000, phi_b=0.9, dead_case?, live_case?)`` returns
+one check per BEAM member (model order).
+
+* **Applicability screen** — checked beams are horizontal (|dz| <= 1e-6),
+  carry a library W-shape (name + 1% area validation, the v0.6 steel
+  rule), support a slab (horizontal ``kind == "slab", behavior == "shell"``
+  region in the beam plane whose plan polygon contains the beam MIDPOINT —
+  the v0.18 punching geometry, boundary inclusive), and have analysis
+  demands; everything else reports ``applicable: false`` + ``reason``.
+  ``t_slab`` defaults to the supporting slab's shell-section thickness,
+  ``fc'`` to the slab concrete's E inverted through ACI 19.2.2.1
+  (``fc_from_E``) — both overridable per request.
+* **Effective width (I3.1a)** — per side ``min(span/8, s_neighbor/2,
+  edge_distance)``: ``s_neighbor`` = perpendicular plan distance to the
+  nearest PARALLEL beam at the same elevation with its midpoint in the
+  same slab; ``edge_distance`` = ray distance from the beam midpoint to
+  the slab polygon's BOUNDING BOX (documented simplification for
+  non-rectangular slabs).  ``beff`` = sum of the two sides.
+* **Flexure (I3.2a, plastic distribution — all three PNA cases)** — with
+  ``tc = t_slab - hr`` (solid slab above the ribs; rib concrete ignored)::
+
+      Cf = min(As*Fy, 0.85*fc'*beff*tc);  C = min(Cf, sumQn)  [partial]
+      a  = C/(0.85*fc'*beff)   (<= tc by construction)
+      A_c = (As*Fy - C)/(2*Fy)          # steel area above the PNA
+        A_c = 0       -> PNA in slab;  <= bf*tf -> flange;  else web
+      Mn = C*(t_slab - a/2) + Fy*As*d/2 + 2*Fy*A_c*y_c
+
+  the exact force sum about the top of steel written as a superposition
+  (whole shape yielded in tension at -d/2, then a 2*Fy compression
+  correction on A_c at its centroid y_c; PNA-in-slab reduces to the
+  textbook ``As*Fy*(d/2 + t_slab - a/2)``); ``phi_b = 0.90``.  Web taken
+  at constant tw below the flange (the k-region fillet area deepens the
+  PNA slightly — forces exact, documented).
+* **Studs (I8.2a)** — ``Qn = min(0.5*Asa*sqrt(fc'*Ec), Rg*Rp*Asa*Fu)``
+  with Rg = 1.0, Rp = 0.75 (one stud per rib, welded through deck),
+  ``Ec = 4700*sqrt(fc'[MPa])`` MPa; in kPa*m^2 the concrete branch is
+  directly kN.  One stud per rib: ``n_studs = floor((span/2)/
+  rib_spacing)`` per shear span, ``sumQn = n_studs*Qn``;
+  ``ratio_composite = sumQn/Cf`` (< 0.25 noted per the I3.2d.1 user note).
+* **Demand** — ``Mu`` = max |M3| over the member stations ENVELOPED over
+  the combos (default: every ADDITIVE combo — the v0.9 envelope pattern;
+  static case names accepted; ValueError when the model has none and no
+  names are passed); ``ratio = Mu/phiMn_partial``.
+* **Pre-composite (unshored)** — ``precomp_Mu = 1.4 * M_dead`` (first
+  DEAD-classified case) vs the F2 capacity at ``Lb = 0`` (the deck braces
+  the compression flange during casting, documented) = ``phi_b*Fy*Zx``;
+  ``shored: true`` (or no dead case) skips with a note (``null``).
+* **Deflection** — ``I_tr`` = elastic transformed inertia (n = Es/Ec,
+  solid slab tc over beff, parallel-axis about the elastic NA);
+  ``I_equiv = Is + sqrt(sumQn/Cf)*(I_tr - Is)`` (AISC Commentary
+  Eq. C-I3-4, ratio clamped to [0, 1]); ``defl_LL`` = the v0.16 EXACT
+  bare-steel chord-relative max |dy| of the LIVE-classified case scaled
+  by ``Is/I_equiv`` (exact for prismatic beams — the elastic line is
+  proportional to 1/I; documented approximation: composite I applied
+  over the full span).  Checked against ``span/model.deflection_limit``.
+
+`CompositeBeamCheck.to_dict()`:
+
+```jsonc
+{"uid": "B1", "story": "S1", "section": "W18x50",
+ "applicable": true, "reason": "",
+ "span": 6.0, "beff": 1.1, "tc": 0.075, "fc": 30000.0,
+ "C_full": 2103.75, "PNA_case": "web",       // "slab"|"flange"|"web"
+ "phiMn_full": 993.4, "n_studs": 10, "Qn": 95.69, "sumQn": 956.9,
+ "ratio_composite": 0.4549, "phiMn_partial": 757.6,
+ "Mu": 90.0, "ratio": 0.1188,
+ "precomp_Mu": 63.0, "precomp_ratio": 0.1226,   // null when shored
+ "I_s": 3.32985e-4, "I_tr": 1.0847e-3, "I_equiv": 7.2945e-4,
+ "defl_LL": 5.783e-4, "defl_limit": 0.016667, "defl_limit_ok": true,
+ "governing_combo": "U", "status": "OK",     // "OK"|"NG"|"N/A"
+ "notes": [...], "preliminary": true}
+```
+
+Hand-checks (tests/test_wave21.py): PNA-in-slab longhand on W18x50
+(As*Fy = 3271.929 kN, a = 0.0570226 m, Mn = 1276.335 kN*m, 1e-12);
+contrived fc'/beff pin the flange (Cc = 1530, x = 0.013252 <= tf) and web
+(Cc = 510, x = 0.152521) cases against the typed force sums; partial
+sumQn = 0.5*As*Fy makes the studs govern (A_c = As/4 -> flange);
+Qn concrete branch at fc' = 20 MPa (91.915 kN) vs steel at 30 MPa
+(95.691 kN); beff = 1.1/1.0/0.9/1.5 across neighbour-, edge- and
+span/8-governed sides; C-I3-4 endpoints (sumQn = Cf -> I_tr, -> 0 -> Is,
+quarter -> midpoint via sqrt); a statics-exact engine model (one-quad
+slab that never splits the beams) pins Mu = wL^2/8 = 90, the pre-composite
+ratio, and defl_LL = 5wL^4/(384*E*I_equiv) end to end.
+
+## Slab strip flexural design (`skyframe/design/slab.py`)
+
+ETABS-style column/middle strip design of every horizontal MESHED SHELL
+slab from the v0.4 per-quad gauss-averaged ``shell_forces``.
+``check_slab_strips(model, results, case=None, *, fc_prime?, fy=420_000,
+bar_d=0.016, cover=0.03, phi_tc=0.9)``; case defaults to the first
+DEAD-classified case (unknown -> KeyError); NO shell slabs -> ``[]``.
+
+* **Strips (ACI §8.4.1)** — per direction, support lines = distinct plan
+  coordinates of the columns supporting the slab (v0.18 punching
+  detection); column strip = ``min(L1, L2)/4`` each side of each line
+  (L1 = largest perpendicular-line span, L2 = distance to the adjacent
+  parallel line; an edge line uses 2x its edge distance as L2 —
+  documented); the gaps are middle strips.  Irregular regions use their
+  plan BOUNDING BOX; no columns -> one full-width middle strip.
+* **Sections** — both ends + midspan of every span between perpendicular
+  support lines (deduped stations; bbox extent when < 2 lines).
+* **Strip moment** — ``Mu = mean(M_dir over the strip's quad row nearest
+  the station) * width`` — the mid-quad rectangle rule for ``int M dx``
+  across the strip (exact for a transversely constant field, O(h^2)
+  otherwise, documented).  Mxx reinforces spans along the element LOCAL
+  x (the mesher's corner-0 -> corner-1 direction); the module maps it to
+  the global direction that edge is most aligned with (note emitted when
+  swapped).
+* **Rebar** — closed-form Whitney inversion, per metre (b = 1; the
+  solution is exactly width-linear so per-metre == whole-strip)::
+
+      T = 0.85*fc'*d - sqrt((0.85*fc'*d)^2 - 2*0.85*fc'*|mu|/phi)
+      As_req = T/fy      (discriminant < 0 -> "NG": section too thin)
+
+  phi made consistent with the ACI 21.2 strain rule by fixed-point on
+  ``beam_flexure`` (slabs are tension-controlled, one pass); at
+  convergence ``beam_flexure(...)["phiMn"] == Mu`` EXACTLY.
+  ``d = t - cover`` (0.03 m default, the v0.18 convention);
+  ``As_min = 0.0018*b*h`` (ACI 24.4.3.2 temperature minimum, fy 420);
+  ``spacing = Ab/max(As_req, As_min)`` capped at ``min(3h, 0.45)``
+  (ACI 8.7.2.2).  ``As`` in mm^2/m (*1e6 from m^2/m, explicit).
+
+Per-region shape:
+
+```jsonc
+{"uid": "S1", "story": "S1", "case": "G", "t": 0.2, "d": 0.17,
+ "fc": 30000.0,
+ "directions": {"x": [                         // strips RUNNING along x
+    {"strip": "column", "line": 0.0,           // "middle" has line: null
+     "band": [0.0, 1.0], "width": 1.0,
+     "sections": [{"x": 0.0, "Mu": 12.0,       // strip total, kN*m
+                   "mu": 12.0,                 // per metre, kN*m/m
+                   "As_req": 189.3,            // mm^2/m (null when NG)
+                   "As_min": 360.0,            // mm^2/m
+                   "spacing": 0.45,            // m (3h/450 capped)
+                   "min_governs": true, "status": "OK"}, ...]}, ...],
+  "y": [...]},
+ "notes": [...], "preliminary": true}
+```
+
+Hand-checks: min(L1,L2)/4 layout typed for the corner-supported square
+(bands (0,1)/(1,3)/(3,4)) and a 3-line run; UNIFORM synthetic Mxx/Myy over
+the real 2x2 mesh make every section's Mu equal moment x width to 1e-12
+(the area-weighted hand sum); the inversion round-trips ``beam_flexure``
+to 1e-9 at Mu = 100 and 120; As_min (360 mm^2/m) governs a low-moment
+section with the 0.45 m spacing cap; Mu past the tension-controlled
+ceiling 0.9*R*d^2/2 reports NG.
+
+## Walking vibration (`skyframe/design/vibration.py`)
+
+AISC Design Guide 11 Chapter 4 walking screen per slab-supporting beam.
+``check_vibration(model, results, case=None, live_case=None, *,
+live_factor=0.11, beta=0.03, ap_limit=0.005, P0=0.29, g=9.81)``; case
+defaults to the first DEAD-classified case (KeyError on unknown),
+live_case to the first LIVE-classified one (dead-only with a note when
+absent).
+
+* ``delta`` = |chord-relative midspan dy(dead) + live_factor * dy(live)|
+  from the v0.16 exact per-case deflection stations — the DG11 sustained
+  load ``Dead + live_factor*Live`` (0.11 ~ the DG11 office assumption,
+  documented); bare-steel I is conservative (documented).
+* ``fn = 0.18*sqrt(g/delta)`` (DG11 Eq. 3-3).
+* ``W_eff = W_beam * beff_v/trib`` — ``W_beam = |V2(0) - V2(L)|`` under
+  the sustained combo (the exact station-shear drop = the total carried
+  load), ``beff_v`` = the composite effective width, ``trib`` = the
+  summed per-side available widths; this implements DG11's
+  ``w * B * L`` with w recovered from the beam's own carried load
+  (documented simplification of the modal panel weight).
+* ``ap/g = P0*exp(-0.35*fn)/(beta*W_eff)`` (DG11 Eq. 4-1, P0 = 0.29 kN);
+  ``status = OK`` iff ``ap/g <= ap_limit`` (0.005 offices, Table 4-1);
+  fn < 3 Hz noted (outside the walking fit).
+
+`VibrationCheck.to_dict()`:
+
+```jsonc
+{"uid": "B1", "story": "S1", "applicable": true, "reason": "",
+ "fn": 10.904, "delta_mid": 2.6733e-3, "W_eff": 63.3,
+ "ap_over_g": 3.3607e-3, "limit": 0.005, "status": "OK",
+ "notes": [...], "preliminary": true}
+```
+
+Hand-checks: the pure chain at delta = 0.005 typed to 1e-12
+(fn = 0.18*sqrt(9.81/0.005) = 7.97301 Hz, ap/g = 0.29*exp(-0.35*fn)/
+(0.03*100)); the engine beam pins delta = 5*10.55*6^4/(384*2e8*I) =
+2.673261e-3 m, W_eff = 10.55*6 = 63.3 kN, fn = 10.9040 Hz, ap/g =
+3.3607e-3 (OK at 0.005, flips NG at 0.003); beta doubling exactly halves
+ap/g.
+
+## API additions
+
+| Method | Path                      | Body / Response |
+|--------|---------------------------|-----------------|
+| POST   | `/api/design/composite`   | `{combos?: [names] (default: all additive combos), fc_prime?, t_slab?, hr?, stud_d?, stud_Fu?, rib_spacing?, shored?: bool}` → `{"preliminary": true, "combos", "params": {fc_prime, t_slab, hr, stud_d, stud_Fu, rib_spacing, shored} (RESOLVED: request values over the defaults; fc_prime/t_slab null = derived per slab), "beams": [CompositeBeamCheck...], "summary": {n, ok, ng, na, max_ratio, governing, preliminary}}`; `beams: []` (200) when the model has no beam members; 400 on bad params / unknown combo names / no additive combos |
+| POST   | `/api/design/slab`        | `{case?: name (default: first DEAD-classified case), fc_prime?, bar_d?, cover? (m)}` → `{"preliminary": true, "case", "regions": [...]}`; `regions: []` (200) when the model has no shell slabs; 400 on an unknown case / bad params |
+| POST   | `/api/results/vibration`  | `{case?: dead case, live_case?, live_factor?, beta?, ap_limit?}` → `{"preliminary": true, "case", "live_case", "beams": [VibrationCheck...]}`; 400 on unknown case names / bad params |
+
+All three run the engine on the CURRENT model server-side (like the other
+design endpoints); no analysis results travel in the request.

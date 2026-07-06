@@ -9,12 +9,29 @@
   §18.10.6.3 boundary-element trigger (v0.18).
 * :mod:`skyframe.design.punching` — preliminary ACI two-way (punching)
   shear checks at columns supporting meshed shell slabs (v0.18).
+* :mod:`skyframe.design.composite` — preliminary AISC 360-16 Chapter I3
+  composite beam checks (studs, partial composite, C-I3-4 deflection) for
+  W-shape beams supporting meshed shell slabs (v0.20).
+* :mod:`skyframe.design.slab`     — preliminary ETABS-style column/middle
+  strip flexural design of meshed shell slabs (v0.20).
+* :mod:`skyframe.design.vibration` — preliminary AISC Design Guide 11
+  walking-vibration screening of slab-supporting beams (v0.20).
 
-Both original modules' ``summarize`` roll-ups are exported here under
-distinct names (``summarize`` = steel, kept for backward compatibility;
-``summarize_concrete`` = concrete; ``summarize_walls`` = wall).
+The ``summarize`` roll-ups are exported here under distinct names
+(``summarize`` = steel, kept for backward compatibility;
+``summarize_concrete`` = concrete; ``summarize_walls`` = wall;
+``summarize_composite`` = composite).
 """
 
+from skyframe.design.composite import (
+    CompositeBeamCheck,
+    check_composite_beams,
+    composite_flexure,
+    equivalent_inertia,
+    stud_strength,
+    summarize_composite,
+    transformed_inertia,
+)
 from skyframe.design.concrete import (
     ConcreteCheck,
     RebarLayout,
@@ -31,6 +48,11 @@ from skyframe.design.punching import (
     default_gravity_case,
     punching_capacity,
 )
+from skyframe.design.slab import (
+    check_slab_strips,
+    required_steel,
+    strip_layout,
+)
 from skyframe.design.steel import (
     MemberCheck,
     SectionSuggestion,
@@ -38,6 +60,12 @@ from skyframe.design.steel import (
     check_members,
     optimize_members,
     summarize,
+)
+from skyframe.design.vibration import (
+    VibrationCheck,
+    check_vibration,
+    natural_frequency,
+    walking_acceleration,
 )
 from skyframe.design.wall import (
     WallPierCheck,
@@ -61,4 +89,10 @@ __all__ = [
     "summarize_walls",
     "PunchingCheck", "check_punching", "punching_capacity",
     "default_gravity_case",
+    "CompositeBeamCheck", "check_composite_beams", "composite_flexure",
+    "stud_strength", "transformed_inertia", "equivalent_inertia",
+    "summarize_composite",
+    "check_slab_strips", "required_steel", "strip_layout",
+    "VibrationCheck", "check_vibration", "natural_frequency",
+    "walking_acceleration",
 ]
