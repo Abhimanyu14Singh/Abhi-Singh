@@ -1276,8 +1276,10 @@ function drawSpringGlyph(ctx, x, y, r, color) {
   ctx.restore();
 }
 
-/* v0.15 — link device types: tiny type letter per non-elastic device. */
-const LINK_LETTERS = { elastic: "", damper: "D", gap: "G", hook: "H", isolator: "I" };
+/* v0.15 — link device types: tiny type letter per non-elastic device.
+   v0.21 — friction-pendulum bearings (F/T) + multilinear elastic (M). */
+const LINK_LETTERS = { elastic: "", damper: "D", gap: "G", hook: "H", isolator: "I",
+  fp_isolator: "F", triple_fp: "T", multilinear: "M" };
 
 /** v0.15 — screen-space link device glyph (mirrors the plan/elevation SVG
     glyphs): damper = dashpot, gap = open jaws, hook = interlocked chain
@@ -1325,6 +1327,25 @@ function drawLinkDevice(ctx, x1, y1, x2, y2, type, ampPx = 5) {
     mv(Q(-b * 0.7, 1)); ln(Q(-b * 0.7, -1));
     mv(Q(b * 0.7, 1)); ln(Q(b * 0.7, -1));
     ring(0, r);
+  } else if (type === "fp_isolator") {            // v0.21 — pendulum dish + slider
+    const w = b * 0.95, r = Math.min(a * 0.4, w * 0.4);
+    rods(-w * 0.8, w * 0.8);
+    mv(Q(-w, 0.9));
+    { const c = Q(0, -1.1), e = Q(w, 0.9); ctx.quadraticCurveTo(c[0], c[1], e[0], e[1]); }
+    ring(0, r);
+  } else if (type === "triple_fp") {              // v0.21 — three nested dishes
+    const w = b;
+    rods(-w * 0.85, w * 0.85);
+    const dish = (s, oEnd, oCtl) => {
+      mv(Q(-w * s, oEnd));
+      const c = Q(0, oCtl), e = Q(w * s, oEnd);
+      ctx.quadraticCurveTo(c[0], c[1], e[0], e[1]);
+    };
+    dish(1, 1, -1.3); dish(0.66, 0.75, -0.95); dish(0.33, 0.5, -0.6);
+  } else if (type === "multilinear") {            // v0.21 — piecewise F–d line
+    const w = b * 0.95;
+    rods(-w, w);
+    mv(Q(-w, -0.9)); ln(Q(-w * 0.34, 0.55)); ln(Q(w * 0.3, -0.15)); ln(Q(w, 0.9));
   } else {
     drawZigzag(ctx, x1, y1, x2, y2);
   }

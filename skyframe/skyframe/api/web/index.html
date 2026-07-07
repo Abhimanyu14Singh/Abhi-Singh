@@ -1016,6 +1016,14 @@
           </div>
           <div class="mgr-table" id="materialRows"></div>
         </section>
+        <!-- v0.21: designer (polygon + rebar) sections -->
+        <section class="mgr-group">
+          <div class="mgr-group-head">
+            <h3>Designer sections <span class="muted">polygon + rebar</span></h3>
+            <button class="btn btn-small" id="openDesignerBtn" title="Draw arbitrary polygon + rebar sections; properties are computed server-side">Section Designer…</button>
+          </div>
+          <div class="mgr-table" id="designerSectionRows"></div>
+        </section>
         <section class="mgr-group">
           <div class="mgr-group-head">
             <h3>Add from library… <span class="muted">steel W-shapes</span></h3>
@@ -1030,6 +1038,71 @@
       <footer class="modal-foot">
         <span class="muted">Edits apply to the working model — Save Model to persist.</span>
         <button class="btn" id="sectionModalDone">Done</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ============ SECTION DESIGNER (v0.21) ============ -->
+  <div class="modal-backdrop hidden" id="designerModal">
+    <div class="modal modal-wide designer-modal" role="dialog" aria-labelledby="designerTitle">
+      <header class="modal-head">
+        <h2 id="designerTitle">Section Designer <span class="muted">polygon + rebar fiber sections</span></h2>
+        <button class="icon-btn" id="designerClose" title="Close" aria-label="Close section designer">×</button>
+      </header>
+      <div class="modal-body designer-body">
+        <aside class="ds-side">
+          <div class="mgr-group-head">
+            <h3>Sections</h3>
+            <button class="btn btn-small" id="dsNew" title="Start a new blank designer section">+ New</button>
+          </div>
+          <div class="ds-list" id="dsList"></div>
+          <div class="field"><label for="dsName">Name</label>
+            <input id="dsName" type="text" spellcheck="false" autocomplete="off"></div>
+          <div class="field-row">
+            <div class="field"><label for="dsSnap">Grid <span class="unit">mm</span></label>
+              <input id="dsSnap" type="number" min="1" step="5" value="10" title="Snap grid spacing in millimetres"></div>
+            <div class="field"><label for="dsBarArea">Bar area <span class="unit">mm²</span></label>
+              <input id="dsBarArea" type="number" min="10" step="50" value="500" title="Area of newly placed rebar"></div>
+          </div>
+          <div class="seg-toggle" id="dsModeToggle" title="Polygon outlines or rebar placement">
+            <button class="seg-btn is-active" data-dsmode="poly">Polygon</button>
+            <button class="seg-btn" data-dsmode="rebar">Rebar</button>
+          </div>
+          <div class="field-row ds-poly-opts">
+            <div class="field"><label for="dsMaterial">Material</label>
+              <select id="dsMaterial" class="mini-select"></select></div>
+            <div class="field"><label class="fdn-check ds-hole-check" title="The next closed polygon is subtracted (opening)"><input type="checkbox" id="dsHole"> Hole</label></div>
+          </div>
+          <div class="ds-items" id="dsItems"></div>
+          <div class="ds-props" id="dsProps"></div>
+          <div class="ds-btns">
+            <button class="btn btn-run" id="dsSave" title="POST /api/sections/designer {action:'upsert'} — server recomputes A/I33/I22/J">Save</button>
+            <button class="btn" id="dsPmmBtn" title="POST /api/sections/designer/pmm — φPn–φMn interaction diagram">PMM</button>
+            <button class="btn btn-danger" id="dsDelete" title="Delete this designer section (blocked while members use it)">Delete</button>
+          </div>
+          <p class="muted ds-hint" id="dsHint"></p>
+        </aside>
+        <div class="ds-canvas-wrap">
+          <svg id="dsSvg"></svg>
+          <div class="ds-readout" id="dsReadout"></div>
+          <div class="ds-pmm hidden" id="dsPmmPanel">
+            <div class="ds-pmm-head">
+              <b>PMM interaction</b>
+              <div class="seg-toggle" id="dsAxisToggle" title="Bending axis — 33 (major) or 22 (minor)">
+                <button class="seg-btn is-active" data-axis="33">axis 33</button>
+                <button class="seg-btn" data-axis="22">axis 22</button>
+              </div>
+              <span class="toolbar-spacer"></span>
+              <button class="icon-btn" id="dsPmmClose" title="Close PMM viewer" aria-label="Close PMM viewer">×</button>
+            </div>
+            <svg id="dsPmmSvg" preserveAspectRatio="xMidYMid meet"></svg>
+            <div class="ds-pmm-meta muted" id="dsPmmMeta"></div>
+          </div>
+        </div>
+      </div>
+      <footer class="modal-foot">
+        <span class="muted">Saved via POST /api/sections/designer — each section also becomes a frame section with server-computed properties.</span>
+        <button class="btn" id="designerDone">Done</button>
       </footer>
     </div>
   </div>

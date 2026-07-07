@@ -9,8 +9,10 @@ import { mockModel, mockResults, mockSectionLibrary, mockModelFiles, mockWindPat
   mockRsDirectional, mockNotionalPattern, mockOptimize, mockLiveReduction,
   mockDesignWall, mockDesignPunching, mockVirtualWork,
   mockPatternLive, mockAutoSequence, mockPerformancePoint,
-  mockDesignComposite, mockDesignSlab, mockVibration } from "./mock.js";
+  mockDesignComposite, mockDesignSlab, mockVibration,
+  mockDesignerUpsert, mockDesignerDelete, mockDesignerPmm } from "./mock.js";
 import { PlanEditor } from "./draw.js";
+import { SectionDesigner } from "./secdesigner.js";   // v0.21
 import { ElevEditor } from "./elev.js";
 import { LoadsEditor } from "./loads.js";
 import { openReport, buildReportHtml } from "./report.js";
@@ -219,6 +221,67 @@ async function designOptimize(body) {
   }
   await new Promise(r => setTimeout(r, 250));
   return mockOptimize(store.model, body);
+}
+
+/* ---- v0.21: section designer (polygon + rebar fiber sections). The live
+   path syncs the working model, POSTs /api/sections/designer and returns the
+   FULL model dict (properties computed server-side). Mock — or a missing
+   endpoint — mutates the model locally via the client shoelace formulas. */
+async function designerAction(action, section) {
+  if (!store.mock) {
+    try {
+      const payload = JSON.parse(JSON.stringify(store.model));
+      delete payload._mock_params;
+      await postModel(payload);
+      const modelDict = await api("/api/sections/designer", { action, section });
+      return { model: modelDict, live: true };
+    } catch (e) {
+      console.warn("Section-designer endpoint unavailable, using mock:", e.message);
+    }
+  }
+  await new Promise(r => setTimeout(r, 150));
+  return {
+    model: action === "delete"
+      ? mockDesignerDelete(store.model, section.name)
+      : mockDesignerUpsert(store.model, section),
+    live: false,
+  };
+}
+
+/** Run a designer upsert/delete and adopt the returned model everywhere.
+    Live round-trip ⇒ the backend owns the model (clean); mock/fallback ⇒
+    the change is local-only (dirty). */
+async function applyDesignerAction(action, section) {
+  const { model: md, live } = await designerAction(action, section);
+  store.model = ME.normalizeModel(md);
+  if (live) clearDirty(); else markDirty();
+  store.modelEdited = false;
+  viewer.setModel(store.model);
+  refreshDrawViews();
+  renderSectionMgr();
+  renderProps();
+  renderSummary();
+  return store.model;
+}
+
+/* ---- v0.21: PMM interaction diagram for a saved designer section. */
+async function designerPmmFetch(name, axis = "33") {
+  if (!store.mock) {
+    try {
+      const payload = JSON.parse(JSON.stringify(store.model));
+      delete payload._mock_params;
+      await postModel(payload);
+      return await api("/api/sections/designer/pmm", { name, axis });
+    } catch (e) {
+      console.warn("Designer PMM endpoint unavailable, using mock:", e.message);
+    }
+  }
+  await new Promise(r => setTimeout(r, 150));
+  return mockDesignerPmm(store.model, { name, axis });
+}
+
+function openSectionDesigner(name) {
+  if (sectionDesigner) sectionDesigner.open(name);
 }
 
 /* ---- v0.18: wall-pier design + slab punching check. Same convention as
@@ -705,6 +768,7 @@ function switchTab(tab) {
 let planEditor = null;
 let elevEditor = null;    // v0.5 elevation (section) editor
 let loadsEditor = null;   // v0.3 loads/cases/combos editor
+let sectionDesigner = null;   // v0.21 polygon + rebar section designer
 
 /* v0.5 — both draw views share model + selection; keep them in sync. */
 function activeEditor() {
@@ -1157,6 +1221,7 @@ function renderProps() {
         ? `<p class="muted axial-note" style="font-size:11px">Tension/compression-only members carry a <b>${axl === "tension" ? "T-only" : "C-only"}</b> glyph in plan &amp; 3D and make the analysis <b>nonlinear</b>.</p>`
         : `<p class="muted" style="font-size:11px">Restricting a member to tension- or compression-only makes the analysis nonlinear.</p>`}`;
     // v0.19 — automatic ASCE 41 plastic hinges (pushover asce41 mode)
+    // v0.21 — fiber PMM hinges (axial–biaxial-moment interaction fibers)
     const hng = commonVal(members, x => x.hinges || "none");
     html += `
       <div class="field"><label for="propHinges">Plastic hinges <span class="unit">ASCE 41 · pushover</span></label>
@@ -1164,9 +1229,10 @@ function renderProps() {
           ${hng === undefined ? `<option value="" selected disabled>— mixed —</option>` : ""}
           <option value="none"${hng === "none" ? " selected" : ""}>None (elastic)</option>
           <option value="auto_m3"${hng === "auto_m3" ? " selected" : ""}>Auto M3 (ASCE 41-17)</option>
+          <option value="fiber_pmm"${hng === "fiber_pmm" ? " selected" : ""}>Fiber PMM (ASCE 41)</option>
         </select>
       </div>
-      <p class="muted" style="font-size:11px">Auto M3 members get trilinear ASCE 41-17 hinge backbones at both ends in a pushover case with hinge mode <b>asce41</b> (Table 9-7.1 steel / Table 10-7 concrete).</p>`;
+      <p class="muted" style="font-size:11px">Auto M3 members get trilinear ASCE 41-17 hinge backbones at both ends in a pushover case with hinge mode <b>asce41</b> (Table 9-7.1 steel / Table 10-7 concrete). Fiber PMM members get fiber hinges with axial–moment interaction — best with a designer (polygon + rebar) section.</p>`;
     // v0.4: orientation angle for columns & braces (FrameMember.angle)
     const angMembers = [...columns, ...braces];
     if (angMembers.length) {
@@ -1407,10 +1473,10 @@ function renderProps() {
     refreshDrawViews();     // T-only/C-only glyphs live in the label layer
     renderProps();          // refresh the nonlinear note
   });
-  // v0.19 — plastic hinge assignment
+  // v0.19 — plastic hinge assignment (v0.21: + fiber_pmm)
   on("propHinges", "change", e => {
     const v = e.target.value;
-    if (v !== "none" && v !== "auto_m3") return;
+    if (v !== "none" && v !== "auto_m3" && v !== "fiber_pmm") return;
     for (const mm of members) mm.hinges = v;
     markDirty();
     store.modelEdited = true;

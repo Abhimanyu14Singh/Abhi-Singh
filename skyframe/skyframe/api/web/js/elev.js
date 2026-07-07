@@ -800,6 +800,25 @@ export function linkGlyphPath(x1, y1, x2, y2, type, amp = 0.16) {
         ` ${M(b * 0.7, 1)} ${Ln(b * 0.7, -1)}` +
         ` ${ring(0, r)}`;                                          // roller/pad
     }
+    case "fp_isolator": {                          // v0.21 — pendulum: dish + slider
+      const w = b * 0.95;
+      const r = Math.min(a * 0.4, w * 0.4);
+      return rod(-w * 0.8, w * 0.8) +
+        ` ${M(-w, 0.9)} Q${Q(0, -1.1)} ${Q(w, 0.9)}` +            // concave dish
+        ` ${ring(0, r)}`;                                          // slider
+    }
+    case "triple_fp": {                            // v0.21 — three nested dishes
+      const w = b;
+      return rod(-w * 0.85, w * 0.85) +
+        ` ${M(-w, 1)} Q${Q(0, -1.3)} ${Q(w, 1)}` +
+        ` ${M(-w * 0.66, 0.75)} Q${Q(0, -0.95)} ${Q(w * 0.66, 0.75)}` +
+        ` ${M(-w * 0.33, 0.5)} Q${Q(0, -0.6)} ${Q(w * 0.33, 0.5)}`;
+    }
+    case "multilinear": {                          // v0.21 — piecewise F–d line
+      const w = b * 0.95;
+      return rod(-w, w) +
+        ` ${M(-w, -0.9)} ${Ln(-w * 0.34, 0.55)} ${Ln(w * 0.3, -0.15)} ${Ln(w, 0.9)}`;
+    }
     default:                                       // elastic zigzag spring
       return "M" + zigzagPoints(x1, y1, x2, y2, a).split(" ").join(" L");
   }

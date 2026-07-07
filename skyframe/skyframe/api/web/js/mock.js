@@ -1,6 +1,8 @@
 /* SkyFrame mock backend — matches CONTRACT.md shapes so the UI is fully
    explorable without the Flask server (offline / ?mock=1). */
 
+import { designerProps } from "./modeledit.js";   // v0.21 — shoelace properties
+
 const G = 9.80665;
 
 function mulberry32(seed) {
@@ -243,6 +245,21 @@ export function mockModel(p = {}) {
     },
   };
 
+  // v0.21: a demo designer section — 600×600 RC column with 8 bars of
+  // 500 mm² (5e-4 m²). Its companion FrameSection carries the shoelace
+  // properties (the live backend recomputes them server-side).
+  const dcol = {
+    name: "D-COL600",
+    polygons: [{
+      vertices: [[-0.3, -0.3], [0.3, -0.3], [0.3, 0.3], [-0.3, 0.3]],
+      material: "CONC", hole: false,
+    }],
+    rebar: [-0.24, 0, 0.24].flatMap(z => [-0.24, 0, 0.24]
+      .filter(y => y !== 0 || z !== 0)
+      .map(y => ({ y, z, area: 5e-4, material: "CONC" }))),
+  };
+  const dprops = designerProps(dcol);
+
   return {
     name: o.name,
     materials: { CONC: { name: "CONC", E: o.E, nu: 0.2, unit_weight: 24 } },
@@ -253,7 +270,12 @@ export function mockModel(p = {}) {
         mod_A: 1, mod_I33: 1, mod_I22: 1, mod_J: 1 },
       BRACE: { name: "BRACE", material: "CONC", b: 0.2, h: 0.2,
         mod_A: 1, mod_I33: 1, mod_I22: 1, mod_J: 1 },
+      "D-COL600": { name: "D-COL600", material: "CONC", b: 0, h: 0,
+        shape: "designer", A: dprops.A, I33: dprops.I33, I22: dprops.I22,
+        J: dprops.J, mod_A: 1, mod_I33: 1, mod_I22: 1, mod_J: 1 },
     },
+    // v0.21: designer (polygon + rebar) sections — round-trip via POST /api/model
+    designer_sections: { "D-COL600": dcol },
     shell_sections, shells,
     grid, grid_systems, stories, members,
     base_fixity: o.base_fixity,
@@ -2637,4 +2659,90 @@ export function mockVibration(model, body = {}) {
       ap_over_g, limit, status: ap_over_g > limit ? "NG" : "OK" };
   });
   return { beams: rows, params: { live_factor: lf, beta, ap_limit: limit } };
+}
+
+/* ================================================================
+   v0.21 — SECTION DESIGNER (polygon + rebar fiber sections)
+   ================================================================ */
+const cloneModel = m => JSON.parse(JSON.stringify(m));
+
+/** POST /api/sections/designer {action:"upsert", section} — store the
+    designer section, refresh its companion FrameSection with shoelace
+    properties (the live backend computes the true values, incl. torsion J;
+    here J is the polar approximation) and echo the full model dict. */
+export function mockDesignerUpsert(model, section) {
+  const sec = JSON.parse(JSON.stringify(section));
+  model.designer_sections = model.designer_sections || {};
+  model.designer_sections[sec.name] = sec;
+  const pr = designerProps(sec);
+  const prev = model.sections[sec.name] || {};
+  model.sections[sec.name] = {
+    name: sec.name,
+    material: (sec.polygons[0] && sec.polygons[0].material) || prev.material || "CONC",
+    A: pr.A, I33: pr.I33, I22: pr.I22, J: pr.J,
+    b: 0, h: 0, shape: "designer",
+    mod_A: prev.mod_A ?? 1, mod_I33: prev.mod_I33 ?? 1,
+    mod_I22: prev.mod_I22 ?? 1, mod_J: prev.mod_J ?? 1,
+  };
+  return cloneModel(model);
+}
+
+/** POST /api/sections/designer {action:"delete", section:{name}} — remove
+    the designer section (and its companion FrameSection when unused) and
+    echo the full model dict. */
+export function mockDesignerDelete(model, name) {
+  if (model.designer_sections) delete model.designer_sections[name];
+  const used = (model.members || []).some(mm => mm.section === name);
+  if (!used) delete model.sections[name];
+  return cloneModel(model);
+}
+
+/** POST /api/sections/designer/pmm {name, axis?} — analytic rectangular
+    interaction diagram: a convex curve through (0, φP0), (Mb, Pb) and
+    (M0, 0) plus a linear tension tail to (0, −φTn). fc' 30 MPa / fy 420 MPa;
+    unreinforced sections assume 1 % steel. Points are [[φMn kN·m, φPn kN]]
+    ordered tension → compression. */
+export function mockDesignerPmm(model, { name, axis = "33" } = {}) {
+  const ds = (model.designer_sections || {})[name];
+  if (!ds) throw new Error(`unknown designer section "${name}"`);
+  const pr = designerProps(ds);
+  let ymin = Infinity, ymax = -Infinity, zmin = Infinity, zmax = -Infinity;
+  for (const p of ds.polygons) {
+    if (p.hole) continue;
+    for (const [y, z] of p.vertices) {
+      ymin = Math.min(ymin, y); ymax = Math.max(ymax, y);
+      zmin = Math.min(zmin, z); zmax = Math.max(zmax, z);
+    }
+  }
+  const depth = Math.max(axis === "22" ? (ymax - ymin) : (zmax - zmin), 0.05);
+  const Ast = (ds.rebar || []).reduce((s, b) => s + b.area, 0);
+  const Ag = Math.max(pr.A - Ast, 1e-6);
+  const fc = 30000, fy = 420000;                   // kPa (30 / 420 MPa)
+  const As = Ast > 0 ? Ast : 0.01 * Ag;            // unreinforced → assume 1 %
+  const P0 = 0.65 * (0.85 * fc * Ag + fy * As);    // φPn at zero moment (kN)
+  const Pt = 0.9 * fy * As;                        // φTn — pure tension (kN)
+  const M0 = 0.9 * (As / 2) * fy * 0.8 * depth;    // φMn at P = 0 (kN·m)
+  const Pb = 0.38 * P0;                            // balanced point
+  const Mb = 1.35 * M0;
+  const points = [];
+  const N = 12;
+  for (let i = N; i >= 1; i--) {                   // tension tail: −φTn → 0⁻
+    const u = i / N;
+    points.push([+(M0 * (1 - u)).toFixed(2), +(-Pt * u).toFixed(1)]);
+  }
+  for (let i = 0; i <= N; i++) {                   // 0 → balanced (bulges out)
+    const t = i / N;
+    points.push([+(M0 + (Mb - M0) * Math.sin(t * Math.PI / 2)).toFixed(2),
+                 +(Pb * t).toFixed(1)]);
+  }
+  for (let i = 1; i <= N; i++) {                   // balanced → φP0 cap
+    const u = i / N;
+    points.push([+(Mb * Math.cos(u * Math.PI / 2)).toFixed(2),
+                 +(Pb + (P0 - Pb) * u).toFixed(1)]);
+  }
+  return {
+    points,
+    properties: { A: pr.A, I33: pr.I33, I22: pr.I22, J: pr.J,
+      cy: pr.cy, cz: pr.cz },
+  };
 }

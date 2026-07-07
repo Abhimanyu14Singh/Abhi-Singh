@@ -16,9 +16,10 @@ export function normalizeModel(m) {
   m.patterns = m.patterns || {};
   m.members = m.members || [];
   for (const mm of m.members) if (mm.releases == null) mm.releases = "";
-  // v0.19 — ASCE 41 auto-hinge assignment (absent = "none")
+  // v0.19 — ASCE 41 auto-hinge assignment (absent = "none");
+  // v0.21 — "fiber_pmm" fiber P-M-M hinges (designer sections)
   for (const mm of m.members)
-    if (mm.hinges !== "auto_m3") mm.hinges = "none";
+    if (mm.hinges !== "auto_m3" && mm.hinges !== "fiber_pmm") mm.hinges = "none";
   for (const p of Object.values(m.patterns)) {
     p.member_loads = p.member_loads || [];
     p.area_loads = p.area_loads || [];
@@ -208,7 +209,102 @@ export function normalizeModel(m) {
   // v0.14 — multiple grid systems (orthogonal + radial, origin + rotation).
   // The legacy single grid stays the primary system (grid_systems[0]).
   ensureGridSystems(m);
+  // v0.21 — designer sections (polygon + rebar fiber sections). Each valid
+  // entry also appears as a normal FrameSection under the same name; when an
+  // older backend didn't provide one, synthesize it from the client-side
+  // shoelace properties so section dropdowns stay consistent.
+  m.designer_sections = normalizeDesignerSections(m);
   return m;
+}
+
+/* ================================================================
+   v0.21 — section designer (polygon + rebar) property math
+   ================================================================ */
+/** Signed shoelace integrals of one polygon about the origin:
+    {A, Sy: ∫y dA, Sz: ∫z dA, Iyy: ∫y² dA, Izz: ∫z² dA}. Signs follow the
+    vertex winding — callers normalize with the sign of A. */
+export function polygonIntegrals(verts) {
+  let A = 0, Sy = 0, Sz = 0, Iyy = 0, Izz = 0;
+  for (let i = 0; i < verts.length; i++) {
+    const [y1, z1] = verts[i];
+    const [y2, z2] = verts[(i + 1) % verts.length];
+    const cr = y1 * z2 - y2 * z1;
+    A += cr / 2;
+    Sy += (y1 + y2) * cr / 6;
+    Sz += (z1 + z2) * cr / 6;
+    Iyy += (y1 * y1 + y1 * y2 + y2 * y2) * cr / 12;
+    Izz += (z1 * z1 + z1 * z2 + z2 * z2) * cr / 12;
+  }
+  return { A, Sy, Sz, Iyy, Izz };
+}
+
+/** Combined designer-section properties (m, m², m⁴): polygons (holes
+    subtract, winding-insensitive) + rebar point areas, about the combined
+    centroid. I33 = ∫z̄² dA (major axis), I22 = ∫ȳ² dA. J is the polar
+    approximation I33 + I22 — the backend computes the true torsion constant
+    server-side. */
+export function designerProps(sec) {
+  let A = 0, Sy = 0, Sz = 0, Iyy = 0, Izz = 0;
+  for (const p of (sec.polygons || [])) {
+    const g = polygonIntegrals(p.vertices || []);
+    const s = (g.A < 0 ? -1 : 1) * (p.hole ? -1 : 1);
+    A += s * g.A; Sy += s * g.Sy; Sz += s * g.Sz;
+    Iyy += s * g.Iyy; Izz += s * g.Izz;
+  }
+  for (const b of (sec.rebar || [])) {
+    A += b.area; Sy += b.area * b.y; Sz += b.area * b.z;
+    Iyy += b.area * b.y * b.y; Izz += b.area * b.z * b.z;
+  }
+  if (!(A > 0)) return { A: 0, cy: 0, cz: 0, I33: 0, I22: 0, J: 0 };
+  const cy = Sy / A, cz = Sz / A;
+  const I33 = Math.max(Izz - A * cz * cz, 0);
+  const I22 = Math.max(Iyy - A * cy * cy, 0);
+  return { A, cy, cz, I33, I22, J: I33 + I22 };
+}
+
+/** Normalize model.designer_sections in place-ish: filter garbage, coerce
+    shapes, and make sure every designer section has a companion FrameSection
+    (the backend computes real properties; this is the defensive fallback). */
+export function normalizeDesignerSections(m) {
+  const src = (m.designer_sections && typeof m.designer_sections === "object")
+    ? m.designer_sections : {};
+  const out = {};
+  for (const [n, ds] of Object.entries(src)) {
+    if (!ds || typeof ds !== "object") continue;
+    const sec = {
+      name: ds.name || n,
+      polygons: (Array.isArray(ds.polygons) ? ds.polygons : [])
+        .filter(p => p && Array.isArray(p.vertices))
+        .map(p => ({
+          vertices: p.vertices
+            .filter(v => Array.isArray(v) && v.length === 2 && v.every(isFinite))
+            .map(v => [+v[0], +v[1]]),
+          material: typeof p.material === "string" && p.material
+            ? p.material : defaultMaterial(m),
+          hole: !!p.hole,
+        }))
+        .filter(p => p.vertices.length >= 3),
+      rebar: (Array.isArray(ds.rebar) ? ds.rebar : [])
+        .filter(b => b && isFinite(b.y) && isFinite(b.z) && isFinite(b.area) && b.area > 0)
+        .map(b => ({
+          y: +b.y, z: +b.z, area: +b.area,
+          material: typeof b.material === "string" && b.material
+            ? b.material : defaultMaterial(m),
+        })),
+    };
+    if (!sec.polygons.length) continue;
+    out[sec.name] = sec;
+    if (!m.sections[sec.name]) {
+      const pr = designerProps(sec);
+      m.sections[sec.name] = {
+        name: sec.name, material: sec.polygons[0].material,
+        A: pr.A, I33: pr.I33, I22: pr.I22, J: pr.J,
+        b: 0, h: 0, shape: "designer",
+        mod_A: 1, mod_I33: 1, mod_I22: 1, mod_J: 1,
+      };
+    }
+  }
+  return out;
 }
 
 export function storyByName(model, name) {
@@ -445,6 +541,25 @@ export const LINK_TYPES = {
     note: "Bilinear bearing — initial k1, post-yield k2 past Fy, vertical stiffness kv — makes static analysis nonlinear.",
     params: [["k1", "kN/m", 80000], ["k2", "kN/m", 8000], ["Fy", "kN", 120], ["kv", "kN/m", 1e6]],
   },
+  // v0.21 — friction-pendulum bearings + multilinear elastic device
+  fp_isolator: {
+    label: "FP isolator (single pendulum)", letter: "F",
+    note: "Single friction-pendulum bearing — slider on a spherical dish of radius R with friction μ (post-slide stiffness W/R, isolated period 2π√(R/g)) — makes the analysis nonlinear.",
+    params: [["R", "m", 2.2], ["mu", "–", 0.06]],
+  },
+  triple_fp: {
+    label: "Triple FP isolator", letter: "T",
+    note: "Triple friction-pendulum bearing — inner slider (R1, μ1) plus two outer dishes (R2/R3, μ2/μ3) with displacement capacities d1–d3 under carried weight W — makes the analysis nonlinear.",
+    params: [["R1", "m", 0.4], ["R2", "m", 2.2], ["R3", "m", 2.2],
+      ["mu1", "–", 0.02], ["mu2", "–", 0.06], ["mu3", "–", 0.09],
+      ["d1", "m", 0.05], ["d2", "m", 0.3], ["d3", "m", 0.3], ["W", "kN", 1000]],
+  },
+  multilinear: {
+    label: "Multilinear elastic", letter: "M",
+    note: "Piecewise-linear elastic force–deformation curve through the (d, F) points, mirrored in the negative range — makes the analysis nonlinear.",
+    params: [], points: true,
+    defaultPoints: [[0.01, 50], [0.05, 120], [0.15, 180]],
+  },
 };
 
 /** Effective device type of a link ("elastic" fallback). */
@@ -461,6 +576,13 @@ export function normalizeLinkDevice(l) {
   const params = {};
   for (const [k, , dv] of LINK_TYPES[t].params)
     params[k] = isFinite(src[k]) ? +src[k] : dv;
+  // v0.21 — multilinear devices keep a (d, F) points table instead of scalars
+  if (LINK_TYPES[t].points) {
+    const pts = (Array.isArray(src.points) ? src.points : [])
+      .filter(p => Array.isArray(p) && p.length === 2 && p.every(isFinite))
+      .map(p => [+p[0], +p[1]]);
+    params.points = pts.length ? pts : LINK_TYPES[t].defaultPoints.map(p => [...p]);
+  }
   l.params = params;
   return l;
 }
