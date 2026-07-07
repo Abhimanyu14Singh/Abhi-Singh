@@ -2440,3 +2440,216 @@ ap/g.
 
 All three run the engine on the CURRENT model server-side (like the other
 design endpoints); no analysis results travel in the request.
+
+---
+
+# v0.21 additions — Section Designer, fiber PMM hinges, device library II
+
+Units: SI everywhere — m, kN, kPa; section coordinates in the local
+``(y, z)`` plane with **z the depth direction** (``I33 = int z^2 dA``,
+``I22 = int y^2 dA`` — a ``b x h`` rectangle drawn y in [-b/2, b/2], z in
+[-h/2, h/2] reproduces ``b*h^3/12`` exactly).
+
+## Section Designer (`skyframe/core/sections_designer.py`)
+
+```python
+# BuildingModel gains (round-trips; validate() checks every entry):
+#   designer_sections: Dict[str, DesignerSection] = {}
+# add_designer_section(ds)     — validates, stores, and creates/updates a
+#   FrameSection of the SAME NAME in model.sections (preserving existing
+#   mod_* factors) so designer sections feed the analysis pipeline
+#   unchanged; remove_designer_section(name) deletes both (KeyError on an
+#   unknown name, ValueError while a member still uses it).
+DESIGNER_BASES = ("concrete", "steel")
+```
+
+`DesignerSection.to_dict()` (exact round trip):
+
+```jsonc
+{"name": "D1", "material": "conc",      // BASE material (reference E)
+ "base": "concrete",                     // "concrete" | "steel" (PMM path)
+ "polygons": [{"vertices": [[y, z], ...],   // >= 3, simple (validated by
+               "material": "conc",          //   pairwise edge-crossing +
+               "hole": false}, ...],        //   zero-area tests)
+ "rebar": [{"y": 0.0, "z": 0.24, "area": 1e-3, "material": "bar"}, ...]}
+```
+
+**Properties (EXACT shoelace closed forms — no quadrature).**  Signed
+polygon integrals ``A = 1/2 sum cr_i``, ``S = 1/6 sum (p_i + p_{i+1})
+cr_i``, ``I = 1/12 sum (p_i^2 + p_i p_{i+1} + p_{i+1}^2) cr_i`` with
+``cr_i = y_i z_{i+1} - y_{i+1} z_i``; every polygon normalized CCW, holes
+enter with sign -1.  ``I33``/``I22`` about the GROSS centroid.  Torsion is
+the St. Venant polygon APPROXIMATION ``J ~ A^4/(40 Ip)``, ``Ip = I33 +
+I22`` (documented approximate; exact for a circle).  Rebar is SEPARATE
+from the gross area (point areas on top of the base material, displaced
+material not deducted); the derived FrameSection carries the TRANSFORMED
+values with ``n = E_bar/E_base``:  ``A_tr = A + sum (n-1) As``, centroid
+shift included, ``I_tr = I_gross(transferred to the transformed centroid)
++ sum (n-1) As d^2`` (bars have no own inertia), ``J`` gross only,
+``b``/``h`` = solid-polygon bounding box.  ``section_properties()``
+returns ``{A, Cy, Cz, I33, I22, Ip, J, b, h, A_tr, Cy_tr, Cz_tr, I33_tr,
+I22_tr, As_total, n_bars}``.
+
+**Polygon clipping (`clip_polygon(verts, z0, keep="above"|"below")`).**
+EXACT single-half-plane Sutherland-Hodgman against the horizontal line
+``z = z0`` (crossings interpolated exactly, cut chord in the outline,
+``[]`` when nothing remains) — the kernel of the PMM block integrals and
+the engine's fiber strips.
+
+**PMM surface (`pmm_surface(ds, materials, axis="33"|"22")`).**
+Returns ``{"base", "axis", "points": [[phiMn, phiPn], ...], "detail":
+[{label, c, Pn, Mn, eps_t, phi, phiPn, phiMn}, ...]}`` ordered pure
+compression -> pure tension; axis "22" runs the identical machinery with
+y as the depth coordinate.
+
+* concrete — ACI strain compatibility, IDENTICAL assumptions to
+  ``design.concrete.column_interaction`` (verified: a rectangular
+  designer section reproduces its pure-compression / eps_t = 0 /
+  balanced / pure-bending / pure-tension points to ~1e-13): Whitney
+  block ``a = beta1*c`` integrated EXACTLY over the clipped polygons
+  (0.85 fc'), bar strains ``0.003 (c - depth)/c`` clamped at +-fy
+  (displaced concrete ignored), ``phi = phi_from_strain`` with the
+  0.80*0.65 tied cap on the closed-form pure-compression point
+  ``Pn0 = 0.85 fc' (Ag - Ast) + sum fy As``; ``fc'`` = material ``fc``
+  attr or ``fc_from_E``; bar ``fy`` attr or 420 MPa; moments about the
+  GROSS centroid; a c-sweep (16 + the labeled exact points, pure bending
+  bisected) fills the diagram.  Requires >= 1 rebar point (ValueError).
+* steel — NOMINAL full-plastic distribution (phi = 1.0): section clipped
+  at a PNA sweep, +-Fy on the two sides (Fy = material ``fy`` attr or
+  345 MPa; rebar at its own +-fy); the P = 0 point is bisected so a
+  rectangle gives ``M = Fy b h^2/4 = Fy Zp`` EXACTLY.
+
+## Fiber PMM hinges (engine + `design/hinges.py`)
+
+```python
+MEMBER_HINGE_OPTIONS = ("none", "auto_m3", "fiber_pmm")   # round-trips
+```
+
+In an ``asce41`` pushover a ``fiber_pmm`` member becomes a
+``forceBeamColumn`` with ``beamIntegration('HingeRadau', fiberSec, lp,
+fiberSec, lp, elasticInterior)``, ``lp = 0.5 h`` (documented hinge
+length).  The standard two-point Gauss-Radau hinge rule puts the FIBER
+section at x = 0 / x = L with weight ``lp`` each; the elastic interior
+(the member's modifier-scaled A/I/J at the material E) carries points
+``8lp/3`` & ``L - 8lp/3`` (weight ``3lp``) plus two-point Gauss over
+``[4lp, L - 4lp]`` — so the elastic tip flexibility is the 6-point sum
+``f = sum w_i (x_i/L - 1)^2 / EI(x_i)`` the tests pin.  Fiber source, in
+priority order (OpenSees section coords: local y = DEPTH, so a designer
+(y, z) maps to fibers at (z - Cz, y - Cy) about the gross centroid):
+
+1. member's section name matches a DESIGNER SECTION — exact per-material
+   grid cells (FIBER_HINGE_STRIPS = 20 depth bands x FIBER_HINGE_LATERAL
+   = 4 width cells; cell area/centroid from the exact polygon clip;
+   holes subtract PER MATERIAL GROUP — a hole entry should carry the
+   material of the solid it pierces) + one fiber per rebar point;
+2. LIBRARY W SHAPE — Steel01(Fye = expected_factor*Fy, E, b = 0.01)
+   patches: 2 depth x 4 width cells per flange + 20 x 2 web cells
+   (design-table dims);
+3. RECTANGULAR CONCRETE (drawing b/h) — Concrete01 over 20 x 4 cells
+   + 8 perimeter bars (3 per face row at depth +-0.4h, 2 side bars at
+   mid-depth; each ``rho*b*(0.9h)/3`` with rho/fy_bar from hinge_params,
+   defaults 0.01/420 MPa — a face row is exactly the Table 10-7
+   ``As = rho b d_eff``).
+
+The WIDTH split exists because a force-based element inverts the section
+stiffness: a single fiber column across the width leaves the weak axis
+singular and blows up ``ForceBeamColumn3d::update`` (observed).  Width
+splitting never moves a band's depth centroid, so the strong-axis
+closed forms above are unaffected (the weak-axis fiber inertia runs
+~(1 - 1/4^2) soft — the hinge is an M3-dominant idealization).
+
+Concrete01 is UNCONFINED: ``fpc = fc`` (material ``fc`` attr or
+``fc_from_E``), ``eps0 = 2 fpc / E`` — so the INITIAL FIBER TANGENT
+(= 2 fpc/eps0) EQUALS the material E — residual ``0.2 fpc`` at 0.006.
+Midpoint strips make a rectangle's discretized inertia EXACTLY
+``b h^3/12 (1 - 1/n^2)`` (the pinned closed form).  Steel01 hardening
+1% everywhere.
+
+Recording: per converged step each end's BASIC rotation/moment from
+``eleResponse('basicDeformation'/'basicForce')`` (3D basic order
+``[N, Mz_i, Mz_j, My_i, My_j, T]`` — VERIFIED on openseespy 3.7.1: the
+end-i basic Mz of a cantilever equals V*L exactly by statics).  States
+use the SAME Table 9-7.1/10-7 acceptance criteria (``auto_backbone`` —
+the backbone supplies ONLY the criteria; the resisting moment comes from
+the fibers) applied to the CURVATURE-BASED plastic hinge rotation
+
+    theta_pl = max(0, |kappa_z| - kappa_y) * lp,   kappa_y = My/(E I33)
+
+(``kappa_z`` from the end integration point's section 'deformation'
+response — point 1 = end i, 6 = end j; ``kappa_y`` the GROSS-section
+yield curvature) via ``hinge_state(theta_pl, bb, k = inf)`` — the yield
+shift removed so the Table bands read plastic rotations directly.  A
+moment-free end therefore stays "elastic" no matter the chord rotation,
+and theta_pl clamps at EXACTLY 0 below kappa_y; because kappa_y is
+normalized on the gross EI while the cracked fiber section curves more,
+the first transition lands BELOW My (measured ~0.49 My on the 0.4 x 0.4
+test column — documented conservatism).  ``hinge_detail`` entries carry
+the v0.19 keys + ``"fiber": true``, ``lp``, ``kappa_y`` and the per-step
+``rot_plastic`` list.  Members that are split by shell edges,
+rigid-offset, or released are left elastic with a ``UserWarning``;
+``auto_m3`` members and every legacy mode are BIT-IDENTICAL to v0.19
+(fiber code runs only for fiber_pmm members in asce41 pushovers).
+
+**v0.21 engine/design fix** — ``auto_backbone``'s concrete fc'
+E-inversion missed the kPa -> MPa conversion ((E/4700)^2*1000 instead of
+``fc_from_E`` = ((E/1000)/4700)^2*1000, a 1e6 inflation); it now calls
+``fc_from_E``.  Only reachable for materials with no explicit ``fc``
+attribute (no shipped test exercised it).
+
+## Device library II (`LINK_TYPES` + engine)
+
+```python
+LINK_TYPES = ("elastic", "damper", "gap", "hook", "isolator",
+              "fp_isolator", "triple_fp", "multilinear")   # v0.21: last 3
+FP_DEFAULT_KINIT = 1e5; TFP_DEFAULT_UY = 1e-3
+TFP_DEFAULT_MINFV = 0.1; TFP_DEFAULT_TOL = 1e-5
+```
+
+Validation mirrors v0.15 exactly (missing required key / unknown key /
+out-of-range value -> ValueError, `POST /api/model` 400); all three
+require a VERTICAL axis (or zero length), the v0.15 isolator rule.  The
+axis-vertical/Newton-routing rules extend unchanged:
+``NONLINEAR_STATIC_LINK_TYPES`` now includes all three (static Newton +
+TH Newton like gap/hook/isolator); link-only nodes are grounded anchors.
+
+* **fp_isolator** `{R (m, > 0), mu (> 0), k_init (kN/m, default 1e5),
+  kv (default 1e7), P0? (kN, > 0)}` — single friction pendulum:
+  ``frictionModel('Coulomb', mu)`` + ``element('singleFPBearing', tag,
+  iLower, jUpper, frnTag, R, k_init, '-P', Elastic(kv), '-T'/'-My'/'-Mz',
+  Elastic(10.0))`` (node i = the LOWER node; zero length adds
+  ``'-orient', 0,0,1, 1,0,0``).  Post-slip lateral law ``F = mu*N +
+  N*d/R`` with N the axial load FROM THE ANALYSIS (verified 0.03%/0.5%
+  at d = 0.001/0.1 — the small excess is the element's exact
+  large-displacement kinematics).  ``P0`` is INFORMATIONAL only (echoed
+  for UI/hand checks; the element never reads it).
+* **triple_fp** `{R1, R2, R3 (effective radii, m), mu1, mu2, mu3,
+  d1, d2, d3 (capacities, m), W (kN) — all > 0; uy (default 1e-3),
+  kv (1e7), kvt (= kv), minFv (0.1), tol (1e-5)}` —
+  ``element('TripleFrictionPendulum', tag, i, j, frn1, frn2, frn3,
+  Elastic(kv), rotZ, rotX, rotY = Elastic(10.0), R1, R2, R3, d1, d2, d3,
+  W, uy, kvt, minFv, tol)`` (exact documented arg order; R1 = inner
+  effective radius).  Fully-sliding tangent ``W/(R2 + R3)`` — verified
+  EXACT (400.00 kN/m for W = 1000, R2 = R3 = 1.25).  The uy = 1e-4 +
+  tol = 1e-10 combination stalls the element internally (probed) — hence
+  the defaults.
+* **multilinear** `{points: [[d1, F1], [d2, F2], ...] (>= 2 pairs,
+  d strictly increasing, d1 > 0), kv (default 1e7)}` —
+  ``uniaxialMaterial('MultiLinear', d1, F1, ...)`` on BOTH horizontal
+  shear directions of the isolator-layout twoNodeLink (finite vertical:
+  dirs 1 = Elastic(kv) axial, 2/3 = MultiLinear; zero length: zeroLength
+  with global 1/2 = MultiLinear, 3 = kv).  Backbone force EXACT at every
+  [d, F] point and piecewise-linear between (verified: 50/85/120/150 kN
+  at 0.01/0.03/0.05/0.20 m); flat beyond the last point.  ``points`` is
+  the ONE non-scalar param value (serialised as the nested list).
+
+## API
+
+| Method | Path | Body / Response |
+|--------|------|-----------------|
+| POST | `/api/sections/designer` | `{action: "upsert", section: {name, material, base?, polygons, rebar}}` → `{"model": <model dict>, "properties": <section_properties()>}`; `{action: "delete", name}` (or `section.name`) → `{"model": ...}`; 400 on bad action/polygons/materials, unknown name, or a section still used by a member |
+| POST | `/api/sections/designer/pmm` | `{name, axis?: "33"\|"22"}` → `{name, axis, base, points: [[phiMn, phiPn], ...], detail: [...], properties: {...}}` (non-finite closed-form sentinels null); 400 unknown name / bad axis / concrete without rebar |
+
+`POST /api/model` round-trips ``designer_sections``, ``hinges ==
+"fiber_pmm"`` and the three new link types (400 via ``validate()``);
+asce41 pushover ``hinges`` entries gain ``"fiber": true`` for fiber
+hinges.

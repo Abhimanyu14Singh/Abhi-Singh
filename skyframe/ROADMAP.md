@@ -143,9 +143,9 @@ scrutinized benchmark tests.
 - [x] 6. Wall/slab openings; elevation-view drawing (Wave 6)
 - [x] 7. Nonlinear static pushover (OpenSees fiber hinges) (Wave 6)
 
-## Status — v1.6 released 🎉
+## Status — v1.7 released 🎉
 All waves above are complete with engine + REST API + UI, pinned by a
-481-test suite. The app builds standalone locally (`packaging/build.sh`).
+507-test suite. The app builds standalone locally (`packaging/build.sh`).
 
 ## Scheduled waves toward ETABS v23 parity
 Driven by `docs/ETABS23_GAP_MATRIX.md` (compiled from CSI ETABS v23 docs
@@ -171,11 +171,12 @@ and release notes). No gap is skipped — everything below is scheduled.
 - [ ] Camber recommendation → moved to Wave 24 (steel design depth —
       not skipped, rescheduled)
 
-### Wave 22 — sections & devices
-- [ ] Section Designer (arbitrary fiber sections, PMM surface)
-- [ ] Fiber PMM hinges (from Wave 20, on the fiber-section machinery)
-- [ ] Friction-pendulum isolators (single/triple), elastomeric bearings,
-      multilinear links
+### Wave 22 — sections & devices  ✅ done (v1.7)
+- [x] Section Designer (arbitrary fiber sections, PMM surface)
+- [x] Fiber PMM hinges (from Wave 20, on the fiber-section machinery)
+- [x] Friction-pendulum isolators (single/triple), multilinear links
+      (elastomeric bearings = the existing v0.15 bilinear "isolator"
+      idealization — no separate type needed)
 
 ### Wave 23 — meshing & advanced shells
 - [ ] Auto edge constraints (mismatched-mesh zipper)

@@ -233,8 +233,11 @@ async function designerAction(action, section) {
       const payload = JSON.parse(JSON.stringify(store.model));
       delete payload._mock_params;
       await postModel(payload);
-      const modelDict = await api("/api/sections/designer", { action, section });
-      return { model: modelDict, live: true };
+      const resp = await api("/api/sections/designer", { action, section });
+      // v0.21 backend wraps the payload: {model: <dict>, properties: {...}}
+      const modelDict = resp && resp.model ? resp.model : resp;
+      return { model: modelDict, properties: resp && resp.properties,
+               live: true };
     } catch (e) {
       console.warn("Section-designer endpoint unavailable, using mock:", e.message);
     }

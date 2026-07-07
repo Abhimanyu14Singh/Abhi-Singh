@@ -174,10 +174,13 @@ def auto_backbone(model: BuildingModel, m: FrameMember, *,
         return steel_hinge_backbone(props, Fy, E, I, L,
                                     expected_factor=expected_factor)
     if sec.b > 0.0 and sec.h > 0.0:
-        fc = getattr(mat, "fc", 0.0) or (E / 4700.0) ** 2 * 1000.0
+        from skyframe.design.wall import fc_from_E
+        fc = getattr(mat, "fc", 0.0) or fc_from_E(E)
         # fc from E via inverted ACI 19.2.2.1 (E = 4700 sqrt(fc') MPa)
-        # when the material carries no explicit fc — same convention as
-        # design.wall.fc_from_E.
+        # when the material carries no explicit fc — design.wall.fc_from_E.
+        # (v0.21 fix: the old inline formula skipped the kPa -> MPa
+        # conversion, inflating the implied fc' by 1e6; the path is only
+        # reached for materials carrying no explicit ``fc`` attribute.)
         return concrete_hinge_backbone(sec.b, sec.h, fc, E, I, L, rho=rho,
                                        rho_prime=rho_prime, fy_bar=fy_bar)
     return None

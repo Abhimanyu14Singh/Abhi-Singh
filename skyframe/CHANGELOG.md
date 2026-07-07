@@ -1,5 +1,25 @@
 # SkyFrame changelog
 
+## 1.7.0
+
+### Wave 22 — section designer, fiber hinges & seismic devices
+- **Section Designer**: arbitrary polygon sections (holes + discrete
+  rebar) with exact shoelace properties, transformed-section frame
+  properties, and P-M interaction surfaces (ACI strain compatibility
+  for concrete via exact Whitney-block polygon clipping; full-plastic
+  surfaces for steel) — designer sections mirror into ordinary frame
+  sections and drive analysis, checks, and fiber hinges.
+- **Fiber PMM hinges**: members flagged "fiber_pmm" run asce41
+  pushovers as force-based elements with HingeRadau fiber hinge zones
+  (lp = 0.5h) built from the designer section, the steel W library, or
+  rectangular-RC + perimeter bars; per-step curvature-based plastic
+  rotations classified against the ASCE 41 acceptance tables.
+- **Device library II**: single friction pendulum (singleFPBearing,
+  F = mu·N + N·d/R), triple friction pendulum (TripleFrictionPendulum,
+  fully-sliding tangent W/(R2+R3) exact) and multilinear backbone links
+  (exact at every backbone point), on the v0.15 link machinery.
+- 507 tests (26 new).
+
 ## 1.6.0
 
 ### Wave 21 — composite floors & slab design

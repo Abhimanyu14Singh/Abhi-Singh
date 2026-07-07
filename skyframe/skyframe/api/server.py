@@ -133,6 +133,33 @@ v0.20 additions:
   ``{preliminary, case, live_case, beams: [VibrationCheck...]}``; 400 on
   unknown case names / bad parameters.
 
+v0.21 additions:
+
+* ``POST /api/sections/designer`` — Section Designer upsert/delete (body
+  ``{action: "upsert"|"delete", section?: {name, material, base?,
+  polygons, rebar}, name?: str}``): "upsert" validates the polygon
+  outline (>= 3 vertices, non-self-intersecting, known materials),
+  computes the exact shoelace properties, stores the designer section AND
+  creates/updates the same-named FrameSection (transformed A/I33/I22,
+  approximate J = A^4/(40*Ip), bbox b/h); response ``{"model": <model
+  dict>, "properties": {...}}``.  "delete" (by ``name`` or
+  ``section.name``) removes both; response ``{"model": ...}``; 400 on bad
+  polygons/action, an unknown name, or a section still used by a member;
+* ``POST /api/sections/designer/pmm`` — interaction diagram of a designer
+  section (body ``{name, axis?: "33"|"22"}``): concrete strain-
+  compatibility (Whitney over the exact clipped polygons, phi per ACI
+  21.2.2) or the steel full-plastic surface; response ``{name, axis,
+  base, points: [[phiMn, phiPn], ...], detail: [...], properties:
+  {...}}``; 400 on an unknown name / bad axis / a concrete section
+  without rebar;
+* ``POST /api/model`` round-trips ``designer_sections``, the
+  ``fiber_pmm`` member hinge option, and the three new device link types
+  ``fp_isolator`` / ``triple_fp`` / ``multilinear`` (400 on bad/missing
+  params via ``validate()``);
+* ``POST /api/analyze`` asce41 pushover blocks: fiber PMM hinge entries
+  appear in ``hinges`` with the extra key ``"fiber": true`` (rot/moment
+  are the member-end BASIC rotation / moment of the fiber element).
+
 Saved models live as ``<name>.skyframe.json`` files in ``~/.skyframe/models``
 (override with the ``SKYFRAME_MODELS_DIR`` environment variable; the
 directory is created on demand).  Names must match ``[A-Za-z0-9 _-]{1,60}``.
@@ -1195,6 +1222,72 @@ def create_app() -> Flask:
         return jsonify({"preliminary": True, "case": case,
                         "live_case": live,
                         "beams": [c.to_dict() for c in checks]})
+
+    # ------------------------------------------- v0.21: section designer
+    @app.post("/api/sections/designer")
+    def sections_designer():
+        """Upsert/delete a designer section + its mirrored FrameSection.
+
+        Body: ``{action: "upsert"|"delete", section?: {...}, name?}`` —
+        see the module docstring for the exact shapes.
+        """
+        from skyframe.core.sections_designer import (DesignerSection,
+                                                     section_properties)
+        body = request.get_json(silent=True) or {}
+        action = body.get("action")
+        model = _state["model"]
+        if action == "upsert":
+            try:
+                ds = DesignerSection.from_dict(body.get("section") or {})
+                model.add_designer_section(ds)
+                props = section_properties(ds, model.materials)
+            except (ValueError, TypeError, KeyError) as exc:
+                return jsonify({"error": str(exc)}), 400
+            return jsonify({"model": model.to_dict(), "properties": props})
+        if action == "delete":
+            name = body.get("name") or (body.get("section") or {}).get("name")
+            try:
+                model.remove_designer_section(str(name))
+            except KeyError:
+                return jsonify({"error": f"unknown designer section "
+                                         f"{name!r}"}), 400
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
+            return jsonify({"model": model.to_dict()})
+        return jsonify({"error": "'action' must be 'upsert' or "
+                                 "'delete'"}), 400
+
+    @app.post("/api/sections/designer/pmm")
+    def sections_designer_pmm():
+        """PMM interaction diagram of a designer section.
+
+        Body: ``{name, axis?: "33"|"22"}`` -> ``{name, axis, base,
+        points: [[phiMn, phiPn], ...], detail, properties}``.
+        """
+        from skyframe.core.sections_designer import (pmm_surface,
+                                                     section_properties)
+        body = request.get_json(silent=True) or {}
+        model = _state["model"]
+        name = body.get("name")
+        ds = model.designer_sections.get(name)
+        if ds is None:
+            return jsonify({"error": f"unknown designer section "
+                                     f"{name!r}"}), 400
+        axis = str(body.get("axis", "33"))
+        try:
+            out = pmm_surface(ds, model.materials, axis=axis)
+            props = section_properties(ds, model.materials)
+        except (ValueError, TypeError, KeyError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        # strict JSON: the +-inf sentinels of the closed-form endpoints
+        # (c at pure compression, eps_t at pure tension) become null
+        import math as _math
+        for row in out["detail"]:
+            for k, v in list(row.items()):
+                if isinstance(v, float) and not _math.isfinite(v):
+                    row[k] = None
+        out.update({"name": name, "properties": props})
+        return jsonify(out)
 
     # --------------------------------------------- v0.12: steel optimization
     @app.post("/api/design/optimize")

@@ -55,6 +55,19 @@ point-load / full-span-UDL fields the stations carry); the contribution
 sum equals the roof virtual displacement by the unit-load theorem for
 frame-only models.
 
+v0.21 Section Designer / fiber PMM hinges / device library II: designer
+polygon sections mirror into ordinary FrameSections (transformed
+properties — see :mod:`skyframe.core.sections_designer`); in an asce41
+pushover a ``FrameMember.hinges == "fiber_pmm"`` member becomes a
+forceBeamColumn with HingeRadau fiber hinge sections at both ends
+(lp = 0.5h; designer strips / W-shape patches / rectangular-RC +
+perimeter-bar fibers), recording per-step end basic rotation/moment and
+curvature-based plastic-rotation acceptance states; new link types
+``fp_isolator`` (singleFPBearing + Coulomb friction), ``triple_fp``
+(TripleFrictionPendulum) and ``multilinear`` (MultiLinear backbone on
+both shear directions) ride the v0.15 device-link machinery (vertical
+axis, grounded anchors, Newton static routing).
+
 v0.16 beam deflection recovery: every static case / additive combo reports
 ``member_deflections`` — EXACT closed-form transverse deflection stations
 (local y/z) recovered per segment from the end node displacements plus the
@@ -190,7 +203,35 @@ GAP_YIELD_HUGE = 1.0e12
 # (verified empirically on openseespy 3.7.1.2: a static solve with a
 # ViscousDamper element matches the damper-free solve exactly, and the eigen
 # frequencies are unchanged), so damper-only models keep the linear path.
-NONLINEAR_STATIC_LINK_TYPES = ("gap", "hook", "isolator")
+# v0.21: the friction-pendulum bearings and the multilinear backbone are
+# displacement-state devices too — same Newton routing.
+NONLINEAR_STATIC_LINK_TYPES = ("gap", "hook", "isolator",
+                               "fp_isolator", "triple_fp", "multilinear")
+
+# v0.21 device links: elastic rotational stiffness handed to the bearing
+# elements' -T/-My/-Mz (singleFPBearing) and rotZ/rotX/rotY
+# (TripleFrictionPendulum) materials.  Deliberately TINY (10 kN*m/rad) so
+# a bearing never noticeably restrains the frame rotations it connects
+# to; the element formulations require a non-zero material here.
+BEARING_ROT_STIFF = 10.0
+
+# v0.21 fiber PMM hinges: number of fiber strips through the section
+# depth (midpoint strips — a rectangle's discretized strong-axis inertia
+# is EXACTLY b*h^3/12 * (1 - 1/n^2), the closed form the tests pin).
+FIBER_HINGE_STRIPS = 20
+# ... and across the WIDTH.  A force-based element inverts the section
+# stiffness, so the fiber section must carry stiffness in EVERY section
+# dof — a single fiber column across the width would leave the weak axis
+# (Iy = sum A z^2) SINGULAR and blow up ForceBeamColumn3d::update
+# (observed empirically).  4 width cells keep the weak axis regular
+# (and ~6% soft, (1 - 1/4^2) — the fiber hinge is an M3-dominant
+# idealization; the depth-direction closed forms are unaffected because
+# lateral splitting never moves a band's depth centroid).
+FIBER_HINGE_LATERAL = 4
+# Steel01 hardening ratio of every fiber-hinge steel (rebar and W-shape)
+FIBER_STEEL_HARDENING = 0.01
+# fiber section tags live far above the shell-section tag range
+_FIBER_SEC_TAG0 = 100000
 
 Vec3 = Tuple[float, float, float]
 
@@ -785,6 +826,20 @@ class _Assembly:
         default_factory=dict)
     #   v0.6: (uid, end) -> (My/k22, My/k33) yield rotations of the hinge
     #   springs about the local y and z bending axes
+    fiber_hinges: Dict[Tuple[str, str], dict] = field(default_factory=dict)
+    #   v0.21 fiber PMM hinges: (uid, "i"|"j") -> {"ele": forceBeamColumn
+    #   tag, "bb": the Table-criteria backbone from design.hinges,
+    #   "k33": 6EI33/L, "lp": hinge length, "kappa_y": My/(E I33_eff),
+    #   "sec": end integration-point number (1 = end i, 6 = end j)}.
+    #   The pushover records the end BASIC rotation / moment
+    #   (eleResponse basicDeformation/basicForce) and classifies the
+    #   CURVATURE-BASED plastic hinge rotation
+    #       theta_pl = max(0, |kappa_z| - kappa_y) * lp
+    #   (end-section curvature from eleResponse 'section' deformation;
+    #   kappa_y = My/EI the gross-section yield curvature) directly
+    #   against the Table plastic-rotation bands — hinge_state with the
+    #   yield shift removed (k_spring = inf).  A moment-free end stays
+    #   "elastic" (kappa = 0) no matter how far the member rotates.
     link_ele: Dict[str, int] = field(default_factory=dict)   # v0.5 links
     spring_nodes: Dict[int, List[float]] = field(default_factory=dict)
     #   v0.8: real node tag -> 6 grounded-spring stiffnesses (0 where none);
@@ -1506,6 +1561,42 @@ class OpenSeesEngine:
                 plan[(m.uid, "j")] = float(my)
         return plan
 
+    def _fiber_plan(self, case) -> Dict[str, dict]:
+        """uid -> acceptance backbone for ``fiber_pmm`` members (v0.21).
+
+        Only an ``asce41`` pushover activates fiber hinges; the backbone
+        (from :func:`skyframe.design.hinges.auto_backbone`, the SAME
+        Table 9-7.1 / 10-7 machinery as ``auto_m3``) supplies ONLY the
+        acceptance criteria — the resisting moment comes from the fibers.
+        Members the generator cannot size and axial-only members are
+        skipped with a ``UserWarning`` (mirrors the auto_m3 rules).
+        """
+        plan: Dict[str, dict] = {}
+        if getattr(case, "hinges", "") != "asce41":
+            return plan
+        from skyframe.design.hinges import auto_backbone
+        hp = dict(getattr(case, "hinge_params", {}) or {})
+        kw = {k: hp[k] for k in ("expected_factor", "rho", "rho_prime",
+                                 "fy_bar") if k in hp}
+        for m in self.model.members:
+            if getattr(m, "hinges", "none") != "fiber_pmm":
+                continue
+            if getattr(m, "axial_limit", "both") != "both":
+                warnings.warn(
+                    f"fiber_pmm hinges: member {m.uid!r} is axial-only; "
+                    "hinge skipped (Truss members carry no moment)",
+                    UserWarning)
+                continue
+            bb = auto_backbone(self.model, m, **kw)
+            if bb is None:
+                warnings.warn(
+                    f"fiber_pmm hinges: member {m.uid!r} has neither a "
+                    "library steel section nor rectangular drawing dims; "
+                    "left elastic", UserWarning)
+                continue
+            plan[m.uid] = bb
+        return plan
+
     def _build(self, pdelta: bool = False, hinge_case=None) -> _Assembly:
         """(Re)build the OpenSees domain from the (meshed) BuildingModel.
 
@@ -1663,6 +1754,14 @@ class OpenSeesEngine:
         mtag = 9                       # uniaxial material tags (guard uses 1)
         hinge_plan: Dict[Tuple[str, str], float] = (
             self._hinge_plan(hinge_case) if hinge_case is not None else {})
+        # v0.21 fiber PMM hinges (asce41 pushovers only; empty otherwise —
+        # every other analysis keeps the exact pre-v0.21 member path)
+        fiber_plan: Dict[str, dict] = (
+            self._fiber_plan(hinge_case) if hinge_case is not None else {})
+        hp_fiber: Dict[str, float] = (
+            dict(getattr(hinge_case, "hinge_params", {}) or {})
+            if hinge_case is not None else {})
+        fiber_counters = {"sec": _FIBER_SEC_TAG0, "integ": 0}
         # (uid, end, member, orig node tag, dup node tag, My)
         hinge_dups: List[tuple] = []
         # v0.19: duplicate-node translation ties are DEFERRED until after
@@ -1729,6 +1828,35 @@ class OpenSeesEngine:
                 truss_end_nodes.add(seg.ni)
                 truss_end_nodes.add(seg.nj)
                 continue
+            # --- v0.21 fiber PMM hinge member (asce41 pushover only) ------
+            bb_fiber = fiber_plan.get(m.uid)
+            if bb_fiber is not None:
+                if len(segs) != 1 or has_offset or toks:
+                    warnings.warn(
+                        f"fiber_pmm hinges: member {m.uid!r} is split by "
+                        "shell-edge compatibility, rigid-offset, or "
+                        "released; left elastic", UserWarning)
+                else:
+                    seg = segs[0]
+                    ni_tag, nj_tag = seg.ni + 1, seg.nj + 1
+                    if pz_map and m.kind == "beam":
+                        ent = pz_map.get(_pkey(mesh.points[seg.ni]))
+                        if ent is not None:
+                            ni_tag = ent[1]
+                            asm.pz_load_tag[(m.uid, seg.ni)] = ent[1]
+                        ent = pz_map.get(_pkey(mesh.points[seg.nj]))
+                        if ent is not None:
+                            nj_tag = ent[1]
+                            asm.pz_load_tag[(m.uid, seg.nj)] = ent[1]
+                    etag += 1
+                    mtag = self._fiber_hinge_element(
+                        asm, m, sec, mat, bb_fiber, hp_fiber, ni_tag,
+                        nj_tag, etag, mtag, fiber_counters, pdelta, vecxz)
+                    asm.seg_ele[(m.uid, seg.index)] = etag
+                    asm.ele_nodes[m.uid] = (seg.ni + 1, seg.nj + 1)
+                    for node in (seg.ni, seg.nj):
+                        rot_add(node, eye3)
+                    continue
             for seg in segs:
                 etag += 1
                 beam_etag = etag
@@ -1934,6 +2062,7 @@ class OpenSeesEngine:
         # created in every build.
         link_node_k: Dict[int, List[float]] = {}
         device_nodes: set = set()
+        frn_tag = 0            # v0.21 frictionModel tags (own namespace)
         for lk in model.links:
             ni = self._find_node(asm, lk.pi)
             nj = self._find_node(asm, lk.pj)
@@ -1985,7 +2114,7 @@ class OpenSeesEngine:
                                          float(prm["k"]), GAP_YIELD_HUGE,
                                          float(prm["slack"]))
                 mats, dirs = [mtag], [1]
-            else:  # isolator
+            elif ltype == "isolator":
                 k1 = float(prm["k1"])
                 b_iso = float(prm["k2"]) / k1
                 fy = float(prm["Fy"])
@@ -2005,6 +2134,107 @@ class OpenSeesEngine:
                     mats, dirs = shear_tags + [kv_tag], [1, 2, 3]
                 else:
                     # vertical axis: local 1 = axial (kv), 2/3 = shear
+                    mats, dirs = [kv_tag] + shear_tags, [1, 2, 3]
+            elif ltype in ("fp_isolator", "triple_fp"):
+                # ---- v0.21 friction-pendulum bearings (dedicated OpenSees
+                # elements, NOT the twoNodeLink material path).  Node i is
+                # always the LOWER node (the sliding surface reads its
+                # axial load from the analysis); the model validated the
+                # axis vertical (or zero length).
+                if p_i[2] > p_j[2]:
+                    ni, nj = nj, ni
+                if ltype == "fp_isolator":
+                    # element('singleFPBearing', tag, iNode, jNode,
+                    #         frnMdlTag, Reff, kInit, '-P', matP,
+                    #         '-T', matT, '-My', matMy, '-Mz', matMz
+                    #         [, '-orient', x1..3, y1..3])
+                    # frnMdl = frictionModel('Coulomb', tag, mu);
+                    # post-slip F = mu*N + N*d/R (verified to ~0.5% at
+                    # d = 0.1 m — large-displacement kinematics add the
+                    # small excess).  P0 (if given) is informational only.
+                    frn_tag += 1
+                    ops.frictionModel("Coulomb", frn_tag, float(prm["mu"]))
+                    mtag += 1
+                    ops.uniaxialMaterial(
+                        "Elastic", mtag,
+                        float(prm.get("kv", ISOLATOR_DEFAULT_KV)))
+                    p_tag = mtag
+                    rot_tags = []
+                    for _ in range(3):          # -T, -My, -Mz
+                        mtag += 1
+                        ops.uniaxialMaterial("Elastic", mtag,
+                                             BEARING_ROT_STIFF)
+                        rot_tags.append(mtag)
+                    etag += 1
+                    args = ["singleFPBearing", etag, ni, nj, frn_tag,
+                            float(prm["R"]),
+                            float(prm.get("k_init", FP_DEFAULT_KINIT)),
+                            "-P", p_tag, "-T", rot_tags[0],
+                            "-My", rot_tags[1], "-Mz", rot_tags[2]]
+                    if L_lk < _TOL:
+                        # zero length: local x (bearing axis) must be set
+                        # explicitly UP, local y = global X
+                        args += ["-orient", 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]
+                    ops.element(*args)
+                else:
+                    # element('TripleFrictionPendulum', tag, iNode, jNode,
+                    #         frnTag1, frnTag2, frnTag3, vertMat, rotZMat,
+                    #         rotXMat, rotYMat, L1, L2, L3, d1, d2, d3,
+                    #         W, uy, kvt, minFv, tol)
+                    # L1 = inner effective radius, L2/L3 outer; the fully-
+                    # sliding tangent is W/(L2 + L3) (verified exact).
+                    frns = []
+                    for key in ("mu1", "mu2", "mu3"):
+                        frn_tag += 1
+                        ops.frictionModel("Coulomb", frn_tag,
+                                          float(prm[key]))
+                        frns.append(frn_tag)
+                    kv = float(prm.get("kv", ISOLATOR_DEFAULT_KV))
+                    mtag += 1
+                    ops.uniaxialMaterial("Elastic", mtag, kv)
+                    v_tag = mtag
+                    rot_tags = []
+                    for _ in range(3):          # rotZ, rotX, rotY
+                        mtag += 1
+                        ops.uniaxialMaterial("Elastic", mtag,
+                                             BEARING_ROT_STIFF)
+                        rot_tags.append(mtag)
+                    etag += 1
+                    ops.element(
+                        "TripleFrictionPendulum", etag, ni, nj, *frns,
+                        v_tag, *rot_tags,
+                        float(prm["R1"]), float(prm["R2"]),
+                        float(prm["R3"]), float(prm["d1"]),
+                        float(prm["d2"]), float(prm["d3"]),
+                        float(prm["W"]),
+                        float(prm.get("uy", TFP_DEFAULT_UY)),
+                        float(prm.get("kvt", kv)),
+                        float(prm.get("minFv", TFP_DEFAULT_MINFV)),
+                        float(prm.get("tol", TFP_DEFAULT_TOL)))
+                asm.link_ele[lk.uid] = etag
+                device_nodes.update((ni, nj))
+                continue
+            else:  # multilinear (v0.21)
+                # MultiLinear backbone on BOTH horizontal shear
+                # directions (dirs 2/3 of the vertical twoNodeLink /
+                # global 1/2 of a zeroLength), elastic vertical kv —
+                # exactly the isolator layout with the bilinear Steel01
+                # replaced by the user backbone.  Backbone force is EXACT
+                # at every [d, F] point (verified).
+                pts = [float(v) for p in prm["points"] for v in p]
+                shear_tags = []
+                for _ in range(2):
+                    mtag += 1
+                    ops.uniaxialMaterial("MultiLinear", mtag, *pts)
+                    shear_tags.append(mtag)
+                mtag += 1
+                ops.uniaxialMaterial("Elastic", mtag,
+                                     float(prm.get("kv",
+                                                   ISOLATOR_DEFAULT_KV)))
+                kv_tag = mtag
+                if L_lk < _TOL:
+                    mats, dirs = shear_tags + [kv_tag], [1, 2, 3]
+                else:
                     mats, dirs = [kv_tag] + shear_tags, [1, 2, 3]
             etag += 1
             if L_lk < _TOL:
@@ -2279,6 +2509,191 @@ class OpenSeesEngine:
         """(A, I22, I33, J) with the v0.4 stiffness modifiers applied."""
         return (sec.A * sec.mod_A, sec.I22 * sec.mod_I22,
                 sec.I33 * sec.mod_I33, sec.J * sec.mod_J)
+
+    def _fiber_hinge_element(self, asm: _Assembly, m: FrameMember,
+                             sec: FrameSection, mat, bb: dict,
+                             hp: Dict[str, float], ni_tag: int, nj_tag: int,
+                             etag: int, mtag: int, counters: dict,
+                             pdelta: bool, vecxz) -> int:
+        """Create one v0.21 fiber PMM hinge member; returns the new mtag.
+
+        ``forceBeamColumn`` with ``beamIntegration('HingeRadau', fiber
+        section, lp, fiber section, lp, elastic interior)`` — hinge length
+        ``lp = 0.5 * h`` (h = section depth; documented idealization).
+        The standard two-point Gauss-Radau hinge rule puts the FIBER
+        section at x = 0 and x = L with weight lp each and the ELASTIC
+        section everywhere else (points 8lp/3 / L - 8lp/3 with weight 3lp
+        + two-point Gauss over [4lp, L - 4lp]) — the flexibility hand
+        formula the tests pin.  The elastic interior carries the member's
+        modifier-scaled A/I/J at the material E.
+
+        Fiber source (OpenSees section coords: local y = the DEPTH
+        direction, so Iz = the model's strong-axis I33; a designer
+        section's (y, z) therefore maps to fibers at
+        (z - Cz, y - Cy) about the GROSS centroid):
+
+        * the member's section name matches a DESIGNER SECTION — exact
+          per-material strip fibers: FIBER_HINGE_STRIPS depth bands, each
+          band's net area/centroid from the exact polygon clip (holes
+          subtract PER MATERIAL GROUP — a hole entry is expected to carry
+          the material of the solid it pierces); Concrete01 for
+          ``base == "concrete"`` (fpc = material fc or the ACI E-inversion
+          fc_from_E, eps0 = 2*fpc/E so the INITIAL FIBER TANGENT EQUALS
+          the material E, residual 0.2*fpc at 0.006 — unconfined,
+          documented), Steel01(fy or 345 MPa, E, 1%) for "steel"; rebar
+          points are Steel01(fy or 420 MPa, E_bar, 1%) fibers laid ON TOP
+          of the base fibers (displaced material not deducted).
+        * else a LIBRARY W SHAPE — Steel01(Fye, E, 1%) patches over the
+          two flanges (2 depth x FIBER_HINGE_LATERAL width cells each)
+          and the clear web (FIBER_HINGE_STRIPS x 2 cells), dims from
+          design_properties; Fye = expected_factor (hinge_params,
+          default 1.1) * Fy — the same expected strength the acceptance
+          backbone uses.
+        * else RECTANGULAR CONCRETE b x h — Concrete01 as above +
+          8 perimeter bars: 3 per face row at depth +-0.4h (z = -0.4b /
+          0 / +0.4b) and 2 side bars at mid-depth (z = +-0.4b), each of
+          area rho*b*(0.9h)/3 with rho / fy_bar from hinge_params
+          (defaults 0.01 / 420 MPa) — the face rows carry exactly the
+          Table 10-7 tension steel As = rho*b*d_eff, d_eff = 0.9h.
+        """
+        from skyframe.design.steel import design_properties
+        from skyframe.design.wall import fc_from_E
+        model = self.model
+        A_eff, I22_eff, I33_eff, J_eff = self._eff_props(sec)
+        E, G, L = mat.E, mat.G, m.length
+        nf = FIBER_HINGE_STRIPS
+        ds = getattr(model, "designer_sections", {}).get(m.section)
+        props = None if ds is not None else design_properties(sec.name)
+
+        counters["sec"] += 1
+        fsec = counters["sec"]
+        ops.section("Fiber", fsec, "-GJ", G * J_eff)
+        if ds is not None:
+            from skyframe.core.sections_designer import (clip_polygon,
+                                                         polygon_integrals,
+                                                         section_properties)
+            sp = section_properties(ds, model.materials)
+            Cy, Cz, h_depth = sp["Cy"], sp["Cz"], sp["h"]
+            groups: Dict[str, list] = {}
+            for sgn, verts, mname in ds.signed_polygons():
+                groups.setdefault(mname, []).append((sgn, verts))
+            for mname, polys in groups.items():
+                pm = model.materials[mname]
+                mtag += 1
+                if ds.base == "steel":
+                    fy_p = getattr(pm, "fy", 0.0) or 345_000.0
+                    ops.uniaxialMaterial("Steel01", mtag, fy_p, pm.E,
+                                         FIBER_STEEL_HARDENING)
+                else:
+                    fc_p = getattr(pm, "fc", 0.0) or fc_from_E(pm.E)
+                    eps0 = 2.0 * fc_p / pm.E
+                    ops.uniaxialMaterial("Concrete01", mtag, -fc_p, -eps0,
+                                         -0.2 * fc_p, -0.006)
+                z_lo = min(z for _s, v in polys for (_y, z) in v)
+                z_hi = max(z for _s, v in polys for (_y, z) in v)
+                y_lo = min(y for _s, v in polys for (y, _z) in v)
+                y_hi = max(y for _s, v in polys for (y, _z) in v)
+                nl = FIBER_HINGE_LATERAL
+                # depth bands x lateral cells (the lateral split keeps
+                # the weak axis regular; a band's depth centroid — hence
+                # the strong-axis closed form — is unchanged)
+                cells: Dict[Tuple[int, int], List[float]] = {}
+                for sgn, verts in polys:
+                    for k in range(nf):
+                        z0 = z_lo + (z_hi - z_lo) * k / nf
+                        z1 = z_lo + (z_hi - z_lo) * (k + 1) / nf
+                        band = clip_polygon(verts, z0, "above")
+                        if band:
+                            band = clip_polygon(band, z1, "below")
+                        if not band:
+                            continue
+                        # lateral clip = the same exact half-plane clip
+                        # with (y, z) swapped
+                        sw = [[z, y] for (y, z) in band]
+                        for j in range(nl):
+                            y0 = y_lo + (y_hi - y_lo) * j / nl
+                            y1 = y_lo + (y_hi - y_lo) * (j + 1) / nl
+                            cell = clip_polygon(sw, y0, "above")
+                            if cell:
+                                cell = clip_polygon(cell, y1, "below")
+                            if not cell:
+                                continue
+                            back = [[y, z] for (z, y) in cell]
+                            a, sy, sz, _iy, _iz = polygon_integrals(back)
+                            acc = cells.setdefault((k, j), [0.0, 0.0, 0.0])
+                            acc[0] += sgn * a
+                            acc[1] += sgn * sy
+                            acc[2] += sgn * sz
+                for (A_b, Sy_b, Sz_b) in cells.values():
+                    if A_b > 1e-14:
+                        ops.fiber(Sz_b / A_b - Cz, Sy_b / A_b - Cy,
+                                  A_b, mtag)
+            for r in ds.rebar:
+                rm = model.materials[r["material"]]
+                fy_r = getattr(rm, "fy", 0.0) or 420_000.0
+                mtag += 1
+                ops.uniaxialMaterial("Steel01", mtag, fy_r, rm.E,
+                                     FIBER_STEEL_HARDENING)
+                ops.fiber(r["z"] - Cz, r["y"] - Cy, r["area"], mtag)
+        elif props is not None:
+            Fy = getattr(mat, "fy", 0.0) or 345_000.0
+            Fye = float(hp.get("expected_factor", 1.1)) * Fy
+            d_w, bf = props["d"], props["bf"]
+            tf, tw = props["tf"], props["tw"]
+            mtag += 1
+            ops.uniaxialMaterial("Steel01", mtag, Fye, E,
+                                 FIBER_STEEL_HARDENING)
+            hw = d_w - 2.0 * tf
+            nl = FIBER_HINGE_LATERAL
+            ops.patch("rect", mtag, 2, nl, d_w / 2.0 - tf, -bf / 2.0,
+                      d_w / 2.0, bf / 2.0)
+            ops.patch("rect", mtag, 2, nl, -d_w / 2.0, -bf / 2.0,
+                      -d_w / 2.0 + tf, bf / 2.0)
+            ops.patch("rect", mtag, nf, 2, -hw / 2.0, -tw / 2.0,
+                      hw / 2.0, tw / 2.0)
+            h_depth = d_w
+        else:
+            b_r, h_r = sec.b, sec.h
+            fc = getattr(mat, "fc", 0.0) or fc_from_E(E)
+            eps0 = 2.0 * fc / E
+            mtag += 1
+            ops.uniaxialMaterial("Concrete01", mtag, -fc, -eps0,
+                                 -0.2 * fc, -0.006)
+            ops.patch("rect", mtag, nf, FIBER_HINGE_LATERAL,
+                      -h_r / 2.0, -b_r / 2.0, h_r / 2.0, b_r / 2.0)
+            rho = float(hp.get("rho", 0.01))
+            fy_bar = float(hp.get("fy_bar", 420_000.0))
+            bar = rho * b_r * 0.9 * h_r / 3.0
+            mtag += 1
+            ops.uniaxialMaterial("Steel01", mtag, fy_bar, 2.0e8,
+                                 FIBER_STEEL_HARDENING)
+            for (y, z) in ((0.4 * h_r, -0.4 * b_r), (0.4 * h_r, 0.0),
+                           (0.4 * h_r, 0.4 * b_r),
+                           (0.0, -0.4 * b_r), (0.0, 0.4 * b_r),
+                           (-0.4 * h_r, -0.4 * b_r), (-0.4 * h_r, 0.0),
+                           (-0.4 * h_r, 0.4 * b_r)):
+                ops.fiber(y, z, bar, mtag)
+            h_depth = h_r
+
+        counters["sec"] += 1
+        esec = counters["sec"]
+        # section('Elastic', tag, E, A, Iz, Iy, G, J) — Iz = strong = I33
+        ops.section("Elastic", esec, E, A_eff, I33_eff, I22_eff, G, J_eff)
+        counters["integ"] += 1
+        itag = counters["integ"]
+        lp = 0.5 * h_depth
+        ops.beamIntegration("HingeRadau", itag, fsec, lp, fsec, lp, esec)
+        ops.geomTransf("PDelta" if pdelta else "Linear", etag, *vecxz)
+        ops.element("forceBeamColumn", etag, ni_tag, nj_tag, etag, itag)
+        k33 = 6.0 * E * I33_eff / L
+        kappa_y = bb["My"] / (E * I33_eff)
+        asm.fiber_hinges[(m.uid, "i")] = {"ele": etag, "bb": bb,
+                                          "k33": k33, "lp": lp,
+                                          "kappa_y": kappa_y, "sec": 1}
+        asm.fiber_hinges[(m.uid, "j")] = {"ele": etag, "bb": bb,
+                                          "k33": k33, "lp": lp,
+                                          "kappa_y": kappa_y, "sec": 6}
+        return mtag
 
     def _find_node(self, asm: _Assembly, point: Tuple[float, float, float]) -> int:
         """Structural node whose coordinates match `point` within 1e-6."""
@@ -3889,6 +4304,10 @@ class OpenSeesEngine:
         hinge_hist: Dict[Tuple[str, str], dict] = {
             key: {"rot": [], "moment": [], "state": []}
             for key in asm.hinge_backbone}
+        # v0.21 fiber PMM hinge histories (v0.19 shape + rot_plastic)
+        fiber_hist: Dict[Tuple[str, str], dict] = {
+            key: {"rot": [], "moment": [], "rot_plastic": [], "state": []}
+            for key in asm.fiber_hinges}
         from skyframe.design.hinges import hinge_state as _hstate
         for k in range(case.steps):
             ok = ops.analyze(1)
@@ -3922,6 +4341,34 @@ class OpenSeesEngine:
                     hh["moment"].append(m33)
                     hh["state"].append(
                         _hstate(r33, spec["bb"], spec["k33"]))
+            # v0.21 fiber PMM hinges: end BASIC rotation/moment about the
+            # strong axis — basicDeformation/basicForce order verified on
+            # openseespy 3.7.1: [N, Mz_i, Mz_j, My_i, My_j, T] (the end-i
+            # basic Mz of a base section equals V*L exactly by statics).
+            # States classify the CURVATURE-BASED plastic rotation
+            #   theta_pl = max(0, |kappa_z| - kappa_y) * lp
+            # (kappa_z from the end section's 'deformation' response,
+            # kappa_y = My/EI) against the SAME Table 9-7.1 / 10-7
+            # acceptance rotations — hinge_state with the yield shift
+            # removed (k = inf), so the bands read plastic rotations
+            # directly; a moment-free end stays elastic (kappa = 0).
+            for (uid, end), spec in asm.fiber_hinges.items():
+                bd = ops.eleResponse(spec["ele"], "basicDeformation")
+                bfrc = ops.eleResponse(spec["ele"], "basicForce")
+                sd = ops.eleResponse(spec["ele"], "section", spec["sec"],
+                                     "deformation")
+                idx = 1 if end == "i" else 2
+                rot = float(bd[idx]) if len(bd) > idx else 0.0
+                mom = float(bfrc[idx]) if len(bfrc) > idx else 0.0
+                kz = float(sd[1]) if len(sd) > 1 else 0.0
+                t_pl = max(0.0, abs(kz) - spec["kappa_y"]) * spec["lp"]
+                hh = fiber_hist[(uid, end)]
+                hh["rot"].append(rot)
+                hh["moment"].append(mom)
+                hh["rot_plastic"].append(t_pl)
+                hh["state"].append(_hstate(t_pl, spec["bb"], math.inf))
+                if abs(rot) > hinge_rot.get(uid, 0.0):
+                    hinge_rot[uid] = abs(rot)
 
         hinge_detail: List[dict] = []
         for (uid, end), spec in asm.hinge_backbone.items():
@@ -3932,6 +4379,18 @@ class OpenSeesEngine:
                 "a": bb["a"], "b": bb["b"], "c": bb["c"], "IO": bb["IO"],
                 "LS": bb["LS"], "CP": bb["CP"], "kind": bb["kind"],
                 "rot": hh["rot"], "moment": hh["moment"],
+                "state": hh["state"]})
+        for (uid, end), spec in asm.fiber_hinges.items():
+            bb = spec["bb"]
+            hh = fiber_hist[(uid, end)]
+            hinge_detail.append({
+                "uid": uid, "end": end, "My": bb["My"], "thy": bb["thy"],
+                "a": bb["a"], "b": bb["b"], "c": bb["c"], "IO": bb["IO"],
+                "LS": bb["LS"], "CP": bb["CP"], "kind": bb["kind"],
+                "fiber": True, "lp": spec["lp"],
+                "kappa_y": spec["kappa_y"],
+                "rot": hh["rot"], "moment": hh["moment"],
+                "rot_plastic": hh["rot_plastic"],
                 "state": hh["state"]})
 
         result = PushoverResults(
