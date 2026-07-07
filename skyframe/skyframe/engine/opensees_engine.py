@@ -118,9 +118,11 @@ import openseespy.opensees as ops
 from skyframe.core.buckling import BucklingResult, buckling_analysis
 from skyframe.core.mesh import MeshedModel, Segment, mesh_model
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
-                                 G_ACCEL, ISOLATOR_DEFAULT_KV, BuildingModel,
-                                 FrameMember, FrameSection, LoadCase,
-                                 LoadCombo, LoadPattern,
+                                 FP_DEFAULT_KINIT, G_ACCEL,
+                                 ISOLATOR_DEFAULT_KV, TFP_DEFAULT_MINFV,
+                                 TFP_DEFAULT_TOL, TFP_DEFAULT_UY,
+                                 BuildingModel, FrameMember, FrameSection,
+                                 LoadCase, LoadCombo, LoadPattern,
                                  ResponseSpectrumCase, SectionCut,
                                  ShellRegion, StoryForce)
 

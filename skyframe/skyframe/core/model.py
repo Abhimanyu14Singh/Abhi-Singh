@@ -302,8 +302,9 @@ class Story:
 
 AXIAL_LIMITS = ("both", "tension", "compression")
 
-# v0.19 automatic plastic-hinge assignment (see FrameMember.hinges)
-MEMBER_HINGE_OPTIONS = ("none", "auto_m3")
+# v0.19 automatic plastic-hinge assignment (see FrameMember.hinges);
+# v0.21 adds "fiber_pmm" (HingeRadau fiber P-M-M hinge in asce41 pushovers)
+MEMBER_HINGE_OPTIONS = ("none", "auto_m3", "fiber_pmm")
 
 
 @dataclass
@@ -353,6 +354,10 @@ class FrameMember:
     # case with hinges == "asce41" inserts trilinear M3 hinge springs at
     # BOTH ends with backbones from skyframe.design.hinges (steel Table
     # 9-7.1 / concrete-beam Table 10-7).  Ignored by every other analysis.
+    # v0.21 adds "fiber_pmm": in an asce41 pushover the member becomes a
+    # forceBeamColumn with HingeRadau FIBER hinge sections at both ends
+    # (lp = 0.5*h; full axial-biaxial interaction from the fibers);
+    # acceptance criteria stay the v0.19 table rotations (CONTRACT v0.21).
     hinges: str = "none"
 
     @property
@@ -909,7 +914,29 @@ RS_DIRECTIONAL_METHODS = ("100_30", "SRSS")
 #            bilinear (Steel01: initial k1, yield Fy, post-yield k2) shear
 #            in BOTH horizontal directions, elastic vertical kv, rotations
 #            free.  The link axis must be vertical (or zero length).
-LINK_TYPES = ("elastic", "damper", "gap", "hook", "isolator")
+# v0.21 device library II (axis vertical or zero length, like isolator):
+#   fp_isolator {R, mu, k_init=FP_DEFAULT_KINIT, kv=ISOLATOR_DEFAULT_KV,
+#            P0?}  single friction pendulum: OpenSees singleFPBearing with
+#            a Coulomb friction model (mu) and effective radius R (m) —
+#            post-slip lateral force F = mu*N + N*d/R with N the
+#            instantaneous axial load from the analysis; k_init = stick
+#            (pre-slip) stiffness; elastic vertical kv on -P.  ``P0`` is
+#            an OPTIONAL informational expected axial load (kN, echoed for
+#            UI/hand checks; the element always reads N from the model).
+#   triple_fp {R1, R2, R3, mu1, mu2, mu3, d1, d2, d3, W,
+#            uy=TFP_DEFAULT_UY, kv=ISOLATOR_DEFAULT_KV, kvt=kv,
+#            minFv=TFP_DEFAULT_MINFV, tol=TFP_DEFAULT_TOL}  OpenSees
+#            TripleFrictionPendulum: effective radii R1 (inner) / R2 / R3
+#            (outer), friction mu1..mu3, displacement capacities d1..d3
+#            (m), W = vertical load for initialization (kN); the fully-
+#            sliding tangent is W/(R2 + R3).
+#   multilinear {points: [[d1, F1], [d2, F2], ...], kv=ISOLATOR_DEFAULT_KV}
+#            uniaxialMaterial MultiLinear backbone (d strictly increasing,
+#            d1 > 0) applied to BOTH horizontal shear directions of a
+#            twoNodeLink (vertical axis; elastic vertical kv).  ``points``
+#            is the ONE non-scalar param value (nested [d, F] list).
+LINK_TYPES = ("elastic", "damper", "gap", "hook", "isolator",
+              "fp_isolator", "triple_fp", "multilinear")
 
 # required / optional param keys per advanced link type
 _LINK_PARAM_KEYS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
@@ -917,11 +944,23 @@ _LINK_PARAM_KEYS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "gap": (("k", "gap"), ()),
     "hook": (("k", "slack"), ()),
     "isolator": (("k1", "k2", "Fy"), ("kv",)),
+    "fp_isolator": (("R", "mu"), ("k_init", "kv", "P0")),
+    "triple_fp": (("R1", "R2", "R3", "mu1", "mu2", "mu3",
+                   "d1", "d2", "d3", "W"),
+                  ("uy", "kv", "kvt", "minFv", "tol")),
+    "multilinear": (("points",), ("kv",)),
 }
 
 DAMPER_DEFAULT_ALPHA = 1.0     # velocity exponent (1 = linear dashpot)
 DAMPER_DEFAULT_K = 1.0e6       # kN/m, Maxwell series spring ("rigid" spring)
 ISOLATOR_DEFAULT_KV = 1.0e7    # kN/m, vertical bearing stiffness
+FP_DEFAULT_KINIT = 1.0e5       # kN/m, FP stick (pre-slip) shear stiffness
+TFP_DEFAULT_UY = 1.0e-3        # m, TFP yield displacement (element uy)
+TFP_DEFAULT_MINFV = 0.1        # kN, TFP minimum vertical force bound
+TFP_DEFAULT_TOL = 1.0e-5       # TFP internal iteration tolerance
+#   (uy = 1e-3 / tol = 1e-5 verified stable on openseespy 3.7.1; the much
+#   tighter uy = 1e-4 + tol = 1e-10 combination stalls the element's
+#   internal iteration — probed empirically, hence these defaults)
 
 
 @dataclass
@@ -942,6 +981,11 @@ class LinkMember:
     length; an isolator's axis must be vertical (or zero length).  A node
     connected ONLY to advanced-type links is treated as a grounded anchor
     (fully fixed, reported as a support).
+
+    v0.21 device library II adds ``fp_isolator`` / ``triple_fp`` /
+    ``multilinear`` (see :data:`LINK_TYPES`); every param value is a
+    float EXCEPT ``multilinear``'s ``points`` (a nested ``[[d, F], ...]``
+    list, serialised as-is).
     """
 
     uid: str
@@ -949,17 +993,28 @@ class LinkMember:
     pj: Tuple[float, float, float]
     stiffness: List[float]                      # 6 entries, >= 0
     link_type: str = "elastic"                  # v0.15, one of LINK_TYPES
-    params: Dict[str, float] = field(default_factory=dict)   # v0.15
+    params: Dict[str, object] = field(default_factory=dict)  # v0.15/v0.21
 
     @property
     def length(self) -> float:
         return math.dist(self.pi, self.pj)
 
+    @staticmethod
+    def coerce_params(params) -> Dict[str, object]:
+        """Float-coerce a params dict, keeping ``points`` as [[d, F], ...]."""
+        out: Dict[str, object] = {}
+        for k, v in (params or {}).items():
+            if str(k) == "points":
+                out["points"] = [[float(p[0]), float(p[1])] for p in v]
+            else:
+                out[str(k)] = float(v)
+        return out
+
     def to_dict(self) -> dict:
         return {"uid": self.uid, "pi": list(self.pi), "pj": list(self.pj),
                 "stiffness": [float(k) for k in self.stiffness],
                 "link_type": self.link_type,
-                "params": {k: float(v) for k, v in self.params.items()}}
+                "params": self.coerce_params(self.params)}
 
 
 DIAPHRAGM_OPTIONS = ("rigid", "none")
@@ -1090,6 +1145,13 @@ class BuildingModel:
     name: str = "Untitled Building"
     materials: Dict[str, Material] = field(default_factory=dict)
     sections: Dict[str, FrameSection] = field(default_factory=dict)
+    # v0.21 Section Designer: name -> DesignerSection (arbitrary polygon
+    # fiber sections).  Each designer section is MIRRORED by a FrameSection
+    # of the same name in ``sections`` (kept in sync by
+    # ``add_designer_section`` / ``remove_designer_section``) so it plugs
+    # into the existing analysis pipeline unchanged.
+    designer_sections: Dict[str, "DesignerSection"] = field(
+        default_factory=dict)
     shell_sections: Dict[str, ShellSection] = field(default_factory=dict)
     grid: Optional[GridSystem] = None
     # v0.14 multiple named grid systems (rotated / radial). ``grid`` stays as
@@ -1160,6 +1222,44 @@ class BuildingModel:
         self._validate_section_mods(sec)
         self.sections[sec.name] = sec
         return sec
+
+    # ---------------- v0.21 Section Designer ----------------
+    def add_designer_section(self, ds) -> "DesignerSection":
+        """Add/replace a designer section AND its mirrored FrameSection.
+
+        Validates the polygons/rebar against the material table, computes
+        the exact polygon properties, and stores a same-named
+        :class:`FrameSection` (transformed A/I, approximate J, bbox b/h —
+        see :mod:`skyframe.core.sections_designer`) so the section can be
+        assigned to members like any other.  Preserves any existing
+        same-named section's v0.4 stiffness modifiers.
+        """
+        from skyframe.core.sections_designer import (make_frame_section,
+                                                     validate_designer_section)
+        validate_designer_section(ds, self.materials)
+        sec = make_frame_section(ds, self.materials)
+        old = self.sections.get(ds.name)
+        if old is not None:                      # keep the modifiers
+            sec.mod_A, sec.mod_I33 = old.mod_A, old.mod_I33
+            sec.mod_I22, sec.mod_J = old.mod_I22, old.mod_J
+        self.designer_sections[ds.name] = ds
+        self.sections[ds.name] = sec
+        return ds
+
+    def remove_designer_section(self, name: str) -> None:
+        """Delete a designer section and its mirrored FrameSection.
+
+        Raises ``KeyError`` for an unknown name and ``ValueError`` when a
+        member still uses the section.
+        """
+        if name not in self.designer_sections:
+            raise KeyError(name)
+        used = [m.uid for m in self.members if m.section == name]
+        if used:
+            raise ValueError(f"Designer section {name}: still used by "
+                             f"member(s) {used}")
+        del self.designer_sections[name]
+        self.sections.pop(name, None)
 
     @staticmethod
     def _validate_section_mods(sec: FrameSection) -> None:
@@ -1730,8 +1830,7 @@ class BuildingModel:
                         tuple(float(v) for v in pj),
                         [float(k) for k in stiffness],
                         link_type=str(link_type),
-                        params={str(k): float(v)
-                                for k, v in (params or {}).items()})
+                        params=LinkMember.coerce_params(params))
         self._validate_link(lk)
         if any(o.uid == lk.uid for o in self.links):
             raise ValueError(f"Duplicate link uid {lk.uid!r}")
@@ -1801,6 +1900,8 @@ class BuildingModel:
                 raise ValueError(f"Link {lk.uid} ({ltype}): unknown param "
                                  f"{key!r} (allowed: "
                                  f"{list(required) + list(optional)})")
+            if key == "points":
+                continue                    # nested list, validated below
             if not (isinstance(v, (int, float)) and math.isfinite(v)):
                 raise ValueError(f"Link {lk.uid} ({ltype}): param {key!r} "
                                  f"must be a finite number (got {v!r})")
@@ -1821,7 +1922,7 @@ class BuildingModel:
             if prm[open_key] < 0.0:
                 raise ValueError(f"Link {lk.uid} ({ltype}): {open_key} must "
                                  "be >= 0")
-        else:  # isolator
+        elif ltype == "isolator":
             if prm["k1"] <= 0.0:
                 raise ValueError(f"Link {lk.uid} (isolator): k1 must be > 0")
             if prm["k2"] < 0.0 or prm["k2"] >= prm["k1"]:
@@ -1831,9 +1932,63 @@ class BuildingModel:
                 raise ValueError(f"Link {lk.uid} (isolator): Fy must be > 0")
             if prm.get("kv", ISOLATOR_DEFAULT_KV) <= 0.0:
                 raise ValueError(f"Link {lk.uid} (isolator): kv must be > 0")
+        elif ltype == "fp_isolator":
+            for key in ("R", "mu"):
+                if prm[key] <= 0.0:
+                    raise ValueError(f"Link {lk.uid} (fp_isolator): {key} "
+                                     "must be > 0")
+            if prm.get("k_init", FP_DEFAULT_KINIT) <= 0.0:
+                raise ValueError(f"Link {lk.uid} (fp_isolator): k_init must "
+                                 "be > 0")
+            if prm.get("kv", ISOLATOR_DEFAULT_KV) <= 0.0:
+                raise ValueError(f"Link {lk.uid} (fp_isolator): kv must "
+                                 "be > 0")
+            if "P0" in prm and prm["P0"] <= 0.0:
+                raise ValueError(f"Link {lk.uid} (fp_isolator): P0 must "
+                                 "be > 0")
+        elif ltype == "triple_fp":
+            for key in ("R1", "R2", "R3", "mu1", "mu2", "mu3",
+                        "d1", "d2", "d3", "W"):
+                if prm[key] <= 0.0:
+                    raise ValueError(f"Link {lk.uid} (triple_fp): {key} "
+                                     "must be > 0")
+            for key, dflt in (("uy", TFP_DEFAULT_UY),
+                              ("kv", ISOLATOR_DEFAULT_KV),
+                              ("kvt", ISOLATOR_DEFAULT_KV),
+                              ("tol", TFP_DEFAULT_TOL)):
+                if prm.get(key, dflt) <= 0.0:
+                    raise ValueError(f"Link {lk.uid} (triple_fp): {key} "
+                                     "must be > 0")
+            if prm.get("minFv", TFP_DEFAULT_MINFV) < 0.0:
+                raise ValueError(f"Link {lk.uid} (triple_fp): minFv must "
+                                 "be >= 0")
+        else:  # multilinear
+            pts = prm.get("points")
+            if (not isinstance(pts, (list, tuple)) or len(pts) < 2
+                    or not all(isinstance(p, (list, tuple)) and len(p) == 2
+                               for p in pts)):
+                raise ValueError(f"Link {lk.uid} (multilinear): points must "
+                                 "be a list of at least 2 [d, F] pairs")
+            for p in pts:
+                if not all(isinstance(v, (int, float)) and math.isfinite(v)
+                           for v in p):
+                    raise ValueError(f"Link {lk.uid} (multilinear): points "
+                                     "entries must be finite numbers")
+            if pts[0][0] <= 0.0:
+                raise ValueError(f"Link {lk.uid} (multilinear): the first "
+                                 "backbone displacement must be > 0")
+            for (dA, _fA), (dB, _fB) in zip(pts[:-1], pts[1:]):
+                if dB <= dA:
+                    raise ValueError(f"Link {lk.uid} (multilinear): backbone "
+                                     "displacements must be strictly "
+                                     "increasing")
+            if prm.get("kv", ISOLATOR_DEFAULT_KV) <= 0.0:
+                raise ValueError(f"Link {lk.uid} (multilinear): kv must "
+                                 "be > 0")
+        if ltype in ("isolator", "fp_isolator", "triple_fp", "multilinear"):
             dx = abs(lk.pj[0] - lk.pi[0]) + abs(lk.pj[1] - lk.pi[1])
             if length > 1e-9 and dx > 1e-6:
-                raise ValueError(f"Link {lk.uid} (isolator): the link axis "
+                raise ValueError(f"Link {lk.uid} ({ltype}): the link axis "
                                  "must be vertical (or zero length)")
         if ltype in ("damper", "gap", "hook") and length < 1e-9:
             raise ValueError(f"Link {lk.uid} ({ltype}): the link axis is "
@@ -2065,6 +2220,11 @@ class BuildingModel:
                 raise ValueError(f"Section {sec.name}: unknown material "
                                  f"{sec.material}")
             self._validate_section_mods(sec)
+        if self.designer_sections:
+            from skyframe.core.sections_designer import \
+                validate_designer_section
+            for ds in self.designer_sections.values():
+                validate_designer_section(ds, self.materials)
         for ssec in self.shell_sections.values():
             if ssec.material not in self.materials:
                 raise ValueError(f"Shell section {ssec.name}: unknown "
@@ -2226,6 +2386,9 @@ class BuildingModel:
             "name": self.name,
             "materials": {k: v.to_dict() for k, v in self.materials.items()},
             "sections": {k: v.to_dict() for k, v in self.sections.items()},
+            "designer_sections": {k: v.to_dict()
+                                  for k, v in
+                                  self.designer_sections.items()},
             "shell_sections": {k: v.to_dict()
                                for k, v in self.shell_sections.items()},
             # v0.14: emit BOTH the primary/legacy `grid` (for old readers) and
@@ -2297,6 +2460,12 @@ class BuildingModel:
                 mod_I33=float(sd.get("mod_I33", 1.0)),
                 mod_I22=float(sd.get("mod_I22", 1.0)),
                 mod_J=float(sd.get("mod_J", 1.0)))
+        if d.get("designer_sections"):
+            from skyframe.core.sections_designer import DesignerSection
+            for name, dd in d["designer_sections"].items():
+                ds = DesignerSection.from_dict(dd)
+                ds.name = ds.name or name
+                mdl.designer_sections[name] = ds
         for name, sd in (d.get("shell_sections") or {}).items():
             mdl.shell_sections[name] = ShellSection(
                 name=sd.get("name", name), material=sd["material"],
@@ -2376,8 +2545,7 @@ class BuildingModel:
                 pj=tuple(float(v) for v in ld["pj"]),
                 stiffness=[float(k) for k in ld["stiffness"]],
                 link_type=str(ld.get("link_type", "elastic")),
-                params={str(k): float(v)
-                        for k, v in (ld.get("params") or {}).items()}))
+                params=LinkMember.coerce_params(ld.get("params"))))
         mdl.story_masses = {k: float(v)
                             for k, v in (d.get("story_masses") or {}).items()}
         mdl.mass_from_patterns = {
