@@ -1418,6 +1418,23 @@ function renderProps() {
           <input type="number" class="linkP" data-pk="${esc(k)}" step="any"
             value="${v === undefined ? "" : v}" placeholder="${v === undefined ? "mixed" : ""}"></label>`;
         }).join("") + `</div>`;
+      // v0.21 — multilinear devices: editable (d, F) points table
+      if (def.points) {
+        if (links.length === 1) {
+          const pts = ((links[0].params || {}).points) || [];
+          html += `
+      <div class="ml-points" id="mlPoints">
+        <div class="ml-row head"><span>d (m)</span><span>F (kN)</span><span></span></div>` +
+            pts.map((p, i) => `<div class="ml-row" data-i="${i}">
+          <input type="number" step="0.01" data-mk="0" value="${p[0]}" title="Deformation d (m)">
+          <input type="number" step="10" data-mk="1" value="${p[1]}" title="Force F (kN)">
+          <button class="chip-x ml-del" data-del="${i}" title="Remove point">✕</button></div>`).join("") +
+          `</div>
+      <button class="btn btn-small btn-block" id="mlAdd" style="margin-top:6px">+ Point</button>`;
+        } else {
+          html += `<p class="muted" style="font-size:11px">Select a single link to edit the (d, F) points table.</p>`;
+        }
+      }
     }
     if (lt !== undefined)
       html += `<p class="muted link-note" style="font-size:11px">${esc(ME.LINK_TYPES[lt].note)}</p>`;
@@ -1605,9 +1622,49 @@ function renderProps() {
       const v = parseFloat(inp.value);
       if (!isFinite(v)) return;
       const k = inp.dataset.pk;
-      for (const l of links) { l.params = l.params || {}; l.params[k] = v; }
+      for (const l of links) {
+        // guard against a late blur-change from a replaced form: only write
+        // keys that belong to the link's CURRENT device type
+        if (!ME.LINK_TYPES[ME.linkTypeOf(l)].params.some(([pk]) => pk === k)) continue;
+        l.params = l.params || {};
+        l.params[k] = v;
+      }
       markDirty();
     }));
+
+  /* v0.21 — multilinear link (d, F) points table (single link selected) */
+  if (links.length === 1 && $("mlPoints")) {
+    const l0 = links[0];
+    const pts = (l0.params = l0.params || {}).points ||
+      (l0.params.points = ME.LINK_TYPES.multilinear.defaultPoints.map(p => [...p]));
+    box.querySelectorAll("#mlPoints .ml-row:not(.head) input").forEach(inp =>
+      inp.addEventListener("change", () => {
+        const i = parseInt(inp.closest(".ml-row").dataset.i, 10);
+        const v = parseFloat(inp.value);
+        if (!isFinite(v) || !pts[i]) {
+          inp.value = pts[i] ? String(pts[i][+inp.dataset.mk]) : "";
+          return;
+        }
+        pts[i][+inp.dataset.mk] = v;
+        markDirty();
+      }));
+    box.querySelectorAll(".ml-del").forEach(btn =>
+      btn.addEventListener("click", () => {
+        if (pts.length <= 1) {
+          toast("Multilinear link", "At least one (d, F) point is required", "error", 3500);
+          return;
+        }
+        pts.splice(parseInt(btn.dataset.del, 10), 1);
+        markDirty();
+        renderProps();
+      }));
+    on("mlAdd", "click", () => {
+      const last = pts[pts.length - 1] || [0.05, 100];
+      pts.push([+(last[0] + 0.05).toFixed(3), +(last[1] + 30).toFixed(1)]);
+      markDirty();
+      renderProps();
+    });
+  }
 
   /* v0.15 — wall pier label + model-level auto-label toggle */
   on("propPier", "change", e => {
@@ -1868,7 +1925,7 @@ function renderSectionMgr() {
       const props = document.createElement("span");
       props.className = "sec-props";
       props.title = `A ${sci(s.A)} m² · I33 ${sci(s.I33)} m⁴ · I22 ${sci(s.I22)} m⁴ · J ${sci(s.J)} m⁴`;
-      props.textContent = `${s.shape === "W" ? "W-shape" : "library"} · A ${sci(s.A)} · I33 ${sci(s.I33)}`;
+      props.textContent = `${s.shape === "W" ? "W-shape" : s.shape === "designer" ? "designer" : "library"} · A ${sci(s.A)} · I33 ${sci(s.I33)}`;
       frameBox.appendChild(mgrRow([
         nameIn,
         props,
@@ -1932,6 +1989,27 @@ function renderSectionMgr() {
         delete m.materials[name]; markDirty(); renderSectionMgr();
       }),
     ]));
+  }
+
+  /* v0.21 — designer (polygon + rebar) sections: list + re-edit launcher */
+  const dsBox = $("designerSectionRows");
+  if (dsBox) {
+    dsBox.textContent = "";
+    const entries = Object.entries(m.designer_sections || {});
+    if (!entries.length) {
+      dsBox.innerHTML = `<p class="lib-none">No designer sections yet — click “Section Designer…” to draw one.</p>`;
+    } else {
+      dsBox.appendChild(mgrRow(["Name", "A (m²)", "I33 (m⁴)", "I22 (m⁴)", ""], "mgr-row lib head"));
+      for (const [name] of entries) {
+        const s = m.sections[name] || {};
+        const edit = document.createElement("button");
+        edit.className = "btn btn-small";
+        edit.textContent = "Edit…";
+        edit.title = `Open ${name} in the Section Designer`;
+        edit.addEventListener("click", () => openSectionDesigner(name));
+        dsBox.appendChild(mgrRow([name, sci(s.A), sci(s.I33), sci(s.I22), edit], "mgr-row lib"));
+      }
+    }
   }
 }
 
@@ -6387,6 +6465,14 @@ function wire() {
   $("addFrameSection").addEventListener("click", () => {
     ME.addFrameSection(store.model); markDirty(); renderSectionMgr();
   });
+
+  /* ---- v0.21: section designer dialog */
+  $("openDesignerBtn").addEventListener("click", () => openSectionDesigner());
+  $("designerClose").addEventListener("click", () => sectionDesigner.close());
+  $("designerDone").addEventListener("click", () => sectionDesigner.close());
+  $("designerModal").addEventListener("click", e => {
+    if (e.target === $("designerModal")) sectionDesigner.close();
+  });
   $("addShellSection").addEventListener("click", () => {
     ME.addShellSection(store.model); markDirty(); renderSectionMgr();
   });
@@ -6563,6 +6649,7 @@ function wire() {
     // v0.3 dialogs respond to Escape even while an input has focus
     if (e.key === "Escape") {
       if (confirmResolve) { settleConfirm(false); return; }
+      if (!$("designerModal").classList.contains("hidden")) { sectionDesigner.handleEscape(); return; }
       if (!$("importModal").classList.contains("hidden")) { $("importModal").classList.add("hidden"); return; }
       if (!$("galleryModal").classList.contains("hidden")) { $("galleryModal").classList.add("hidden"); return; }
       if (!$("saveAsModal").classList.contains("hidden")) { $("saveAsModal").classList.add("hidden"); return; }
@@ -6636,6 +6723,15 @@ async function boot() {
     onErase: handleErase,
     onSelect: handleSelect,
     onReadout: t => { $("planReadout").textContent = t; },
+  });
+  sectionDesigner = new SectionDesigner({          // v0.21
+    getModel: () => store.model,
+    toast,
+    onUpsert: section => applyDesignerAction("upsert", section),
+    onDelete: name => applyDesignerAction("delete", { name }),
+    onPmm: (name, axis) => designerPmmFetch(name, axis),
+    isSectionInUse: name => ME.sectionInUse(store.model, name),
+    onClose: () => { renderSectionMgr(); renderStaticViews(); renderProps(); },
   });
   loadsEditor = new LoadsEditor($("loadsPane"), {
     getModel: () => store.model,
@@ -6738,6 +6834,9 @@ async function boot() {
     slabStripSvg, designSlab, renderVibTable, runVibration, vibRows,
     fetchVibration, startVibPulse, stopVibPulse, clearVibTimer,
     mockDesignComposite, mockDesignSlab, mockVibration,
+    // v0.21 — section designer, fiber PMM hinges, FP/multilinear links
+    sectionDesigner, openSectionDesigner, designerAction, applyDesignerAction,
+    designerPmmFetch, mockDesignerUpsert, mockDesignerDelete, mockDesignerPmm,
   };
 }
 
