@@ -136,8 +136,10 @@ export function normalizeModel(m) {
         ? ls[k].map(Number) : [0, 0, 0];
     }
     ls.kz = (isFinite(ls.kz) && ls.kz >= 0) ? +ls.kz : 30000;
+    // kx/ky are optional lateral beds — the backend encodes "absent" as 0.0,
+    // so zero (or garbage) collapses back to "unset" here
     for (const k of ["kx", "ky"]) {
-      if (ls[k] == null || !isFinite(ls[k]) || ls[k] < 0) delete ls[k];
+      if (ls[k] == null || !isFinite(ls[k]) || ls[k] <= 0) delete ls[k];
       else ls[k] = +ls[k];
     }
     ls.compression_only = !!ls.compression_only;
