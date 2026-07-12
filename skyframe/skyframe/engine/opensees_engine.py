@@ -1418,6 +1418,15 @@ class OpenSeesEngine:
         return any(getattr(lk, "link_type", "elastic") != "elastic"
                    for lk in self.model.links)
 
+    def _compression_only_springs_present(self) -> bool:
+        """v0.22: any compression-only line/area spring -> Newton statics."""
+        if any(ls.compression_only and ls.kz > 0.0
+               for ls in getattr(self.model, "line_springs", [])):
+            return True
+        return any((getattr(r, "area_spring", None) or {})
+                   .get("compression_only", False)
+                   for r in self.model.shells)
+
     def _nonlinear_static_links_present(self) -> bool:
         """True if any link makes STATIC cases nonlinear (gap/hook/isolator;
         dampers carry no static force — see NONLINEAR_STATIC_LINK_TYPES)."""
@@ -2186,8 +2195,17 @@ class OpenSeesEngine:
             # element edge) a stiff tie-beam CHAIN end_a -> hangs -> end_b is
             # laid along the edge, sized EDGE_TIE_FACTOR x the edge region's
             # shell section per unit width x the full edge length (see the
-            # constant note).  Elements only — no MP constraints, so no
-            # constraint chains (the v0.19 lesson).
+            # constant note).  The chain's OUTER ends are moment-RELEASED
+            # (a pinned rigid bar): the chain then enforces exactly the
+            # per-edge interpolation kinematics (interior nodes held on the
+            # rotated chord, interface forces split (1-t, t)) WITHOUT
+            # coupling the end-node rotations — unpinned chains merge across
+            # collinear edges into one spuriously rigid line (measured
+            # -43% tip deflection on the two-region validation wall vs
+            # -4.7% pinned).  Torsion uses the UNSCALED t^3/12*L_e (a soft,
+            # regular placeholder — plate-rotation coupling along the edge
+            # is not part of the interpolation tie).  Elements only — no
+            # MP constraints, so no constraint chains (the v0.19 lesson).
             if getattr(model, "edge_constraints", False):
                 for ruid, na, nb, hangs in edge_tie_chains(mesh):
                     region = regions[ruid]
@@ -2197,6 +2215,7 @@ class OpenSeesEngine:
                     L_e = math.dist(mesh.points[na], mesh.points[nb])
                     A_tie = EDGE_TIE_FACTOR * t_sh * L_e
                     I_tie = EDGE_TIE_FACTOR * t_sh ** 3 / 12.0 * L_e
+                    J_tie = t_sh ** 3 / 12.0 * L_e
                     E_s = mat.E * ssec.mod
                     G_s = mat.G * ssec.mod
                     pa, pb = mesh.points[na], mesh.points[nb]
@@ -2206,16 +2225,22 @@ class OpenSeesEngine:
                              if abs(axis[2]) > 1.0 - _TOL else (0.0, 0.0, 1.0))
                     chain = [na] + hangs + [nb]
                     eles: List[int] = []
-                    for ni_c, nj_c in zip(chain[:-1], chain[1:]):
+                    n_seg = len(chain) - 1
+                    for k_c, (ni_c, nj_c) in enumerate(zip(chain[:-1],
+                                                           chain[1:])):
                         etag += 1
                         ops.geomTransf("PDelta" if pdelta else "Linear",
                                        etag, *vecxz)
+                        code = ((1 if k_c == 0 else 0)
+                                + (2 if k_c == n_seg - 1 else 0))
+                        extra = (["-releasez", code, "-releasey", code]
+                                 if code else [])
                         ops.element("elasticBeamColumn", etag,
                                     ni_c + 1, nj_c + 1, A_tie, E_s, G_s,
-                                    I_tie, I_tie, I_tie, etag)
+                                    J_tie, I_tie, I_tie, etag, *extra)
                         eles.append(etag)
-                        rot_add(ni_c, eye3)
-                        rot_add(nj_c, eye3)
+                    for h in hangs:
+                        rot_add(h, eye3)   # interior nodes: chain-stiffened
                     asm.edge_ties.append({"region": ruid,
                                           "chain": [n + 1 for n in chain],
                                           "eles": eles})
@@ -2959,6 +2984,23 @@ class OpenSeesEngine:
                 return t
         raise ValueError(f"No FE node at point {tuple(point)}")
 
+    def _story_slab_nodes(self, asm: _Assembly, story: str) -> List[int]:
+        """Meshed-slab node tags in a story plane (v0.22 semi-rigid).
+
+        The tags of every shell-mesh node that (a) belongs to a quad of a
+        ``kind == "slab"`` region and (b) lies in the story's node set
+        (i.e. at the story elevation), sorted.  Empty when the story has
+        no meshed slab.
+        """
+        slab_regions = {r.uid for r in self.model.shells
+                        if r.kind == "slab" and r.behavior == "shell"}
+        if not slab_regions:
+            return []
+        story_set = set(asm.story_nodes.get(story, ()))
+        tags = {n + 1 for q in asm.mesh.quads if q.region in slab_regions
+                for n in q.nodes}
+        return sorted(tags & story_set)
+
     # ------------------------------------------------------------- loading
     def _apply_pattern(self, asm: _Assembly, pat_name: str, scale: float) -> None:
         """Add one scaled load pattern into the active OpenSees pattern."""
@@ -3013,8 +3055,58 @@ class OpenSeesEngine:
             if not nodes:
                 raise ValueError(f"Story force on story {sf.story!r} which has "
                                  "no nodes")
-            for t in nodes:
-                ops.load(t, fx / len(nodes), fy / len(nodes), 0.0, 0.0, 0.0, 0.0)
+            # v0.22 semi-rigid auto distribution: a "none"-diaphragm story
+            # that HAS a meshed shell slab spreads the force over the SLAB
+            # MESH NODES weighted by tributary mass (plain node count when
+            # the story carries no mass), and realizes the accidental-
+            # torsion moment as a linear ANTISYMMETRIC force-couple field:
+            #   fx_i = fx*w_i/W - mu*w_i*(y_i - y_bar),  mu = Mz_x/Iw_y,
+            #   fy_i = fy*w_i/W + nu*w_i*(x_i - x_bar),  nu = Mz_y/Iw_x,
+            # with Mz_x = fx*ecc*Ly, Mz_y = fy*ecc*Lx (the v0.8 master-node
+            # values), x_bar/y_bar the weighted node centroid and
+            # Iw_y = sum w_i (y_i - y_bar)^2 (Iw_x likewise) — zero net
+            # force added, exact moment.  Stories WITHOUT slab mesh nodes
+            # keep the pre-v0.22 equal split over the story nodes.
+            slab_nodes = self._story_slab_nodes(asm, sf.story)
+            if not slab_nodes:
+                for t in nodes:
+                    ops.load(t, fx / len(nodes), fy / len(nodes),
+                             0.0, 0.0, 0.0, 0.0)
+                continue
+            w = [asm.mass_map.get((t, 1), 0.0) for t in slab_nodes]
+            if not any(v > 0.0 for v in w):
+                w = [1.0] * len(slab_nodes)
+            wsum = sum(w)
+            xs = [asm.node_coords[t][0] for t in slab_nodes]
+            ys = [asm.node_coords[t][1] for t in slab_nodes]
+            x_bar = sum(wi * x for wi, x in zip(w, xs)) / wsum
+            y_bar = sum(wi * y for wi, y in zip(w, ys)) / wsum
+            mu = nu_c = 0.0
+            if acc_tors:
+                iw_y = sum(wi * (y - y_bar) ** 2 for wi, y in zip(w, ys))
+                iw_x = sum(wi * (x - x_bar) ** 2 for wi, x in zip(w, xs))
+                mz_x = fx * ecc * ly
+                mz_y = fy * ecc * lx
+                if mz_x != 0.0:
+                    if iw_y > 1e-12:
+                        mu = mz_x / iw_y
+                    else:
+                        warnings.warn(
+                            f"Story {sf.story!r}: accidental torsion from "
+                            "fx cannot be realized (slab nodes have no y "
+                            "spread); torsion couple skipped", UserWarning)
+                if mz_y != 0.0:
+                    if iw_x > 1e-12:
+                        nu_c = mz_y / iw_x
+                    else:
+                        warnings.warn(
+                            f"Story {sf.story!r}: accidental torsion from "
+                            "fy cannot be realized (slab nodes have no x "
+                            "spread); torsion couple skipped", UserWarning)
+            for t, wi, x, y in zip(slab_nodes, w, xs, ys):
+                ops.load(t, fx * wi / wsum - mu * wi * (y - y_bar),
+                         fy * wi / wsum + nu_c * wi * (x - x_bar),
+                         0.0, 0.0, 0.0, 0.0)
 
         # v0.7 self-weight: an ETABS-style self-weight factor turns each
         # material's real weight into exact loads through the existing member-
@@ -3040,7 +3132,8 @@ class OpenSeesEngine:
                 mat = model.materials.get(ssec.material) if ssec else None
                 if ssec is None or mat is None:
                     continue
-                q_sw = swf * ssec.thickness * mat.unit_weight   # kN/m^2 down
+                # v0.22: layered sections weigh their summed layer thickness
+                q_sw = swf * ssec.total_thickness * mat.unit_weight  # kN/m^2
                 if q_sw == 0.0:
                     continue
                 self._apply_area_load(asm, region.uid, q_sw * scale)
@@ -3888,7 +3981,7 @@ class OpenSeesEngine:
                     mat = model.materials.get(ssec.material) if ssec else None
                     if ssec is None or mat is None:
                         continue
-                    q = swf * ssec.thickness * mat.unit_weight
+                    q = swf * ssec.total_thickness * mat.unit_weight
                     total += scale * self._area_load_fz(asm, region, q)
             for al in pat.area_loads:
                 region = model._shell(al.region_uid)

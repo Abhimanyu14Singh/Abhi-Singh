@@ -143,9 +143,9 @@ scrutinized benchmark tests.
 - [x] 6. Wall/slab openings; elevation-view drawing (Wave 6)
 - [x] 7. Nonlinear static pushover (OpenSees fiber hinges) (Wave 6)
 
-## Status — v1.7 released 🎉
+## Status — v1.8 released 🎉
 All waves above are complete with engine + REST API + UI, pinned by a
-507-test suite. The app builds standalone locally (`packaging/build.sh`).
+532-test suite. The app builds standalone locally (`packaging/build.sh`).
 
 ## Scheduled waves toward ETABS v23 parity
 Driven by `docs/ETABS23_GAP_MATRIX.md` (compiled from CSI ETABS v23 docs
@@ -179,9 +179,9 @@ and release notes). No gap is skipped — everything below is scheduled.
       idealization — no separate type needed)
 
 ### Wave 23 — meshing & advanced shells
-- [ ] Auto edge constraints (mismatched-mesh zipper)
-- [ ] Nonlinear layered shell walls; line springs / nonlinear area springs
-- [ ] Semi-rigid diaphragm auto lateral-load distribution
+- [x] Auto edge constraints (mismatched-mesh zipper)
+- [x] Nonlinear layered shell walls; line springs / nonlinear area springs
+- [x] Semi-rigid diaphragm auto lateral-load distribution
 
 ### Wave 24 — code breadth & steel design depth
 - [ ] ASCE 7-22 updates; EC2/EC3 frame design; NBCC wind/seismic

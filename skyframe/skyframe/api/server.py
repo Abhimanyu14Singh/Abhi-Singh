@@ -160,6 +160,26 @@ v0.21 additions:
   appear in ``hinges`` with the extra key ``"fiber": true`` (rot/moment
   are the member-end BASIC rotation / moment of the fiber element).
 
+v0.22 additions (no new endpoints — the model round trip carries every
+new field, see CONTRACT.md "v0.22 additions"):
+
+* ``POST /api/model`` round-trips ``edge_constraints`` (bool: the auto
+  edge-constraint "zipper" that ties mesh-mismatched shell interfaces
+  and mid-edge frame ends with stiff pinned tie-beam chains),
+  ``shell_sections[*].layered`` (``{"layers": [{t, material, kind:
+  "concrete"|"steel", angle?: 0|90}, ...]}`` — nonlinear analyses build
+  an OpenSees LayeredShell, linear analyses use the summed elastic
+  thickness), ``line_springs`` (``[{p1, p2, kz, kx, ky,
+  compression_only}, ...]`` — kN/m per m, discretized over the FE nodes
+  on the line by tributary length) and ``shells[*].area_spring``
+  (``{kz, compression_only}`` — kN/m per m^2 on every mesh node by
+  tributary area); 400 on bad shapes via ``validate()``;
+* story forces on a "none"-diaphragm story that has a MESHED SLAB now
+  auto-distribute over the slab mesh nodes by tributary mass (node
+  count when massless), with accidental torsion realized as an exact
+  antisymmetric force-couple field; slab-less stories keep the legacy
+  equal split.
+
 Saved models live as ``<name>.skyframe.json`` files in ``~/.skyframe/models``
 (override with the ``SKYFRAME_MODELS_DIR`` environment variable; the
 directory is created on demand).  Names must match ``[A-Za-z0-9 _-]{1,60}``.

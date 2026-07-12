@@ -1,5 +1,27 @@
 # SkyFrame changelog
 
+## 1.8.0
+
+### Wave 23 — meshing & advanced shells
+- **Auto edge constraints**: turn on one switch and mismatched shell
+  meshes (and frame ends landing mid-edge) zip together via stiff
+  interpolation tie chains — validated by a two-region wall matching
+  its monolithic twin to ~5% (vs +19% disconnected) and exact patch
+  equilibrium.
+- **Nonlinear layered shell walls**: per-layer concrete/steel shell
+  sections (LayeredShell with real tension-softening concrete laws) for
+  pushover and nonlinear time history; genuine cracking and post-peak
+  softening, elastic analyses unchanged.
+- **Line springs & compression-only area springs**: grounded soil lines
+  under wall edges and subgrade area springs under slabs, both with
+  uplift-releasing (compression-only) behavior — reactions match
+  tributary closed forms exactly.
+- **Semi-rigid diaphragm load distribution**: story forces on
+  diaphragm-free floors distribute over the slab mesh automatically,
+  with the accidental-torsion couple field preserved (base shear and
+  torque match the rigid-diaphragm run to 1e-9).
+- 532 tests (25 new).
+
 ## 1.7.0
 
 ### Wave 22 — section designer, fiber hinges & seismic devices

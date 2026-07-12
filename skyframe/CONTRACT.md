@@ -2653,3 +2653,191 @@ TH Newton like gap/hook/isolator); link-only nodes are grounded anchors.
 "fiber_pmm"`` and the three new link types (400 via ``validate()``);
 asce41 pushover ``hinges`` entries gain ``"fiber": true`` for fiber
 hinges.
+
+---
+
+# v0.22 additions — edge constraints, layered shells, line/area springs, semi-rigid distribution
+
+Units: SI everywhere — m, kN, kPa.
+
+## Auto edge constraints (`BuildingModel.edge_constraints`, the "zipper")
+
+```python
+edge_constraints: bool = False      # round-trips; validate(): must be bool
+EDGE_TIE_FACTOR = 1.0e6             # engine tie-beam scale
+```
+
+`False` (default) keeps every pre-v0.22 result bit-identical.  `True`:
+at BUILD time the engine finds every **hanging node** — a mesh point
+(shell node OR frame node) lying strictly inside another shell's element
+edge within the 1e-6 pool tolerance without being one of that edge's end
+nodes (`skyframe.core.mesh.edge_tie_chains(mesh)`: all quad edges,
+deduplicated by unordered end-node pair, each keeping the first
+contributing region's uid; returns `(region_uid, end_a, end_b,
+[hangs sorted by edge position])`, deterministic order).  Structured
+meshing guarantees a region never hangs on its own edges, so every chain
+is a genuine mesh-mismatched interface (shell/shell T-junction or a
+frame member end landing mid-edge).
+
+**Tie realization** — a stiff `elasticBeamColumn` CHAIN
+`end_a -> hangs -> end_b` laid along the edge, sized from the edge
+region's shell section (`t` = `total_thickness`, `E_s = E*mod`,
+`G_s = G*mod`) per unit width times the FULL edge length `L_e`:
+
+    A_tie = EDGE_TIE_FACTOR * t * L_e            # membrane   t*E per m
+    I_tie = EDGE_TIE_FACTOR * t^3/12 * L_e       # bending  t^3*E/12 per m
+    J_tie =                   t^3/12 * L_e       # soft placeholder torsion
+
+The chain's OUTER ends are moment-RELEASED (`-releasez/-releasey`): a
+pinned rigid bar holds the interior nodes on the rotated chord and
+splits the interface force `(1-t, t)` — the interpolation-tie kinematics
+— without coupling end-node rotations.  (Unpinned chains merge across
+collinear edges into one spuriously rigid line: measured -43% tip
+deflection on the validation wall vs -4.7% pinned.)  Elements only — no
+MP constraints, so no Transformation-handler constraint chains (the
+v0.19 lesson).  Documented over-stiffness: the chain also suppresses the
+edge's own axial stretch mode (pure interpolation would allow it) —
+relative parasitic stiffening ~1/EDGE_TIE_FACTOR per tied dof plus that
+one per-edge stretch mode; equilibrium is EXACT regardless (internal
+elements).  `_Assembly.edge_ties` records
+`{"region", "chain": [tags], "eles": [tags]}` per zipped edge.
+
+Hand-pins (tests): two-region 4 x 3 x 0.2 cantilever wall (left 1 x 2 @
+1.5 m, right 2 x 3 @ 1.0 m) under 100 kN tip shear — exactly 3 chains
+(left edges (0,1.5)/(1.5,3) x=2 catch right nodes z=1/z=2; right edge
+(1,2) catches left z=1.5); tip 1.2784e-4 monolithic / 1.5263e-4 untied
+(+19.4%) / 1.2187e-4 tied (-4.7%); reactions balance 1e-9 in every
+variant; a beam end at (2,0,1.5) inside edge (2,0,1)-(2,0,2) is a
+SINGULAR mechanism untied and carries 10 kN into the wall tied.
+
+## Nonlinear layered shell walls (`ShellSection.layered`)
+
+```jsonc
+{"layers": [{"t": m, "material": name, "kind": "concrete"|"steel",
+             "angle": 0|90}, ...]}      // angle: steel only, default 0
+```
+
+Validated (`validate()` / `add_shell_section`): dict with the single key
+`layers`; non-empty list; per layer `t` finite > 0, known material,
+`kind` in `SHELL_LAYER_KINDS = ("concrete", "steel")`, `angle` only on
+steel and only 0|90.  Round-trips exactly.
+`ShellSection.total_thickness` = summed layer `t` when layered, else
+`thickness`.
+
+**Linear analyses** keep `ElasticMembranePlateSection(E*mod, nu,
+total_thickness)` — a layered model is displacement-identical to the
+elastic model at the summed thickness (`thickness` is ignored while
+`layered` is set); self-weight also uses `total_thickness`.  Bit-
+identical legacy path when `layered is None`.
+
+**Nonlinear builds** (exactly when the engine builds with a
+`hinge_case` — pushovers and nonlinear THs) emit `section('LayeredShell')`
+with every model layer split into `SHELL_SUBLAYERS = 4` equal sublayers
+(LayeredShell requires >= 3 layers; the split refines bending stress
+recovery, membrane response unchanged):
+
+* **concrete** — `PlaneStressUserMaterial` is NOT compiled into the
+  shipped openseespy binary ("PSUMAT ... SOURCE CODE RESTRICTED",
+  probed), so the DOCUMENTED REPLACEMENT is `ASDConcrete3D(E_eff =
+  E*mod, nu)` statically condensed via `PlaneStress` and wrapped in
+  `PlateFromPlaneStress` with out-of-plane shear modulus
+  `E_eff/(2(1+nu))`.  Exact piecewise-linear laws from the material
+  (`fc'` = material `fc` attr or `fc_from_E(E)`; `ft = LAYERED_FT_RATIO
+  (0.1) * fc'`; `et = ft/E_eff`, `ec = fc'/E_eff`):
+
+      tension     (-Te/-Ts/-Td): (0,0,0) -> (et, ft, 0)
+                    -> (20*et, 0.05*ft, 0.95)
+      compression (-Ce/-Cs/-Cd): (0,0,0) -> (ec, fc', 0)
+                    -> (10*ec, 1.05*fc', 0)
+
+  The first segment slope is EXACTLY `E_eff`, so the pre-crack layered
+  stiffness EQUALS the elastic shell's (pinned: first pushover step
+  secant = elastic 254165.46 kN/m to 1e-4 on the 2 x 3 x 0.2 wall,
+  fc' = 30 MPa); the capacity curve then peaks at 258.90 kN (0.68x the
+  elastic extrapolation at that displacement) and descends below half
+  the peak — genuine cracking.
+* **steel** — `PlateRebar` wrapping `Steel01(fy = material fy attr or
+  LAYERED_FY_DEFAULT = 420 MPa, E_eff, b = FIBER_STEEL_HARDENING)` at
+  the layer `angle` in degrees from the element local x axis (0 =
+  along corner0->corner1, 90 = perpendicular; verified: a 90-degree
+  layer pulled along local x is singular, along local y exact).  A
+  steel-only panel in uniform stretch reproduces `u = 2P*W/(E t H)`
+  and the same-thickness elastic panel (nu = 0) to 1e-3.
+
+nDMaterial tags live from `_ND_MAT_TAG0 = 200000` (own OpenSees
+namespace; kept clear of everything anyway).
+
+## Line springs + area springs
+
+```python
+# BuildingModel.line_springs: List[LineSpring] (round-trips; validated)
+LineSpring(p1, p2, kz=0.0, kx=0.0, ky=0.0, compression_only=False)
+#   kz/kx/ky in kN/m PER METER of line, GLOBAL axes; finite, >= 0, at
+#   least one > 0; p1 != p2; compression_only requires kz > 0.
+# ShellRegion.area_spring: Optional[dict] (round-trips; validated)
+{"kz": kN/m per m^2 (> 0), "compression_only": bool = False}
+#   shell behavior only (membrane slabs have no mesh nodes).
+```
+
+Engine (v0.11 Winkler pattern): a line spring discretizes over the
+EXISTING FE nodes on the p1->p2 segment (error if none) — node i owns
+the tributary `[mid(t_{i-1},t_i), mid(t_i,t_{i+1})]` with the first/last
+intervals extended to p1/p2, so `sum(trib) == |p2-p1|` exactly; an area
+spring lumps `kz x nodal tributary area` at every mesh node of the
+region.  Linear springs reuse the v0.8 grounded zeroLength machinery
+(reaction `-k*disp`, node counts as a support, sprung dof freed from
+base fixity).  `compression_only` (vertical only; kx/ky stay linear)
+uses the v0.12 `Elastic(kz*AXIAL_ONLY_RATIO, 0, kz)` material —
+settlement at full kz, uplift at the 1e-6 residual — recorded in
+`_Assembly.ent_springs` and reported with the EXACT same law
+(`-kz*uz` settling, `-1e-6*kz*uz` uplifting).  Any compression-only
+spring routes static cases to Newton
+(`_compression_only_springs_present`), like axial-only members.
+
+Closed forms (tests): rigid plate (4 x 4, kz = 1000, E = 25e11, t = 2)
+under central 100 kN settles `P/(kz*A)` = 6.25 mm uniformly (< 1e-6;
+the bending residual scales 1/(E t^3) — pushing E higher instead
+ill-conditions the penalty and WORSENS it, measured); nodal reactions =
+kz x tributary x u exactly (corner/edge/interior 1.5625/3.125/6.25 kN =
+1:2:4); wall base line spring reacts the [0.5, 1, 1, 1, 0.5] m
+tributaries exactly ([10, 20, 20, 20, 10] kN under 80 kN); eccentric
+compression-only cases: uplifted nodes read exactly the residual path
+(pinned 8.0e-6 kN), the contact zone carries rigid-body statics
+([8, 8] kN), equilibrium closes to 1e-9.  NOTE (documented): exact
+closed-form checks on compression-only beds need REALISTIC stiffness —
+Newton's displacement test (1e-8) stops early on quasi-rigid (E ~ 1e9+)
+models with kN-scale force residuals at the free dofs.
+
+## Semi-rigid diaphragm auto distribution (story forces)
+
+Pre-v0.22 a story force on a "none"-diaphragm story was split EQUALLY
+over the story nodes.  v0.22: when the story HAS meshed shell-slab
+nodes in its plane (`kind == "slab"`, `behavior == "shell"`;
+`_story_slab_nodes`), the force spreads over THOSE nodes weighted by
+tributary mass (`mass_map` ux entries; plain node count when the story
+carries no mass), and the accidental-torsion moment (v0.8:
+`Mz_x = fx*ecc*Ly`, `Mz_y = fy*ecc*Lx`) is realized as the linear
+ANTISYMMETRIC force-couple field about the weighted node centroid
+(x̄, ȳ):
+
+    fx_i = fx*w_i/W - mu*w_i*(y_i - ȳ),   mu = Mz_x / sum w_i (y_i - ȳ)^2
+    fy_i = fy*w_i/W + nu*w_i*(x_i - x̄),   nu = Mz_y / sum w_i (x_i - x̄)^2
+
+— zero net force added, exact moment; a zero-spread direction warns and
+skips its couple.  Stories WITHOUT slab mesh nodes keep the exact
+pre-v0.22 equal split (bit-identical legacy).  Reported story shears
+(`_story_shears`) are unchanged (same totals).
+
+Pins: 4-column + 6 x 6 slab building, 100 kN EQX @ 5% ecc — semi-rigid
+base FX = -100 and base MZ = 270 kN*m match the rigid-diaphragm run to
+1e-9 (270 = -(-100*3 + 30)); symmetric building: mirrored ux equal, uy
+antisymmetric, mirror-line uy = 0; semi-rigid drift 4.7959e-4 >= rigid
+4.7417e-4 (flexible diaphragm bounds from above, +1.14%); ALL mass on
+one slab node == a nodal load there (1e-15); 6 x 0.5 strip: base torque
+-(-0.25*100 + 100*0.05*0.5) = 22.5 kN*m exact.
+
+## API
+
+No new endpoints.  `POST /api/model` round-trips `edge_constraints`,
+`ShellSection.layered`, `line_springs`, and `ShellRegion.area_spring`
+(400 via `validate()`).
