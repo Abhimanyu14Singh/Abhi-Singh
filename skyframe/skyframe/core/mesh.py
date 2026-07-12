@@ -533,6 +533,70 @@ def _integral_between(bps: List[Tuple[float, float]], lo: float,
 
 
 # --------------------------------------------------------------------------- #
+# v0.22 auto edge constraints (the ETABS "zipper")
+# --------------------------------------------------------------------------- #
+def edge_tie_chains(mesh: "MeshedModel"
+                    ) -> List[Tuple[str, int, int, List[int]]]:
+    """Hanging-node chains for the v0.22 auto edge constraints.
+
+    A HANGING NODE is a mesh point lying strictly INSIDE a shell element
+    edge (within the 1e-6 pool tolerance) without being one of that edge's
+    end nodes — the classic T-junction of two shell regions meshed at
+    different sizes, or a frame member end landing mid-edge.  Candidates
+    are ALL pool points (shell mesh nodes AND frame nodes); edges are all
+    quad edges, deduplicated by their (unordered) end-node pair, each
+    keeping the region uid of the first quad that contributed it (the tie
+    stiffness is sized from that region's shell section).
+
+    Returns ``[(region_uid, end_a, end_b, [hanging point indices sorted
+    by position along the edge]), ...]`` — only edges that actually have
+    hanging nodes, in deterministic (quad, edge) discovery order.
+    Structured meshing guarantees a region's own nodes never fall strictly
+    inside its own edges, so every entry is a genuine interface.
+    """
+    edges: Dict[Tuple[int, int], Tuple[str, int, int]] = {}
+    order: List[Tuple[int, int]] = []
+    for quad in mesh.quads:
+        n = quad.nodes
+        for k in range(4):
+            a, b = n[k], n[(k + 1) % 4]
+            key = (a, b) if a < b else (b, a)
+            if key not in edges:
+                edges[key] = (quad.region, a, b)
+                order.append(key)
+
+    pts = mesh.points
+    chains: List[Tuple[str, int, int, List[int]]] = []
+    for key in order:
+        region_uid, a, b = edges[key]
+        pa, pb = pts[a], pts[b]
+        d = _sub(pb, pa)
+        length = _norm(d)
+        u = tuple(c / length for c in d)
+        lo = (min(pa[0], pb[0]) - _TOL, min(pa[1], pb[1]) - _TOL,
+              min(pa[2], pb[2]) - _TOL)
+        hi = (max(pa[0], pb[0]) + _TOL, max(pa[1], pb[1]) + _TOL,
+              max(pa[2], pb[2]) + _TOL)
+        hanging: List[Tuple[float, int]] = []
+        for idx, p in enumerate(pts):
+            if idx == a or idx == b:
+                continue
+            if not (lo[0] <= p[0] <= hi[0] and lo[1] <= p[1] <= hi[1]
+                    and lo[2] <= p[2] <= hi[2]):
+                continue                    # cheap bounding-box reject
+            t = _dot(_sub(p, pa), u)
+            if t <= _TOL or t >= length - _TOL:
+                continue
+            foot = (pa[0] + t * u[0], pa[1] + t * u[1], pa[2] + t * u[2])
+            if _norm(_sub(p, foot)) < _TOL:
+                hanging.append((t, idx))
+        if hanging:
+            hanging.sort()
+            chains.append((region_uid, a, b, [idx for _, idx in hanging]))
+    return chains
+
+
+# --------------------------------------------------------------------------- #
 # entry point
 # --------------------------------------------------------------------------- #
 def mesh_model(model: BuildingModel) -> MeshedModel:

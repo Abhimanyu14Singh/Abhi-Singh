@@ -129,7 +129,8 @@ import numpy as np
 import openseespy.opensees as ops
 
 from skyframe.core.buckling import BucklingResult, buckling_analysis
-from skyframe.core.mesh import MeshedModel, Segment, mesh_model
+from skyframe.core.mesh import (MeshedModel, Segment, edge_tie_chains,
+                                mesh_model)
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
                                  FP_DEFAULT_KINIT, G_ACCEL,
                                  ISOLATOR_DEFAULT_KV, TFP_DEFAULT_MINFV,
@@ -232,6 +233,50 @@ FIBER_HINGE_LATERAL = 4
 FIBER_STEEL_HARDENING = 0.01
 # fiber section tags live far above the shell-section tag range
 _FIBER_SEC_TAG0 = 100000
+
+# v0.22 auto edge constraints: the tie-beam chain along a zipped shell
+# edge is an elasticBeamColumn sized from the edge region's shell section
+# per unit width times the FULL edge length L_e:
+#   A_tie = EDGE_TIE_FACTOR * t * L_e          (membrane   t*E per m)
+#   I_tie = EDGE_TIE_FACTOR * t^3/12 * L_e     (bending  t^3*E/12 per m)
+# (J_tie = I_tie; E/G from the shell material x ssec.mod).  The chain
+# makes the edge segment effectively RIGID between its two structural end
+# nodes — a physical realization of the (1-t, t) interpolation tie that
+# avoids MP-constraint chains entirely (the v0.19 lesson); the relative
+# parasitic stiffening at the interface is ~1/EDGE_TIE_FACTOR.
+EDGE_TIE_FACTOR = 1.0e6
+
+# v0.22 nonlinear layered shells: every model layer is subdivided into
+# this many equal LayeredShell sublayers (OpenSees' LayeredShell requires
+# >= 3 layers, and sublayering resolves the through-thickness bending
+# stress profile; membrane response is unchanged by the split).
+SHELL_SUBLAYERS = 4
+# Concrete layer (ASDConcrete3D wrapped in PlaneStress + PlateFromPlane-
+# Stress; PlaneStressUserMaterial is NOT compiled into the shipped
+# openseespy binary — "PSUMAT ... SOURCE CODE RESTRICTED", probed).
+# Law derivation from the layer material (fc' = material.fc attr or
+# fc_from_E(E)) — all pinned by tests:
+#   ft  = LAYERED_FT_RATIO * fc'                 (tension strength)
+#   tension:      elastic to (ft/E, ft), linear softening to
+#                 (LAYERED_ETU_FACTOR * ft/E, LAYERED_FT_RESIDUAL * ft),
+#                 damage 0 -> LAYERED_TENSION_DAMAGE
+#   compression:  elastic to (fc'/E, fc'), plateau to
+#                 (LAYERED_ECU_FACTOR * fc'/E, LAYERED_FC_HARDENING * fc'),
+#                 no damage
+# The first law segment slope is exactly E, so the pre-crack layered
+# stiffness equals the elastic shell's (same E, nu) by construction.
+LAYERED_FT_RATIO = 0.1
+LAYERED_FT_RESIDUAL = 0.05
+LAYERED_ETU_FACTOR = 20.0
+LAYERED_TENSION_DAMAGE = 0.95
+LAYERED_ECU_FACTOR = 10.0
+LAYERED_FC_HARDENING = 1.05
+# Steel layers: PlateRebar wrapping Steel01(fy = material.fy attr or
+# 420 MPa, E, b = FIBER_STEEL_HARDENING) at the layer's angle (deg from
+# the element local x axis; 0 = horizontal bars, 90 = vertical).
+LAYERED_FY_DEFAULT = 420_000.0     # kPa
+# nDMaterial tags live in their own OpenSees namespace; start high anyway.
+_ND_MAT_TAG0 = 200000
 
 Vec3 = Tuple[float, float, float]
 
@@ -844,6 +889,16 @@ class _Assembly:
     spring_nodes: Dict[int, List[float]] = field(default_factory=dict)
     #   v0.8: real node tag -> 6 grounded-spring stiffnesses (0 where none);
     #   the spring reaction (-k*disp) is added to that node's case reactions
+    ent_springs: Dict[int, float] = field(default_factory=dict)
+    #   v0.22 compression-only vertical springs (line/area springs):
+    #   real node tag -> summed kz.  Material is Elastic(kz*AXIAL_ONLY_
+    #   RATIO, 0, kz) on the Z dof, so the exact spring reaction added to
+    #   the case reactions is -kz*uz while settling (uz < 0) and
+    #   -AXIAL_ONLY_RATIO*kz*uz while uplifting.
+    edge_ties: List[dict] = field(default_factory=list)
+    #   v0.22 auto edge constraints: one entry per zipped edge —
+    #   {"region", "chain": [node tags end_a -> hangs -> end_b],
+    #    "eles": [tie elasticBeamColumn tags]}
     anchor_tags: set = field(default_factory=set)
     #   v0.15: grounded anchors of advanced device links (fully fixed nodes
     #   connected ONLY to damper/gap/hook/isolator links); reported as
@@ -1447,7 +1502,11 @@ class OpenSeesEngine:
         # (the Truss materials switch stiffness by strain sign) -> Newton.
         # v0.15: gap/hook/isolator device links likewise (state-dependent
         # tangent); dampers alone keep the linear path (no static force).
-        if self._axial_only_present() or self._nonlinear_static_links_present():
+        # v0.22: compression-only line/area springs switch stiffness by the
+        # settlement sign -> Newton too.
+        if (self._axial_only_present()
+                or self._nonlinear_static_links_present()
+                or self._compression_only_springs_present()):
             self._setup_nonlinear_analysis(asm)
         else:
             self._setup_analysis(asm)
@@ -1669,6 +1728,67 @@ class OpenSeesEngine:
                     continue
                 spring_specs.append((rt, [0.0, 0.0, kz, 0.0, 0.0, 0.0]))
                 spring_cover.setdefault(rt, set()).add(2)   # dof index 2 = uz
+
+        # --- v0.22 line springs + area springs ------------------------------
+        # Line springs discretize over the EXISTING FE nodes on the p1 -> p2
+        # segment (tributary lengths cover the full segment, see LineSpring);
+        # area springs lump kz x nodal tributary area at every mesh node of
+        # the region.  Linear springs reuse the v0.8 grounded machinery;
+        # compression-only vertical springs go to ent_specs (v0.12 Elastic-
+        # with-Eneg pattern) and are created next to the linear ones below.
+        ent_specs: List[Tuple[int, float]] = []       # (real tag, kz)
+
+        def _add_vertical(rt: int, kz: float, comp_only: bool) -> None:
+            if kz <= 0.0:
+                return
+            if comp_only:
+                ent_specs.append((rt, kz))
+            else:
+                spring_specs.append((rt, [0.0, 0.0, kz, 0.0, 0.0, 0.0]))
+            spring_cover.setdefault(rt, set()).add(2)
+
+        for ls in getattr(model, "line_springs", []):
+            p1 = tuple(float(v) for v in ls.p1)
+            p2 = tuple(float(v) for v in ls.p2)
+            dvec = (p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2])
+            L_ls = math.sqrt(dvec[0] ** 2 + dvec[1] ** 2 + dvec[2] ** 2)
+            uvec = tuple(c / L_ls for c in dvec)
+            stations: List[Tuple[float, int]] = []
+            for idx, p in enumerate(mesh.points):
+                t_ls = ((p[0] - p1[0]) * uvec[0] + (p[1] - p1[1]) * uvec[1]
+                        + (p[2] - p1[2]) * uvec[2])
+                if t_ls < -_TOL or t_ls > L_ls + _TOL:
+                    continue
+                foot = (p1[0] + t_ls * uvec[0], p1[1] + t_ls * uvec[1],
+                        p1[2] + t_ls * uvec[2])
+                off = math.dist(p, foot)
+                if off < _TOL:
+                    stations.append((t_ls, idx))
+            if not stations:
+                raise ValueError(
+                    f"Line spring {tuple(ls.p1)} -> {tuple(ls.p2)}: no FE "
+                    "node lies on the line (nothing to attach to)")
+            stations.sort()
+            ts = [t for t, _ in stations]
+            for k, (t_ls, idx) in enumerate(stations):
+                lo = 0.0 if k == 0 else 0.5 * (ts[k - 1] + t_ls)
+                hi = L_ls if k == len(ts) - 1 else 0.5 * (t_ls + ts[k + 1])
+                trib = hi - lo
+                rt = idx + 1
+                _add_vertical(rt, ls.kz * trib, ls.compression_only)
+                horiz = [ls.kx * trib, ls.ky * trib, 0.0, 0.0, 0.0, 0.0]
+                if any(horiz):
+                    spring_specs.append((rt, horiz))
+                    cover = spring_cover.setdefault(rt, set())
+                    cover |= {d for d in (0, 1) if horiz[d] > 0.0}
+        for region in model.shells:
+            asp = getattr(region, "area_spring", None)
+            if not asp:
+                continue
+            kz_a = float(asp["kz"])
+            comp_only = bool(asp.get("compression_only", False))
+            for pidx, trib_a in mesh.region_trib[region.uid].items():
+                _add_vertical(pidx + 1, kz_a * trib_a, comp_only)
 
         # --- supports ----------------------------------------------------
         def record_fix(ntag: int, restr: Sequence[int]) -> None:
@@ -2025,16 +2145,28 @@ class OpenSeesEngine:
             asm.pz_joints[orig] = {"dup": dup, "K": k_theta, "ele": etag}
 
         # --- shell elements -------------------------------------------------
+        # v0.22: a LAYERED section in a NONLINEAR build (pushover /
+        # nonlinear TH — exactly when hinge_case is not None) becomes an
+        # OpenSees LayeredShell; every LINEAR analysis keeps the elastic
+        # section at the SUMMED layer thickness (total_thickness ==
+        # thickness while layered is None — bit-identical legacy path).
+        nonlinear_shells = hinge_case is not None
+        nd_tag = _ND_MAT_TAG0
         if mesh.quads:
             sec_tags: Dict[str, int] = {}
             stag = 0
             for name, ssec in model.shell_sections.items():
                 stag += 1
                 mat = model.materials[ssec.material]
-                # rho = 0: shell self-weight/mass ignored in v0.2
-                # v0.4: ssec.mod scales E (membrane AND flexural stiffness)
-                ops.section("ElasticMembranePlateSection", stag,
-                            mat.E * ssec.mod, mat.nu, ssec.thickness, 0.0)
+                if getattr(ssec, "layered", None) and nonlinear_shells:
+                    mtag, nd_tag = self._layered_shell_section(
+                        stag, ssec, mtag, nd_tag)
+                else:
+                    # rho = 0: shell self-weight/mass ignored in v0.2
+                    # v0.4: ssec.mod scales E (membrane AND flexural)
+                    ops.section("ElasticMembranePlateSection", stag,
+                                mat.E * ssec.mod, mat.nu,
+                                ssec.total_thickness, 0.0)
                 sec_tags[name] = stag
             regions = {r.uid: r for r in model.shells}
             for quad in mesh.quads:
@@ -2048,6 +2180,45 @@ class OpenSeesEngine:
                 asm.quad_ele.append(etag)
                 for n in quad.nodes:
                     rot_add(n, eye3)   # shells stiffen all three rotations
+
+            # --- v0.22 auto edge constraints (the "zipper") ------------------
+            # For every hanging node (a node strictly inside another shell's
+            # element edge) a stiff tie-beam CHAIN end_a -> hangs -> end_b is
+            # laid along the edge, sized EDGE_TIE_FACTOR x the edge region's
+            # shell section per unit width x the full edge length (see the
+            # constant note).  Elements only — no MP constraints, so no
+            # constraint chains (the v0.19 lesson).
+            if getattr(model, "edge_constraints", False):
+                for ruid, na, nb, hangs in edge_tie_chains(mesh):
+                    region = regions[ruid]
+                    ssec = model.shell_sections[region.section]
+                    mat = model.materials[ssec.material]
+                    t_sh = ssec.total_thickness
+                    L_e = math.dist(mesh.points[na], mesh.points[nb])
+                    A_tie = EDGE_TIE_FACTOR * t_sh * L_e
+                    I_tie = EDGE_TIE_FACTOR * t_sh ** 3 / 12.0 * L_e
+                    E_s = mat.E * ssec.mod
+                    G_s = mat.G * ssec.mod
+                    pa, pb = mesh.points[na], mesh.points[nb]
+                    axis = _unit((pb[0] - pa[0], pb[1] - pa[1],
+                                  pb[2] - pa[2]))
+                    vecxz = ((1.0, 0.0, 0.0)
+                             if abs(axis[2]) > 1.0 - _TOL else (0.0, 0.0, 1.0))
+                    chain = [na] + hangs + [nb]
+                    eles: List[int] = []
+                    for ni_c, nj_c in zip(chain[:-1], chain[1:]):
+                        etag += 1
+                        ops.geomTransf("PDelta" if pdelta else "Linear",
+                                       etag, *vecxz)
+                        ops.element("elasticBeamColumn", etag,
+                                    ni_c + 1, nj_c + 1, A_tie, E_s, G_s,
+                                    I_tie, I_tie, I_tie, etag)
+                        eles.append(etag)
+                        rot_add(ni_c, eye3)
+                        rot_add(nj_c, eye3)
+                    asm.edge_ties.append({"region": ruid,
+                                          "chain": [n + 1 for n in chain],
+                                          "eles": eles})
 
         # --- link elements (v0.5 elastic, v0.15 devices) ---------------------
         # elastic: zeroLength with one elastic uniaxial material per non-zero
@@ -2270,6 +2441,27 @@ class OpenSeesEngine:
             acc = asm.spring_nodes.setdefault(rt, [0.0] * 6)
             for d in range(6):
                 acc[d] += float(kvec[d])
+            if rt not in asm.support_tags:
+                asm.support_tags.append(rt)
+
+        # --- v0.22 compression-only vertical springs ------------------------
+        # Same grounded layout with the v0.12 Elastic-with-Eneg material:
+        # zeroLength(ground -> real) strain = uz, so Eneg = kz carries
+        # settlement at full stiffness while the tension side keeps the tiny
+        # AXIAL_ONLY_RATIO residual (system stays regular; the uplifted
+        # spring force is ~1e-6 of linear).  Exact reactions are added in
+        # _add_spring_reactions from asm.ent_springs.
+        for rt, kz_ent in ent_specs:
+            tag += 1
+            gnd = tag
+            ops.node(gnd, *asm.node_coords[rt])
+            ops.fix(gnd, 1, 1, 1, 1, 1, 1)
+            mtag += 1
+            ops.uniaxialMaterial("Elastic", mtag, kz_ent * AXIAL_ONLY_RATIO,
+                                 0.0, kz_ent)
+            etag += 1
+            ops.element("zeroLength", etag, gnd, rt, "-mat", mtag, "-dir", 3)
+            asm.ent_springs[rt] = asm.ent_springs.get(rt, 0.0) + kz_ent
             if rt not in asm.support_tags:
                 asm.support_tags.append(rt)
 
@@ -2509,6 +2701,70 @@ class OpenSeesEngine:
         """(A, I22, I33, J) with the v0.4 stiffness modifiers applied."""
         return (sec.A * sec.mod_A, sec.I22 * sec.mod_I22,
                 sec.I33 * sec.mod_I33, sec.J * sec.mod_J)
+
+    def _layered_shell_section(self, stag: int, ssec,
+                               mtag: int, nd_tag: int) -> Tuple[int, int]:
+        """Build one OpenSees ``LayeredShell`` section from ``ssec.layered``
+        (v0.22, nonlinear builds only).  Returns the advanced (mtag, nd_tag).
+
+        Every model layer is split into SHELL_SUBLAYERS equal sublayers
+        (LayeredShell needs >= 3 layers; the split refines the bending
+        stress profile and leaves the membrane response unchanged).
+
+        * concrete — ``ASDConcrete3D`` (E_eff = E*mod, nu) with the exact
+          piecewise-linear laws documented at the LAYERED_* constants
+          (fc' = material ``fc`` attr or ``fc_from_E``; ft = 0.1 fc'; the
+          first segment slope is EXACTLY E_eff so the pre-crack stiffness
+          matches the elastic shell), statically condensed through
+          ``PlaneStress`` and wrapped in ``PlateFromPlaneStress`` with the
+          out-of-plane shear modulus E_eff/(2(1+nu)).
+          ``PlaneStressUserMaterial`` is NOT compiled into the shipped
+          openseespy binary ("PSUMAT ... SOURCE CODE RESTRICTED", probed)
+          — this is the documented replacement.
+        * steel — ``PlateRebar`` wrapping ``Steel01`` (fy = material
+          ``fy`` attr or 420 MPa, E_eff, b = FIBER_STEEL_HARDENING) at the
+          layer's ``angle`` (default 0) from the element local x axis.
+        """
+        from skyframe.design.wall import fc_from_E
+        model = self.model
+        args: List[float] = []
+        for la in ssec.layered["layers"]:
+            mat = model.materials[la["material"]]
+            E_eff = mat.E * ssec.mod
+            t_sub = float(la["t"]) / SHELL_SUBLAYERS
+            if la["kind"] == "concrete":
+                fc = getattr(mat, "fc", None) or fc_from_E(mat.E)
+                ft = LAYERED_FT_RATIO * fc
+                et = ft / E_eff
+                ec = fc / E_eff
+                nd_tag += 1
+                ops.nDMaterial(
+                    "ASDConcrete3D", nd_tag, E_eff, mat.nu,
+                    "-Te", 0.0, et, LAYERED_ETU_FACTOR * et,
+                    "-Ts", 0.0, ft, LAYERED_FT_RESIDUAL * ft,
+                    "-Td", 0.0, 0.0, LAYERED_TENSION_DAMAGE,
+                    "-Ce", 0.0, ec, LAYERED_ECU_FACTOR * ec,
+                    "-Cs", 0.0, fc, LAYERED_FC_HARDENING * fc,
+                    "-Cd", 0.0, 0.0, 0.0)
+                ps_tag = nd_tag + 1
+                ops.nDMaterial("PlaneStress", ps_tag, nd_tag)
+                plate_tag = nd_tag + 2
+                ops.nDMaterial("PlateFromPlaneStress", plate_tag, ps_tag,
+                               E_eff / (2.0 * (1.0 + mat.nu)))
+                nd_tag += 2
+            else:                                        # steel
+                fy = getattr(mat, "fy", None) or LAYERED_FY_DEFAULT
+                mtag += 1
+                ops.uniaxialMaterial("Steel01", mtag, fy, E_eff,
+                                     FIBER_STEEL_HARDENING)
+                nd_tag += 1
+                plate_tag = nd_tag
+                ops.nDMaterial("PlateRebar", plate_tag, mtag,
+                               float(la.get("angle", 0.0)))
+            args.extend([plate_tag, t_sub] * SHELL_SUBLAYERS)
+        n_layers = len(args) // 2
+        ops.section("LayeredShell", stag, n_layers, *args)
+        return mtag, nd_tag
 
     def _fiber_hinge_element(self, asm: _Assembly, m: FrameMember,
                              sec: FrameSection, mat, bb: dict,
@@ -3529,6 +3785,15 @@ class OpenSeesEngine:
             for d in range(6):
                 if kvec[d] != 0.0:
                     r[d] += -kvec[d] * disp[d]
+        # v0.22 compression-only springs: mirror the Elastic(k*ratio, 0, k)
+        # material exactly — full kz while settling (uz < 0), the tiny
+        # residual while uplifting — so equilibrium closes to solver
+        # precision.
+        for t, kz in asm.ent_springs.items():
+            uz = node_disp.get(t, [0.0] * 6)[2]
+            k_eff = kz if uz < 0.0 else kz * AXIAL_ONLY_RATIO
+            r = reactions.setdefault(t, [0.0] * 6)
+            r[2] += -k_eff * uz
 
     @staticmethod
     def _base_totals(asm: _Assembly,

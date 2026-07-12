@@ -2411,6 +2411,7 @@ class BuildingModel:
                     and math.isfinite(ssec.mod) and ssec.mod > 0.0):
                 raise ValueError(f"Shell section {ssec.name}: mod must be a "
                                  f"finite value > 0 (got {ssec.mod!r})")
+            self._validate_layered(ssec)
         uids = set()
         for m in self.members:
             if m.uid in uids:
@@ -2507,6 +2508,11 @@ class BuildingModel:
             self._validate_link(lk)
         for sp in self.spring_supports:
             self._validate_spring(sp)
+        for ls in self.line_springs:                     # v0.22
+            self._validate_line_spring(ls)
+        if not isinstance(self.edge_constraints, bool):  # v0.22
+            raise ValueError(f"edge_constraints must be a bool (got "
+                             f"{self.edge_constraints!r})")
         if not (isinstance(self.thermal_alpha, (int, float))
                 and math.isfinite(self.thermal_alpha)):
             raise ValueError(f"thermal_alpha must be finite (got "
@@ -2579,6 +2585,8 @@ class BuildingModel:
             "base_fixity": self.base_fixity,
             "supports": [s.to_dict() for s in self.supports],
             "spring_supports": [s.to_dict() for s in self.spring_supports],
+            "line_springs": [s.to_dict() for s in self.line_springs],
+            "edge_constraints": self.edge_constraints,
             "thermal_alpha": self.thermal_alpha,
             "nodal_masses": [m.to_dict() for m in self.nodal_masses],
             "rigid_diaphragms": self.rigid_diaphragms,
@@ -2645,10 +2653,19 @@ class BuildingModel:
                 ds.name = ds.name or name
                 mdl.designer_sections[name] = ds
         for name, sd in (d.get("shell_sections") or {}).items():
+            lay = sd.get("layered")            # v0.22 (absent/None = elastic)
+            if lay is not None:
+                lay = {"layers": [
+                    dict({"t": float(la["t"]),
+                          "material": str(la["material"]),
+                          "kind": str(la["kind"])},
+                         **({"angle": float(la["angle"])}
+                            if "angle" in la else {}))
+                    for la in (lay.get("layers") or [])]}
             mdl.shell_sections[name] = ShellSection(
                 name=sd.get("name", name), material=sd["material"],
                 thickness=float(sd["thickness"]),
-                mod=float(sd.get("mod", 1.0)))
+                mod=float(sd.get("mod", 1.0)), layered=lay)
         # v0.14 grid systems: prefer the full `grid_systems` list; otherwise
         # wrap a legacy single `grid` as a one-element list.  Both `grid`
         # (primary) and `grid_systems` are populated so all readers work.
@@ -2681,6 +2698,11 @@ class BuildingModel:
                 axial_limit=str(md.get("axial_limit", "both")),
                 hinges=str(md.get("hinges", "none"))))
         for rd in d.get("shells") or []:
+            asp = rd.get("area_spring")        # v0.22 (absent/None = none)
+            if asp is not None:
+                asp = {"kz": float(asp["kz"]),
+                       "compression_only": bool(asp.get("compression_only",
+                                                        False))}
             mdl.shells.append(ShellRegion(
                 uid=rd["uid"], kind=rd["kind"], behavior=rd["behavior"],
                 section=rd.get("section", ""),
@@ -2690,7 +2712,8 @@ class BuildingModel:
                 openings=[Opening(float(o["u0"]), float(o["v0"]),
                                   float(o["u1"]), float(o["v1"]))
                           for o in (rd.get("openings") or [])],
-                pier=str(rd.get("pier", ""))))
+                pier=str(rd.get("pier", "")),
+                area_spring=asp))
         mdl.base_fixity = d.get("base_fixity", "fixed")
         if mdl.base_fixity not in ("fixed", "pinned"):
             raise ValueError(f"base_fixity must be fixed|pinned, got "
@@ -2705,6 +2728,14 @@ class BuildingModel:
             mdl.spring_supports.append(SpringSupport(
                 tuple(float(v) for v in sd["point"]),
                 [float(k) for k in sd["stiffness"]]))
+        for sd in d.get("line_springs") or []:           # v0.22
+            mdl.line_springs.append(LineSpring(
+                tuple(float(v) for v in sd["p1"]),
+                tuple(float(v) for v in sd["p2"]),
+                kz=float(sd.get("kz", 0.0)), kx=float(sd.get("kx", 0.0)),
+                ky=float(sd.get("ky", 0.0)),
+                compression_only=bool(sd.get("compression_only", False))))
+        mdl.edge_constraints = bool(d.get("edge_constraints", False))
         mdl.thermal_alpha = float(d.get("thermal_alpha", 1.2e-5))
         for md in d.get("nodal_masses") or []:
             mdl.nodal_masses.append(NodalMass(
