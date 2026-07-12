@@ -148,6 +148,13 @@ class BucklingResult:
     ``lambda`` on the reference gravity.  ``modes`` maps mode number (1-based)
     to per-node 6-dof buckling mode shapes.  ``node_coords`` (not serialised
     in the standard dict shape) maps node tag -> (x, y, z) for lookups.
+
+    ``base_case`` (v0.25): name of the static case whose converged axial
+    forces formed the fixed base geometric stiffness (see
+    :func:`buckling_analysis` ``base_N``), or ``None`` for the classic
+    single-load-set problem.  With a base state, ``factors`` are the
+    critical multipliers ON THE BUCKLING ``gravity`` LOADS ONLY — the base
+    state is held constant (two-load-set formulation).
     """
 
     factors: List[float]
@@ -155,6 +162,7 @@ class BucklingResult:
     gravity: Dict[str, float]
     node_coords: Dict[int, Vec3] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
+    base_case: Optional[str] = None                            # v0.25
 
     def to_dict(self) -> dict:
         return {
@@ -164,6 +172,7 @@ class BucklingResult:
                       for m, sh in self.modes.items()},
             "gravity": dict(self.gravity),
             "warnings": list(self.warnings),
+            "base_case": self.base_case,
         }
 
 
@@ -293,12 +302,35 @@ def assemble_elastic_stiffness(model: BuildingModel
 
 
 def buckling_analysis(model: BuildingModel, gravity: Dict[str, float],
-                      num_modes: int = 6) -> BucklingResult:
+                      num_modes: int = 6,
+                      base_N: Optional[Dict[str, float]] = None,
+                      base_label: Optional[str] = None) -> BucklingResult:
     """Linear buckling analysis under a reference gravity state.
 
     ``gravity`` maps load-pattern name -> factor (the reference load whose
     critical multiplier is sought).  Returns a :class:`BucklingResult` with
     the ``num_modes`` smallest positive load factors and their mode shapes.
+
+    ``base_N`` (v0.25, buckling from a stressed/staged state): optional
+    member uid -> CONSTANT axial force (kN, TENSION POSITIVE — the member
+    station/`ul[6]-ul[0]` convention) of a pre-existing base stress state.
+    The eigenproblem becomes the standard TWO-LOAD-SET form
+
+        (K + Kg(N_base)) phi = lambda (-Kg(N_gravity)) phi
+
+    where ``Kg(N_base)`` is assembled from ``base_N`` and HELD FIXED while
+    ``N_gravity`` still comes from the internal linear solve of the
+    ``gravity`` reference load on the UNSTRESSED elastic stiffness ``K``
+    (the classic linearized treatment: the base state pre-stresses the
+    geometry, it does not re-stiffen the reference solve).  ``lambda``
+    is therefore the critical multiplier ON THE ``gravity`` LOADS GIVEN
+    the base state; because Kg is linear in N, for a shared distribution
+    the exact identity ``lambda_base + lambda = lambda_no_base`` holds
+    (pinned in the tests).  A base state at/beyond buckling makes
+    ``K + Kg(N_base)`` indefinite — the Cholesky fails and an explicit
+    warning is returned instead of factors.  Members named in ``base_N``
+    that the frame assembly skipped are ignored; ``base_label`` is echoed
+    as ``BucklingResult.base_case``.
     """
     warn: List[str] = []
     if model.shells:
@@ -314,7 +346,8 @@ def buckling_analysis(model: BuildingModel, gravity: Dict[str, float],
     warn.extend(asm_warn)
     if not coords:
         return BucklingResult([], {}, dict(gravity), {}, warn +
-                              ["no frame members to analyse"])
+                              ["no frame members to analyse"],
+                              base_case=base_label)
     restr = _restraints(model, tag_of, coords)
     tags_sorted = sorted(coords)
     idx = {t: i for i, t in enumerate(tags_sorted)}
@@ -333,7 +366,8 @@ def buckling_analysis(model: BuildingModel, gravity: Dict[str, float],
     free_i = np.where(free)[0]
     if free_i.size == 0:
         return BucklingResult([], {}, dict(gravity), coords,
-                              warn + ["all DOFs restrained"])
+                              warn + ["all DOFs restrained"],
+                              base_case=base_label)
 
     Kff = K[np.ix_(free_i, free_i)]
     # ---- linear static solve for member axial forces ----
@@ -343,23 +377,39 @@ def buckling_analysis(model: BuildingModel, gravity: Dict[str, float],
     except np.linalg.LinAlgError:
         return BucklingResult([], {}, dict(gravity), coords,
                               warn + ["singular stiffness in the static "
-                                      "solve; cannot form geometric stiffness"])
+                                      "solve; cannot form geometric stiffness"],
+                              base_case=base_label)
 
     # ---- assemble geometric stiffness Kg from member axial forces ----
+    # (plus, v0.25, the FIXED base geometric stiffness from base_N)
     Kg = np.zeros((ndof, ndof))
+    Kg_base = np.zeros((ndof, ndof)) if base_N else None
     for (m, T, dofs, ea_over_L, L) in ele:
         ul = T @ u[dofs]
         N = ea_over_L * (ul[6] - ul[0])          # tension positive
         kgg = T.T @ _local_geometric(N, L) @ T
         Kg[np.ix_(dofs, dofs)] += kgg
+        if Kg_base is not None and m.uid in base_N:
+            Nb = float(base_N[m.uid])            # tension positive
+            kgb = T.T @ _local_geometric(Nb, L) @ T
+            Kg_base[np.ix_(dofs, dofs)] += kgb
 
     Kgff = Kg[np.ix_(free_i, free_i)]
     M = -Kgff                                    # K phi = lambda (-Kg) phi
+    K_eff = Kff
+    if Kg_base is not None:
+        # two-load-set form: the base state pre-stresses the structure
+        K_eff = Kff + Kg_base[np.ix_(free_i, free_i)]
 
-    factors, vectors = _solve_buckling(Kff, M)
+    factors, vectors = _solve_buckling(K_eff, M)
     if not factors:
-        warn.append("no positive buckling factors found "
-                    "(gravity may induce no compression)")
+        if Kg_base is not None and not _is_spd(K_eff):
+            warn.append("base axial state is at or beyond the buckling "
+                        "load of the structure (K + Kg(N_base) is not "
+                        "positive definite); no factors")
+        else:
+            warn.append("no positive buckling factors found "
+                        "(gravity may induce no compression)")
 
     n_keep = min(num_modes, len(factors))
     modes: Dict[int, Dict[int, List[float]]] = {}
@@ -373,7 +423,17 @@ def buckling_analysis(model: BuildingModel, gravity: Dict[str, float],
         modes[mno + 1] = shape
 
     return BucklingResult([float(f) for f in factors[:n_keep]], modes,
-                          dict(gravity), coords, warn)
+                          dict(gravity), coords, warn,
+                          base_case=base_label)
+
+
+def _is_spd(A: np.ndarray) -> bool:
+    """True when ``A`` admits a Cholesky factorization (SPD)."""
+    try:
+        np.linalg.cholesky(A)
+        return True
+    except np.linalg.LinAlgError:
+        return False
 
 
 def _gravity_nodal_vector(model: BuildingModel, gravity: Dict[str, float],

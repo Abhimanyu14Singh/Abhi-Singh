@@ -744,6 +744,10 @@ class LoadPattern:
         }
 
 
+# v0.25 geometric-nonlinearity options for static (and pushover) cases
+GEOMETRIC_OPTIONS = ("linear", "pdelta", "corotational")
+
+
 @dataclass
 class LoadCase:
     """Static case: scaled sum of load patterns.
@@ -756,12 +760,34 @@ class LoadCase:
     nonlinear stage.  Otherwise the engine applies the gravity state first,
     holds it constant, then applies the case's own patterns and reports the
     case's incremental (gravity-stiffened) response.
+
+    ``geometric`` (v0.25): ``"linear"`` (default) | ``"pdelta"`` |
+    ``"corotational"`` — the geometric-nonlinearity level.
+    ``"corotational"`` uses OpenSees ``geomTransf('Corotational', ...)``
+    (exact large-displacement/large-rotation kinematics of the frame
+    members) with the SAME two-stage gravity flow as P-Delta
+    (``pdelta_gravity`` applies to both).  PRECEDENCE (exact, v0.25): a
+    non-``"linear"`` ``geometric`` value WINS; with ``geometric ==
+    "linear"`` (or absent, i.e. every pre-v0.25 file) the legacy
+    ``pdelta`` bool decides — ``pdelta=True`` means ``"pdelta"``.  Both
+    fields stay serialized; :meth:`effective_geometric` is the single
+    source of truth the engine consults.
     """
 
     name: str
     patterns: Dict[str, float]  # pattern name -> scale factor
     pdelta: bool = False
     pdelta_gravity: Optional[Dict[str, float]] = None
+    geometric: str = "linear"   # v0.25: "linear" | "pdelta" | "corotational"
+
+    @property
+    def effective_geometric(self) -> str:
+        """Resolved geometric-nonlinearity level (documented precedence:
+        ``geometric`` wins when it is not ``"linear"``; otherwise the
+        legacy ``pdelta`` bool maps True -> ``"pdelta"``)."""
+        if self.geometric != "linear":
+            return self.geometric
+        return "pdelta" if self.pdelta else "linear"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -924,6 +950,11 @@ class PushoverCase:
     # default 1.1; rho / rho_prime — concrete steel ratios, defaults
     # 0.01 / 0.0; fy_bar — rebar fy in kPa, default 420000).
     hinge_params: Dict[str, float] = field(default_factory=dict)
+    # v0.25 geometric nonlinearity of the push: "linear" (default; the
+    # exact pre-v0.25 behavior — Linear transformations), "pdelta", or
+    # "corotational" (large-displacement pushover).  Same transformation
+    # rules as LoadCase.geometric.
+    geometric: str = "linear"
 
     def to_dict(self) -> dict:
         return {"name": self.name, "direction": self.direction,
@@ -931,7 +962,8 @@ class PushoverCase:
                 "target_drift": self.target_drift, "steps": self.steps,
                 "hinges": self.hinges, "My": dict(self.My),
                 "default_My": self.default_My, "hardening": self.hardening,
-                "hinge_params": dict(self.hinge_params)}
+                "hinge_params": dict(self.hinge_params),
+                "geometric": self.geometric}
 
 
 STAGED_MODES = ("per_story",)
@@ -955,17 +987,39 @@ class StagedCase:
     structure in one unstaged increment.  The engine also solves the
     one-shot application of the same total loads internally and reports a
     comparison (see CONTRACT v0.6).
+
+    ``time_dependent`` (v0.25): ``None`` (default — the exact pre-v0.25
+    elastic staged analysis) or a dict switching on the AGE-ADJUSTED
+    EFFECTIVE MODULUS creep/shrinkage model (see CONTRACT v0.25 for the
+    full method).  Keys (all optional except ``days_per_story``):
+
+    * ``days_per_story`` — casting-cycle length d (days, > 0): story j
+      (0-based) is cast at ``j*d`` and its stage loads arrive at
+      ``(j+1)*d`` (one cycle later, when it is d days old);
+    * ``creep_coeff`` — ultimate creep coefficient phi_inf (default 2.0);
+    * ``shrinkage`` — ultimate free shrinkage strain eps_sh_inf
+      (default 300e-6);
+    * ``aging`` — bool (default False): scale the loading-age modulus by
+      the ACI 209 growth curve ``E(t) = E28*sqrt(t/(4 + 0.85 t))``;
+    * ``t_eval`` — evaluation time in days from the start of construction
+      (default ``None`` = long-term, t -> infinity);
+    * ``materials`` — list of material names the model treats as concrete
+      (creep/shrinkage applies to members of those materials only);
+      default = ALL materials.
     """
 
     name: str
     pattern: str = "DEAD"
     stages: str = "per_story"
     include_live: Dict[str, float] = field(default_factory=dict)
+    time_dependent: Optional[dict] = None      # v0.25 AAEM creep/shrinkage
 
     def to_dict(self) -> dict:
         return {"name": self.name, "pattern": self.pattern,
                 "stages": self.stages,
-                "include_live": dict(self.include_live)}
+                "include_live": dict(self.include_live),
+                "time_dependent": (dict(self.time_dependent)
+                                   if self.time_dependent else None)}
 
 
 @dataclass
@@ -978,15 +1032,27 @@ class BucklingCase:
     geometric stiffness of the frame, extracts member axial forces under this
     reference load, and returns the ``num_modes`` smallest positive load
     factors ``lambda`` (the critical multipliers) and their mode shapes.
+
+    ``base_case`` (v0.25): ``None`` (default — pre-v0.25 behavior: the
+    only axial state is the buckling case's own ``gravity``, solved
+    linearly inside the buckling module) or the name of a STATIC load
+    case.  The engine then solves that case with its own settings
+    (P-Delta / corotational / tension-only members included), extracts
+    the converged member axial forces N_base, and the eigenproblem
+    becomes the two-load-set form ``(K + Kg(N_base)) phi =
+    lambda (-Kg(N_gravity)) phi`` — lambda is the critical multiplier on
+    the BUCKLING ``gravity`` loads GIVEN the pre-existing base stress
+    state (see CONTRACT v0.25 for the exact pin).
     """
 
     name: str
     gravity: Dict[str, float] = field(default_factory=dict)
     num_modes: int = 6
+    base_case: Optional[str] = None            # v0.25 stressed-state base
 
     def to_dict(self) -> dict:
         return {"name": self.name, "gravity": dict(self.gravity),
-                "num_modes": self.num_modes}
+                "num_modes": self.num_modes, "base_case": self.base_case}
 
 
 # v0.10 response-spectrum directional combination methods (ASCE 7 §12.5)
@@ -1554,7 +1620,8 @@ class BuildingModel:
 
     def add_case(self, name: str, patterns: Dict[str, float],
                  pdelta: bool = False,
-                 pdelta_gravity: Optional[Dict[str, float]] = None) -> LoadCase:
+                 pdelta_gravity: Optional[Dict[str, float]] = None,
+                 geometric: str = "linear") -> LoadCase:
         for p in patterns:
             if p not in self.patterns:
                 raise ValueError(f"Case {name}: unknown pattern {p}")
@@ -1562,9 +1629,13 @@ class BuildingModel:
             if p not in self.patterns:
                 raise ValueError(f"Case {name}: pdelta_gravity references "
                                  f"unknown pattern {p}")
+        if geometric not in GEOMETRIC_OPTIONS:
+            raise ValueError(f"Case {name}: geometric must be one of "
+                             f"{GEOMETRIC_OPTIONS}, got {geometric!r}")
         c = LoadCase(name, dict(patterns), pdelta=bool(pdelta),
                      pdelta_gravity=(dict(pdelta_gravity)
-                                     if pdelta_gravity else None))
+                                     if pdelta_gravity else None),
+                     geometric=str(geometric))
         self.cases[name] = c
         return c
 
@@ -1812,14 +1883,21 @@ class BuildingModel:
 
     def add_staged_case(self, name: str, pattern: str = "DEAD",
                         stages: str = "per_story",
-                        include_live: Optional[Dict[str, float]] = None
+                        include_live: Optional[Dict[str, float]] = None,
+                        time_dependent: Optional[dict] = None
                         ) -> StagedCase:
         sc = StagedCase(name, pattern=pattern, stages=stages,
                         include_live={k: float(v) for k, v in
-                                      (include_live or {}).items()})
+                                      (include_live or {}).items()},
+                        time_dependent=(dict(time_dependent)
+                                        if time_dependent else None))
         self._validate_staged_case(sc)
         self.staged_cases[name] = sc
         return sc
+
+    # allowed time_dependent keys (v0.25); days_per_story is required
+    _TD_KEYS = ("days_per_story", "creep_coeff", "shrinkage", "aging",
+                "t_eval", "materials")
 
     def _validate_staged_case(self, sc: StagedCase) -> None:
         if sc.stages not in STAGED_MODES:
@@ -1835,12 +1913,59 @@ class BuildingModel:
             if not math.isfinite(float(f)):
                 raise ValueError(f"Staged case {sc.name}: include_live "
                                  f"factor for {p} must be finite")
+        td = sc.time_dependent                             # v0.25
+        if td is None:
+            return
+        if not isinstance(td, dict):
+            raise ValueError(f"Staged case {sc.name}: time_dependent must "
+                             "be a dict or None")
+        for k in td:
+            if k not in self._TD_KEYS:
+                raise ValueError(f"Staged case {sc.name}: unknown "
+                                 f"time_dependent key {k!r} (allowed: "
+                                 f"{self._TD_KEYS})")
+
+        def _pos(key, required=False, allow_zero=False):
+            v = td.get(key)
+            if v is None:
+                if required:
+                    raise ValueError(f"Staged case {sc.name}: "
+                                     f"time_dependent[{key!r}] is required")
+                return
+            ok = (isinstance(v, (int, float)) and not isinstance(v, bool)
+                  and math.isfinite(v)
+                  and (v >= 0.0 if allow_zero else v > 0.0))
+            if not ok:
+                raise ValueError(f"Staged case {sc.name}: "
+                                 f"time_dependent[{key!r}] must be a finite "
+                                 f"value {'>= 0' if allow_zero else '> 0'}")
+        _pos("days_per_story", required=True)
+        _pos("creep_coeff", allow_zero=True)
+        _pos("shrinkage", allow_zero=True)
+        _pos("t_eval")
+        if "aging" in td and not isinstance(td["aging"], bool):
+            raise ValueError(f"Staged case {sc.name}: "
+                             "time_dependent['aging'] must be a bool")
+        mats = td.get("materials")
+        if mats is not None:
+            if not isinstance(mats, (list, tuple)):
+                raise ValueError(f"Staged case {sc.name}: "
+                                 "time_dependent['materials'] must be a "
+                                 "list of material names")
+            for mname in mats:
+                if mname not in self.materials:
+                    raise ValueError(f"Staged case {sc.name}: "
+                                     f"time_dependent['materials'] names "
+                                     f"unknown material {mname!r}")
 
     def add_buckling_case(self, name: str, gravity: Dict[str, float],
-                          num_modes: int = 6) -> BucklingCase:
+                          num_modes: int = 6,
+                          base_case: Optional[str] = None) -> BucklingCase:
         bc = BucklingCase(name, gravity={k: float(v)
                                          for k, v in gravity.items()},
-                          num_modes=int(num_modes))
+                          num_modes=int(num_modes),
+                          base_case=(None if base_case is None
+                                     else str(base_case)))
         self._validate_buckling_case(bc)
         self.buckling_cases[name] = bc
         return bc
@@ -1858,6 +1983,10 @@ class BuildingModel:
                                  f"{p} must be finite")
         if bc.num_modes < 1:
             raise ValueError(f"Buckling case {bc.name}: num_modes must be >= 1")
+        if bc.base_case is not None and bc.base_case not in self.cases:
+            raise ValueError(f"Buckling case {bc.name}: base_case "
+                             f"{bc.base_case!r} is not a defined static "
+                             "load case")
 
     def add_rs_combo(self, name: str, name_x: str, name_y: str,
                      method: str = "100_30") -> Dict[str, str]:
@@ -1885,7 +2014,8 @@ class BuildingModel:
                           My: Optional[Dict[str, float]] = None,
                           default_My: Optional[float] = None,
                           hardening: float = 0.02,
-                          hinge_params: Optional[Dict[str, float]] = None
+                          hinge_params: Optional[Dict[str, float]] = None,
+                          geometric: str = "linear"
                           ) -> PushoverCase:
         po = PushoverCase(
             name, direction, gravity=dict(gravity or {}),
@@ -1895,7 +2025,8 @@ class BuildingModel:
             default_My=(None if default_My is None else float(default_My)),
             hardening=float(hardening),
             hinge_params={k: float(v)
-                          for k, v in (hinge_params or {}).items()})
+                          for k, v in (hinge_params or {}).items()},
+            geometric=str(geometric))
         self._validate_pushover_case(po)
         self.pushover_cases[name] = po
         return po
@@ -1904,6 +2035,10 @@ class BuildingModel:
         if po.direction not in PUSHOVER_DIRECTIONS:
             raise ValueError(f"Pushover case {po.name}: direction must be "
                              f"X|Y, got {po.direction!r}")
+        if po.geometric not in GEOMETRIC_OPTIONS:              # v0.25
+            raise ValueError(f"Pushover case {po.name}: geometric must be "
+                             f"one of {GEOMETRIC_OPTIONS}, got "
+                             f"{po.geometric!r}")
         if po.hinges not in PUSHOVER_HINGE_MODES + ("asce41",):
             raise ValueError(f"Pushover case {po.name}: hinges must be "
                              f"column_base|all_ends|asce41, got "
@@ -2528,6 +2663,10 @@ class BuildingModel:
                 if p not in self.patterns:
                     raise ValueError(f"Case {case.name}: pdelta_gravity "
                                      f"references unknown pattern {p}")
+            if case.geometric not in GEOMETRIC_OPTIONS:       # v0.25
+                raise ValueError(f"Case {case.name}: geometric must be one "
+                                 f"of {GEOMETRIC_OPTIONS}, got "
+                                 f"{case.geometric!r}")
         for combo in self.combos.values():
             self._validate_combo(combo)
         for rs in self.rs_cases.values():
@@ -2852,7 +2991,10 @@ class BuildingModel:
                 {p: float(f) for p, f in (cd.get("patterns") or {}).items()},
                 pdelta=bool(cd.get("pdelta", False)),
                 pdelta_gravity=({p: float(f) for p, f in pg.items()}
-                                if pg else None))
+                                if pg else None),
+                # v0.25; absent in pre-v0.25 files -> "linear" (the pdelta
+                # bool then decides, see LoadCase.effective_geometric)
+                geometric=str(cd.get("geometric", "linear")))
         for name, cd in (d.get("combos") or {}).items():
             mdl.combos[name] = LoadCombo(
                 cd.get("name", name),
@@ -2914,20 +3056,25 @@ class BuildingModel:
                 default_My=(None if dmy is None else float(dmy)),
                 hardening=float(pd.get("hardening", 0.02)),
                 hinge_params={k: float(v) for k, v in
-                              (pd.get("hinge_params") or {}).items()})
+                              (pd.get("hinge_params") or {}).items()},
+                geometric=str(pd.get("geometric", "linear")))    # v0.25
         for name, sd in (d.get("staged_cases") or {}).items():
+            td = sd.get("time_dependent")                        # v0.25
             mdl.staged_cases[name] = StagedCase(
                 name=sd.get("name", name),
                 pattern=sd.get("pattern", "DEAD"),
                 stages=sd.get("stages", "per_story"),
                 include_live={p: float(f) for p, f in
-                              (sd.get("include_live") or {}).items()})
+                              (sd.get("include_live") or {}).items()},
+                time_dependent=(dict(td) if td else None))
         for name, bd in (d.get("buckling_cases") or {}).items():
+            bcase = bd.get("base_case")                          # v0.25
             mdl.buckling_cases[name] = BucklingCase(
                 name=bd.get("name", name),
                 gravity={p: float(f)
                          for p, f in (bd.get("gravity") or {}).items()},
-                num_modes=int(bd.get("num_modes", 6)))
+                num_modes=int(bd.get("num_modes", 6)),
+                base_case=(None if bcase is None else str(bcase)))
         for name, cd in (d.get("rs_combos") or {}).items():
             mdl.rs_combos[name] = {"name_x": str(cd["name_x"]),
                                    "name_y": str(cd["name_y"]),

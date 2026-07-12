@@ -1,5 +1,37 @@
 # SkyFrame changelog
 
+## 1.10.0
+
+### Analysis Waves 1 & 2 — ETABS analysis parity
+- **Ritz vectors**: load-dependent WYD basis (pure numpy, rigid
+  diaphragms supported) — n Ritz vectors guaranteed to capture at
+  least the mass participation of n eigenvectors.
+- **Fast Nonlinear Analysis (FNA)**: modal-superposition time history
+  with nonlinearity confined to device links (dampers, gap/hook,
+  bilinear isolators) — matches direct integration to ~2e-7 peak on
+  the isolator benchmark and collapses exactly to linear modal
+  superposition without devices.
+- **Modal damping**: per-mode damping ratios for time history and FNA.
+- **Eigen solver policy**: Arpack-first with clean retry; the
+  "fullGenLapack is VERY SLOW" console noise is gone (root cause
+  documented: Arnoldi is capped at rank(M)); 15x faster on models
+  where Arpack applies.
+- **Large-displacement (corotational) analysis** for static cases and
+  pushover — Mattiasson elastica benchmarks to 0.04%.
+- **Buckling from a stressed/staged state**: pre-load an Euler column
+  to half its critical load and the remaining multiplier is exactly
+  half (verified to 4e-12).
+- **Floor-cracking analysis**: iterative per-quad cracked-stiffness
+  slabs (modulus-of-rupture trigger), bracketed by the elastic and
+  fully-cracked closed forms.
+- **Time-dependent staged construction**: age-adjusted effective
+  modulus creep + shrinkage (ACI 209 curves) with a per-story column
+  shortening report — the AAEM closed form 1 + chi*phi is exact.
+- Two engine findings fixed en route: FNA base shears corrected for
+  OpenSees reactions carrying no damping share; degenerate-cluster
+  eigenvectors re-orthonormalized (they broke the FNA fixed point).
+- 617 tests (58 new across both waves).
+
 ## 1.9.0
 
 ### Wave 24 — code breadth

@@ -3172,3 +3172,187 @@ console warning fired on every such modal run.  New policy:
   feature (message names `run_time_history`).
 * `POST /api/model` round-trips `th_cases[*].damping_model` /
   `modal_zeta`; 400 on a bad damping_model or ratios outside (0, 1).
+
+# v0.25 additions — analysis parity II
+
+Units everywhere: kN, m, kPa, tonne, s.  Four ANALYSIS features (no
+design): large-displacement (corotational) geometric nonlinearity,
+buckling from a stressed/staged base state, floor-cracking iterative
+stiffness, and time-dependent (creep/shrinkage) staged construction.
+
+## Large-displacement geometric nonlinearity (`LoadCase.geometric`)
+
+`LoadCase.geometric: "linear" (default) | "pdelta" | "corotational"`.
+PRECEDENCE (exact): a non-`"linear"` `geometric` WINS; with `geometric
+== "linear"` (or the key absent — every pre-v0.25 file) the legacy
+`pdelta` bool decides (`True -> "pdelta"`).  BOTH fields stay
+serialized (`to_dict` keeps `pdelta` unchanged); the engine consults
+only `LoadCase.effective_geometric`.  `PushoverCase.geometric` takes
+the same options (default `"linear"` = the exact pre-v0.25 build) for
+large-displacement pushover.  `add_case`/`add_pushover_case` accept
+`geometric=`; validation rejects anything outside the option tuple.
+
+* Engine: `"corotational"` builds every frame member on
+  `geomTransf('Corotational', ...)` and reuses the EXACT two-stage
+  P-Delta flow (`pdelta_gravity` applies identically; the reported
+  response is the increment past the held gravity state).  The ONLY
+  solver difference: each corotational stage ramps its load in
+  `CORO_INCREMENTS = 10` equal LoadControl increments with a
+  NewtonLineSearch retry per increment (a single Newton step to a
+  finitely rotated state frequently diverges).  The `"pdelta"` path is
+  BIT-IDENTICAL to the pre-v0.25 pdelta bool (same OpenSees calls,
+  single load step — asserted in the suite).
+* HONEST LIMITATION (probed on openseespy 3.7.1): the 3D Corotational
+  transformation cannot carry elasticBeamColumn `-releasez/-releasey`
+  codes (singular system).  In a corotational build, RELEASED segments
+  (member-end moment releases; the release-coded outer elements of
+  v0.22 edge-tie chains) fall back to the PDelta transformation with a
+  `warnings.warn` naming them.  `eleLoad -beamUniform` on corotational
+  members works (verified).
+* Superpose/envelope warnings and the virtual-work LINEAR-case guard
+  now key on `effective_geometric != "linear"` (message text still
+  contains "P-Delta" for compatibility).
+* Pins: Mattiasson (1981) elastica cantilever, PL^2/EI = 1 (w/L =
+  0.30172, u/L = 0.05643), 10 corotational elements to < 1% (measured
+  0.04% / 0.25%); the deep PL^2/EI = 3 regime against an in-suite RK4
+  elastica ODE reference (itself reproducing the Mattiasson row) to
+  < 1%; corotational == linear at tiny load to 1e-9 relative;
+  corotational ~ P-Delta at moderate gravity (5%); the elastic
+  corotational pushover slope = the exact base-hinge series formula
+  `EI/L^3 / (1/3 + 1/60)`.
+
+## Buckling from a stressed/staged state (`BucklingCase.base_case`)
+
+`BucklingCase.base_case: Optional[str] = None` — the name of a STATIC
+load case (validated to exist).  Pre-v0.25 behavior (`None`): the
+buckling case's own `gravity` dict, solved LINEARLY inside the numpy
+buckling module, is the ONLY axial state.  With a base case the engine
+solves it through the FULL engine first (its own P-Delta/corotational/
+tension-only behavior — the CONVERGED state) and extracts per-member
+reference axials as the MEAN of the tension-positive station values
+N(x) (exact for end-loaded columns; the natural constant-N reduction
+of a linearly varying field otherwise).  These feed
+`buckling_analysis(model, gravity, num_modes, base_N, base_label)` as
+the FIXED base geometric stiffness in the standard TWO-LOAD-SET form
+
+    (K + Kg(N_base)) phi = lambda (-Kg(N_gravity)) phi
+
+so LAMBDA MULTIPLIES THE BUCKLING `gravity` LOADS ONLY, GIVEN the base
+state (the base state is held, never scaled).  `N_gravity` still comes
+from the module's internal linear solve on the UNSTRESSED K (the
+classic linearized treatment).  Kg is linear in N, so for a shared
+distribution `lambda(base P0) = lambda(no base) - P0` EXACTLY.
+`BucklingResult` gains `base_case` (serialized).
+
+* A base state at/beyond the buckling load makes `K + Kg(N_base)`
+  indefinite: the Cholesky fails and the result carries factors = []
+  plus the explicit warning "base axial state is at or beyond the
+  buckling load ..." (no silent garbage).
+* Pins: Euler cantilever column — `lambda0 ~ pi^2 EI/(2L)^2` to 1%
+  (1-element consistent Kg) and, with base `P0 = 0.5 lambda0` fed
+  through a real static case, remaining multiplier `= 0.5 lambda0` to
+  1e-9 relative (measured 4e-12 absolute on `lambda0 - P0 - lambda`);
+  the engine force path (2-story column, per-story loads) equals the
+  hand-fed `base_N` to 1e-12; staged-final-state equivalence follows
+  from the v0.6 staged == one-shot force pins.
+
+## Floor-cracking iterative stiffness (`skyframe.core.cracked`)
+
+`cracked_analysis(model, case, cracked_ratio=0.35, fr_factor=0.62,
+max_iter=10, tol=0.02)` / engine wrapper `run_cracked(...)` — iterate
+a static case; after each solve every SLAB shell quad's extreme-fiber
+bending stress `sigma = 6*max(|Mxx|, |Myy|)/t^2` is checked against
+the modulus of rupture `fr = fr_factor*sqrt(fc') MPa` (ACI 318
+19.2.3; fc' from the material `fc` attr or the established ACI
+19.2.2.1 E-inversion `fc_from_E`); quads over fr get their stiffness
+scaled by the FLAT `cracked_ratio` (Branson SIMPLIFIED — the full
+`Ie = (Mcr/Ma)^3` interpolation is deliberately NOT applied,
+documented) and the case re-solves until the cracked set stabilizes.
+
+* GRANULARITY DELIVERED: PER-QUAD factors (`OpenSeesEngine.
+  _quad_stiff_scale`: one extra ElasticMembranePlateSection per
+  distinct (section, factor) pair, assigned quad by quad).  The
+  section has ONE modulus, so membrane scales WITH bending — the same
+  documented limitation as `ShellSection.mod`; transverse plate
+  bending (the cracking driver) is unaffected by the membrane share.
+* Iteration: MONOTONE (a cracked quad stays cracked — terminates in
+  <= n_quads passes up to `max_iter`); converged on (a) a stable set,
+  or (b) max |uz| changing < `tol` relative between passes (marginal
+  flip guard, reported in the warnings); non-convergence at `max_iter`
+  returns the last state with an explicit warning.  Walls never crack
+  here (slab quads only); membrane slabs have no quads.
+* Returns `CrackedResults`: the FINAL iteration's CaseResults +
+  `cracking` map `{quad index: {region, cracked, Ma, Mcr}}` (kN*m/m;
+  indices match `shell_forces`/`shell_quads`), `iterations` (solve
+  count), `converged`, echoed parameters.
+* Pins: below cracking -> ONE iteration, BIT-IDENTICAL to the elastic
+  case (the empty-scale build IS the standard build); far above
+  cracking on a simply supported strip -> every quad cracked and
+  deflection EXACTLY `1/cracked_ratio` x elastic (1e-9); `Mcr =
+  fr*t^2/6` hand value to 1e-12; a threshold load cracks ONLY the
+  midspan band (0 < cracked < all).
+* API: `POST /api/analyze/cracked {case, cracked_ratio?}` -> final
+  case results dict + `{"cracking", "iterations", "converged",
+  "cracked_ratio", "fr_factor", "cracked_warnings", "case", "method":
+  "cracked"}`; 400 on unknown case / bad ratio.
+
+## Time-dependent staged construction (`StagedCase.time_dependent`)
+
+`StagedCase.time_dependent: Optional[dict] = None` — `None` keeps the
+elastic staged run BIT-IDENTICAL to pre-v0.25.  Keys: `days_per_story`
+(REQUIRED, > 0), `creep_coeff` phi_inf (default 2.0), `shrinkage`
+eps_sh_inf (default 300e-6), `aging` bool (default False), `t_eval`
+days (default None = t -> infinity), `materials` list (concrete
+filter; default ALL materials).  Method: AGE-ADJUSTED EFFECTIVE
+MODULUS (deterministic hand method — NOT OpenSees TDConcrete), chi =
+0.8 (`TD_CHI`), ACI 209 curves as module functions `aci209_creep`
+(phi_inf*(t/(10+t))^0.6, t = days under load), `aci209_shrinkage`
+(eps_inf*t/(35+t), t = days since cast), `aci209_modulus_growth`
+(sqrt(t/(4+0.85t))).
+
+* TIMELINE (exact): story j (0-based) is CAST at `j*d`; stage k's
+  loads ARRIVE at `(k+1)*d` (one cycle later — the story above is
+  starting), so a story is at least d days old when loaded.  At stage
+  k, story j's concrete members carry `E_adj = E(t0)/(1 +
+  chi*phi(t_eval - (k+1)*d))` with `E(t0) = E28 *
+  aci209_modulus_growth((k+1-j)*d)` when `aging` (else E28; the ACI
+  loading-age phi correction 1.25*t0^-0.118 is NOT applied — phi_inf
+  is uniform, documented).  Implementation: per-stage submodels get
+  per-story CLONED materials/sections (members) and shell sections
+  with `mod` scaled (shells) — the parent model is never mutated.
+  `include_live` stays at E28 (short-term loads do not creep) and the
+  one-shot comparison stays elastic (it measures sequencing, not
+  creep).  A finite `t_eval` before a stage's load arrival clamps that
+  stage's creep to 0 (all stages are still applied; mid-construction
+  snapshots are out of scope).
+* SHRINKAGE: one extra increment on the full structure — every
+  concrete FRAME member of story j gets the exact thermal equivalence
+  `dT = -eps_sh(t_eval - j*d)/thermal_alpha` (member-only: the thermal
+  machinery does not load shells, documented) on the age-adjusted
+  stiffness `E28/(1 + chi*phi(t_eval - j*d))` (a gradually developing
+  strain, the standard AAEM treatment; no aging growth factor).
+* REPORT: `StagedResults.shortening` (serialized `"shortening"`) —
+  per story `{uz_elastic, uz_time_dependent, delta}` = mean cumulative
+  uz over that story's column TOPS, from the time-dependent pass vs an
+  internally re-run ELASTIC staged pass (`delta` = creep + shrinkage
+  share).  Rebuild-and-accumulate note: a story-k node accumulates
+  only from stages >= k (cast to design elevation — the staged pins
+  encode this).
+* Pins (all exact): held load at t = inf -> `delta_total/
+  delta_elastic = 1 + chi*phi_inf` to 1e-12 (the AAEM closed form);
+  finite `t_eval` follows `1 + chi*phi(t_eval - d)` on the ACI curve
+  to 1e-12; an UNLOADED column's shrinkage shortening `= eps_sh(t)*L`
+  to 1e-9 (determinate -> E-independent, thermal equivalence exact,
+  both t = inf and the t/(35+t) half-value at 35 d); the 2-story
+  creep total = the longhand stage sum; aging hand factors
+  `1/growth((k+1-j)d)` reproduce the engine to 1e-12; phi = eps = 0
+  time-dependent == elastic to 1e-15; `materials` filter leaves a
+  steel story's share exactly elastic.
+
+## API
+
+* `POST /api/analyze/cracked {case, cracked_ratio?}` (above).
+* `POST /api/model` round-trips `cases[*].geometric`,
+  `pushover_cases[*].geometric`, `buckling_cases[*].base_case`,
+  `staged_cases[*].time_dependent` (pre-v0.25 files load unchanged:
+  absent keys default to linear/None).

@@ -110,6 +110,20 @@ sway DOFs) and a Newton solve: the gravity state (``pdelta_gravity`` or, if
 (``loadConst``), then the case's own loads are solved on the gravity-
 stiffened geometry; two-stage runs report the case's INCREMENTAL response.
 
+v0.25 large-displacement statics: ``LoadCase.geometric = "corotational"``
+(and ``PushoverCase.geometric``) runs the SAME two-stage flow on
+``geomTransf('Corotational', ...)`` with each stage's load ramped in
+``CORO_INCREMENTS`` LoadControl increments; released segments fall back
+to PDelta (unsupported by the 3D corotational formulation — see
+``_build``).  The legacy ``pdelta`` bool maps to ``geometric="pdelta"``
+via ``LoadCase.effective_geometric`` (bit-identical path).  v0.25 also
+adds buckling from a stressed base state (``run_buckling`` +
+``BucklingCase.base_case``), the cracked-slab iteration hook
+(``run_cracked`` / ``_quad_stiff_scale``) and time-dependent (AAEM)
+staged construction (``run_staged`` + ``StagedCase.time_dependent``,
+ACI 209 curves ``aci209_creep`` / ``aci209_shrinkage`` /
+``aci209_modulus_growth``, chi = ``TD_CHI``).
+
 v0.2: shell regions are meshed (:mod:`skyframe.core.mesh`) into ShellMITC4
 elements with ElasticMembranePlateSection; frame members are split so their
 nodes match shell edge meshes (results are re-aggregated per ORIGINAL
@@ -155,7 +169,7 @@ from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
                                  BuildingModel, FrameMember, FrameSection,
                                  LoadCase, LoadCombo, LoadPattern,
                                  ResponseSpectrumCase, SectionCut,
-                                 ShellRegion, StoryForce)
+                                 ShellRegion, StoryForce, ThermalLoad)
 
 # time-history step cap for engine.run(): if the model's TH cases together
 # exceed this many integration steps they are skipped in run() (a warning is
@@ -211,6 +225,58 @@ PUSHOVER_STEP_CAP = 2000
 # is a cheap self-contained numpy eigen-solve); extra cases are skipped in
 # run() with a results warning (run_buckling() itself is never capped).
 BUCKLING_CASE_CAP = 25
+
+# v0.25 corotational static cases: each stage's load is ramped in this many
+# equal LoadControl increments (a single Newton load step to a finitely
+# rotated state frequently diverges; 10 increments converge the elastica
+# validation problems and cost little).  The P-Delta path is untouched
+# (single load step, bit-identical to pre-v0.25).
+CORO_INCREMENTS = 10
+
+# v0.25 time-dependent staged construction: AGE-ADJUSTED EFFECTIVE MODULUS
+# aging coefficient chi (Bazant/Trost; 0.8 is the standard hand value).
+# The AAEM closed form pins the tests: a load applied at t0 and held gives
+# delta(t)/delta_elastic = 1 + chi*phi(t - t0) exactly.
+TD_CHI = 0.8
+
+
+def aci209_creep(phi_inf: float, t: float) -> float:
+    """ACI 209R-92 creep development: phi(t) = phi_inf * (t/(10+t))^0.6.
+
+    ``t`` = days UNDER LOAD; ``math.inf`` -> phi_inf, t <= 0 -> 0.
+    """
+    if t == math.inf:
+        return phi_inf
+    if t <= 0.0:
+        return 0.0
+    return phi_inf * (t / (10.0 + t)) ** 0.6
+
+
+def aci209_shrinkage(eps_inf: float, t: float) -> float:
+    """ACI 209R-92 shrinkage development: eps(t) = eps_inf * t/(35+t).
+
+    ``t`` = days SINCE CASTING (moist-cure form); ``math.inf`` -> eps_inf,
+    t <= 0 -> 0.
+    """
+    if t == math.inf:
+        return eps_inf
+    if t <= 0.0:
+        return 0.0
+    return eps_inf * t / (35.0 + t)
+
+
+def aci209_modulus_growth(t: float) -> float:
+    """ACI 209R-92 modulus growth: E(t)/E28 = sqrt(t/(4 + 0.85 t)).
+
+    (moist-cured a=4, b=0.85 constants; E(28) = E28 * sqrt(28/27.8) ~
+    1.0036 — the curve is anchored to fc(t), documented).  ``t`` = concrete
+    age in days; ``math.inf`` -> sqrt(1/0.85).
+    """
+    if t == math.inf:
+        return math.sqrt(1.0 / 0.85)
+    if t <= 0.0:
+        return 0.0
+    return math.sqrt(t / (4.0 + 0.85 * t))
 
 # v0.5 stiff-hinge idealization factor n: the zeroLength hinge spring's
 # elastic rotational stiffness is k_theta = n * 6EI/L about each bending
@@ -1161,6 +1227,11 @@ class StagedResults:
     case: CaseResults
     oneshot: CaseResults
     column_axial_max_diff_pct: float
+    # v0.25 time-dependent runs only: per-story column-shortening report
+    # {story: {"uz_elastic", "uz_time_dependent", "delta"}} (m; cumulative
+    # vertical displacement at the story's column tops — negative = down;
+    # "delta" = time_dependent - elastic = the creep + shrinkage share).
+    shortening: Optional[Dict[str, Dict[str, float]]] = None
 
     def to_dict(self) -> dict:
         d = self.case.to_dict()
@@ -1169,6 +1240,9 @@ class StagedResults:
                 float(self.column_axial_max_diff_pct),
             "oneshot_case": self.oneshot.to_dict(),
         }
+        if self.shortening is not None:
+            d["shortening"] = {s: {k: float(v) for k, v in e.items()}
+                               for s, e in self.shortening.items()}
         return d
 
 
@@ -1287,6 +1361,10 @@ class OpenSeesEngine:
         # v0.17 panel_zones == "rigid": effective per-member rigid offsets
         # (computed lazily; the user's model is never mutated)
         self._pz_offsets: Optional[Dict[str, Tuple[float, float]]] = None
+        # v0.25 cracked-slab iteration: quad index -> stiffness scale on
+        # the shell section E; set (on a FRESH engine) by run_cracked's
+        # driver before any analysis.  Empty = the exact standard build.
+        self._quad_stiff_scale: Dict[int, float] = {}
 
     # ------------------------------------------------------------------ API
     def run(self) -> AnalysisResults:
@@ -1552,8 +1630,9 @@ class OpenSeesEngine:
         if case_name not in model.cases:
             raise ValueError(f"Unknown load case {case_name!r}")
         case = model.cases[case_name]
-        if case.pdelta:
-            result = self._run_static_pdelta(case)
+        geom = case.effective_geometric          # v0.25 (pdelta bool honored)
+        if geom != "linear":
+            result = self._run_static_geom(case, geom)
             self._case_cache[case_name] = result
             return result
 
@@ -1723,7 +1802,8 @@ class OpenSeesEngine:
             plan[m.uid] = bb
         return plan
 
-    def _build(self, pdelta: bool = False, hinge_case=None) -> _Assembly:
+    def _build(self, pdelta: bool = False, hinge_case=None,
+               transf: Optional[str] = None) -> _Assembly:
         """(Re)build the OpenSees domain from the (meshed) BuildingModel.
 
         ``hinge_case`` (v0.5, pushover only): a :class:`PushoverCase` whose
@@ -1732,8 +1812,23 @@ class OpenSeesEngine:
         equalDOF) between duplicated nodes at the hinge locations.  Hinged
         builds are NOT stored as ``self._asm`` (the elastic assembly stays
         the engine-wide reference).
+
+        ``transf`` (v0.25): explicit geometric transformation name for the
+        frame members — ``"Linear"`` | ``"PDelta"`` | ``"Corotational"``;
+        ``None`` keeps the legacy ``pdelta`` bool mapping (True ->
+        ``"PDelta"``, False -> ``"Linear"``), so every pre-v0.25 call site
+        is bit-identical.  LIMITATION (probed on openseespy 3.7.1): the
+        3D Corotational transformation cannot carry elasticBeamColumn
+        ``-releasez/-releasey`` codes (the released element yields a
+        singular system), so in a Corotational build any RELEASED segment
+        — member-end moment releases and the release-coded outer elements
+        of the v0.22 edge-tie chains — falls back to the PDelta
+        transformation, with a ``warnings.warn`` naming the members.
         """
         model = self.model
+        transf_name = (transf if transf is not None
+                       else ("PDelta" if pdelta else "Linear"))
+        coro_release_fallback: List[str] = []
         if self._mesh is None:
             self._mesh = mesh_model(model)
         mesh = self._mesh
@@ -2038,7 +2133,8 @@ class OpenSeesEngine:
                     etag += 1
                     mtag = self._fiber_hinge_element(
                         asm, m, sec, mat, bb_fiber, hp_fiber, ni_tag,
-                        nj_tag, etag, mtag, fiber_counters, pdelta, vecxz)
+                        nj_tag, etag, mtag, fiber_counters, transf_name,
+                        vecxz)
                     asm.seg_ele[(m.uid, seg.index)] = etag
                     asm.ele_nodes[m.uid] = (seg.ni + 1, seg.nj + 1)
                     for node in (seg.ni, seg.nj):
@@ -2047,11 +2143,16 @@ class OpenSeesEngine:
             for seg in segs:
                 etag += 1
                 beam_etag = etag
-                ops.geomTransf("PDelta" if pdelta else "Linear",
-                               beam_etag, *vecxz)
                 rel_i = "Mi" in toks and seg.index == 0
                 rel_j = "Mj" in toks and seg.index == last
                 code = (1 if rel_i else 0) + (2 if rel_j else 0)
+                # v0.25: released segments cannot ride Corotational (see
+                # the _build docstring) -> PDelta fallback + warning
+                seg_transf = transf_name
+                if code and transf_name == "Corotational":
+                    seg_transf = "PDelta"
+                    coro_release_fallback.append(m.uid)
+                ops.geomTransf(seg_transf, beam_etag, *vecxz)
                 extra = ["-releasez", code, "-releasey", code] if code else []
                 ni_tag, nj_tag = seg.ni + 1, seg.nj + 1
                 # v0.17 scissors panel zones: a BEAM end at a panel-zone
@@ -2092,8 +2193,7 @@ class OpenSeesEngine:
                     tag += 1
                     ops.node(tag, *p_off)
                     etag += 1
-                    ops.geomTransf("PDelta" if pdelta else "Linear",
-                                   etag, *vecxz)
+                    ops.geomTransf(transf_name, etag, *vecxz)
                     ops.element("elasticBeamColumn", etag, ni_tag, tag, A_eff,
                                 mat.E * RIGID_LINK_FACTOR,
                                 mat.G * RIGID_LINK_FACTOR, J_eff, I22_eff,
@@ -2106,8 +2206,7 @@ class OpenSeesEngine:
                     tag += 1
                     ops.node(tag, *p_off)
                     etag += 1
-                    ops.geomTransf("PDelta" if pdelta else "Linear",
-                                   etag, *vecxz)
+                    ops.geomTransf(transf_name, etag, *vecxz)
                     ops.element("elasticBeamColumn", etag, tag, nj_tag, A_eff,
                                 mat.E * RIGID_LINK_FACTOR,
                                 mat.G * RIGID_LINK_FACTOR, J_eff, I22_eff,
@@ -2236,12 +2335,35 @@ class OpenSeesEngine:
                                 ssec.total_thickness, 0.0)
                 sec_tags[name] = stag
             regions = {r.uid: r for r in model.shells}
-            for quad in mesh.quads:
+            # v0.25 cracked-slab iteration: per-quad stiffness scale factors
+            # (quad index -> factor on the section E; one extra
+            # ElasticMembranePlateSection per DISTINCT (section, factor)
+            # pair).  ElasticMembranePlateSection has a single modulus, so
+            # the factor scales membrane AND bending stiffness together —
+            # the same documented limitation as ShellSection.mod.  Layered
+            # nonlinear sections are never scaled (cracked runs are linear
+            # builds, where layered sections use the elastic path anyway).
+            scaled_tags: Dict[Tuple[str, float], int] = {}
+            for qi, quad in enumerate(mesh.quads):
                 etag += 1
                 node_tags = [n + 1 for n in quad.nodes]
                 region = regions[quad.region]
-                ops.element("ShellMITC4", etag, *node_tags,
-                            sec_tags[region.section])
+                stag_q = sec_tags[region.section]
+                scale = float(self._quad_stiff_scale.get(qi, 1.0))
+                if scale != 1.0 and not (nonlinear_shells and getattr(
+                        model.shell_sections[region.section],
+                        "layered", None)):
+                    key = (region.section, scale)
+                    if key not in scaled_tags:
+                        ssec_q = model.shell_sections[region.section]
+                        mat_q = model.materials[ssec_q.material]
+                        stag += 1
+                        ops.section("ElasticMembranePlateSection", stag,
+                                    mat_q.E * ssec_q.mod * scale, mat_q.nu,
+                                    ssec_q.total_thickness, 0.0)
+                        scaled_tags[key] = stag
+                    stag_q = scaled_tags[key]
+                ops.element("ShellMITC4", etag, *node_tags, stag_q)
                 asm.shell_quads.append({"region": quad.region,
                                         "nodes": node_tags})
                 asm.quad_ele.append(etag)
@@ -2287,10 +2409,15 @@ class OpenSeesEngine:
                     for k_c, (ni_c, nj_c) in enumerate(zip(chain[:-1],
                                                            chain[1:])):
                         etag += 1
-                        ops.geomTransf("PDelta" if pdelta else "Linear",
-                                       etag, *vecxz)
                         code = ((1 if k_c == 0 else 0)
                                 + (2 if k_c == n_seg - 1 else 0))
+                        # v0.25: release-coded tie elements fall back to
+                        # PDelta in a Corotational build (see _build doc)
+                        tie_transf = transf_name
+                        if code and transf_name == "Corotational":
+                            tie_transf = "PDelta"
+                            coro_release_fallback.append(f"edge-tie {ruid}")
+                        ops.geomTransf(tie_transf, etag, *vecxz)
                         extra = (["-releasez", code, "-releasey", code]
                                  if code else [])
                         ops.element("elasticBeamColumn", etag,
@@ -2731,6 +2858,11 @@ class OpenSeesEngine:
 
         # --- mass -----------------------------------------------------------
         self._assign_mass(asm)
+        if coro_release_fallback:                                  # v0.25
+            warnings.warn(
+                "Corotational build: released elements are not supported "
+                "by the 3D Corotational transformation; PDelta fallback "
+                f"applied to: {sorted(set(coro_release_fallback))}")
         if hinge_case is None:
             self._asm = asm
         return asm
@@ -2853,7 +2985,7 @@ class OpenSeesEngine:
                              sec: FrameSection, mat, bb: dict,
                              hp: Dict[str, float], ni_tag: int, nj_tag: int,
                              etag: int, mtag: int, counters: dict,
-                             pdelta: bool, vecxz) -> int:
+                             transf_name: str, vecxz) -> int:
         """Create one v0.21 fiber PMM hinge member; returns the new mtag.
 
         ``forceBeamColumn`` with ``beamIntegration('HingeRadau', fiber
@@ -3022,7 +3154,7 @@ class OpenSeesEngine:
         itag = counters["integ"]
         lp = 0.5 * h_depth
         ops.beamIntegration("HingeRadau", itag, fsec, lp, fsec, lp, esec)
-        ops.geomTransf("PDelta" if pdelta else "Linear", etag, *vecxz)
+        ops.geomTransf(transf_name, etag, *vecxz)
         ops.element("forceBeamColumn", etag, ni_tag, nj_tag, etag, itag)
         k33 = 6.0 * E * I33_eff / L
         kappa_y = bb["My"] / (E * I33_eff)
@@ -3840,9 +3972,10 @@ class OpenSeesEngine:
                              f"got {direction!r}")
         if case_name not in model.cases:
             raise ValueError(f"Unknown load case {case_name!r}")
-        if model.cases[case_name].pdelta:
+        if model.cases[case_name].effective_geometric != "linear":
             raise ValueError("virtual-work diagrams need a LINEAR static "
-                             f"case; {case_name!r} is a P-Delta case")
+                             f"case; {case_name!r} is a P-Delta/"
+                             "corotational (geometrically nonlinear) case")
         if self._axial_only_present() or self._nonlinear_static_links_present():
             raise ValueError(
                 "virtual-work diagrams need a linear model (no tension/"
@@ -4378,9 +4511,10 @@ class OpenSeesEngine:
         """Linear superposition of already-solved case results."""
         parts = [(self.run_static(case_name), f) for case_name, f in factors.items()]
         warning = ""
-        if any(self.model.cases[c].pdelta for c in factors):
-            warning = ("superposition includes a P-Delta (nonlinear) case; "
-                       "linear combination is approximate")
+        if any(self.model.cases[c].effective_geometric != "linear"
+               for c in factors):
+            warning = ("superposition includes a P-Delta/corotational "
+                       "(nonlinear) case; linear combination is approximate")
 
         def comb_vecs(get) -> dict:
             first = get(parts[0][0])
@@ -4457,9 +4591,11 @@ class OpenSeesEngine:
         parts = [(self.run_static(case_name), f)
                  for case_name, f in factors.items()]
         warning = ""
-        if any(self.model.cases[c].pdelta for c in factors):
-            warning = ("envelope includes a P-Delta (nonlinear) case; its "
-                       "factored results enter the envelope unchanged")
+        if any(self.model.cases[c].effective_geometric != "linear"
+               for c in factors):
+            warning = ("envelope includes a P-Delta/corotational (nonlinear) "
+                       "case; its factored results enter the envelope "
+                       "unchanged")
 
         def env_vecs(get) -> Tuple[dict, dict]:
             first = get(parts[0][0])
@@ -4514,17 +4650,57 @@ class OpenSeesEngine:
 
     # ----------------------------------------------------- P-Delta statics
     def _run_static_pdelta(self, case: LoadCase) -> CaseResults:
-        """Solve one P-Delta case (Newton on the PDelta transformation).
+        """Back-compat alias for :meth:`_run_static_geom` (P-Delta)."""
+        return self._run_static_geom(case, "pdelta")
+
+    @staticmethod
+    def _analyze_geom_stage(geometric: str, err: str) -> None:
+        """Run one static stage of a geometrically nonlinear case.
+
+        P-Delta keeps the exact pre-v0.25 single Newton load step
+        (bit-identical path).  Corotational (v0.25, large displacements)
+        ramps the stage load in ``CORO_INCREMENTS`` equal LoadControl
+        increments with a NewtonLineSearch retry per increment — a Newton
+        solve straight to a finitely-rotated state frequently diverges,
+        the standard incremental treatment.  The stage pattern rides a
+        Linear time series, so the final state is the full stage load in
+        both branches.
+        """
+        if geometric != "corotational":
+            if ops.analyze(1) != 0:
+                raise RuntimeError(err)
+            return
+        ops.integrator("LoadControl", 1.0 / CORO_INCREMENTS)
+        for _ in range(CORO_INCREMENTS):
+            ok = ops.analyze(1)
+            if ok != 0:
+                ops.algorithm("NewtonLineSearch")
+                ok = ops.analyze(1)
+                ops.algorithm("Newton")
+            if ok != 0:
+                raise RuntimeError(err)
+
+    def _run_static_geom(self, case: LoadCase,
+                         geometric: str) -> CaseResults:
+        """Solve one geometrically nonlinear static case (v0.3 P-Delta,
+        v0.25 corotational — Newton on the PDelta or Corotational
+        transformation).
 
         Two-stage when ``pdelta_gravity`` names a distinct gravity state:
         gravity is applied and held (``loadConst``), then the case's own
         loads are solved; the reported response is the INCREMENT past the
         gravity state (the standard linearized-P-Delta case result).  With
         ``pdelta_gravity is None`` the case's own patterns are the gravity
-        state and a single nonlinear stage is reported in full.
+        state and a single nonlinear stage is reported in full.  The
+        corotational flow is IDENTICAL except for the transformation and
+        the incremental stage solve (see :meth:`_analyze_geom_stage`).
         """
         model = self.model
-        asm = self._build(pdelta=True)
+        asm = self._build(transf=("Corotational"
+                                  if geometric == "corotational"
+                                  else "PDelta"))
+        label = ("Corotational" if geometric == "corotational"
+                 else "P-Delta")
         self._seg_span_loads = {}
         self._seg_fef = {}
 
@@ -4542,11 +4718,11 @@ class OpenSeesEngine:
             for pat_name, scale in case.pdelta_gravity.items():
                 self._apply_pattern(asm, pat_name, scale)
             self._setup_nonlinear_analysis(asm)
-            if ops.analyze(1) != 0:
-                raise RuntimeError(
-                    f"P-Delta analysis failed to converge for case "
-                    f"{case.name!r} (gravity stage: patterns "
-                    f"{case.pdelta_gravity})")
+            self._analyze_geom_stage(
+                geometric,
+                f"{label} analysis failed to converge for case "
+                f"{case.name!r} (gravity stage: patterns "
+                f"{case.pdelta_gravity})")
             ops.loadConst("-time", 0.0)
             snap_disp = {t: list(ops.nodeDisp(t)) for t in asm.node_coords}
             ops.reactions()
@@ -4568,12 +4744,12 @@ class OpenSeesEngine:
         for pat_name, scale in case.patterns.items():
             self._apply_pattern(asm, pat_name, scale)
         self._setup_nonlinear_analysis(asm)
-        if ops.analyze(1) != 0:
-            raise RuntimeError(
-                f"P-Delta analysis failed to converge for case "
-                f"{case.name!r}. The load level may exceed the elastic "
-                "buckling capacity of the gravity state, or the model may "
-                "be unstable; reduce loads or check supports.")
+        self._analyze_geom_stage(
+            geometric,
+            f"{label} analysis failed to converge for case "
+            f"{case.name!r}. The load level may exceed the elastic "
+            "buckling capacity of the gravity state, or the model may "
+            "be unstable; reduce loads or check supports.")
 
         node_disp = {t: [d - s for d, s in
                          zip(ops.nodeDisp(t), snap_disp.get(t, (0.0,) * 6))]
@@ -4666,7 +4842,12 @@ class OpenSeesEngine:
             raise ValueError(f"Pushover case {name!r}: the model has no "
                              "stories (no roof to control)")
 
-        asm = self._build(hinge_case=case)
+        # v0.25: the case's geometric option picks the frame transformation
+        # ("linear" = the exact pre-v0.25 build; PushoverCase.geometric).
+        geom_po = getattr(case, "geometric", "linear")
+        po_transf = {"linear": None, "pdelta": "PDelta",
+                     "corotational": "Corotational"}[geom_po]
+        asm = self._build(hinge_case=case, transf=po_transf)
         self._seg_span_loads = {}
         self._seg_fef = {}
         dof = 1 if case.direction == "X" else 2
@@ -4699,9 +4880,12 @@ class OpenSeesEngine:
             for pat_name, scale in case.gravity.items():
                 self._apply_pattern(asm, pat_name, scale)
             self._setup_pushover_analysis(asm)
-            if ops.analyze(1) != 0:
-                raise RuntimeError(f"Pushover case {name!r}: gravity stage "
-                                   "failed to converge")
+            # v0.25: a corotational gravity stage ramps in increments (the
+            # same treatment as _analyze_geom_stage); other geometrics
+            # keep the exact single-step path.
+            self._analyze_geom_stage(
+                "corotational" if geom_po == "corotational" else "linear",
+                f"Pushover case {name!r}: gravity stage failed to converge")
             ops.loadConst("-time", 0.0)
             d0 = ops.nodeDisp(ctrl, dof)
 
@@ -4907,6 +5091,188 @@ class OpenSeesEngine:
         sub.num_modes = 0
         return sub
 
+    # -------------------- v0.25 time-dependent staged helpers (AAEM) ----
+    def _td_normalize(self, td: dict) -> dict:
+        """Normalized time_dependent parameters (defaults documented in
+        :class:`skyframe.core.model.StagedCase`)."""
+        model = self.model
+        t_eval = td.get("t_eval")
+        mats = td.get("materials")
+        return {
+            "d": float(td["days_per_story"]),
+            "phi_inf": float(td.get("creep_coeff", 2.0)),
+            "eps_inf": float(td.get("shrinkage", 300e-6)),
+            "aging": bool(td.get("aging", False)),
+            "t_eval": (math.inf if t_eval is None else float(t_eval)),
+            "materials": (set(model.materials) if mats is None
+                          else {str(m) for m in mats}),
+        }
+
+    @staticmethod
+    def _td_stage_scale(tdn: dict, k: int, j: int) -> float:
+        """E multiplier of story ``j``'s concrete for STAGE ``k``'s loads.
+
+        Timeline (0-based, d = days_per_story): story j is CAST at
+        ``j*d``; stage k's loads ARRIVE at ``(k+1)*d`` (one casting cycle
+        after story k is cast — the story above is starting).  The
+        age-adjusted effective modulus for the stage-k increments,
+        evaluated at ``t_eval`` (default infinity), is
+
+            E_adj = E(t0) / (1 + chi*phi(t_eval - (k+1)*d)),   chi = 0.8,
+
+        with phi the ACI 209 creep curve (:func:`aci209_creep`) of the
+        DURATION UNDER LOAD and ``E(t0) = E28 * aci209_modulus_growth(
+        (k+1-j)*d)`` when ``aging`` (else E28; the ACI loading-age creep
+        correction 1.25*t0^-0.118 is NOT applied — phi_inf is uniform,
+        documented).  A finite ``t_eval`` earlier than a stage's load
+        arrival clamps that stage's duration to 0 (elastic — every stage
+        is still applied; mid-construction snapshots are out of scope).
+        """
+        dur = max(tdn["t_eval"] - (k + 1) * tdn["d"], 0.0) \
+            if tdn["t_eval"] != math.inf else math.inf
+        phi = aci209_creep(tdn["phi_inf"], dur)
+        e_fac = (aci209_modulus_growth((k + 1 - j) * tdn["d"])
+                 if tdn["aging"] else 1.0)
+        return e_fac / (1.0 + TD_CHI * phi)
+
+    @staticmethod
+    def _td_shrink_scale(tdn: dict, j: int) -> float:
+        """E multiplier of story ``j``'s concrete for the SHRINKAGE stage.
+
+        Shrinkage develops gradually from casting, so the standard AAEM
+        treatment applies the age-adjusted modulus over the FULL interval
+        cast -> t_eval: ``E28 / (1 + chi*phi(t_eval - j*d))`` (no aging
+        growth factor — a gradually developing strain starting at age ~0
+        has no single loading age, documented).
+        """
+        dur = max(tdn["t_eval"] - j * tdn["d"], 0.0) \
+            if tdn["t_eval"] != math.inf else math.inf
+        return 1.0 / (1.0 + TD_CHI * aci209_creep(tdn["phi_inf"], dur))
+
+    def _td_apply(self, sub: BuildingModel,
+                  scale_of_story: Dict[int, float],
+                  mats: set) -> None:
+        """Retarget ``sub``'s concrete members/shells to per-story clones
+        of their sections/materials with E scaled by ``scale_of_story``.
+
+        Clones are shallow copies (dynamic attributes like ``fc``
+        survive); the parent model is never mutated (the submodel's dicts
+        are fresh shallow copies, only NEW keys are added and the member/
+        region lists are rebuilt with copies).  Frame members scale via a
+        cloned Material E; shell regions via a cloned ShellSection with
+        ``mod`` scaled (the v0.4 modifier — same effect on the elastic
+        section).
+        """
+        sidx = {s.name: i for i, s in enumerate(self.model.stories)}
+        mat_cache: Dict[Tuple[str, int], str] = {}
+        sec_cache: Dict[Tuple[str, int], str] = {}
+        ssec_cache: Dict[Tuple[str, int], str] = {}
+
+        def scaled_material(mname: str, j: int, s: float) -> str:
+            key = (mname, j)
+            if key not in mat_cache:
+                base = sub.materials[mname]
+                clone = copy.copy(base)
+                clone.name = f"__td__{mname}@{j}"
+                clone.E = base.E * s
+                sub.materials[clone.name] = clone
+                mat_cache[key] = clone.name
+            return mat_cache[key]
+
+        new_members: List[FrameMember] = []
+        for m in sub.members:
+            j = self._stage_of_member(m, sidx)
+            s = scale_of_story.get(j, 1.0)
+            sec = sub.sections.get(m.section)
+            if (sec is None or s == 1.0 or sec.material not in mats):
+                new_members.append(m)
+                continue
+            skey = (m.section, j)
+            if skey not in sec_cache:
+                sclone = copy.copy(sec)
+                sclone.name = f"__td__{m.section}@{j}"
+                sclone.material = scaled_material(sec.material, j, s)
+                sub.sections[sclone.name] = sclone
+                sec_cache[skey] = sclone.name
+            mclone = copy.copy(m)
+            mclone.section = sec_cache[skey]
+            new_members.append(mclone)
+        sub.members = new_members
+
+        new_shells: List[ShellRegion] = []
+        for r in sub.shells:
+            j = self._stage_of_region(r, sidx)
+            s = scale_of_story.get(j, 1.0)
+            ssec = sub.shell_sections.get(r.section)
+            if (ssec is None or s == 1.0 or ssec.material not in mats):
+                new_shells.append(r)
+                continue
+            skey = (r.section, j)
+            if skey not in ssec_cache:
+                sclone = copy.copy(ssec)
+                sclone.name = f"__td__{r.section}@{j}"
+                sclone.mod = ssec.mod * s
+                sub.shell_sections[sclone.name] = sclone
+                ssec_cache[skey] = sclone.name
+            rclone = copy.copy(r)
+            rclone.section = ssec_cache[skey]
+            new_shells.append(rclone)
+        sub.shells = new_shells
+
+    def _td_shrink_pattern(self, tdn: dict) -> LoadPattern:
+        """Equivalent-temperature shrinkage pattern on the FULL structure.
+
+        Every concrete FRAME member of story j gets a uniform temperature
+        change ``dT_j = -eps_sh_j / thermal_alpha`` with ``eps_sh_j =
+        aci209_shrinkage(eps_inf, t_eval - j*d)`` (the ACI 209 t/(35+t)
+        curve of the story's concrete AGE at evaluation) — the exact
+        thermal equivalence: an unrestrained member's shortening is
+        ``alpha*dT*L = -eps_sh*L`` regardless of E.  Shell regions carry
+        NO shrinkage load (the thermal machinery is member-only,
+        documented).
+        """
+        model = self.model
+        alpha = getattr(model, "thermal_alpha", 1.2e-5)
+        sidx = {s.name: i for i, s in enumerate(model.stories)}
+        pat = LoadPattern("__td_shrinkage__", "other")
+        for m in model.members:
+            sec = model.sections.get(m.section)
+            if sec is None or sec.material not in tdn["materials"]:
+                continue
+            j = self._stage_of_member(m, sidx)
+            t_age = (math.inf if tdn["t_eval"] == math.inf
+                     else max(tdn["t_eval"] - j * tdn["d"], 0.0))
+            eps = aci209_shrinkage(tdn["eps_inf"], t_age)
+            if eps > 0.0:
+                pat.thermal_loads.append(ThermalLoad(m.uid, -eps / alpha))
+        return pat
+
+    def _td_shortening(self, model, disp_td: Dict[Vec3, np.ndarray],
+                       disp_el: Dict[Vec3, np.ndarray]
+                       ) -> Dict[str, Dict[str, float]]:
+        """Per-story column-shortening report (v0.25, docstring at
+        :class:`StagedResults`): mean cumulative uz over the TOP endpoints
+        of each story's columns, time-dependent vs elastic staged."""
+        sidx = {s.name: i for i, s in enumerate(model.stories)}
+        zeros6 = np.zeros(6)
+        out: Dict[str, Dict[str, float]] = {}
+        for s in model.stories:
+            j = sidx[s.name]
+            pts = [max((m.pi, m.pj), key=lambda p: p[2])
+                   for m in model.members
+                   if m.kind == "column"
+                   and self._stage_of_member(m, sidx) == j]
+            if not pts:
+                continue
+            uz_td = float(np.mean([disp_td.get(_pkey(p), zeros6)[2]
+                                   for p in pts]))
+            uz_el = float(np.mean([disp_el.get(_pkey(p), zeros6)[2]
+                                   for p in pts]))
+            out[s.name] = {"uz_elastic": uz_el,
+                           "uz_time_dependent": uz_td,
+                           "delta": uz_td - uz_el}
+        return out
+
     def run_staged(self, name: str) -> StagedResults:
         """Run one staged-construction case (v0.6, cached per engine).
 
@@ -4926,6 +5292,19 @@ class OpenSeesEngine:
 
         Every partial structure 1..k must be stable on its own (a story
         propped only by later construction cannot be staged).
+
+        ``time_dependent`` (v0.25): the SAME rebuild-and-accumulate loop
+        with the AGE-ADJUSTED EFFECTIVE MODULUS method — at stage k every
+        concrete member/shell of story j carries ``E_adj``
+        (:meth:`_td_stage_scale`: chi = 0.8, ACI 209 creep curve, optional
+        aging growth), one extra SHRINKAGE increment is applied on the
+        full structure through the exact thermal-equivalence pattern
+        (:meth:`_td_shrink_pattern`, member shortening ``-eps_sh(t)*L``),
+        and the ELASTIC staged loop is ALSO run for the per-story
+        column-shortening report (``StagedResults.shortening``).  The
+        ``include_live`` increment stays at E28 (short-term loads do not
+        creep, documented), and the one-shot comparison stays elastic
+        (it measures the sequencing effect, not the creep share).
         """
         if name in self._staged_cache:
             return self._staged_cache[name]
@@ -4941,59 +5320,95 @@ class OpenSeesEngine:
                              f"{sc.pattern!r}")
         n = len(model.stories)
         parts = self._split_staged_pattern(model.patterns[sc.pattern])
+        td = getattr(sc, "time_dependent", None)
+        tdn = self._td_normalize(td) if td else None
 
-        disp_acc: Dict[Vec3, np.ndarray] = {}
-        master_acc: Dict[str, np.ndarray] = {}
-        reac_acc: Dict[Vec3, np.ndarray] = {}
-        base_acc = {key: 0.0 for key in ("FX", "FY", "FZ", "MX", "MY", "MZ")}
-        mf_acc: Dict[str, np.ndarray] = {}
-        st_acc: Dict[str, dict] = {}
-        story_acc: Dict[str, Dict[str, float]] = {}
+        def run_loop(tdn_loop: Optional[dict]) -> dict:
+            """One full staged accumulation pass; ``tdn_loop`` switches
+            the time-dependent material adjustment + shrinkage stage."""
+            acc = {"disp": {}, "master": {}, "reac": {},
+                   "base": {key: 0.0 for key in
+                            ("FX", "FY", "FZ", "MX", "MY", "MZ")},
+                   "mf": {}, "st": {}, "story": {}}
 
-        def accumulate(eng: "OpenSeesEngine", res: CaseResults) -> None:
-            asm = eng._asm
-            for t, c in asm.struct_coords.items():
-                key = _pkey(c)
-                disp_acc[key] = (disp_acc.get(key, np.zeros(6))
-                                 + np.asarray(res.node_disp[t]))
-            for s_name, mt in asm.masters.items():
-                master_acc[s_name] = (master_acc.get(s_name, np.zeros(6))
-                                      + np.asarray(res.node_disp[mt]))
-            for t in asm.support_tags:
-                key = _pkey(asm.node_coords[t])
-                reac_acc[key] = (reac_acc.get(key, np.zeros(6))
-                                 + np.asarray(res.reactions[t]))
-            for key2 in base_acc:
-                base_acc[key2] += res.base[key2]
-            for uid, f in res.member_forces.items():
-                mf_acc[uid] = mf_acc.get(uid, np.zeros(12)) + np.asarray(f)
-            for uid, st in res.member_stations.items():
-                entry = st_acc.setdefault(uid, {"x": list(st["x"])})
-                for key3 in ("N", "V2", "V3", "T", "M2", "M3"):
-                    entry[key3] = (entry.get(key3,
-                                             np.zeros(len(st[key3])))
-                                   + np.asarray(st[key3]))
-            for s_name, vals in res.story.items():
-                acc = story_acc.setdefault(s_name,
-                                           {k4: 0.0 for k4 in vals})
-                for k4, v in vals.items():
-                    acc[k4] += v
+            def accumulate(eng: "OpenSeesEngine", res: CaseResults) -> None:
+                asm = eng._asm
+                disp_acc, master_acc = acc["disp"], acc["master"]
+                reac_acc, base_acc = acc["reac"], acc["base"]
+                mf_acc, st_acc, story_acc = acc["mf"], acc["st"], acc["story"]
+                for t, c in asm.struct_coords.items():
+                    key = _pkey(c)
+                    disp_acc[key] = (disp_acc.get(key, np.zeros(6))
+                                     + np.asarray(res.node_disp[t]))
+                for s_name, mt in asm.masters.items():
+                    master_acc[s_name] = (master_acc.get(s_name, np.zeros(6))
+                                          + np.asarray(res.node_disp[mt]))
+                for t in asm.support_tags:
+                    key = _pkey(asm.node_coords[t])
+                    reac_acc[key] = (reac_acc.get(key, np.zeros(6))
+                                     + np.asarray(res.reactions[t]))
+                for key2 in base_acc:
+                    base_acc[key2] += res.base[key2]
+                for uid, f in res.member_forces.items():
+                    mf_acc[uid] = (mf_acc.get(uid, np.zeros(12))
+                                   + np.asarray(f))
+                for uid, st in res.member_stations.items():
+                    entry = st_acc.setdefault(uid, {"x": list(st["x"])})
+                    for key3 in ("N", "V2", "V3", "T", "M2", "M3"):
+                        entry[key3] = (entry.get(key3,
+                                                 np.zeros(len(st[key3])))
+                                       + np.asarray(st[key3]))
+                for s_name, vals in res.story.items():
+                    sacc = story_acc.setdefault(s_name,
+                                                {k4: 0.0 for k4 in vals})
+                    for k4, v in vals.items():
+                        sacc[k4] += v
 
-        for k in range(n):
-            sub = self._stage_submodel(k)
-            sub.patterns = {"__stage__": parts[k]}
-            sub.cases = {"__stage__": LoadCase("__stage__",
-                                               {"__stage__": 1.0})}
-            eng = OpenSeesEngine(sub)
-            accumulate(eng, eng.run_static("__stage__"))
+            for k in range(n):
+                sub = self._stage_submodel(k)
+                if tdn_loop is not None:
+                    self._td_apply(sub,
+                                   {j: self._td_stage_scale(tdn_loop, k, j)
+                                    for j in range(k + 1)},
+                                   tdn_loop["materials"])
+                sub.patterns = {"__stage__": parts[k]}
+                sub.cases = {"__stage__": LoadCase("__stage__",
+                                                   {"__stage__": 1.0})}
+                eng = OpenSeesEngine(sub)
+                accumulate(eng, eng.run_static("__stage__"))
 
-        if sc.include_live:
-            sub = self._stage_submodel(n - 1)      # full structure
-            sub.patterns = dict(model.patterns)
-            sub.cases = {"__live__": LoadCase("__live__",
-                                              dict(sc.include_live))}
-            eng = OpenSeesEngine(sub)
-            accumulate(eng, eng.run_static("__live__"))
+            if tdn_loop is not None and tdn_loop["eps_inf"] > 0.0:
+                # shrinkage increment on the full structure (age-adjusted
+                # E per story; exact thermal equivalence per member)
+                sub = self._stage_submodel(n - 1)
+                self._td_apply(sub,
+                               {j: self._td_shrink_scale(tdn_loop, j)
+                                for j in range(n)},
+                               tdn_loop["materials"])
+                pat = self._td_shrink_pattern(tdn_loop)
+                sub.patterns = {pat.name: pat}
+                sub.cases = {"__shrink__": LoadCase("__shrink__",
+                                                    {pat.name: 1.0})}
+                eng = OpenSeesEngine(sub)
+                accumulate(eng, eng.run_static("__shrink__"))
+
+            if sc.include_live:
+                sub = self._stage_submodel(n - 1)      # full structure, E28
+                sub.patterns = dict(model.patterns)
+                sub.cases = {"__live__": LoadCase("__live__",
+                                                  dict(sc.include_live))}
+                eng = OpenSeesEngine(sub)
+                accumulate(eng, eng.run_static("__live__"))
+            return acc
+
+        acc = run_loop(tdn)
+        # the elastic pass feeds the shortening report; without
+        # time_dependent the single pass IS the elastic pass (pre-v0.25
+        # behavior, bit-identical)
+        acc_el = run_loop(None) if tdn is not None else acc
+        disp_acc, master_acc = acc["disp"], acc["master"]
+        reac_acc, base_acc = acc["reac"], acc["base"]
+        mf_acc, st_acc, story_acc = acc["mf"], acc["st"], acc["story"]
 
         # one-shot comparison: the same total loads applied at once on the
         # full structure (stage-n geometry == the full model geometry, so
@@ -5039,7 +5454,11 @@ class OpenSeesEngine:
                 pct = 100.0 * max(
                     abs(member_forces[u][0] - oneshot.member_forces[u][0])
                     for u in cols) / ref
-        result = StagedResults(name, case, oneshot, pct)
+        shortening = (self._td_shortening(model, acc["disp"],
+                                          acc_el["disp"])
+                      if tdn is not None else None)
+        result = StagedResults(name, case, oneshot, pct,
+                               shortening=shortening)
         self._staged_cache[name] = result
         return result
 
@@ -5437,12 +5856,57 @@ class OpenSeesEngine:
         assembles the elastic and geometric stiffness of the frame, extracts
         member axial forces under the case's reference gravity, and returns
         the smallest positive load factors and mode shapes.
+
+        ``base_case`` (v0.25): when the case names one, that STATIC case is
+        solved through the FULL engine first (its own P-Delta/corotational
+        setting, tension-only members, springs — the converged state), and
+        each member's reference axial force is extracted as the MEAN of its
+        tension-positive station axials N(x) (exact for the end-loaded
+        columns of the closed-form pins; for members with axial span loads
+        the mean is the natural constant-N reduction of the linearly
+        varying field, documented).  These forces form the FIXED
+        ``Kg(N_base)`` of the two-load-set eigenproblem — see
+        :func:`buckling_analysis` for the exact formulation and the
+        meaning of the returned factors.
         """
         model = self.model
         if name not in model.buckling_cases:
             raise ValueError(f"Unknown buckling case {name!r}")
         bc = model.buckling_cases[name]
-        return buckling_analysis(model, bc.gravity, num_modes=bc.num_modes)
+        base_N: Optional[Dict[str, float]] = None
+        base_case = getattr(bc, "base_case", None)
+        if base_case is not None:
+            if base_case not in model.cases:
+                raise ValueError(f"Buckling case {name!r}: base_case "
+                                 f"{base_case!r} is not a static load case")
+            base_res = self.run_static(base_case)
+            base_N = {}
+            for uid, st in base_res.member_stations.items():
+                vals = st.get("N") or []
+                if vals:
+                    base_N[uid] = float(sum(vals) / len(vals))
+        return buckling_analysis(model, bc.gravity, num_modes=bc.num_modes,
+                                 base_N=base_N, base_label=base_case)
+
+    # -------------------------------------------- v0.25 cracked-slab solve
+    def run_cracked(self, name: str, cracked_ratio: float = 0.35,
+                    fr_factor: float = 0.62, max_iter: int = 10,
+                    tol: float = 0.02):
+        """Floor-cracking iterative stiffness solve of one static case.
+
+        Delegates to :func:`skyframe.core.cracked.cracked_analysis` (see
+        that module for the full method: sigma = 6*max(|Mxx|, |Myy|)/t^2
+        vs fr = fr_factor*sqrt(fc') MPa per SLAB quad; cracked quads'
+        shell stiffness scaled by ``cracked_ratio``; monotone iteration
+        to a stable cracked set).  Fresh engines are built per iteration
+        — this engine's caches are untouched.  Returns a
+        :class:`skyframe.core.cracked.CrackedResults`.
+        """
+        from skyframe.core.cracked import cracked_analysis
+        return cracked_analysis(self.model, name,
+                                cracked_ratio=cracked_ratio,
+                                fr_factor=fr_factor,
+                                max_iter=max_iter, tol=tol)
 
     # ------------------------------------------- v0.24 load-dependent Ritz
     def run_ritz(self, n: Optional[int] = None, direction: str = "X"):

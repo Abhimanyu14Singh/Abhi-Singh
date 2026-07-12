@@ -235,6 +235,28 @@ v0.24 additions (analysis parity I):
   padded with its last value) fields — 400 on a bad damping_model or
   ratios outside (0, 1).
 
+v0.25 additions (analysis parity II):
+
+* ``POST /api/analyze/cracked`` — floor-cracking iterative stiffness
+  solve of one static case (body ``{case: name, cracked_ratio?: float
+  in (0, 1] (default 0.35)}``): SLAB quads whose extreme-fiber bending
+  stress 6*max(|Mxx|, |Myy|)/t^2 exceeds fr = 0.62*sqrt(fc') MPa get
+  their stiffness scaled by cracked_ratio and the case re-solves until
+  the cracked set stabilizes (:mod:`skyframe.core.cracked`) -> the
+  final case results dict plus ``{"cracking": {quad: {region, cracked,
+  Ma, Mcr}}, "iterations", "converged", "cracked_ratio", "fr_factor",
+  "cracked_warnings", "case", "method": "cracked"}``; 400 on an
+  unknown case or a bad ratio;
+* ``POST /api/model`` round-trips ``cases[*].geometric`` ("linear" |
+  "pdelta" | "corotational" — large-displacement statics; the legacy
+  ``pdelta`` bool still serializes and decides when geometric is
+  "linear"), ``pushover_cases[*].geometric``,
+  ``buckling_cases[*].base_case`` (buckling from a stressed static
+  state) and ``staged_cases[*].time_dependent`` (AAEM creep/shrinkage
+  staged construction; ``StagedResults`` gains the per-story
+  ``shortening`` report) — 400 on bad values, pre-v0.25 files load
+  unchanged.
+
 Saved models live as ``<name>.skyframe.json`` files in ``~/.skyframe/models``
 (override with the ``SKYFRAME_MODELS_DIR`` environment variable; the
 directory is created on demand).  Names must match ``[A-Za-z0-9 _-]{1,60}``.
@@ -890,6 +912,37 @@ def create_app() -> Flask:
         payload = res.to_dict()
         payload["case"] = case
         payload["method"] = "FNA"
+        return jsonify(payload)
+
+    # -------------------------------------------- v0.25: cracked-slab solve
+    @app.post("/api/analyze/cracked")
+    def analyze_cracked():
+        """Floor-cracking iterative stiffness solve of one static case.
+
+        Body: ``{case: "<static case name>", cracked_ratio?: float in
+        (0, 1] (default 0.35)}``.  Returns the final iteration's case
+        results dict plus ``{"cracking", "iterations", "converged",
+        "cracked_ratio", "fr_factor", "cracked_warnings", "case",
+        "method": "cracked"}`` (see CONTRACT v0.25); 400 on an unknown
+        case or a bad ratio.
+        """
+        if not _OPENSEES_OK:
+            return jsonify({"error": "OpenSeesPy is not available"}), 400
+        body = request.get_json(silent=True) or {}
+        case = body.get("case")
+        if not isinstance(case, str) or not case:
+            return jsonify({"error": "'case' (name of a static case) is "
+                                     "required"}), 400
+        ratio = body.get("cracked_ratio", 0.35)
+        try:
+            from skyframe.core.cracked import cracked_analysis
+            res = cracked_analysis(_state["model"], case,
+                                   cracked_ratio=ratio)
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 400
+        payload = res.to_dict()
+        payload["case"] = case
+        payload["method"] = "cracked"
         return jsonify(payload)
 
     # --------------------------------------------- v0.6: preliminary design

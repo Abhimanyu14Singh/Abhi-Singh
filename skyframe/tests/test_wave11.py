@@ -203,7 +203,8 @@ def test_buckling_case_roundtrip_and_engine_results():
     mdl.add_buckling_case("BUCK", {"DEAD": 1.0, "LIVE": 1.0}, num_modes=3)
     d = mdl.to_dict()
     assert d["buckling_cases"]["BUCK"] == {
-        "name": "BUCK", "gravity": {"DEAD": 1.0, "LIVE": 1.0}, "num_modes": 3}
+        "name": "BUCK", "gravity": {"DEAD": 1.0, "LIVE": 1.0},
+        "num_modes": 3, "base_case": None}     # base_case: v0.25 field
     back = BuildingModel.from_dict(d)
     assert back.to_dict() == d
     assert back.buckling_cases["BUCK"].num_modes == 3
