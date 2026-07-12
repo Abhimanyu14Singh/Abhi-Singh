@@ -1,5 +1,24 @@
 # SkyFrame changelog
 
+## 1.9.0
+
+### Wave 24 — code breadth
+- **Eurocode design**: EN 1993-1-1 steel checks (cross-section, exact
+  Table 6.1/6.2 buckling curves, §6.3.3 interaction with Annex B
+  factors) and EN 1992-1-1 concrete checks (0.8x stress block with
+  material factors, VRd,c/VRd,s/VRd,max) selectable per check —
+  AISC 360 / ACI 318 remain the bit-identical defaults.
+- **NBCC 2020 lateral loads**: auto wind (Iw·q·Ce·Cg·Cp with exposure
+  power laws) and seismic ELF (piecewise design spectrum, V floor/cap,
+  Ft top force) pattern generators.
+- **AISC 341 seismic checks**: strong-column/weak-beam ratios and
+  panel-zone demand/capacity at every beam-column joint.
+- **Wind on shell surfaces**: per-region Cp with an auto pattern
+  (exact q·Cp·area resultants, wall normals from mesh tributary areas).
+- **Composite camber recommendation**: 0.8·dead deflection floored to
+  5 mm steps with industry thresholds.
+- 559 tests (27 new).
+
 ## 1.8.0
 
 ### Wave 23 — meshing & advanced shells

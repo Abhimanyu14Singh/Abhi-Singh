@@ -2841,3 +2841,180 @@ one slab node == a nodal load there (1e-15); 6 x 0.5 strip: base torque
 No new endpoints.  `POST /api/model` round-trips `edge_constraints`,
 `ShellSection.layered`, `line_springs`, and `ShellRegion.area_spring`
 (400 via `validate()`).
+
+# v0.23 additions — EC3/EC2 checks, NBCC lateral, AISC 341 SMF, Cp shell wind, camber
+
+Units everywhere: kN, m, kPa, tonne, s.  Every design result still
+carries `"preliminary": true`.
+
+## Eurocode 3 steel checks (`skyframe.design.steel_ec3`)
+
+`check_members_ec3(model, results, case_or_combo, *, fy=355000, kx=1,
+ky=1, E=2.1e8)` — EN 1993-1-1:2005 member screens over the SAME demand
+pipeline as `design.steel` (`_case_block`/`_demands`; library-W-shape
+recognition by name + 1% area).  `gamma_M0 = gamma_M1 = 1.0`
+(recommended values).  EC3 y-y (major) = SkyFrame local 3:
+
+* cross-section: `Npl,Rd = A*fy`, `Mpl,Rd = Wpl*fy` per axis (the AISC
+  table Zx/Zy), combined by the CONSERVATIVE LINEAR Eq. (6.2)
+  `N/Npl + My/Mpl,y + Mz/Mpl,z <= 1` (the exact §6.2.9 plastic
+  interaction is deferred, documented);
+* shear `Vpl,Rd = Av*fy/sqrt(3)` with `Av = d*tw` (the exact rolled
+  formula `A - 2*b*tf + (tw+2r)*tf` needs the root radius r the table
+  lacks — documented simplification);
+* §6.3.1 flexural buckling: `Ncr = pi^2*E*I/(k*L)^2`,
+  `lambda_bar = sqrt(A*fy/Ncr)`, imperfection alpha from the Table 6.1
+  curves (a0/a/b/c/d = 0.13/0.21/0.34/0.49/0.76), curve per the Table
+  6.2 rolled-I rule with tf <= 40 mm (h/b > 1.2 -> a/b, else b/c;
+  y/z), `phi = 0.5*(1 + alpha*(lambda - 0.2) + lambda^2)`,
+  `chi = 1/(phi + sqrt(phi^2 - lambda^2)) <= 1` (chi = 1 exactly for
+  lambda <= 0.2);
+* §6.3.3 Eqs. (6.61)/(6.62) with `chi_LT = 1` (LTB DEFERRED, kc = 1)
+  and Annex B Table B.1 (non-susceptible) factors,
+  `Cmy = Cmz = 0.9` fixed (Table B.3 sway value):
+  `kyy = 0.9*(1 + min(lambda_y - 0.2, 0.8)*n_y)`,
+  `kzz = 0.9*(1 + min(2*lambda_z - 0.6, 1.4)*n_z)`, `kyz = 0.6*kzz`,
+  `kzy = 0.6*kyy`, `n = NEd/(chi*A*fy/gamma_M1)`;
+* governing `ratio`/`equation` = max of "6.2", "6.2.6" (shear),
+  "6.61", "6.62"; TENSION members get the cross-section rows only.
+
+Result rows (`MemberCheckEC3.to_dict()`): `{uid, section, kind, Pu,
+Mu33, Mu22, Vu, NplRd, NbRd, MplRd33, MplRd22, VplRd, chi_y, chi_z,
+ratio, equation, status, notes, preliminary, governing_combo}`.
+`check_members_ec3_envelope` / `summarize_ec3` mirror the AISC pair.
+Pins: chi(lambda = 1, curve b): phi = 0.5*(1 + 0.34*0.8 + 1) = 1.136,
+chi = 1/(1.136 + sqrt(1.136^2 - 1)) = 0.5970231915935528; W18x50
+Npl/Mpl,y/Mpl,z/Vpl exact from the published imperial dims.
+
+## Eurocode 2 concrete checks (`skyframe.design.concrete_ec2`)
+
+`check_concrete_members_ec2(model, results, case_or_combo, rebar, *,
+fck=30000)` — EN 1992-1-1:2004, same call/result shapes as the ACI
+module (`RebarLayout.fy` read as fyk; the `phiMn_*`/`phiVn` fields
+carry the EC2 DESIGN resistances — no phi, the material factors
+`gamma_C = 1.5` / `gamma_S = 1.15` live in `fcd`/`fyd`; fck <= 50 MPa
+ENFORCED, the <= C50 laws only):
+
+* beam flexure: `x = As*fyd/(0.8*b*fcd)` (lambda = 0.8, eta = 1.0),
+  `MRd = As*fyd*(d - 0.4x)`; note when x/d > 0.45; NG when
+  `As < As,min = max(0.26*fctm/fyk, 0.0013)*b*d`,
+  `fctm = 0.30*fck[MPa]^(2/3)`;
+* shear: `VRd,c = max(0.12*k*(100*rho_l*fck)^(1/3),
+  0.035*k^1.5*sqrt(fck))*b*d` (MPa stresses, k = 1 + sqrt(200/d[mm])
+  <= 2, rho_l <= 0.02); `VRd,s = (Asw/s)*0.9d*fywd*2.5` capped by
+  `VRd,max = b*0.9d*nu1*fcd/(2.5 + 0.4)`, `nu1 = 0.6*(1 - fck/250)`;
+  governing capacity `max(VRd,c, min(VRd,s, VRd,max))` — EC2 does NOT
+  add Vc to Vs (documented difference from ACI);
+* columns: uniaxial local-3 interaction via the SAME two-face
+  strain-compatibility machinery as `design.concrete` with the EC2
+  block (eta*fcd over 0.8c, eps_cu2 = 0.0035, steel clamped to fyd) —
+  documented differences from ACI: no phi, no 0.80 compression cap
+  (pure compression = `fcd*(Ag - Ast) + fyd*Ast` exactly), 0.0035 vs
+  0.003; biaxial §5.8.9 deferred (note emitted).  Demand rated by the
+  same radial rule.
+
+`check_concrete_members_ec2_envelope` / `summarize_ec2` mirror the ACI
+pair.
+
+## NBCC 2020 lateral (`skyframe.core.codes`)
+
+* `nbcc_ce(z, exposure)` — Table 4.1.7.1 power laws: open
+  `(h/10)^0.2 >= 0.9`, rough `0.7*(h/12)^0.3 >= 0.7` (intermediate
+  interpolation not implemented).
+* `nbcc_wind_pattern(model, q, exposure="open", name="NWIND",
+  direction="X", cp_total=1.3, Iw=1.0)` — static procedure
+  `p = Iw*q*Ce(z)*Cg*Cp` with the reference velocity pressure `q`
+  passed DIRECTLY in kPa, `Cg = 2.0`, `cp_total` = combined windward
+  0.8 + leeward 0.5 = 1.3 (documented; both faces at Ce of the loaded
+  level).  Same tributary story areas as `make_wind_pattern`; kind
+  "wind".
+* `nbcc_spectrum_value(T, Sa02, Sa05, Sa10, Sa20)` — S(T) from the
+  four site-adjusted ordinates: plateau S(0.2) below 0.2 s, LINEAR IN
+  log T between the octave points (documented simplification of the
+  4.1.8.4 interpolation), `S(2.0)*(2/T)` beyond 2 s (S(5)/S(10) not
+  requested — documented).
+* `nbcc_seismic_elf(model, Sa02, Sa05, Sa10, Sa20, RdRo, Ie=1,
+  system="other", direction="X", name="NELF")` — 4.1.8.11:
+  `Ta = coeff*hn^0.75` (steel_mf 0.085 / concrete_mf 0.075 / other
+  0.05), `V = S(Ta)*Mv*Ie*W/(Rd*Ro)` with `Mv = 1` FIXED (documented),
+  floored at `S(2.0)*Mv*Ie*W/(RdRo)` and capped at
+  `max(2/3*S(0.2), S(0.5))*Ie*W/(RdRo)` (the Rd >= 1.5 condition on
+  the cap cannot be checked from the RdRo product — applied
+  unconditionally, documented); distribution `w*h/sum(w*h)` with the
+  top force `Ft = 0.07*Ta*V <= 0.25V` when Ta > 0.7 s.  Kind "quake".
+
+## AISC 341 SMF joint screens (`skyframe.design.seismic341`)
+
+`check_seismic341(model, results, case_or_combo, columns="auto", *,
+Fy=345000, Ry=1.1, phi_pz=1.0)` — over the v0.17
+`_panel_zone_joints` joint set (dedup point with >= 1 flexural column
+end + >= 1 beam end), restricted to joints touching a designated
+column (`columns` list of uids, or "auto" = all; unknown uids raise):
+
+* SCWB (E3-1): `sum(Zc*(Fy - Puc/Ag)) / sum(1.1*Ry*Fy*Zb) >= 1` with
+  Puc = `max(end-i N, 0)` from the chosen combo; major-axis Z assumed
+  both sides; Muv and the E3.4a exemptions not applied (documented);
+* panel zone: demand `Ru = sum(Mpb*)/(db - tf_beam)` (deepest beam) vs
+  `phi*0.6*Fy*dc*tw*(1 + 3*bcf*tcf^2/(db*dc*tw))` (Eq. J10-11,
+  `panel_zone_capacity`, phi = 1.0, Pr <= 0.75Pc assumed, NO doubler
+  — documented), column = deepest VERTICAL column at the joint.
+
+Rows: `{point, columns, beams, sum_Mpc, sum_Mpb, scwb_ratio,
+pz_demand, pz_capacity, pz_ratio, status, notes, preliminary}`; joints
+with any non-W-shape/demand-less member report "N/A" + note.
+Pin: W14x90 column (Puc = 500) + one W18x50 beam:
+scwb = 1.1757732622985737; capacity/demand from the J10-11/E3-1
+longhand forms exactly.
+
+## Cp wind on shells + camber
+
+* `ShellRegion.wind_cp: Optional[float] = None` (round-trips; validated
+  finite-or-None).  `make_shell_wind_pattern(model, q, name="SWIND")`
+  (`skyframe.core.builder`): every region with `wind_cp` set gets
+  `p = q*Cp` — SLAB regions as one `AreaLoad(q*Cp)` (gravity-down
+  positive: positive Cp presses DOWN on the slab, negative = uplift);
+  WALL regions (AreaLoads are gravity-only) as per-mesh-node
+  `NodalLoad`s `F_i = q*Cp*A_trib,i` along the region's unit plane
+  normal from the CCW corner ordering (`(c1-c0) x (c3-c0)`,
+  normalized; positive Cp pushes ALONG the normal).  The tributary
+  areas are the exact mesh quarter-element areas, so the resultant is
+  EXACTLY `q*Cp*net_area`; the nodal loads are BAKED at the current
+  mesh (regenerate after mesh_size/opening changes — the engine meshes
+  deterministically, so unchanged models always find the nodes).
+  Kind "wind"; ValueError on q <= 0 or when NO region carries wind_cp.
+  Pin: 4 x 3 wall, q = 0.5, Cp = 0.8 -> resultant exactly 4.8 kN along
+  -Y for the documented corner ordering; engine base reactions balance
+  it to 1e-9.
+* Composite camber (`skyframe.design.composite`): every applicable
+  beam row gains `camber` + `defl_DL`.  `defl_DL` = the DEAD case's
+  chord-relative bare-`Is` deflection (the v0.16 recovery integrates
+  the member's own EI, so it IS the bare-steel value; the slab's
+  effect on END displacements is the documented approximation);
+  `camber_recommendation(delta, span)` = `0.8*delta` rounded DOWN to
+  5 mm increments, ZERO when the rounded value < 20 mm or span <
+  7.5 m (industry fabrication rule of thumb, documented — not a code
+  requirement).  `camber` is null when no dead-case deflection is
+  recoverable.  Pin: 9 m W18x50 under w = 40 kN/m ->
+  delta = 5wL^4/384EI = 51.31 mm -> camber 40 mm; 6 m span -> 0.
+
+## API
+
+* `POST /api/design/steel` body gains `code: "AISC360" (default) |
+  "EC3"`; `POST /api/design/concrete` gains `code: "ACI318" | "EC2"`
+  (`fc` = fck, rebar `fy` = fyk under EC2).  Same response shape; the
+  `code` key is echoed back EXACTLY WHEN the request carries it — a
+  code-less request/response is BIT-IDENTICAL to pre-v0.23.  400 on an
+  unknown code.
+* `POST /api/pattern/nbcc-wind` `{q, exposure?, name?, direction?,
+  Cp?, Iw?}`, `POST /api/pattern/nbcc-elf` `{Sa02, Sa05, Sa10, Sa20,
+  RdRo, Ie?, system?, name?, direction?}`, `POST
+  /api/pattern/shell-wind` `{q, name?}` — each returns the updated
+  model dict, 400 on bad/missing parameters (shell-wind also 400 when
+  no region has wind_cp).
+* `POST /api/design/seismic341` `{combo?: name (default: first
+  additive combo), columns?: [uids]|"auto", Fy?, Ry?}` ->
+  `{preliminary, combo, columns, joints: [...], summary: {n, ok, ng,
+  na, min_scwb, max_pz_ratio, preliminary}}`; 400 on an unknown
+  combo/uid.
+* `POST /api/model` round-trips `shells[*].wind_cp`;
+  `POST /api/design/composite` rows carry `camber`/`defl_DL`.
