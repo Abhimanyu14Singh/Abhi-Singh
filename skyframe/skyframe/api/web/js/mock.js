@@ -124,8 +124,14 @@ export function mockModel(p = {}) {
 
   // v0.2: shell sections + a couple of walls & slabs (contract shapes)
   const shell_sections = {
-    SH200: { name: "SH200", material: "CONC", thickness: 0.2 },
-    SLAB150: { name: "SLAB150", material: "CONC", thickness: 0.15 },
+    // v0.22: SH200 ships layered (3-layer sandwich, Σt = elastic thickness)
+    SH200: { name: "SH200", material: "CONC", thickness: 0.2,
+      layered: { layers: [
+        { t: 0.08, material: "CONC", kind: "concrete" },
+        { t: 0.04, material: "CONC", kind: "steel" },
+        { t: 0.08, material: "CONC", kind: "concrete" },
+      ] } },
+    SLAB150: { name: "SLAB150", material: "CONC", thickness: 0.15, layered: null },
   };
   const shells = [];
   const wallLen = Math.min(o.bay_width_x, 8);
@@ -150,6 +156,8 @@ export function mockModel(p = {}) {
       uid: "SL1", kind: "slab", behavior: "shell", section: "SLAB150",
       corners: [[xs[0], ys[0], z1], [xs[1], ys[0], z1], [xs[1], ys[1], z1], [xs[0], ys[1], z1]],
       mesh_size: 1.5, story: stories[0].name,
+      // v0.22: demo area spring (subgrade bed) — hatched overlay in plan
+      area_spring: { kz: 30000, compression_only: false },
     });
     if (stories.length > 1) {
       const z2 = stories[1].elevation;
@@ -373,6 +381,13 @@ export function mockModel(p = {}) {
       { point: [xs[0], ys[0], 0], stiffness: [1.5e5, 1.5e5, 3e5, 0, 0, 0] },
       { point: [xs[xs.length - 1], ys[0], 0], stiffness: [1e5, 1e5, 2.5e5, 0, 0, 0] },
     ],
+    // v0.22: auto edge constraints off by default (round-trips as a bool)
+    edge_constraints: false,
+    // v0.22: a demo line spring — subgrade bed along the west base edge
+    line_springs: (ys.length >= 2 ? [
+      { p1: [xs[0], ys[0], 0], p2: [xs[0], ys[ys.length - 1], 0],
+        kz: 25000, compression_only: true },
+    ] : []),
     thermal_alpha: 1.2e-5,
     combos: {
       "1.2D + 1.6L": { name: "1.2D + 1.6L", combo_type: "add", cases: { DEAD: 1.2, LIVE: 1.6 } },

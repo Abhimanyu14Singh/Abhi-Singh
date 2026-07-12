@@ -913,10 +913,12 @@ function setView(view) {
   $("drawHint").textContent = elev
     ? "brace: click two snapped points at different levels · right-drag pan · wheel zoom · dbl-click fit"
     : "click draws with active tool · right-drag pan · wheel zoom · dbl-click fit";
-  // the slab tool has no meaning in a section — fall back to Select
+  // slab + line-spring tools have no meaning in a section — fall back to Select
   const slabBtn = document.querySelector('[data-tool="slab"]');
   if (slabBtn) slabBtn.disabled = elev;
-  if (elev && store.tool === "slab") setTool("select");
+  const lsBtn = document.querySelector('[data-tool="linespring"]');
+  if (lsBtn) lsBtn.disabled = elev;
+  if (elev && (store.tool === "slab" || store.tool === "linespring")) setTool("select");
   if (elev) {
     rebuildElevSelect();
     elevEditor._resize();
@@ -930,6 +932,17 @@ function setView(view) {
 function syncDiaphragmUI() {
   if (store.model) $("diaphragmSelect").value = store.model.diaphragm || "rigid";
   syncPanelZoneUI();
+  syncEdgeConstraintsUI();
+}
+
+/* v0.22 — auto edge constraints (zip mismatched shell meshes) toggle */
+function syncEdgeConstraintsUI() {
+  if (!store.model) return;
+  const on = !!store.model.edge_constraints;
+  $("edgeConstraintsChk").checked = on;
+  $("edgeConstraintsNote").innerHTML = on
+    ? "Shell–shell interface edges are <b>zipped</b> with interpolation constraints at analysis time — marked with teal zipper glyphs in plan."
+    : "Mismatched shell meshes stay independent along shared edges (nodes only tie where they coincide).";
 }
 
 /* v0.17 — panel-zone joint model select + one-line explanation per choice */
@@ -1014,6 +1027,20 @@ function handleDraw(tool, payload) {
     if (ME.addSpringSupport(m, payload.x, payload.y, base)) {
       markDirty();
       renderStaticViews();
+    }
+    return;
+  }
+  // v0.22: line springs are global base-level subgrade beds — not per-story.
+  // The new spring is auto-selected so its parameters (kz / kx / ky /
+  // compression-only) pop up in the Properties panel right away.
+  if (tool === "linespring") {
+    const base = m.stories.length ? m.stories[0].elevation - m.stories[0].height : 0;
+    const ls = ME.addLineSpring(m,
+      [payload.p1.x, payload.p1.y, base], [payload.p2.x, payload.p2.y, base]);
+    if (ls) {
+      markDirty();
+      renderStaticViews();
+      handleSelect([{ type: "linespring", uid: ME.lineSpringKey(ls) }], false);
     }
     return;
   }
@@ -1125,7 +1152,8 @@ function handleSelect(refs, additive) {
 }
 
 function setTool(tool) {
-  if (store.view === "elev" && tool === "slab") tool = "select";   // v0.5
+  if (store.view === "elev" && (tool === "slab" || tool === "linespring"))
+    tool = "select";                                               // v0.5 / v0.22
   store.tool = tool;
   document.querySelectorAll(".tool-btn").forEach(b =>
     b.classList.toggle("is-active", b.dataset.tool === tool));
@@ -1137,7 +1165,7 @@ function setTool(tool) {
 /* ---- properties / assignment panel */
 function selObjects() {
   const m = store.model;
-  const members = [], shells = [], links = [], springs = [];
+  const members = [], shells = [], links = [], springs = [], lineSprings = [];
   for (const ref of store.selection) {
     if (ref.type === "member") {
       const mm = m.members.find(x => x.uid === ref.uid);
@@ -1148,12 +1176,15 @@ function selObjects() {
     } else if (ref.type === "spring") {
       const s = ME.springByKey(m, ref.uid);
       if (s) springs.push(s);
+    } else if (ref.type === "linespring") {
+      const ls = ME.lineSpringByKey(m, ref.uid);
+      if (ls) lineSprings.push(ls);
     } else {
       const s = m.shells.find(x => x.uid === ref.uid);
       if (s) shells.push(s);
     }
   }
-  return { members, shells, links, springs };
+  return { members, shells, links, springs, lineSprings };
 }
 
 const commonVal = (arr, f) => {
@@ -1171,8 +1202,9 @@ function optionList(names, selected, mixed) {
 
 function renderProps() {
   const box = $("propsContent");
-  const { members, shells, links, springs } = selObjects();
-  const total = members.length + shells.length + links.length + springs.length;
+  const { members, shells, links, springs, lineSprings } = selObjects();
+  const total = members.length + shells.length + links.length + springs.length +
+    lineSprings.length;
   if (!total) {
     box.innerHTML = `<div class="props-empty">
       <p>Nothing selected.</p>
@@ -1190,7 +1222,7 @@ function renderProps() {
   const kinds = [
     [columns.length, "column"], [beams.length, "beam"], [braces.length, "brace"],
     [walls.length, "wall"], [slabs.length, "slab"], [links.length, "link"],
-    [springs.length, "spring"],
+    [springs.length, "spring"], [lineSprings.length, "line spring"],
   ].filter(([n]) => n).map(([n, k]) => `${n} ${k}${n > 1 ? "s" : ""}`).join(" · ");
 
   const pats = ME.patternNames(m);
@@ -1365,6 +1397,23 @@ function renderProps() {
             value="${q === undefined ? "" : q}" placeholder="${q === undefined ? "mixed" : ""}"></div>
       </div>`;
     }
+    /* v0.22 — area spring (subgrade bed under the region) */
+    {
+      const aspOn = commonVal(shells, x => !!x.area_spring);
+      const aspKz = commonVal(shells, x => x.area_spring ? x.area_spring.kz : null);
+      const aspCo = commonVal(shells, x => x.area_spring ? x.area_spring.compression_only : false);
+      const on = aspOn === true;
+      html += `
+      <h3 class="group-title">Area spring (subgrade) <span class="unit">elastic bed under the region</span></h3>
+      <div class="field"><label class="fdn-check"><input type="checkbox" id="propAspOn"${on ? " checked" : ""}${aspOn === undefined ? ' data-mixed="1"' : ""}> Area spring</label></div>
+      <div class="field-row${on ? "" : " fdn-off"}" id="propAspFields">
+        <div class="field"><label for="propAspKz">k<sub>z</sub> <span class="unit">kN/m/m²</span></label>
+          <input id="propAspKz" type="number" step="1000" min="0"${on ? "" : " disabled"}
+            value="${aspKz == null ? "" : aspKz}" placeholder="${aspKz === undefined ? "mixed" : ""}"></div>
+        <div class="field"><label class="fdn-check" style="margin-top:18px"><input type="checkbox" id="propAspCo"${aspCo ? " checked" : ""}${on ? "" : " disabled"}> compression-only</label></div>
+      </div>
+      <p class="muted" style="font-size:11px">Regions carrying an area spring show a subtle diagonal hatch in plan. Compression-only beds make the analysis <b>nonlinear</b>.</p>`;
+    }
     /* v0.5 — openings editor (single region selected) */
     if (shells.length === 1) {
       const sh = shells[0];
@@ -1461,6 +1510,31 @@ function renderProps() {
             value="${v === undefined ? "" : v}" placeholder="${v === undefined ? "mixed" : ""}"></label>`;
       }).join("") + `</div>
       <p class="muted" style="font-size:11px;margin-top:6px">Replaces base fixity at these points with a 6-dof elastic support.</p>`;
+  }
+
+  /* v0.22 — line-spring parameters (kz required; kx/ky optional; C-only) */
+  if (lineSprings.length) {
+    const kz = commonVal(lineSprings, s => s.kz);
+    const kx = commonVal(lineSprings, s => s.kx ?? null);
+    const ky = commonVal(lineSprings, s => s.ky ?? null);
+    const co = commonVal(lineSprings, s => !!s.compression_only);
+    const pt = lineSprings.length === 1
+      ? ` <span class="unit">@ ${fmt(lineSprings[0].p1[0], 1)}, ${fmt(lineSprings[0].p1[1], 1)} → ${fmt(lineSprings[0].p2[0], 1)}, ${fmt(lineSprings[0].p2[1], 1)} m</span>` : "";
+    html += `
+      <h3 class="group-title">Line spring (subgrade)${pt}</h3>
+      <div class="link-stiff spring-stiff">
+        <label><span>kz <span class="unit">kN/m/m</span></span>
+          <input type="number" class="lineSpringK" data-lk="kz" step="1000" min="0"
+            value="${kz === undefined ? "" : kz}" placeholder="${kz === undefined ? "mixed" : ""}"></label>
+        <label><span>kx <span class="unit">kN/m/m · optional</span></span>
+          <input type="number" class="lineSpringK" data-lk="kx" step="1000" min="0"
+            value="${kx == null ? "" : kx}" placeholder="${kx === undefined ? "mixed" : "— none —"}"></label>
+        <label><span>ky <span class="unit">kN/m/m · optional</span></span>
+          <input type="number" class="lineSpringK" data-lk="ky" step="1000" min="0"
+            value="${ky == null ? "" : ky}" placeholder="${ky === undefined ? "mixed" : "— none —"}"></label>
+      </div>
+      <div class="field" style="margin-top:6px"><label class="fdn-check"><input type="checkbox" id="propLsCo"${co ? " checked" : ""}${co === undefined ? ' data-mixed="1"' : ""}> Compression-only</label></div>
+      <p class="muted" style="font-size:11px;margin-top:6px">A grounded elastic bed along the line (kN/m per m of length). Clear kx / ky to drop the lateral bed. Compression-only makes the analysis <b>nonlinear</b>.</p>`;
   }
 
   html += `<h3 class="group-title"></h3>
@@ -1690,6 +1764,52 @@ function renderProps() {
       markDirty();
     }));
 
+  /* v0.22 — line-spring parameter wiring (kz required; kx/ky clearable) */
+  box.querySelectorAll(".lineSpringK").forEach(inp =>
+    inp.addEventListener("change", () => {
+      const k = inp.dataset.lk;
+      const raw = inp.value.trim();
+      if (k !== "kz" && raw === "") {                 // blank optional → drop key
+        for (const ls of lineSprings) delete ls[k];
+        markDirty();
+        return;
+      }
+      const v = parseFloat(raw);
+      if (!isFinite(v) || v < 0) {
+        inp.value = k === "kz"
+          ? String(commonVal(lineSprings, s => s.kz) ?? "")
+          : (commonVal(lineSprings, s => s[k] ?? null) ?? "");
+        return;
+      }
+      for (const ls of lineSprings) ls[k] = v;
+      markDirty();
+    }));
+  on("propLsCo", "change", e => {
+    for (const ls of lineSprings) ls.compression_only = !!e.target.checked;
+    markDirty();
+  });
+
+  /* v0.22 — area-spring wiring: checkbox enables/writes kz + compression-only;
+     unchecking clears the bed (area_spring = null). */
+  const applyAreaSpring = () => {
+    const onChk = $("propAspOn").checked;
+    if (onChk) {
+      let kz = parseFloat($("propAspKz").value);
+      if (!(isFinite(kz) && kz > 0)) kz = 30000;     // sensible default subgrade
+      const co = !!$("propAspCo").checked;
+      for (const s of shells) s.area_spring = { kz, compression_only: co };
+    } else {
+      for (const s of shells) s.area_spring = null;
+    }
+    markDirty();
+    store.modelEdited = true;
+    refreshDrawViews();      // hatch overlays live in the element layer
+    renderProps();           // re-sync the enabled/disabled fields
+  };
+  on("propAspOn", "change", applyAreaSpring);
+  on("propAspKz", "change", applyAreaSpring);
+  on("propAspCo", "change", applyAreaSpring);
+
   /* v0.8 — member thermal-load wiring */
   on("propThermPat", "change", e => { store.loadPattern = e.target.value; renderProps(); });
   on("propThermDT", "change", e => {
@@ -1896,6 +2016,125 @@ function frameModsDetails(s) {
   return det;
 }
 
+/** v0.22 — collapsed layered-(nonlinear)-shell editor row for a shell section.
+    Persists to section.layered = {layers:[{t, material, kind}]} | null; the
+    body re-renders locally so the <details> stays open while editing. */
+function shellLayeredDetails(m, s) {
+  const det = document.createElement("details");
+  det.className = "mgr-mods mgr-layers";
+  const sum = document.createElement("summary");
+  const body = document.createElement("div");
+  body.className = "layers-body";
+
+  const mm = v => (v * 1000).toFixed(v * 1000 % 1 ? 1 : 0);   // m → mm label
+  const syncSum = () => {
+    if (!s.layered) { sum.textContent = "Layered (nonlinear) · off"; return; }
+    const tot = ME.layeredTotal(s.layered);
+    const mismatch = Math.abs(tot - s.thickness) > 5e-4;
+    sum.innerHTML = `Layered (nonlinear) · ${s.layered.layers.length} layer${s.layered.layers.length === 1 ? "" : "s"} · Σt ${mm(tot)} mm` +
+      (mismatch ? ` <span class="layer-warn">≠ elastic ${mm(s.thickness)} mm</span>` : "");
+  };
+
+  const render = () => {
+    syncSum();
+    body.textContent = "";
+    const chk = document.createElement("label");
+    chk.className = "fdn-check layer-toggle";
+    chk.title = "Layered (nonlinear) shell — the section is analyzed as a stack of concrete/steel layers; off keeps the single elastic thickness";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !!s.layered;
+    cb.addEventListener("change", () => {
+      s.layered = cb.checked ? ME.defaultLayered(m, s) : null;
+      markDirty();
+      render();
+      if (cb.checked) det.open = true;
+    });
+    chk.append(cb, document.createTextNode(" Layered (nonlinear)"));
+    body.appendChild(chk);
+    if (!s.layered) return;
+
+    const layers = s.layered.layers;
+    const rows = document.createElement("div");
+    rows.className = "layer-rows";
+    const head = document.createElement("div");
+    head.className = "layer-row head";
+    for (const h of ["t (mm)", "Material", "Kind", "", "", ""]) {
+      const sp = document.createElement("span");
+      sp.textContent = h;
+      head.appendChild(sp);
+    }
+    rows.appendChild(head);
+    layers.forEach((l, i) => {
+      const row = document.createElement("div");
+      row.className = "layer-row";
+      const tIn = document.createElement("input");
+      tIn.type = "number"; tIn.step = "5"; tIn.min = "1";
+      tIn.value = String(+(l.t * 1000).toFixed(2));
+      tIn.title = "Layer thickness (mm)";
+      tIn.addEventListener("change", () => {
+        const v = parseFloat(tIn.value);
+        if (isFinite(v) && v > 0) { l.t = +(v / 1000).toFixed(5); markDirty(); syncSum(); }
+        else tIn.value = String(+(l.t * 1000).toFixed(2));
+      });
+      const matSel = mgrMatSelect(m, l.material, v => l.material = v);
+      const kindSel = document.createElement("select");
+      for (const k of ["concrete", "steel"]) {
+        const o = document.createElement("option");
+        o.value = k; o.textContent = k; o.selected = l.kind === k;
+        kindSel.appendChild(o);
+      }
+      kindSel.addEventListener("change", () => { l.kind = kindSel.value; markDirty(); });
+      const mv = (dir, title) => {
+        const b = document.createElement("button");
+        b.className = "chip-x layer-mv"; b.textContent = dir > 0 ? "▼" : "▲";
+        b.title = title;
+        b.disabled = dir > 0 ? i === layers.length - 1 : i === 0;
+        b.addEventListener("click", () => {
+          const [x] = layers.splice(i, 1);
+          layers.splice(i + dir, 0, x);
+          markDirty();
+          render();
+        });
+        return b;
+      };
+      const del = document.createElement("button");
+      del.className = "chip-x"; del.textContent = "✕";
+      del.title = layers.length <= 1 ? "A layered section keeps at least one layer" : "Remove layer";
+      del.disabled = layers.length <= 1;
+      del.addEventListener("click", () => {
+        layers.splice(i, 1);
+        markDirty();
+        render();
+      });
+      row.append(tIn, matSel, kindSel, mv(-1, "Move layer up"), mv(1, "Move layer down"), del);
+      rows.appendChild(row);
+    });
+    body.appendChild(rows);
+
+    const add = document.createElement("button");
+    add.className = "btn btn-small";
+    add.textContent = "+ Layer";
+    add.title = "Append a layer (same thickness as the last one)";
+    add.addEventListener("click", () => {
+      const last = layers[layers.length - 1];
+      layers.push({ t: last ? last.t : 0.05, material: last ? last.material : ME.defaultMaterial(m), kind: last ? last.kind : "concrete" });
+      markDirty();
+      render();
+    });
+    body.appendChild(add);
+
+    const note = document.createElement("p");
+    note.className = "muted layer-note";
+    note.innerHTML = "Layers stack bottom → top; Σt should match the elastic thickness (a mismatch is flagged above). Layered sections make shell behavior <b>nonlinear</b>.";
+    body.appendChild(note);
+  };
+
+  render();
+  det.append(sum, body);
+  return det;
+}
+
 function renderSectionMgr() {
   const m = store.model;
 
@@ -1962,6 +2201,7 @@ function renderSectionMgr() {
         delete m.shell_sections[name]; markDirty(); renderSectionMgr();
       }),
     ]));
+    shellBox.appendChild(shellLayeredDetails(m, s));   // v0.22 layered editor
   }
 
   const matBox = $("materialRows");
@@ -6324,6 +6564,13 @@ function wire() {
     markDirty();
     refreshDrawViews();          // plan joint glyphs follow the choice live
   });
+  /* ---- v0.22: auto edge constraints (round-trips via POST /api/model) */
+  $("edgeConstraintsChk").addEventListener("change", e => {
+    store.model.edge_constraints = !!e.target.checked;
+    syncEdgeConstraintsUI();
+    markDirty();
+    refreshDrawViews();          // plan zipper glyphs follow the toggle live
+  });
 
   /* ---- v0.4: brace layout toggle */
   document.querySelectorAll("#braceToggle .seg-btn").forEach(b =>
@@ -6646,7 +6893,7 @@ function wire() {
 
   // keyboard
   const TABS = ["view3d", "story", "modal", "reactions", "forces", "design", "drift", "th", "pushover", "buckling", "takedown", "cuts", "piers"];
-  const TOOL_KEYS = { v: "select", c: "column", b: "beam", x: "brace", w: "wall", s: "slab", l: "link", g: "spring", e: "erase" };
+  const TOOL_KEYS = { v: "select", c: "column", b: "beam", x: "brace", w: "wall", s: "slab", l: "link", g: "spring", k: "linespring", e: "erase" };
   document.addEventListener("keydown", e => {
     const tag = (e.target.tagName || "").toLowerCase();
     // v0.3 dialogs respond to Escape even while an input has focus
@@ -6840,6 +7087,8 @@ async function boot() {
     // v0.21 — section designer, fiber PMM hinges, FP/multilinear links
     sectionDesigner, openSectionDesigner, designerAction, applyDesignerAction,
     designerPmmFetch, mockDesignerUpsert, mockDesignerDelete, mockDesignerPmm,
+    // v0.22 — edge constraints, layered shells, line/area springs
+    syncEdgeConstraintsUI, selObjects,
   };
 }
 

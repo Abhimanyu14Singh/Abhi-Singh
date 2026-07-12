@@ -5,7 +5,7 @@
    Owns only view + interaction; model mutations happen in app.js via the
    onDraw / onErase / onSelect callbacks (same contract as PlanEditor). */
 
-import { springKey, linkTypeOf, LINK_TYPES } from "./modeledit.js";
+import { springKey, lineSpringKey, linkTypeOf, LINK_TYPES } from "./modeledit.js";
 
 const NS = "http://www.w3.org/2000/svg";
 const el = (tag, attrs = {}) => {
@@ -297,6 +297,20 @@ export class ElevEditor {
       }));
     }
 
+    // v0.22: line springs in the plane — hatched subgrade-bed lines
+    for (const ls of (m.line_springs || [])) {
+      if (!this.inPlane(ls.p1) || !this.inPlane(ls.p2)) continue;
+      const seld = isSel("linespring", lineSpringKey(ls));
+      this.gElems.appendChild(el("path", {
+        d: lineSpringGlyphPath(this.sOf(ls.p1), ls.p1[2], this.sOf(ls.p2), ls.p2[2], 0.3),
+        fill: "none", stroke: seld ? C.sel : C.spring,
+        "stroke-width": seld ? 2.4 : 1.6,
+        "stroke-linejoin": "round", "stroke-linecap": "round",
+        "vector-effect": "non-scaling-stroke",
+        "data-ref": `linespring:${lineSpringKey(ls)}`,
+      }));
+    }
+
     // v0.8: spring supports in the plane — grounded green coil glyphs
     for (const sp of (m.spring_supports || [])) {
       if (!this.inPlane(sp.point)) continue;
@@ -410,6 +424,11 @@ export class ElevEditor {
           Math.hypot(w.s - this.sOf(sp.point), w.z - sp.point[2]) <= Math.max(tol, 0.4))
         out.push({ type: "spring", uid: springKey(sp.point) });
     }
+    for (const ls of (m.line_springs || [])) {
+      if (this.inPlane(ls.p1) && this.inPlane(ls.p2) &&
+          distToSeg(w.s, w.z, this.sOf(ls.p1), ls.p1[2], this.sOf(ls.p2), ls.p2[2]) <= Math.max(tol, 0.2))
+        out.push({ type: "linespring", uid: lineSpringKey(ls) });
+    }
     const seg = (mm) => distToSeg(w.s, w.z, this.sOf(mm.pi), mm.pi[2], this.sOf(mm.pj), mm.pj[2]);
     const inPl = mm => this.inPlane(mm.pi) && this.inPlane(mm.pj);
     for (const mm of m.members)
@@ -472,6 +491,11 @@ export class ElevEditor {
     for (const sp of (m.spring_supports || [])) {
       if (this.inPlane(sp.point) && inBox(this.sOf(sp.point), sp.point[2]))
         refs.push({ type: "spring", uid: springKey(sp.point) });
+    }
+    for (const ls of (m.line_springs || [])) {
+      if (this.inPlane(ls.p1) && this.inPlane(ls.p2) &&
+          endpts(ls.p1, ls.p2))
+        refs.push({ type: "linespring", uid: lineSpringKey(ls) });
     }
     return refs;
   }
@@ -730,6 +754,23 @@ export function springGlyphElev(s, z, a) {
   for (let k = -1; k <= 1; k++) {           // hatches below the ground
     const s0 = s + k * a * 0.7;
     d += ` M${s0},${z} L${s0 - a * 0.55},${z - a * 0.55}`;
+  }
+  return d;
+}
+
+/** v0.22 — line-spring (subgrade bed) glyph: the spring line plus slanted
+    ground-hatch ticks hanging off one side. One path `d` in the caller's 2D
+    coordinates (plan x/y or elevation s/z); drawn with non-scaling stroke. */
+export function lineSpringGlyphPath(x1, y1, x2, y2, a = 0.28) {
+  const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+  const ux = dx / L, uy = dy / L;
+  const nx = -uy, ny = ux;                       // unit normal ("hatch" side)
+  let d = `M${x1},${y1} L${x2},${y2}`;
+  const n = Math.max(2, Math.min(28, Math.round(L / 0.6)));
+  for (let k = 0; k <= n; k++) {
+    const t = k / n;
+    const bx = x1 + dx * t, by = y1 + dy * t;
+    d += ` M${bx},${by} L${bx - (nx + ux * 0.55) * a},${by - (ny + uy * 0.55) * a}`;
   }
   return d;
 }

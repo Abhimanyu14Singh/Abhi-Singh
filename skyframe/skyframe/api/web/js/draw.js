@@ -3,9 +3,9 @@
    Owns only view + interaction; model mutations happen in app.js via
    the onDraw / onErase / onSelect callbacks. */
 
-import { linkGlyphPath } from "./elev.js";
-import { springKey, anyThermalMember, onFoundation, axialLimit, axialLimitBadge,
-  linkTypeOf, LINK_TYPES,
+import { linkGlyphPath, lineSpringGlyphPath } from "./elev.js";
+import { springKey, lineSpringKey, anyThermalMember, onFoundation, axialLimit,
+  axialLimitBadge, linkTypeOf, LINK_TYPES,
   gridSystems, gridSystemGeometry, snapGrids } from "./modeledit.js";
 
 const NS = "http://www.w3.org/2000/svg";
@@ -34,6 +34,8 @@ const C = {
   panelScissors: "rgba(167, 139, 250, 0.85)", // v0.17 — scissors panel-zone spiral
   foundation: "rgba(190, 138, 74, 0.9)",  // earthy tan — Winkler soil bed (v0.11)
   axial: "#4fd0c7",                        // teal — tension/compression-only (v0.12)
+  areaSpring: "rgba(190, 138, 74, 0.55)", // v0.22 — area-spring (subgrade) hatch
+  zipper: "rgba(79, 208, 199, 0.85)",     // v0.22 — edge-constraint zipper glyph
   sel: "#35b5e5",
   snap: "#35b5e5",
   rubber: "rgba(53, 181, 229, 0.9)",
@@ -85,6 +87,19 @@ export class PlanEditor {
     this.cx = 9; this.cy = 6;    // world center
     this.w = 800; this.h = 600;
     this._fitted = false;
+
+    // v0.22 — diagonal hatch pattern for regions carrying an area spring
+    const defs = el("defs");
+    const pat = el("pattern", {
+      id: "areaSpringHatch", patternUnits: "userSpaceOnUse",
+      width: 0.7, height: 0.7, patternTransform: "rotate(45)",
+    });
+    pat.appendChild(el("line", {
+      x1: 0, y1: 0, x2: 0, y2: 0.7,
+      stroke: C.areaSpring, "stroke-width": 0.045,
+    }));
+    defs.appendChild(pat);
+    svg.appendChild(defs);
 
     // layers
     this.gWorld = el("g");                    // world-space (grid + elements)
@@ -222,6 +237,14 @@ export class PlanEditor {
         "stroke-width": seld ? 2 : 1.25, "vector-effect": "non-scaling-stroke",
         "data-ref": `shell:${s.uid}`,
       }));
+      // v0.22: subtle diagonal hatch on slabs carrying an area spring
+      if (s.area_spring) {
+        this.gElems.appendChild(el("path", {
+          d, "fill-rule": "evenodd", fill: "url(#areaSpringHatch)",
+          stroke: "none", "pointer-events": "none",
+          "data-ref": `areaspring:${s.uid}`,
+        }));
+      }
     }
     for (const s of (m.shells || [])) {
       if (s.story !== story || s.kind !== "wall") continue;
@@ -232,6 +255,15 @@ export class PlanEditor {
         stroke: seld ? C.sel : C.wall, "stroke-width": 0.24,
         "stroke-linecap": "butt", "data-ref": `shell:${s.uid}`,
       }));
+      // v0.22: subtle hatch ticks along walls carrying an area spring
+      if (s.area_spring) {
+        this.gElems.appendChild(el("path", {
+          d: lineSpringGlyphPath(a[0], a[1], b[0], b[1], 0.24),
+          fill: "none", stroke: C.areaSpring, "stroke-width": 1.2,
+          "vector-effect": "non-scaling-stroke", "pointer-events": "none",
+          "data-ref": `areaspring:${s.uid}`,
+        }));
+      }
     }
     for (const mm of m.members) {
       if (mm.story !== story || mm.kind === "column" || mm.kind === "brace") continue;
@@ -354,6 +386,33 @@ export class PlanEditor {
         "vector-effect": "non-scaling-stroke",
         "data-ref": `link:${lk.uid}`,
       }));
+    }
+
+    // v0.22: line springs — grounded hatched-line glyphs (base-level subgrade
+    // beds show on every story plan, like spring supports).
+    for (const ls of (m.line_springs || [])) {
+      const seld = isSel("linespring", lineSpringKey(ls));
+      this.gElems.appendChild(el("path", {
+        d: lineSpringGlyphPath(ls.p1[0], ls.p1[1], ls.p2[0], ls.p2[1], 0.3),
+        fill: "none", stroke: seld ? C.sel : C.spring,
+        "stroke-width": seld ? 2.4 : 1.6,
+        "stroke-linejoin": "round", "stroke-linecap": "round",
+        "vector-effect": "non-scaling-stroke",
+        "data-ref": `linespring:${lineSpringKey(ls)}`,
+      }));
+    }
+
+    // v0.22: auto edge constraints ON — zipper glyphs on shell–shell interface
+    // edges of the current story (walls' plan segments vs slab boundary edges).
+    if (m.edge_constraints) {
+      for (const ov of shellInterfaces(m, story)) {
+        this.gElems.appendChild(el("path", {
+          d: zipperGlyphPlan(ov[0], ov[1], ov[2], ov[3], 0.16),
+          fill: "none", stroke: C.zipper, "stroke-width": 1.3,
+          "stroke-linecap": "round", "vector-effect": "non-scaling-stroke",
+          "pointer-events": "none", "data-ref": "edgezip",
+        }));
+      }
     }
 
     // v0.8: spring supports — grounded green coil glyphs at their base points
@@ -519,6 +578,11 @@ export class PlanEditor {
       if (Math.hypot(w.x - sp.point[0], w.y - sp.point[1]) <= Math.max(tol, 0.4))
         out.push({ type: "spring", uid: springKey(sp.point) });
     }
+    // v0.22: line springs (grounded subgrade beds, base level)
+    for (const ls of (m.line_springs || [])) {
+      if (distToSeg(w.x, w.y, ls.p1[0], ls.p1[1], ls.p2[0], ls.p2[1]) <= Math.max(tol, 0.2))
+        out.push({ type: "linespring", uid: lineSpringKey(ls) });
+    }
     for (const mm of m.members) {
       if (mm.story !== story || mm.kind !== "column") continue;
       const sec = m.sections[mm.section];
@@ -596,6 +660,11 @@ export class PlanEditor {
     for (const sp of (m.spring_supports || [])) {
       if (inBox(sp.point[0], sp.point[1]))
         refs.push({ type: "spring", uid: springKey(sp.point) });
+    }
+    for (const ls of (m.line_springs || [])) {
+      if (inBox(ls.p1[0], ls.p1[1]) || inBox(ls.p2[0], ls.p2[1]) ||
+          inBox((ls.p1[0] + ls.p2[0]) / 2, (ls.p1[1] + ls.p2[1]) / 2))
+        refs.push({ type: "linespring", uid: lineSpringKey(ls) });
     }
     return refs;
   }
@@ -701,10 +770,12 @@ export class PlanEditor {
       case "wall":
       case "brace":
       case "link":
+      case "linespring":
         if (!this.pending) this.pending = pt;
         else if (Math.hypot(pt.x - this.pending.x, pt.y - this.pending.y) > 1e-9) {
           this.opts.onDraw(this.tool, { p1: this.pending, p2: pt });
-          this.pending = this.tool === "link" ? null : pt;   // chain, Esc stops
+          // link / line-spring: one segment per pair, Esc-free; others chain
+          this.pending = (this.tool === "link" || this.tool === "linespring") ? null : pt;
         }
         break;
       case "slab": {
@@ -788,7 +859,7 @@ export class PlanEditor {
         g.appendChild(el("line", {
           x1, y1, x2, y2,
           stroke: this.tool === "brace" ? C.braceRubber
-            : this.tool === "link" ? C.linkRubber : C.rubber,
+            : (this.tool === "link" || this.tool === "linespring") ? C.linkRubber : C.rubber,
           "stroke-width": this.tool === "wall" ? 5 : 2, "stroke-dasharray": "7 5",
           "stroke-linecap": "round", opacity: 0.9,
         }));
@@ -878,6 +949,72 @@ export function foundationGlyphPlan(x1, y1, x2, y2, depth) {
     d += ` M${gx},${gy} L${gx + nx * depth * 0.5 - ux * depth * 0.5},${gy + ny * depth * 0.5 - uy * depth * 0.5}`;
   }
   return d;
+}
+
+/** v0.22 — shell–shell interface edges of one story in plan: collinear
+    overlaps between wall plan segments and slab boundary edges (of DIFFERENT
+    regions). Cheap: a story rarely has more than a handful of shells.
+    Returns overlap segments [[ax, ay, bx, by], …]. */
+export function shellInterfaces(m, story) {
+  const edges = [];
+  for (const s of (m.shells || [])) {
+    if (s.story !== story) continue;
+    if (s.kind === "wall") {
+      edges.push({ uid: s.uid, a: [s.corners[0][0], s.corners[0][1]],
+                   b: [s.corners[1][0], s.corners[1][1]] });
+    } else {
+      for (let i = 0; i < s.corners.length; i++) {
+        const c1 = s.corners[i], c2 = s.corners[(i + 1) % s.corners.length];
+        edges.push({ uid: s.uid, a: [c1[0], c1[1]], b: [c2[0], c2[1]] });
+      }
+    }
+  }
+  if (edges.length > 120) return [];              // keep it cheap on huge plans
+  const out = [];
+  for (let i = 0; i < edges.length; i++)
+    for (let j = i + 1; j < edges.length; j++) {
+      if (edges[i].uid === edges[j].uid) continue;
+      const ov = segOverlap2(edges[i].a, edges[i].b, edges[j].a, edges[j].b);
+      if (ov) out.push(ov);
+    }
+  return out;
+}
+
+/** Collinear-overlap of two 2D segments (tolerance 0.05 m off-line, minimum
+    shared length 0.3 m). Returns [ax, ay, bx, by] or null. */
+function segOverlap2(a1, b1, a2, b2, tol = 0.05, minLen = 0.3) {
+  const dx = b1[0] - a1[0], dy = b1[1] - a1[1];
+  const L = Math.hypot(dx, dy);
+  if (L < 1e-9) return null;
+  const ux = dx / L, uy = dy / L;
+  const off = p => Math.abs((p[0] - a1[0]) * -uy + (p[1] - a1[1]) * ux);
+  if (off(a2) > tol || off(b2) > tol) return null;         // not collinear
+  const proj = p => (p[0] - a1[0]) * ux + (p[1] - a1[1]) * uy;
+  const [t2a, t2b] = [proj(a2), proj(b2)].sort((x, y) => x - y);
+  const lo = Math.max(0, t2a), hi = Math.min(L, t2b);
+  if (hi - lo < minLen) return null;
+  return [a1[0] + ux * lo, a1[1] + uy * lo, a1[0] + ux * hi, a1[1] + uy * hi];
+}
+
+/** v0.22 — zipper glyph along a shared edge: alternating teeth ticks across
+    the interface line. One path `d` in world coordinates. */
+export function zipperGlyphPlan(x1, y1, x2, y2, a = 0.16) {
+  const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+  const ux = dx / L, uy = dy / L, nx = -uy, ny = ux;
+  const n = Math.max(3, Math.min(14, Math.round(L / 0.45)));
+  let d = "";
+  for (let k = 0; k <= n; k++) {
+    const t = k / n;
+    const bx = x1 + dx * t, by = y1 + dy * t;
+    const side = k % 2 ? 1 : -1;
+    d += ` M${bx},${by} L${bx + nx * side * a},${by + ny * side * a}`;
+    if (k < n) {                                  // short spine dash between teeth
+      const t2 = (k + 0.5) / n;
+      const sx = x1 + dx * t2, sy = y1 + dy * t2;
+      d += ` M${sx - ux * a * 0.5},${sy - uy * a * 0.5} L${sx + ux * a * 0.5},${sy + uy * a * 0.5}`;
+    }
+  }
+  return d.trim();
 }
 
 /* ------------------------------------------------ geometry helpers */

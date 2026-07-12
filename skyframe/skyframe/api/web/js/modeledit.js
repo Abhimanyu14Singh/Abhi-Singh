@@ -75,6 +75,9 @@ export function normalizeModel(m) {
   }
   for (const s of Object.values(m.shell_sections))
     if (!isFinite(s.mod)) s.mod = 1.0;
+  // v0.22 — layered (nonlinear) shell sections: null | {layers:[{t, material, kind}]}
+  for (const s of Object.values(m.shell_sections))
+    s.layered = normalizeLayeredDef(s.layered, defaultMaterial(m));
   if (!m.mass_source || typeof m.mass_source !== "object" ||
       !Object.keys(m.mass_source).length)
     m.mass_source = { DEAD: 1.0 };
@@ -115,6 +118,31 @@ export function normalizeModel(m) {
   }
   // v0.15 — model-level "auto-label all walls as piers" flag
   m.auto_pier_walls = !!m.auto_pier_walls;
+  // v0.22 — auto edge constraints (zip mismatched shell meshes at analysis time)
+  m.edge_constraints = !!m.edge_constraints;
+  // v0.22 — per-region area springs (subgrade bed): null | {kz, compression_only}
+  for (const s of m.shells) {
+    s.area_spring = (s.area_spring && typeof s.area_spring === "object" &&
+        isFinite(s.area_spring.kz) && s.area_spring.kz > 0)
+      ? { kz: +s.area_spring.kz, compression_only: !!s.area_spring.compression_only }
+      : null;
+  }
+  // v0.22 — grounded line springs: [{p1, p2, kz, kx?, ky?, compression_only}]
+  m.line_springs = (Array.isArray(m.line_springs) ? m.line_springs : [])
+    .filter(ls => ls && typeof ls === "object");
+  for (const ls of m.line_springs) {
+    for (const k of ["p1", "p2"]) {
+      ls[k] = (Array.isArray(ls[k]) && ls[k].length === 3 && ls[k].every(isFinite))
+        ? ls[k].map(Number) : [0, 0, 0];
+    }
+    ls.kz = (isFinite(ls.kz) && ls.kz >= 0) ? +ls.kz : 30000;
+    for (const k of ["kx", "ky"]) {
+      if (ls[k] == null || !isFinite(ls[k]) || ls[k] < 0) delete ls[k];
+      else ls[k] = +ls[k];
+    }
+    ls.compression_only = !!ls.compression_only;
+  }
+  m.line_springs = m.line_springs.filter(ls => dist(ls.p1, ls.p2) > 1e-9);
   // v0.16 — serviceability deflection limit L/x (default 360; round-trips)
   if (!(isFinite(m.deflection_limit) && m.deflection_limit > 0)) m.deflection_limit = 360;
   m.pushover_cases = m.pushover_cases || {};
@@ -636,6 +664,70 @@ export function springByKey(model, key) {
   return (model.spring_supports || []).find(s => springKey(s.point) === key) || null;
 }
 
+/* ================================================================
+   v0.22 — line springs (grounded subgrade bed along a line) +
+           layered shell sections + area springs
+   ================================================================ */
+/** Stable string key for a line spring (its two endpoints). */
+export function lineSpringKey(ls) {
+  return springKey(ls.p1) + "|" + springKey(ls.p2);
+}
+
+/** Add a line spring between two 3D points. kz in kN/m per m of length;
+    optional kx/ky lateral beds; compression_only makes the run nonlinear.
+    Duplicate-safe by endpoint pair (either order). */
+export function addLineSpring(model, p1, p2, opts = {}) {
+  model.line_springs = model.line_springs || [];
+  if (dist(p1, p2) < 1e-6) return null;
+  if (model.line_springs.some(ls =>
+    (near(ls.p1, p1) && near(ls.p2, p2)) || (near(ls.p1, p2) && near(ls.p2, p1)))) return null;
+  const ls = {
+    p1: [...p1], p2: [...p2],
+    kz: (isFinite(opts.kz) && opts.kz >= 0) ? +opts.kz : 30000,
+    compression_only: !!opts.compression_only,
+  };
+  if (isFinite(opts.kx) && opts.kx >= 0) ls.kx = +opts.kx;
+  if (isFinite(opts.ky) && opts.ky >= 0) ls.ky = +opts.ky;
+  model.line_springs.push(ls);
+  return ls;
+}
+
+export function lineSpringByKey(model, key) {
+  return (model.line_springs || []).find(ls => lineSpringKey(ls) === key) || null;
+}
+
+/** Normalize a layered-shell definition: null | {layers:[{t>0, material, kind}]}.
+    Anything invalid collapses to null (the section stays elastic-only). */
+export function normalizeLayeredDef(ld, fallbackMaterial = "") {
+  if (!ld || typeof ld !== "object" || !Array.isArray(ld.layers)) return null;
+  const layers = ld.layers
+    .filter(l => l && isFinite(l.t) && l.t > 0)
+    .map(l => ({
+      t: +l.t,
+      material: (typeof l.material === "string" && l.material) ? l.material : fallbackMaterial,
+      kind: l.kind === "steel" ? "steel" : "concrete",
+    }));
+  return layers.length ? { layers } : null;
+}
+
+/** Total thickness (m) of a layered definition (0 when null). */
+export function layeredTotal(ld) {
+  return (ld && Array.isArray(ld.layers))
+    ? ld.layers.reduce((a, l) => a + (isFinite(l.t) ? l.t : 0), 0) : 0;
+}
+
+/** Default layered stack for a shell section: two equal concrete layers whose
+    total matches the elastic thickness. */
+export function defaultLayered(model, sec) {
+  const t = (isFinite(sec.thickness) && sec.thickness > 0) ? sec.thickness : 0.2;
+  const mat = sec.material || defaultMaterial(model);
+  const half = +(t / 2).toFixed(4);
+  return { layers: [
+    { t: half, material: mat, kind: "concrete" },
+    { t: +(t - half).toFixed(4), material: mat, kind: "concrete" },
+  ] };
+}
+
 /* ---- thermal loads (per pattern: {member_uid, dT °C}) */
 export function getThermalLoad(model, pat, uid) {
   const p = model.patterns[pat];
@@ -763,6 +855,9 @@ export function eraseElement(model, ref) {
   } else if (ref.type === "spring") {
     const i = (model.spring_supports || []).findIndex(s => springKey(s.point) === ref.uid);
     if (i >= 0) { model.spring_supports.splice(i, 1); removed = true; }
+  } else if (ref.type === "linespring") {
+    const i = (model.line_springs || []).findIndex(ls => lineSpringKey(ls) === ref.uid);
+    if (i >= 0) { model.line_springs.splice(i, 1); removed = true; }
   } else if (ref.type === "link") {
     const i = (model.links || []).findIndex(l => l.uid === ref.uid);
     if (i >= 0) { model.links.splice(i, 1); removed = true; }

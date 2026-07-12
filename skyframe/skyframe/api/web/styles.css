@@ -1962,3 +1962,20 @@ tr.cm-active td { background: var(--accent-ghost) !important; }
   letter-spacing: .5px;
 }
 .ml-row input { padding: 4px 7px; font-size: 12px; }
+
+/* v0.22 — layered (nonlinear) shell-section editor in the Section Manager */
+.layer-warn { color: var(--amber); font-weight: 650; }
+.layers-body { padding: 2px 0 8px; }
+.layer-toggle { padding: 2px 0 6px; }
+.layer-rows { display: flex; flex-direction: column; gap: 4px; margin: 2px 0 6px; }
+.layer-row {
+  display: grid; grid-template-columns: 76px 1fr 96px 22px 22px 22px;
+  gap: 6px; align-items: center;
+}
+.layer-row.head span {
+  font-size: 10px; color: var(--text-3); text-transform: uppercase;
+  letter-spacing: .5px;
+}
+.layer-row input, .layer-row select { padding: 3px 6px; font-size: 12px; min-width: 0; }
+.layer-mv:disabled { opacity: .3; cursor: default; }
+.layer-note { font-size: 10.5px; line-height: 1.5; margin-top: 6px; }

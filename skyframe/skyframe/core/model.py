@@ -110,6 +110,9 @@ class FrameSection:
         return asdict(self)
 
 
+SHELL_LAYER_KINDS = ("concrete", "steel")
+
+
 @dataclass
 class ShellSection:
     """Shell section (maps to OpenSees ElasticMembranePlateSection).
@@ -119,12 +122,34 @@ class ShellSection:
     membrane and flexural stiffness scale together; independent
     membrane/flexural modifiers are deliberately not offered in v0.4 (an
     exact split is impossible with this section type).
+
+    ``layered`` (v0.22) — nonlinear layered-shell definition (walls)::
+
+        {"layers": [{"t": m, "material": name,
+                     "kind": "concrete" | "steel",
+                     "angle": 0 | 90}, ...]}      # angle: steel only
+
+    Layers are stacked through the thickness (order irrelevant for
+    membrane response).  In a NONLINEAR analysis (pushover / nonlinear
+    time history) the engine builds an OpenSees ``LayeredShell`` section
+    from the layers (see CONTRACT v0.22 for the exact material laws);
+    every LINEAR analysis keeps the elastic section with the SUMMED layer
+    thickness ``sum(t)`` (``thickness`` is ignored while ``layered`` is
+    set).  ``layered is None`` keeps the exact pre-v0.22 behavior.
     """
 
     name: str
     material: str
     thickness: float  # m
     mod: float = 1.0  # v0.4 stiffness modifier (scales E)
+    layered: Optional[dict] = None  # v0.22 nonlinear layered shell
+
+    @property
+    def total_thickness(self) -> float:
+        """Elastic thickness: summed layer t when layered, else thickness."""
+        if self.layered:
+            return sum(float(la["t"]) for la in self.layered["layers"])
+        return self.thickness
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -445,6 +470,11 @@ class ShellRegion:
     #   labeled wall reports per-story pier design forces P/V/M; walls with
     #   the same label are summed into one pier.  "" = no pier output
     #   (unless BuildingModel.auto_pier_walls labels the wall with its uid).
+    area_spring: Optional[dict] = None     # v0.22 grounded area springs:
+    #   {"kz": kN/m per m^2 (> 0), "compression_only": bool (default
+    #   False)} — every mesh node of the region gets a grounded vertical
+    #   spring of stiffness kz x its tributary area (compression-only via
+    #   the v0.12 Elastic-with-Eneg machinery).  Shell behavior only.
 
     @property
     def area(self) -> float:
@@ -485,7 +515,9 @@ class ShellRegion:
                 "corners": [list(c) for c in self.corners],
                 "mesh_size": self.mesh_size, "story": self.story,
                 "openings": [op.to_dict() for op in self.openings],
-                "pier": self.pier}
+                "pier": self.pier,
+                "area_spring": (dict(self.area_spring)
+                                if self.area_spring else None)}
 
 
 # --------------------------------------------------------------------------- #
@@ -591,6 +623,43 @@ class SpringSupport:
     def to_dict(self) -> dict:
         return {"point": list(self.point),
                 "stiffness": [float(k) for k in self.stiffness]}
+
+
+@dataclass
+class LineSpring:
+    """Grounded distributed line spring (v0.22) — e.g. a strip footing or
+    a wall base on grade.
+
+    ``kz`` (and optional ``kx``/``ky``) are stiffnesses PER METER of line
+    (kN/m per m), acting on the GLOBAL axes.  The engine discretizes the
+    spring over the existing FE nodes lying on the p1 -> p2 segment
+    (shell mesh nodes, frame split nodes): each node gets a grounded
+    zeroLength spring of ``k x tributary length``, exactly the v0.11
+    Winkler-member pattern.  Tributary lengths cover the FULL segment:
+    node i owns [mid(t_{i-1}, t_i), mid(t_i, t_{i+1})] with the first
+    interval starting at p1 and the last ending at p2, so
+    ``sum(trib) == |p2 - p1|`` exactly.  It is an error if no FE node
+    lies on the segment.
+
+    ``compression_only`` applies to the VERTICAL spring only: kz resists
+    settlement (node moving -Z) at full stiffness and uplift at the
+    residual ``AXIAL_ONLY_RATIO`` (1e-6) fraction — the v0.12
+    tension/compression-only machinery (``Elastic`` with ``Eneg``); the
+    tiny residual keeps the system regular.  ``kx``/``ky`` are always
+    linear.
+    """
+
+    p1: Tuple[float, float, float]
+    p2: Tuple[float, float, float]
+    kz: float = 0.0                        # kN/m per m
+    kx: float = 0.0
+    ky: float = 0.0
+    compression_only: bool = False
+
+    def to_dict(self) -> dict:
+        return {"p1": list(self.p1), "p2": list(self.p2),
+                "kz": self.kz, "kx": self.kx, "ky": self.ky,
+                "compression_only": self.compression_only}
 
 
 @dataclass
@@ -1164,6 +1233,14 @@ class BuildingModel:
     base_fixity: str = "fixed"                                 # "fixed" | "pinned"
     supports: List[PointSupport] = field(default_factory=list)
     spring_supports: List[SpringSupport] = field(default_factory=list)  # v0.8
+    line_springs: List[LineSpring] = field(default_factory=list)  # v0.22
+    # v0.22 auto edge constraints (the ETABS "zipper"): when True, the
+    # engine ties every HANGING NODE (a node lying strictly inside another
+    # shell's element edge — mesh-mismatched shell/shell interfaces and
+    # frame ends landing mid-edge) to the edge's end nodes with a stiff
+    # tie-beam chain along the edge (see CONTRACT v0.22 for the exact
+    # sizing).  False (default) keeps every pre-v0.22 result bit-identical.
+    edge_constraints: bool = False
     thermal_alpha: float = 1.2e-5           # v0.8: /degC thermal expansion
     nodal_masses: List[NodalMass] = field(default_factory=list)
     rigid_diaphragms: bool = True
@@ -1367,6 +1444,7 @@ class BuildingModel:
                 and sec.mod > 0.0):
             raise ValueError(f"Shell section {sec.name}: mod must be a "
                              f"finite value > 0 (got {sec.mod!r})")
+        self._validate_layered(sec)
         self.shell_sections[sec.name] = sec
         return sec
 
@@ -1435,6 +1513,7 @@ class BuildingModel:
                         and oa.v0 < ob.v1 and ob.v0 < oa.v1):
                     raise ValueError(f"Shell {region.uid}: openings {a} and "
                                      f"{b} overlap")
+        self._validate_area_spring(region)          # v0.22
 
     def pattern(self, name: str, kind: str = "other") -> LoadPattern:
         if name not in self.patterns:
@@ -1844,6 +1923,105 @@ class BuildingModel:
         self._validate_spring(sp)
         self.spring_supports.append(sp)
         return sp
+
+    def add_line_spring(self, p1: Tuple[float, float, float],
+                        p2: Tuple[float, float, float],
+                        kz: float = 0.0, kx: float = 0.0, ky: float = 0.0,
+                        compression_only: bool = False) -> LineSpring:
+        ls = LineSpring(tuple(float(v) for v in p1),
+                        tuple(float(v) for v in p2),
+                        kz=float(kz), kx=float(kx), ky=float(ky),
+                        compression_only=bool(compression_only))
+        self._validate_line_spring(ls)
+        self.line_springs.append(ls)
+        return ls
+
+    @staticmethod
+    def _validate_line_spring(ls: LineSpring) -> None:
+        for key in ("kz", "kx", "ky"):
+            v = getattr(ls, key)
+            if not (isinstance(v, (int, float)) and math.isfinite(v)
+                    and v >= 0.0):
+                raise ValueError(f"line spring: {key} must be finite and "
+                                 f">= 0 (got {v!r})")
+        if not (ls.kz > 0.0 or ls.kx > 0.0 or ls.ky > 0.0):
+            raise ValueError("line spring: at least one of kz/kx/ky must "
+                             "be > 0")
+        d = _vsub(tuple(map(float, ls.p2)), tuple(map(float, ls.p1)))
+        if math.sqrt(d[0] ** 2 + d[1] ** 2 + d[2] ** 2) < 1e-9:
+            raise ValueError("line spring: p1 and p2 must be distinct")
+        if ls.compression_only and ls.kz <= 0.0:
+            raise ValueError("line spring: compression_only needs kz > 0")
+
+    @staticmethod
+    def _validate_area_spring(region: "ShellRegion") -> None:
+        asp = region.area_spring
+        if asp is None:
+            return
+        if not isinstance(asp, dict):
+            raise ValueError(f"Shell {region.uid}: area_spring must be a "
+                             "dict {kz, compression_only}")
+        allowed = {"kz", "compression_only"}
+        unknown = set(asp) - allowed
+        if unknown:
+            raise ValueError(f"Shell {region.uid}: unknown area_spring "
+                             f"key(s) {sorted(unknown)} (allowed: "
+                             f"{sorted(allowed)})")
+        kz = asp.get("kz")
+        if not (isinstance(kz, (int, float)) and not isinstance(kz, bool)
+                and math.isfinite(kz) and kz > 0.0):
+            raise ValueError(f"Shell {region.uid}: area_spring kz must be "
+                             f"a finite value > 0 (got {kz!r})")
+        if not isinstance(asp.get("compression_only", False), bool):
+            raise ValueError(f"Shell {region.uid}: area_spring "
+                             "compression_only must be a bool")
+        if region.behavior != "shell":
+            raise ValueError(f"Shell {region.uid}: area_spring needs shell "
+                             "behavior (membrane slabs have no mesh nodes)")
+
+    def _validate_layered(self, ssec: ShellSection) -> None:
+        lay = ssec.layered
+        if lay is None:
+            return
+        if not isinstance(lay, dict) or set(lay) != {"layers"}:
+            raise ValueError(f"Shell section {ssec.name}: layered must be a "
+                             "dict with the single key 'layers'")
+        layers = lay["layers"]
+        if not isinstance(layers, (list, tuple)) or not layers:
+            raise ValueError(f"Shell section {ssec.name}: layered.layers "
+                             "must be a non-empty list")
+        allowed = {"t", "material", "kind", "angle"}
+        for k, la in enumerate(layers):
+            if not isinstance(la, dict):
+                raise ValueError(f"Shell section {ssec.name}: layer {k} "
+                                 "must be a dict")
+            unknown = set(la) - allowed
+            if unknown:
+                raise ValueError(f"Shell section {ssec.name}: layer {k}: "
+                                 f"unknown key(s) {sorted(unknown)} "
+                                 f"(allowed: {sorted(allowed)})")
+            t = la.get("t")
+            if not (isinstance(t, (int, float)) and not isinstance(t, bool)
+                    and math.isfinite(t) and t > 0.0):
+                raise ValueError(f"Shell section {ssec.name}: layer {k}: t "
+                                 f"must be a finite value > 0 (got {t!r})")
+            if la.get("material") not in self.materials:
+                raise ValueError(f"Shell section {ssec.name}: layer {k}: "
+                                 f"unknown material {la.get('material')!r}")
+            kind = la.get("kind")
+            if kind not in SHELL_LAYER_KINDS:
+                raise ValueError(f"Shell section {ssec.name}: layer {k}: "
+                                 f"kind must be one of {SHELL_LAYER_KINDS}, "
+                                 f"got {kind!r}")
+            if "angle" in la:
+                if kind != "steel":
+                    raise ValueError(f"Shell section {ssec.name}: layer "
+                                     f"{k}: angle is only valid for steel "
+                                     "layers")
+                if la["angle"] not in (0, 90, 0.0, 90.0):
+                    raise ValueError(f"Shell section {ssec.name}: layer "
+                                     f"{k}: angle must be 0 or 90 (got "
+                                     f"{la['angle']!r})")
 
     @staticmethod
     def _validate_spring(sp: SpringSupport) -> None:
