@@ -249,33 +249,28 @@ def _load_global_components(ml) -> Optional[Vec3]:
     return None      # local_y
 
 
-def buckling_analysis(model: BuildingModel, gravity: Dict[str, float],
-                      num_modes: int = 6) -> BucklingResult:
-    """Linear buckling analysis under a reference gravity state.
+def assemble_elastic_stiffness(model: BuildingModel
+                               ) -> Tuple[np.ndarray, Dict[Vec3, int],
+                                          Dict[int, Vec3], List, List[str]]:
+    """Assemble the global elastic stiffness of the bare frame (v0.24).
 
-    ``gravity`` maps load-pattern name -> factor (the reference load whose
-    critical multiplier is sought).  Returns a :class:`BucklingResult` with
-    the ``num_modes`` smallest positive load factors and their mode shapes.
+    Extracted from :func:`buckling_analysis` so the load-dependent Ritz
+    module (:mod:`skyframe.core.ritz`) can reuse the SAME engine-identical
+    ``elasticBeamColumn`` stiffness.  Returns ``(K, tag_of, coords, ele,
+    warnings)`` where ``K`` is the ``6 * n_nodes`` square global stiffness
+    over the deduped frame endpoint nodes (tag order = sorted tags, 6 dofs
+    per node) and ``ele`` caches per-member ``(member, T, dofs, EA/L, L)``
+    for the geometric-stiffness pass.  Same modelling scope as buckling:
+    frame members only (shells / links / releases are the CALLER's
+    responsibility to warn about).
     """
     warn: List[str] = []
-    if model.shells:
-        warn.append(f"{len(model.shells)} shell region(s) skipped "
-                    "(frame-only buckling)")
-    if model.links:
-        warn.append(f"{len(model.links)} link element(s) skipped")
-    if any(m.release_tokens() for m in model.members):
-        warn.append("member end releases ignored (members treated continuous)")
-
     tag_of, coords = _node_map(model)
     if not coords:
-        return BucklingResult([], {}, dict(gravity), {}, warn +
-                              ["no frame members to analyse"])
-    restr = _restraints(model, tag_of, coords)
+        return np.zeros((0, 0)), tag_of, coords, [], warn
     tags_sorted = sorted(coords)
     idx = {t: i for i, t in enumerate(tags_sorted)}
     ndof = 6 * len(coords)
-
-    # ---- assemble elastic K and cache per-member transforms/props ----
     K = np.zeros((ndof, ndof))
     ele: List[Tuple[FrameMember, np.ndarray, np.ndarray, float, float]] = []
     for m in model.members:
@@ -294,6 +289,36 @@ def buckling_analysis(model: BuildingModel, gravity: Dict[str, float],
                 + [6 * idx[tj] + k for k in range(6)])
         K[np.ix_(dofs, dofs)] += kg
         ele.append((m, T, np.array(dofs), E * A / L, L))
+    return K, tag_of, coords, ele, warn
+
+
+def buckling_analysis(model: BuildingModel, gravity: Dict[str, float],
+                      num_modes: int = 6) -> BucklingResult:
+    """Linear buckling analysis under a reference gravity state.
+
+    ``gravity`` maps load-pattern name -> factor (the reference load whose
+    critical multiplier is sought).  Returns a :class:`BucklingResult` with
+    the ``num_modes`` smallest positive load factors and their mode shapes.
+    """
+    warn: List[str] = []
+    if model.shells:
+        warn.append(f"{len(model.shells)} shell region(s) skipped "
+                    "(frame-only buckling)")
+    if model.links:
+        warn.append(f"{len(model.links)} link element(s) skipped")
+    if any(m.release_tokens() for m in model.members):
+        warn.append("member end releases ignored (members treated continuous)")
+
+    # ---- assemble elastic K and cache per-member transforms/props ----
+    K, tag_of, coords, ele, asm_warn = assemble_elastic_stiffness(model)
+    warn.extend(asm_warn)
+    if not coords:
+        return BucklingResult([], {}, dict(gravity), {}, warn +
+                              ["no frame members to analyse"])
+    restr = _restraints(model, tag_of, coords)
+    tags_sorted = sorted(coords)
+    idx = {t: i for i, t in enumerate(tags_sorted)}
+    ndof = 6 * len(coords)
 
     # ---- reference gravity nodal load vector ----
     F = _gravity_nodal_vector(model, gravity, tag_of, idx, ndof, warn)

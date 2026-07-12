@@ -68,6 +68,18 @@ curvature-based plastic-rotation acceptance states; new link types
 both shear directions) ride the v0.15 device-link machinery (vertical
 axis, grounded anchors, Newton static routing).
 
+v0.24 analysis parity I: ``run_ritz`` (load-dependent Ritz vectors — the
+numpy WYD analysis of :mod:`skyframe.core.ritz` on the buckling module's
+engine-identical frame stiffness, exact rigid-diaphragm condensation);
+``run_fna`` (Fast Nonlinear Analysis: modal superposition of the
+linearized structure with device-link forces as per-step fixed-point
+pseudo-forces — see the method docstring for the honest scope);
+``TimeHistoryCase.damping_model == "modal"`` (per-mode ``modalDamping``
+in direct integration, native per-mode ratios in FNA; the default
+Rayleigh path is bit-identical); and the ``_solve_eigen`` policy
+(Arpack retry on a fresh SOE, dense fallback quieted on tiny models —
+the ``n == n_massed`` case is an ARPACK rank bound, not a bug).
+
 v0.16 beam deflection recovery: every static case / additive combo reports
 ``member_deflections`` — EXACT closed-form transverse deflection stations
 (local y/z) recovered per segment from the end node displacements plus the
@@ -120,7 +132,12 @@ Units follow the model everywhere: kN, m, tonne, s (E in kPa).
 
 from __future__ import annotations
 
+import contextlib
+import copy
+import logging
 import math
+import os
+import sys
 import warnings
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -144,6 +161,46 @@ from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
 # exceed this many integration steps they are skipped in run() (a warning is
 # carried in the results); run_time_history() itself is never capped.
 TH_STEP_CAP = 20000
+
+# v0.24 eigen-solver policy: below this many (estimated) equations the dense
+# -fullGenLapack fallback is effectively instantaneous, so its native
+# "VERY SLOW" console warning is suppressed and downgraded to a debug-level
+# log note; at or above the cap the native warning is left visible (an
+# honest signal that the dense solver really is the wrong tool there).
+EIGEN_QUIET_DOF_CAP = 200
+
+_log = logging.getLogger(__name__)
+
+
+@contextlib.contextmanager
+def _quiet_native_output():
+    """Silence the C++ (OpenSees) stdout/stderr for the enclosed block.
+
+    OpenSees writes solver warnings straight to the process file
+    descriptors (bypassing ``sys.stdout``), so the only way to quiet them
+    is a dup2 redirect of fds 1/2 to /dev/null.  Restores both fds no
+    matter what; degrades to a no-op when the fds cannot be duplicated
+    (exotic embedded interpreters).  Python-level exceptions propagate
+    unchanged.
+    """
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        fd_out, fd_err = os.dup(1), os.dup(2)
+    except (OSError, ValueError):
+        yield
+        return
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+        os.close(devnull)
+        yield
+    finally:
+        os.dup2(fd_out, 1)
+        os.dup2(fd_err, 2)
+        os.close(fd_out)
+        os.close(fd_err)
 
 # v0.5 pushover: run() skips ALL pushover cases (with a results warning)
 # when their combined step count exceeds this cap; run_pushover() itself is
@@ -1217,6 +1274,7 @@ class OpenSeesEngine:
         self._case_cache: Dict[str, CaseResults] = {}
         self._rs_cache: Dict[str, CaseResults] = {}
         self._th_cache: Dict[str, THResults] = {}
+        self._fna_cache: Dict[str, THResults] = {}          # v0.24
         self._po_cache: Dict[str, PushoverResults] = {}
         self._staged_cache: Dict[str, StagedResults] = {}
         self._modal_cache: Dict[int, ModalResults] = {}
@@ -1559,7 +1617,7 @@ class OpenSeesEngine:
             return self._modal_cache[n]
 
         self._setup_analysis(asm)
-        lambdas = self._solve_eigen(n, n_massed)
+        lambdas = self._solve_eigen(n, n_massed, asm)
         periods = [2.0 * math.pi / math.sqrt(lam) for lam in lambdas]
         frequencies = [1.0 / t for t in periods]
         shapes = {mode: {t: list(ops.nodeEigenvector(t, mode))
@@ -5050,7 +5108,23 @@ class OpenSeesEngine:
         asm = self._build(hinge_case=th if nonlinear else None)
         self._seg_span_loads = {}
         self._seg_fef = {}
-        if use_newton:
+        if getattr(th, "damping_model", "rayleigh") == "modal":
+            # v0.24 per-mode viscous damping: eigen in THIS transient
+            # domain (modalDamping consumes the domain's stored
+            # eigenpairs, which survive the later wipeAnalysis), then one
+            # damping ratio per computed mode — modal_zeta padded with its
+            # last value, else the case's flat ``damping``.  Modes beyond
+            # the computed count are UNDAMPED (standard modal-damping
+            # caveat, documented); for hinged/device cases the ratios
+            # apply to the INITIAL-state modes (same convention as the
+            # Rayleigh fit).
+            n_massed = asm.free_massed_dofs()
+            n_eig = min(len(modal.periods) or 1, n_massed)
+            self._setup_analysis(asm)
+            self._solve_eigen(n_eig, n_massed, asm)
+            zetas = self._padded_zetas(th, n_eig)
+            ops.modalDamping(*zetas)
+        elif use_newton:
             # committed-stiffness proportionality (betaKcomm): the a0/a1
             # FIT comes from the initial elastic modes, but C follows the
             # committed stiffness so the stiff hinge springs cannot
@@ -5370,6 +5444,340 @@ class OpenSeesEngine:
         bc = model.buckling_cases[name]
         return buckling_analysis(model, bc.gravity, num_modes=bc.num_modes)
 
+    # ------------------------------------------- v0.24 load-dependent Ritz
+    def run_ritz(self, n: Optional[int] = None, direction: str = "X"):
+        """Load-dependent Ritz vectors (self-contained numpy; v0.24).
+
+        Delegates to :func:`skyframe.core.ritz.ritz_analysis`: ``n``
+        vectors (default ``model.num_modes``) seeded by the
+        mass-proportional spatial load in ``direction`` ("X" | "Y" |
+        "XY").  Returns a :class:`skyframe.core.ritz.RitzResults` with
+        ModalResults-compatible ``periods`` / ``frequencies`` /
+        ``participation`` / ``shapes``.  Modelling scope mirrors
+        ``run_buckling`` (frame members only — shells/links skipped with
+        a warning) PLUS exact rigid-diaphragm condensation.
+        """
+        from skyframe.core.ritz import ritz_analysis
+        return ritz_analysis(self.model, int(n or self.model.num_modes),
+                             direction)
+
+    # --------------------------------------------------------- v0.24 FNA
+    @staticmethod
+    def _padded_zetas(th, n: int) -> List[float]:
+        """Per-mode damping ratios for a "modal"-damping TH/FNA case.
+
+        ``modal_zeta`` truncated/PADDED with its last value to ``n``
+        entries; an empty/None list means the case's flat ``damping`` in
+        every mode.
+        """
+        zetas = [float(z) for z in (getattr(th, "modal_zeta", None) or [])]
+        if not zetas:
+            zetas = [float(th.damping)]
+        zetas = zetas[:n]
+        while len(zetas) < n:
+            zetas.append(zetas[-1])
+        return zetas
+
+    def run_fna(self, name: str) -> THResults:
+        """Fast Nonlinear Analysis of a TH case (v0.24; cached).
+
+        Classic Wilson FNA: the LINEAR structure (elastic frame + shells
+        + elastic links, with every device link removed or replaced by
+        its linear-elastic part) is reduced to its eigen basis
+        (``run_modal`` of the linearized model, ``model.num_modes``
+        modes) and the uncoupled modal equations are integrated with
+        Newmark constant-average acceleration per mode; the NONLINEAR
+        device forces enter as pseudo-forces iterated to convergence per
+        time step (:func:`skyframe.core.fna.fna_modal_th`).
+
+        Linearization of the modal basis (documented):
+
+        * ``damper`` (alpha == 1 ONLY) / ``gap`` / ``hook`` — removed
+          from the basis (zero linear stiffness; their full force is the
+          pseudo-force).  A ``damper`` with ``alpha != 1`` raises
+          ``NotImplementedError`` (direct integration handles it);
+        * ``isolator`` — replaced by an ELASTIC link ``[k1, k1, kv]``
+          (global x/y shear at the initial stiffness, vertical kv), so
+          the basis holds the isolator's elastic-range dynamics and the
+          pseudo-force is the bilinear correction ``F(d) - k1*d``.  The
+          elastic replacement is a zeroLength spring: the finite-height
+          twoNodeLink's shear-moment transfer (~1e-6 relative on the
+          validation models) is not represented;
+        * ``fp_isolator`` / ``triple_fp`` / ``multilinear`` links,
+          hinged (``nonlinear``) cases, and cases with a ``gravity``
+          stage raise ``NotImplementedError`` naming
+          ``run_time_history`` as the fallback.
+
+        Damping: per-mode ratios — the case's Rayleigh fit evaluated at
+        each modal frequency (``zeta_i = (a0/w_i + a1*w_i)/2``, EXACTLY
+        the diagonal of the run_th damping matrix in modal coordinates,
+        so a device-free FNA case reproduces linear direct integration
+        to solver precision) or, with ``damping_model == "modal"``, the
+        padded ``modal_zeta`` ratios natively.
+
+        Returns the SAME ``THResults`` shape as ``run_time_history``
+        (story series from the linearized model's diaphragm masters /
+        story-node averages; story-shear peaks from the same
+        inertia-equilibrium rule; base series from modal equilibrium:
+        ``FX = sum_i L_i*(qdd_i + 2*zeta_i*w_i*qd_i) + Mx*ag``, which is
+        exactly the elastic-resisting-force reaction sum run_th
+        reports).  Modal truncation applies: series carry the full
+        ground-acceleration mass term, but modes beyond ``num_modes``
+        are not represented.
+        """
+        if name in self._fna_cache:
+            return self._fna_cache[name]
+        model = self.model
+        if name not in model.th_cases:
+            raise ValueError(f"Unknown time-history case {name!r}")
+        th = model.th_cases[name]
+        accel, dt = self._resolve_th_record(th)
+        if getattr(th, "nonlinear", False):
+            raise NotImplementedError(
+                f"FNA case {name!r}: hinge nonlinearity is not supported "
+                "by modal superposition — use direct integration "
+                "(run_time_history)")
+        if th.gravity:
+            raise NotImplementedError(
+                f"FNA case {name!r}: a gravity stage is not supported — "
+                "use direct integration (run_time_history)")
+        from skyframe.core.fna import (BilinearComponent, GapComponent,
+                                       HookComponent, MaxwellDamper,
+                                       fna_modal_th)
+        from skyframe.core.model import LinkMember
+
+        # ---- linearized model + device records ---------------------------
+        lin = copy.deepcopy(model)
+        lin.links = []
+        devices: List[Tuple[str, tuple, tuple, dict]] = []
+        for lk in model.links:
+            ltype = getattr(lk, "link_type", "elastic")
+            prm = LinkMember.coerce_params(getattr(lk, "params", {}) or {})
+            if ltype == "elastic":
+                lin.links.append(copy.deepcopy(lk))
+            elif ltype == "damper":
+                alpha = float(prm.get("alpha", DAMPER_DEFAULT_ALPHA))
+                if abs(alpha - 1.0) > 1e-12:
+                    raise NotImplementedError(
+                        f"FNA case {name!r}: damper {lk.uid!r} has "
+                        f"alpha = {alpha} (only alpha = 1 is supported) "
+                        "— use direct integration (run_time_history)")
+                devices.append((ltype, tuple(lk.pi), tuple(lk.pj), prm))
+            elif ltype in ("gap", "hook"):
+                devices.append((ltype, tuple(lk.pi), tuple(lk.pj), prm))
+            elif ltype == "isolator":
+                k1 = float(prm["k1"])
+                kv = float(prm.get("kv", ISOLATOR_DEFAULT_KV))
+                lin.links.append(LinkMember(
+                    lk.uid, tuple(lk.pi), tuple(lk.pj),
+                    [k1, k1, kv, 0.0, 0.0, 0.0]))
+                devices.append((ltype, tuple(lk.pi), tuple(lk.pj), prm))
+            else:
+                raise NotImplementedError(
+                    f"FNA case {name!r}: link type {ltype!r} "
+                    f"({lk.uid!r}) is not supported — use direct "
+                    "integration (run_time_history)")
+
+        # ---- eigen basis of the linearized model --------------------------
+        eng2 = OpenSeesEngine(lin)
+        modal = eng2.run_modal()
+        if not modal.periods:
+            raise RuntimeError(
+                f"FNA case {name!r}: the linearized model has no dynamic "
+                "modes (no mass on unrestrained DOFs)")
+        asm2 = eng2._asm
+        nm = len(modal.periods)
+        w = np.array([2.0 * math.pi / T for T in modal.periods])
+        mass_items = [((t, d), mv) for (t, d), mv in asm2.mass_map.items()]
+        # ---- M-orthonormalize the retained shapes (modified Gram-Schmidt).
+        # The dense fallback eigen solver returns eigenvectors that are NOT
+        # M-orthogonal inside DEGENERATE eigenvalue clusters (verified:
+        # phi_1^T M phi_2 = -0.32 on a doubly-symmetric isolated block),
+        # which breaks the uncoupled modal equations and makes the FNA
+        # fixed point drift exponentially.  Combinations WITHIN a
+        # degenerate cluster are still exact eigenvectors, and the GS
+        # coefficients across well-separated modes are ~1e-9 (already
+        # M-orthogonal), so this is exact where it matters and harmless
+        # elsewhere.
+        shp: List[Dict[int, np.ndarray]] = [
+            {t: np.asarray(phi_t, dtype=float) for t, phi_t in
+             modal.shapes[i + 1].items()} for i in range(nm)]
+
+        def mdot(sa: Dict[int, np.ndarray], sb: Dict[int, np.ndarray]
+                 ) -> float:
+            return sum(mv * sa[t][d - 1] * sb[t][d - 1]
+                       for (t, d), mv in mass_items)
+
+        for i in range(nm):
+            for j in range(i):
+                cij = mdot(shp[i], shp[j])       # shp[j] is unit by now
+                if cij != 0.0:
+                    for t in shp[i]:
+                        shp[i][t] = shp[i][t] - cij * shp[j][t]
+            den = mdot(shp[i], shp[i])
+            s = 1.0 / math.sqrt(den) if den > 0.0 else 0.0
+            for t in shp[i]:
+                shp[i][t] = shp[i][t] * s
+
+        def nphi(i: int, t: int, dof0: int) -> float:
+            """Unit-mass-normalized eigenvector value (0-based dof)."""
+            return float(shp[i][t][dof0])
+
+        dof = 1 if th.direction == "X" else 2
+        L_dir = np.array([sum(mv * nphi(i, t, d - 1)
+                              for (t, d), mv in mass_items if d == dof)
+                          for i in range(nm)])
+        gammas = L_dir                          # unit modal mass
+        M_dir = sum(mv for (t, d), mv in mass_items if d == dof)
+
+        # ---- per-mode damping ratios --------------------------------------
+        if getattr(th, "damping_model", "rayleigh") == "modal":
+            zetas = np.array(self._padded_zetas(th, nm))
+        else:
+            w_i = w[0]
+            w_j = w[min(3, nm) - 1]
+            a0 = 2.0 * th.damping * w_i * w_j / (w_i + w_j)
+            a1 = 2.0 * th.damping / (w_i + w_j)
+            zetas = 0.5 * (a0 / w + a1 * w)
+
+        # ---- device components + modal deformation rows -------------------
+        def node_modes(point) -> Optional[List[np.ndarray]]:
+            """Per-mode 6-dof normalized shape at a point; None = ground."""
+            try:
+                t = eng2._find_node(asm2, point)
+            except ValueError:
+                return None                      # removed anchor -> ground
+            return [shp[i][t] for i in range(nm)]
+
+        comps: List[object] = []
+        b_rows: List[np.ndarray] = []
+        k_lin: List[float] = []
+        for (kind, pi, pj, prm) in devices:
+            sh_i = node_modes(pi)
+            sh_j = node_modes(pj)
+            if kind in ("damper", "gap", "hook"):
+                dx = (pj[0] - pi[0], pj[1] - pi[1], pj[2] - pi[2])
+                Ld = math.sqrt(dx[0] ** 2 + dx[1] ** 2 + dx[2] ** 2)
+                e = np.array(dx) / Ld            # model validates Ld > 0
+                row = np.zeros(nm)
+                for i in range(nm):
+                    uj = sh_j[i][:3] if sh_j is not None else np.zeros(3)
+                    ui = sh_i[i][:3] if sh_i is not None else np.zeros(3)
+                    row[i] = float((uj - ui) @ e)
+                b_rows.append(row)
+                if kind == "damper":
+                    comps.append(MaxwellDamper(
+                        prm.get("k", DAMPER_DEFAULT_K), prm["cd"]))
+                elif kind == "gap":
+                    comps.append(GapComponent(prm["k"], prm["gap"]))
+                else:
+                    comps.append(HookComponent(prm["k"], prm["slack"]))
+                k_lin.append(0.0)
+            else:                                # isolator: x + y shear
+                for d0 in (0, 1):
+                    row = np.zeros(nm)
+                    for i in range(nm):
+                        uj = sh_j[i][d0] if sh_j is not None else 0.0
+                        ui = sh_i[i][d0] if sh_i is not None else 0.0
+                        row[i] = float(uj - ui)
+                    b_rows.append(row)
+                    comps.append(BilinearComponent(
+                        prm["k1"], prm["k2"], prm["Fy"]))
+                    k_lin.append(float(prm["k1"]))
+        B = (np.array(b_rows) if b_rows else None)
+
+        # ---- integrate ----------------------------------------------------
+        ag = [float(th.scale) * float(a) for a in accel]
+        q, qd, qdd, _fdev = fna_modal_th(
+            w, zetas, gammas, ag, dt, comps=comps, B=B,
+            k_lin=(k_lin if k_lin else None))
+
+        # ---- assemble THResults (same construction as run_time_history) ---
+        stories = model.stories
+        n = len(accel)
+        t_out = [(k + 1) * dt for k in range(n)]
+
+        def story_rows(dof0: int) -> Dict[str, np.ndarray]:
+            rows: Dict[str, np.ndarray] = {}
+            for s in stories:
+                row = np.zeros(nm)
+                if s.name in asm2.masters:
+                    t = asm2.masters[s.name]
+                    for i in range(nm):
+                        row[i] = nphi(i, t, dof0)
+                else:
+                    nodes = asm2.story_nodes.get(s.name, [])
+                    if nodes:
+                        for i in range(nm):
+                            row[i] = (sum(nphi(i, t, dof0) for t in nodes)
+                                      / len(nodes))
+                rows[s.name] = row
+            return rows
+
+        rows_x = story_rows(0)
+        rows_y = story_rows(1)
+        sux = {s.name: [float(v) for v in q @ rows_x[s.name]]
+               for s in stories}
+        suy = {s.name: [float(v) for v in q @ rows_y[s.name]]
+               for s in stories}
+
+        # inertia-equilibrium story shears (identical rule to run_th)
+        ag_end = np.array([ag[k + 1] if k + 1 < n else 0.0
+                           for k in range(n)])
+        svx: Dict[str, List[float]] = {}
+        svy: Dict[str, List[float]] = {}
+        for s in stories:
+            for d, out in ((1, svx), (2, svy)):
+                row = np.array([
+                    sum(mv * nphi(i, t, d - 1)
+                        for (t, dd), mv in mass_items
+                        if dd == d
+                        and asm2.node_coords[t][2] >= s.elevation - _TOL)
+                    for i in range(nm)])
+                m_above = sum(mv for (t, dd), mv in mass_items
+                              if dd == d
+                              and asm2.node_coords[t][2]
+                              >= s.elevation - _TOL)
+                ag_term = ag_end * (m_above if d == dof else 0.0)
+                out[s.name] = [float(v) for v in
+                               -(qdd @ row + ag_term)]
+
+        # base series from modal global equilibrium (see docstring):
+        # OpenSees support reactions carry the element RESISTING forces
+        # only (no damping share — verified R = -k*u exactly on an SDOF),
+        # which by the equation of motion equals
+        # sum_i L_i*(qdd_i + 2*zeta_i*w_i*qd_i) + M_dir*ag — the SAME
+        # number run_th reports, device pseudo-forces included implicitly.
+        r_dir = qdd @ L_dir + (qd * (2.0 * zetas * w)) @ L_dir \
+            + M_dir * ag_end
+        bfx = [float(v) for v in (r_dir if dof == 1 else np.zeros(n))]
+        bfy = [float(v) for v in (r_dir if dof == 2 else np.zeros(n))]
+
+        def peak(vals: Sequence[float]) -> float:
+            return max(abs(v) for v in vals) if len(vals) else 0.0
+
+        peaks_story: Dict[str, Dict[str, float]] = {}
+        prev_ux = [0.0] * n
+        prev_uy = [0.0] * n
+        for s in stories:                        # bottom -> top
+            h = s.height if s.height > 0 else 1.0
+            ux_s, uy_s = sux[s.name], suy[s.name]
+            peaks_story[s.name] = {
+                "ux": peak(ux_s), "uy": peak(uy_s),
+                "drift_x": peak([(u - p) / h
+                                 for u, p in zip(ux_s, prev_ux)]),
+                "drift_y": peak([(u - p) / h
+                                 for u, p in zip(uy_s, prev_uy)]),
+                "shear_x": peak(svx[s.name]), "shear_y": peak(svy[s.name]),
+            }
+            prev_ux, prev_uy = ux_s, uy_s
+        peaks = {"story": peaks_story,
+                 "base": {"FX": peak(bfx), "FY": peak(bfy)}}
+        result = THResults(name, t_out, sux, suy, bfx, bfy, peaks,
+                           nonlinear=False)
+        self._fna_cache[name] = result
+        return result
+
     def _modal_static(self, loads: Dict[Tuple[int, int], float]) -> CaseResults:
         """Linear static solve under explicit (node, dof) -> value loads."""
         asm = self._build()
@@ -5469,12 +5877,34 @@ class OpenSeesEngine:
         return all(isinstance(v, (int, float)) and math.isfinite(v)
                    and v > 1e-100 for v in list(vals)[:n])
 
-    def _solve_eigen(self, n: int, n_massed: int) -> List[float]:
+    def _solve_eigen(self, n: int, n_massed: int,
+                     asm: Optional[_Assembly] = None) -> List[float]:
         """Eigenvalues; falls back to -fullGenLapack on failure.
 
-        The default (Arpack) solver requires strictly fewer modes than
-        generalized-eigenvalue pairs, so when ``n`` equals the number of
-        massed dofs we go straight to the dense solver.
+        Solver policy (v0.24, investigated):
+
+        * the default solver (shift-invert Band-Arpack) is FAST but its
+          Arnoldi space is capped at rank(M) — the number of massed free
+          dofs — so it MATHEMATICALLY cannot return ``n == n_massed``
+          modes (``_saupd info = -9999``).  That is exactly the common
+          small-model case (e.g. the default quick building: num_modes 12
+          == 4 stories x 3 diaphragm dofs), which is why the dense
+          fallback used to fire "on every modal run" there.  For
+          ``n < n_massed`` Arpack is tried first and normally succeeds.
+        * on an Arpack failure/garbage result with ``n < n_massed`` the
+          solve is retried ONCE on a freshly rebuilt analysis/SOE
+          (openseespy's ``eigen`` exposes no explicit shift argument, so
+          the "small shift" retry is realised as a clean-state
+          ``-genBandArpack`` rerun, which clears the failed Arnoldi
+          factorization).
+        * only then ``-fullGenLapack`` (dense, always works).  Its native
+          "VERY SLOW" console warning is suppressed and downgraded to a
+          debug log note when the model is tiny (< ``EIGEN_QUIET_DOF_CAP``
+          estimated equations, where dense LAPACK is in fact the right
+          tool); on bigger models the warning stays visible.
+
+        Eigenvalues are solver-independent (verified to 1e-8 relative in
+        the test suite), so the fallback chain never changes results.
         """
         vals = None
         if n < n_massed:
@@ -5482,8 +5912,31 @@ class OpenSeesEngine:
                 vals = ops.eigen(n)
             except Exception:
                 vals = None
+            if not self._eigen_ok(vals, n) and asm is not None:
+                self._setup_analysis(asm)     # fresh SOE, retry once
+                try:
+                    vals = ops.eigen("-genBandArpack", n)
+                except Exception:
+                    vals = None
         if not self._eigen_ok(vals, n):
-            vals = ops.eigen("-fullGenLapack", n)
+            ndof_est = None
+            if asm is not None:
+                # active-equation estimate: free node dofs minus the 3
+                # (ux, uy, rz) each rigid-diaphragm slave gives up
+                ndof_est = sum(
+                    6 - sum(asm.node_restraints.get(t, (0,) * 6))
+                    for t in asm.node_coords)
+                ndof_est -= 3 * sum(len(asm.story_nodes.get(s, ()))
+                                    for s in asm.masters)
+            if ndof_est is not None and ndof_est < EIGEN_QUIET_DOF_CAP:
+                _log.debug("eigen: dense -fullGenLapack on a tiny model "
+                           "(%d estimated dofs, n == %d of %d massed); "
+                           "native VERY SLOW warning suppressed",
+                           ndof_est, n, n_massed)
+                with _quiet_native_output():
+                    vals = ops.eigen("-fullGenLapack", n)
+            else:
+                vals = ops.eigen("-fullGenLapack", n)
         if not self._eigen_ok(vals, n):
             raise RuntimeError(f"Eigenvalue analysis failed for {n} modes")
         return [float(v) for v in list(vals)[:n]]

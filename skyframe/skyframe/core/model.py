@@ -809,6 +809,9 @@ class ResponseSpectrumCase:
 
 TH_DIRECTIONS = ("X", "Y")
 
+# v0.24 time-history viscous damping models
+TH_DAMPING_MODELS = ("rayleigh", "modal")
+
 
 @dataclass
 class TimeHistoryCase:
@@ -833,6 +836,17 @@ class TimeHistoryCase:
       response PAST the gravity state;
     * ``My`` / ``default_My`` / ``hardening`` / ``hinges`` — the hinge plan
       (members with neither ``My`` entry nor ``default_My`` stay elastic).
+
+    v0.24 damping model fields:
+
+    * ``damping_model`` — ``"rayleigh"`` (default; the exact pre-v0.24
+      Rayleigh fit, bit-identical) or ``"modal"`` (per-mode viscous
+      damping: the engine runs an eigen solve in the transient domain and
+      applies ``ops.modalDamping``; FNA uses the per-mode ratios
+      natively);
+    * ``modal_zeta`` — optional per-mode damping ratio list for
+      ``"modal"``; shorter lists are PADDED with their last value, and an
+      empty/None list means "``damping`` in every mode".
     """
 
     name: str
@@ -848,6 +862,8 @@ class TimeHistoryCase:
     default_My: Optional[float] = None                       # v0.6
     hardening: float = 0.02                                  # v0.6
     function: str = ""              # v0.13: named th_functions entry
+    damping_model: str = "rayleigh"                          # v0.24
+    modal_zeta: Optional[List[float]] = None                 # v0.24
 
     def to_dict(self) -> dict:
         return {"name": self.name, "direction": self.direction,
@@ -856,7 +872,10 @@ class TimeHistoryCase:
                 "nonlinear": self.nonlinear, "gravity": dict(self.gravity),
                 "hinges": self.hinges, "My": dict(self.My),
                 "default_My": self.default_My, "hardening": self.hardening,
-                "function": self.function}
+                "function": self.function,
+                "damping_model": self.damping_model,
+                "modal_zeta": (None if self.modal_zeta is None
+                               else [float(z) for z in self.modal_zeta])}
 
 
 PUSHOVER_DIRECTIONS = ("X", "Y")
@@ -1634,7 +1653,10 @@ class BuildingModel:
                     My: Optional[Dict[str, float]] = None,
                     default_My: Optional[float] = None,
                     hardening: float = 0.02,
-                    function: str = "") -> TimeHistoryCase:
+                    function: str = "",
+                    damping_model: str = "rayleigh",
+                    modal_zeta: Optional[List[float]] = None
+                    ) -> TimeHistoryCase:
         th = TimeHistoryCase(
             name, direction, [float(a) for a in (accel or [])], float(dt),
             damping=float(damping), scale=float(scale),
@@ -1642,7 +1664,10 @@ class BuildingModel:
             hinges=hinges,
             My={k: float(v) for k, v in (My or {}).items()},
             default_My=(None if default_My is None else float(default_My)),
-            hardening=float(hardening), function=str(function))
+            hardening=float(hardening), function=str(function),
+            damping_model=str(damping_model),
+            modal_zeta=(None if modal_zeta is None
+                        else [float(z) for z in modal_zeta]))
         self._validate_th_case(th)
         self.th_cases[name] = th
         return th
@@ -1668,6 +1693,16 @@ class BuildingModel:
             raise ValueError(f"TH case {th.name}: dt must be > 0")
         if not 0.0 < th.damping < 1.0:
             raise ValueError(f"TH case {th.name}: damping must be in (0, 1)")
+        # v0.24 damping model
+        if th.damping_model not in TH_DAMPING_MODELS:
+            raise ValueError(f"TH case {th.name}: damping_model must be "
+                             f"rayleigh|modal, got {th.damping_model!r}")
+        if th.modal_zeta is not None:
+            for z in th.modal_zeta:
+                if not (isinstance(z, (int, float)) and math.isfinite(z)
+                        and 0.0 < z < 1.0):
+                    raise ValueError(f"TH case {th.name}: modal_zeta "
+                                     "entries must be in (0, 1)")
         if not math.isfinite(th.scale):
             raise ValueError(f"TH case {th.name}: scale must be finite")
         # v0.6 nonlinear fields (mirror the pushover-case rules)
@@ -2861,7 +2896,11 @@ class BuildingModel:
                 My={u: float(v) for u, v in (td.get("My") or {}).items()},
                 default_My=(None if tmy is None else float(tmy)),
                 hardening=float(td.get("hardening", 0.02)),
-                function=str(td.get("function", "")))
+                function=str(td.get("function", "")),
+                # v0.24 damping model; pre-v0.24 files stay Rayleigh
+                damping_model=str(td.get("damping_model", "rayleigh")),
+                modal_zeta=(None if td.get("modal_zeta") is None
+                            else [float(z) for z in td["modal_zeta"]]))
         for name, pd in (d.get("pushover_cases") or {}).items():
             dmy = pd.get("default_My")
             mdl.pushover_cases[name] = PushoverCase(

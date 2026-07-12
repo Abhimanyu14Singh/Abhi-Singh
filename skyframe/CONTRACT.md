@@ -3018,3 +3018,157 @@ longhand forms exactly.
   combo/uid.
 * `POST /api/model` round-trips `shells[*].wind_cp`;
   `POST /api/design/composite` rows carry `camber`/`defl_DL`.
+
+# v0.24 additions — analysis parity I
+
+Units everywhere: kN, m, kPa, tonne, s.  Four ANALYSIS features (no
+design): load-dependent Ritz vectors, Fast Nonlinear Analysis, per-mode
+(modal) damping for time-history cases, and an eigen-solver policy fix.
+
+## Load-dependent Ritz vectors (`skyframe.core.ritz`)
+
+`ritz_analysis(model, n, direction="X"|"Y"|"XY")` (engine wrapper
+`OpenSeesEngine.run_ritz(n=None, direction="X")`) — the classic WYD /
+Leger sequence, SELF-CONTAINED numpy on the SAME engine-identical
+frame stiffness the buckling module assembles
+(`skyframe.core.buckling.assemble_elastic_stiffness`, extracted in
+this version — `buckling_analysis` behavior unchanged) and the SAME
+diagonal mass rule as the engine's `_assign_mass` (story masses on
+diaphragm masters with `Izz = m*(lx^2+ly^2)/12`, else spread over the
+story nodes; `NodalMass` entries on their own dofs):
+
+* start vector `x_1 = K^-1 f` with `f = M r_dir` (mass-proportional;
+  "XY" alternates an X and a Y chain), then `x_{i+1} = K^-1 M u_i`;
+  each candidate two-pass Gram-Schmidt M-ORTHOGONALIZED against all
+  previous vectors and M-normalized; a chain whose candidate's M-norm
+  collapses below 1e-8 of its pre-orthogonalization value ends (the
+  load-reachable subspace is exhausted — FEWER than `n` vectors come
+  back, with a warning);
+* reduced eigenproblem `K_r = U^T K U`, `M_r = I` -> Ritz values /
+  vectors, ascending; `RitzResults` carries ModalResults-compatible
+  `periods` / `frequencies` / `participation` (same entry shape:
+  `{mode, T, ux, gamma_x, uy, gamma_y, rz}`) / `shapes` (module-own
+  node tags), plus `direction` and `warnings`.
+* RIGID DIAPHRAGMS ARE SUPPORTED (unlike buckling, which ignores
+  them): per rigid story a master at `plan_center()` and the exact
+  rigid-body condensation `ux_s = ux_M - (y_s-cy)*rz_M`,
+  `uy_s = uy_M + (x_s-cx)*rz_M`, `rz_s = rz_M` assembled into
+  `T` with `K_c = T^T K T`, `M_c = T^T M T` — the same elimination the
+  engine's Transformation handler performs.  Modelling scope otherwise
+  matches buckling v0.10 HONESTLY: frame members only (shells/links
+  SKIPPED with a warning — wall/link-stiffened systems will read too
+  soft), releases/offsets ignored with a warning.
+* The matrix-level core `ritz_vectors(K, M, F, n, return_basis=False)`
+  is public — `F` may be ANY load block (the "user vector" entry).
+* Pins: a 2x2 hand problem (K = [[3000,-1000],[-1000,1000]],
+  M = diag(4,2)) reproduces the longhand first WYD vector and BOTH
+  exact eigenvalues (2 Ritz vectors span the full space); on frames
+  the first Ritz period matches `run_modal` to < 0.1% (measured:
+  machine precision on a 3-story diaphragm building) and the TOTAL
+  n-vector ux participation is >= the n-mode eigen total (the Ritz
+  guarantee), both asserted against `run_modal` on the same models.
+
+## FNA — Fast Nonlinear Analysis (`OpenSeesEngine.run_fna(case)`)
+
+For TH cases whose ONLY nonlinearity is in device links: classic
+Wilson FNA — modal superposition of the LINEAR structure with the
+nonlinear link forces as pseudo-forces, fixed-point iterated per time
+step (`skyframe.core.fna.fna_modal_th`; Newmark constant-average
+acceleration per mode at the record dt, OpenSees-identical step/start
+conventions; stalled sweeps under-relax 0.5 after 10 iterations;
+non-convergence raises naming `run_time_history` as the fallback).
+
+* Linearized modal basis: `eng.run_modal()` of a deepcopy whose device
+  links are removed (damper/gap/hook — zero elastic part) or replaced
+  by their linear-elastic part (isolator -> elastic link
+  `[k1, k1, kv]`); `model.num_modes` modes; the retained shapes are
+  M-orthonormalized by modified Gram-Schmidt because the dense eigen
+  fallback returns NON-M-orthogonal vectors inside DEGENERATE clusters
+  (measured phi_1^T M phi_2 = -0.32 on a doubly-symmetric isolated
+  block; without the fix the FNA fixed point drifts exponentially).
+* Device laws in pure numpy (`skyframe.core.fna`), matching the
+  wave-16-validated element laws: Maxwell damper alpha = 1
+  (trapezoidal rule on `dF/dt = k(v - F/cd)`), gap `F = k(d+gap)` for
+  `d < -gap`, hook mirror, bilinear kinematic isolator (Steel01 law,
+  independent x/y shears, elastic vertical kv in the basis).
+* HONEST SCOPE (each raises `NotImplementedError` naming direct
+  integration): hinged (`nonlinear`) cases, `gravity` stages, damper
+  `alpha != 1`, `fp_isolator`, `triple_fp`, `multilinear`.
+* Returns the SAME `THResults` shape as `run_th` (cached per engine):
+  story series from the linearized model's masters / story-node
+  averages, story-shear peaks by the same inertia-equilibrium rule,
+  base series `FX = sum_i L_i*(qdd_i + 2*zeta_i*w_i*qd_i) + Mx*ag` —
+  exactly the elastic-resisting-force reaction sum OpenSees reports
+  (VERIFIED: OpenSees support reactions carry NO damping share,
+  `R = -k*u` on an SDOF).  Modal truncation documented: the ground-
+  acceleration mass term is complete, modes beyond `num_modes` absent.
+* Pins: a device-free / elastic-link case matches linear `run_th` to
+  ~1e-15 (FNA with zero nonlinearity IS modal superposition — same
+  integrator, same damping diagonal); the wave-16 isolated block
+  matches direct integration to ~2e-7 peak/residual (spec < 2%) and
+  the wave-16 hand bilinear integrator to the same tolerance; a
+  grounded damper decay matches `run_th` to ~2e-4; the module-level
+  integrator passes an energy-balance check (input = kinetic + strain
+  + hysteretic + viscous to < 0.1%).
+* API: `POST /api/analyze/fna {case}` (a NEW ENDPOINT was chosen over
+  a TH-case flag so `run()`/`/api/analyze` semantics stay untouched)
+  -> the TH results dict + `{"case", "method": "FNA"}`; 400 with the
+  NotImplementedError text on unsupported cases.  `run()` never runs
+  FNA implicitly.
+
+## Modal damping (`TimeHistoryCase.damping_model` / `modal_zeta`)
+
+* `damping_model: "rayleigh" (default) | "modal"`, `modal_zeta:
+  Optional[List[float]]` — per-mode ratios, TRUNCATED/PADDED with the
+  last value to the computed mode count; empty/None means the flat
+  `damping` in every mode.  Validated (`damping_model` in the pair,
+  each ratio finite in (0, 1)); round-trips through
+  `to_dict`/`from_dict` (pre-v0.24 files stay Rayleigh).
+* Engine (`run_time_history`): `"modal"` runs an eigen solve IN the
+  transient domain (`min(num_modes, massed dofs)` modes — the stored
+  eigenpairs survive `wipeAnalysis`) and applies
+  `ops.modalDamping(*zetas)`; modes beyond the computed count are
+  UNDAMPED (documented).  The default `"rayleigh"` path is
+  BIT-IDENTICAL to pre-v0.24 (same `ops.rayleigh` calls).  FNA uses
+  the per-mode ratios natively.
+* Pins: SDOF free decay with `modal_zeta=[0.05]` -> log-decrement
+  0.05 to 1% (measured 0.05003); a 2-mass column with
+  `modal_zeta=[0.02, 0.10]` shows INDEPENDENT per-mode decay (response
+  projected onto the mass-weighted mode shapes, each mode's log
+  decrement matches its own zeta); FNA under modal damping matches
+  the OpenSees modal-damping run to ~1e-15.
+
+## Eigen-solver policy (`_solve_eigen`)
+
+Investigated: the default shift-invert Band-Arpack solver's Arnoldi
+space is capped at rank(M) — it MATHEMATICALLY cannot return
+`n == n_massed` modes (`_saupd info = -9999`), and that is exactly the
+default small-model case (num_modes 12 == 4 stories x 3 diaphragm
+dofs), which is why the dense fallback and its native "VERY SLOW"
+console warning fired on every such modal run.  New policy:
+
+* `n < n_massed`: default Arpack first; on failure/garbage ONE retry
+  with `-genBandArpack` on a freshly rebuilt SOE (openseespy exposes
+  NO explicit shift argument — the "small shift" retry is realised as
+  a clean-state rerun, documented); only then `-fullGenLapack`.
+* `n == n_massed`: dense LAPACK is REQUIRED (not a bug) — on tiny
+  models (< 200 estimated dofs, `EIGEN_QUIET_DOF_CAP`) the native
+  warning is suppressed via an fd-level redirect and downgraded to a
+  `logging.debug` note; bigger models keep the visible warning.
+* Results are UNCHANGED by policy: Arpack and fullGenLapack
+  eigenvalues agree to < 1e-8 relative (asserted in the suite).
+  Honest timing note: models with `n < n_massed` already took the fast
+  Arpack path pre-v0.24 (quick_building(stories=8), 12 modes: ~0.02 s
+  Arpack vs ~0.20 s dense), so this change removes console noise and
+  adds a retry — it does not speed up runs that were already on
+  Arpack, and the `n == n_massed` dense case cannot be avoided.
+
+## API
+
+* `POST /api/analyze/ritz` `{n?, direction?}` ->
+  `RitzResults.to_dict()`; 400 on bad parameters.
+* `POST /api/analyze/fna` `{case}` -> TH results dict +
+  `{"case", "method": "FNA"}`; 400 on unknown case / unsupported
+  feature (message names `run_time_history`).
+* `POST /api/model` round-trips `th_cases[*].damping_model` /
+  `modal_zeta`; 400 on a bad damping_model or ratios outside (0, 1).

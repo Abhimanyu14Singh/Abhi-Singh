@@ -215,6 +215,26 @@ v0.23 additions:
   the 0.8x pre-composite dead-load-deflection shop-camber
   recommendation, floored to 5 mm steps (zero < 20 mm or span < 7.5 m).
 
+v0.24 additions (analysis parity I):
+
+* ``POST /api/analyze/ritz`` — load-dependent Ritz vectors (body
+  ``{n?: int (default model.num_modes), direction?: "X"|"Y"|"XY"}``):
+  the self-contained numpy WYD analysis of the frame
+  (:mod:`skyframe.core.ritz`) -> ``RitzResults.to_dict()`` (``periods``
+  / ``frequencies`` / ``participation`` in the modal entry shape /
+  ``shapes`` / ``direction`` / ``warnings``); 400 on a bad direction/n;
+* ``POST /api/analyze/fna`` — Fast Nonlinear Analysis of one TH case
+  (body ``{case: name}``): modal superposition with device-link
+  pseudo-forces (``OpenSeesEngine.run_fna``) -> the usual TH results
+  dict plus ``{"case": name, "method": "FNA"}``; 400 on an unknown
+  case or an unsupported feature (hinges / gravity stage / fp
+  isolators / triple FP / multilinear links / damper alpha != 1 — the
+  error names direct integration as the fallback);
+* ``POST /api/model`` round-trips the TimeHistoryCase ``damping_model``
+  ("rayleigh" | "modal") and ``modal_zeta`` (per-mode ratio list,
+  padded with its last value) fields — 400 on a bad damping_model or
+  ratios outside (0, 1).
+
 Saved models live as ``<name>.skyframe.json`` files in ``~/.skyframe/models``
 (override with the ``SKYFRAME_MODELS_DIR`` environment variable; the
 directory is created on demand).  Names must match ``[A-Za-z0-9 _-]{1,60}``.
@@ -822,6 +842,55 @@ def create_app() -> Flask:
         except Exception as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify(results.to_dict())
+
+    # ------------------------------------------- v0.24: analysis parity I
+    @app.post("/api/analyze/ritz")
+    def analyze_ritz():
+        """Load-dependent Ritz vectors (self-contained numpy; v0.24).
+
+        Body: ``{n?: int (default model.num_modes), direction?:
+        "X" (default) | "Y" | "XY"}``.  Returns
+        ``RitzResults.to_dict()``; 400 on bad parameters.
+        """
+        body = request.get_json(silent=True) or {}
+        n = body.get("n")
+        direction = body.get("direction", "X")
+        if n is not None and (not isinstance(n, int) or n < 1):
+            return jsonify({"error": "'n' must be a positive integer"}), 400
+        try:
+            from skyframe.core.ritz import ritz_analysis
+            res = ritz_analysis(_state["model"],
+                                int(n or _state["model"].num_modes),
+                                direction)
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(res.to_dict())
+
+    @app.post("/api/analyze/fna")
+    def analyze_fna():
+        """Fast Nonlinear Analysis of one TH case (v0.24).
+
+        Body: ``{case: "<TH case name>"}``.  Returns the TH results dict
+        (same shape as an ``/api/analyze`` th_cases entry) plus
+        ``{"case", "method": "FNA"}``; 400 on an unknown case or an
+        unsupported feature (the error message names direct integration
+        as the fallback).
+        """
+        if not _OPENSEES_OK:
+            return jsonify({"error": "OpenSeesPy is not available"}), 400
+        body = request.get_json(silent=True) or {}
+        case = body.get("case")
+        if not isinstance(case, str) or not case:
+            return jsonify({"error": "'case' (name of a TH case) is "
+                                     "required"}), 400
+        try:
+            res = OpenSeesEngine(_state["model"]).run_fna(case)
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 400
+        payload = res.to_dict()
+        payload["case"] = case
+        payload["method"] = "FNA"
+        return jsonify(payload)
 
     # --------------------------------------------- v0.6: preliminary design
     @app.post("/api/design/steel")
