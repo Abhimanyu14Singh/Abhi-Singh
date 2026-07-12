@@ -85,9 +85,17 @@ headed studs — the classic ETABS "Composite Beam Design" scope):
   to the full span, end connectivity unchanged).  Checked against
   ``span / model.deflection_limit`` (default L/360).
 
+* Camber (v0.23) — a per-beam shop-camber RECOMMENDATION
+  (:func:`camber_recommendation`, the industry 0.8x-dead-load rule of
+  thumb): ``0.8 x`` the pre-composite dead-load deflection (the DEAD
+  case's chord-relative bare-``Is`` elastic line), rounded DOWN to 5 mm
+  increments, zero below 20 mm or for spans under 7.5 m.  Reported as
+  ``camber`` (with ``defl_DL``) on every applicable beam; ``null`` when
+  no dead-case deflection is recoverable.
+
 THESE ARE PRELIMINARY SCREENING CHECKS, NOT A FINAL CODE CHECK: no
 ductility check on the stud distribution, no rib-parallel deck case, no
-long-term creep multiplier, no camber design, no vibration (see
+long-term creep multiplier, no vibration (see
 :mod:`skyframe.design.vibration`), no shear check.  Every result carries
 ``"preliminary": True``.
 
@@ -110,9 +118,10 @@ from skyframe.design.wall import fc_from_E
 __all__ = [
     "CompositeBeamCheck", "check_composite_beams", "composite_flexure",
     "stud_strength", "transformed_inertia", "equivalent_inertia",
-    "default_live_case", "PHI_B_COMPOSITE", "RG_STUD", "RP_STUD",
-    "DEFAULT_HR", "DEFAULT_STUD_D", "DEFAULT_STUD_FU",
-    "DEFAULT_RIB_SPACING",
+    "default_live_case", "camber_recommendation", "PHI_B_COMPOSITE",
+    "RG_STUD", "RP_STUD", "DEFAULT_HR", "DEFAULT_STUD_D",
+    "DEFAULT_STUD_FU", "DEFAULT_RIB_SPACING", "CAMBER_FRACTION",
+    "CAMBER_INCREMENT", "CAMBER_MIN", "CAMBER_MIN_SPAN",
 ]
 
 PHI_B_COMPOSITE = 0.90      # AISC I3.2a flexure resistance factor
@@ -123,6 +132,35 @@ DEFAULT_STUD_D = 0.019      # m, 19 mm (3/4 in) headed stud
 DEFAULT_STUD_FU = 450_000.0  # kPa, stud tensile strength (65 ksi class)
 DEFAULT_RIB_SPACING = 0.3   # m, deck rib pitch (12 in nominal)
 _TOL = 1e-6
+
+# v0.23 camber recommendation (industry rule of thumb, e.g. AISC Design
+# Guide 36 / SDI practice — documented, not a code requirement):
+CAMBER_FRACTION = 0.8       # camber 80% of the pre-composite DL deflection
+CAMBER_INCREMENT = 0.005    # m — cambers are specified in 5 mm steps
+CAMBER_MIN = 0.020          # m — below ~20 mm (3/4 in) don't camber
+CAMBER_MIN_SPAN = 7.5       # m — short beams (< ~25 ft) are not cambered
+
+
+def camber_recommendation(delta_dead: float, span: float) -> float:
+    """Recommended shop camber [m] for one unshored composite beam.
+
+    Industry rule of thumb (documented — fabrication practice, not an
+    AISC requirement): camber ``CAMBER_FRACTION (0.8) x`` the
+    PRE-COMPOSITE dead-load deflection (wet concrete on the bare steel
+    ``Is``), rounded DOWN to ``CAMBER_INCREMENT`` (5 mm) steps; ZERO
+    when the rounded value falls below ``CAMBER_MIN`` (20 mm) or the
+    span is below ``CAMBER_MIN_SPAN`` (7.5 m) — small cambers are
+    unreliable to fabricate and short beams are simply sized stiffer.
+    """
+    if not (math.isfinite(delta_dead) and delta_dead >= 0.0):
+        raise ValueError("delta_dead must be a finite value >= 0 (m)")
+    if not (math.isfinite(span) and span > 0.0):
+        raise ValueError("span must be a finite value > 0 (m)")
+    if span < CAMBER_MIN_SPAN:
+        return 0.0
+    c = math.floor(CAMBER_FRACTION * delta_dead / CAMBER_INCREMENT + 1e-12) \
+        * CAMBER_INCREMENT
+    return 0.0 if c < CAMBER_MIN else c
 
 
 # --------------------------------------------------------------------------- #
@@ -403,6 +441,9 @@ class CompositeBeamCheck:
     defl_LL: Optional[float] = None      # m, scaled live-load deflection
     defl_limit: Optional[float] = None   # m, span / deflection_limit
     defl_limit_ok: Optional[bool] = None
+    camber: Optional[float] = None       # m, v0.23 recommendation (None =
+    #   no dead-case deflection recoverable; 0.0 = below the thresholds)
+    defl_DL: Optional[float] = None      # m, pre-composite dead deflection
     governing_combo: str = ""
     status: str = "N/A"                  # "OK" | "NG" | "N/A"
     notes: List[str] = field(default_factory=list)
@@ -423,6 +464,7 @@ class CompositeBeamCheck:
             "I_tr": self.I_tr, "I_equiv": self.I_equiv,
             "defl_LL": self.defl_LL, "defl_limit": self.defl_limit,
             "defl_limit_ok": self.defl_limit_ok,
+            "camber": self.camber, "defl_DL": self.defl_DL,
             "governing_combo": self.governing_combo, "status": self.status,
             "notes": list(self.notes), "preliminary": True,
         }
@@ -627,6 +669,19 @@ def check_composite_beams(model, results,
                 chk.defl_limit = span / limit_den
                 chk.defl_limit_ok = bool(
                     chk.defl_LL <= chk.defl_limit * (1.0 + 1e-12))
+
+        # ---- camber recommendation (v0.23, industry rule) --------------- #
+        # Pre-composite DL deflection = the DEAD case's chord-relative
+        # bare-steel elastic line (the v0.16 recovery integrates the
+        # member's own EI = Es*Is, so this IS the bare-Is deflection;
+        # documented approximation: the analysis mesh may include the
+        # slab, which slightly stiffens the END displacements — a true
+        # staged wet-concrete model is out of scope).
+        if dead_blk is not None:
+            rel_d = _chord_relative_dy(dead_blk, m.uid, span)
+            if rel_d is not None:
+                chk.defl_DL = max(abs(v) for v in rel_d)
+                chk.camber = camber_recommendation(chk.defl_DL, span)
 
         bad = chk.ratio > 1.0 or (chk.precomp_ratio is not None
                                   and chk.precomp_ratio > 1.0)

@@ -586,3 +586,192 @@ def reduce_live_demands(results_dict, model: BuildingModel, *,
                         st[key] = [float(v) + scale * float(lv)
                                    for v, lv in zip(st[key], st_l[key])]
     return out
+
+# --------------------------------------------------------------------------- #
+# v0.23: NBCC 2020 lateral loads (static wind + equivalent static seismic)
+# --------------------------------------------------------------------------- #
+# NBCC 4.1.7.1 exposure (terrain) factor Ce — the two tabulated power laws
+# (heights in m, evaluated at the story-top elevation):
+#   open terrain :  Ce = (h/10)^0.2,      not less than 0.9
+#   rough terrain:  Ce = 0.7*(h/12)^0.3,  not less than 0.7
+# (the intermediate-exposure interpolation of the commentary is NOT
+# implemented — documented simplification).
+NBCC_EXPOSURES = ("open", "rough")
+NBCC_CG = 2.0            # gust effect factor, static procedure (4.1.7.1)
+NBCC_CP_TOTAL = 1.3      # windward Cp 0.8 + leeward 0.5 combined (documented
+#                          building-total coefficient, like the ASCE helper)
+
+# NBCC 4.1.8.11(3) approximate fundamental period Ta = coeff * hn^0.75
+NBCC_TA_COEFF = {"steel_mf": 0.085, "concrete_mf": 0.075, "other": 0.05}
+
+
+def nbcc_ce(z: float, exposure: str = "open") -> float:
+    """NBCC 2020 Table 4.1.7.1 exposure factor Ce (power-law form)."""
+    if exposure not in NBCC_EXPOSURES:
+        raise ValueError(f"exposure must be one of {NBCC_EXPOSURES}, "
+                         f"got {exposure!r}")
+    zz = max(float(z), 0.0)
+    if exposure == "open":
+        return max((zz / 10.0) ** 0.2 if zz > 0.0 else 0.0, 0.9)
+    return max(0.7 * (zz / 12.0) ** 0.3 if zz > 0.0 else 0.0, 0.7)
+
+
+def nbcc_wind_pattern(model: BuildingModel, q: float,
+                      exposure: str = "open", name: str = "NWIND",
+                      direction: str = "X", cp_total: float = NBCC_CP_TOTAL,
+                      Iw: float = 1.0) -> LoadPattern:
+    """NBCC 2020 static-procedure wind LoadPattern with story forces.
+
+    External pressure ``p = Iw * q * Ce(z) * Cg * Cp`` (NBCC 4.1.7.1) with
+    the REFERENCE VELOCITY PRESSURE ``q`` passed directly in kPa (the
+    1-in-50 tabulated value; NBCC does not derive it from a wind speed),
+    ``Ce`` per :func:`nbcc_ce` (story-top elevation), ``Cg = 2.0``
+    (static procedure) and ``cp_total`` the combined windward + leeward
+    building coefficient (default 0.8 + 0.5 = 1.3 — the same
+    facade-total convention as the ASCE helper; the leeward face's
+    height-CONSTANT Ce-at-mid-height refinement is not modeled —
+    documented simplification: both faces use Ce(z) of the loaded
+    level).  Story force ``F = p * trib_height * width`` with the same
+    tributary facade areas as :func:`skyframe.core.builder.
+    make_wind_pattern`.  Stored under ``name`` (kind "wind", replacing
+    an existing pattern) and returned.
+    """
+    if direction not in ("X", "Y"):
+        raise ValueError(f"direction must be X|Y, got {direction!r}")
+    if exposure not in NBCC_EXPOSURES:
+        raise ValueError(f"exposure must be one of {NBCC_EXPOSURES}, "
+                         f"got {exposure!r}")
+    for label, val in (("q", q), ("cp_total", cp_total), ("Iw", Iw)):
+        if (isinstance(val, bool) or not isinstance(val, (int, float))
+                or not math.isfinite(val) or val <= 0.0):
+            raise ValueError(f"{label} must be a finite value > 0")
+    if not model.stories:
+        raise ValueError("model has no stories to load")
+    lx, ly = model.plan_extents()
+    width = ly if direction == "X" else lx
+    if width <= 0.0:
+        raise ValueError("plan width perpendicular to the wind is zero")
+
+    pat = LoadPattern(name, "wind")
+    heights = [s.height for s in model.stories]
+    for i, story in enumerate(model.stories):
+        trib_h = heights[i] / 2.0 + (heights[i + 1] / 2.0
+                                     if i + 1 < len(heights) else 0.0)
+        p = float(Iw) * float(q) * nbcc_ce(story.elevation, exposure) \
+            * NBCC_CG * float(cp_total)                  # kPa
+        force = p * trib_h * width                       # kN
+        pat.story_forces.append(StoryForce(
+            story.name,
+            fx=force if direction == "X" else 0.0,
+            fy=force if direction == "Y" else 0.0))
+    model.patterns[name] = pat
+    return pat
+
+
+def nbcc_spectrum_value(T: float, Sa02: float, Sa05: float, Sa10: float,
+                        Sa20: float) -> float:
+    """NBCC design spectral acceleration S(T) [g] from four user ordinates.
+
+    The site-adjusted ordinates S(0.2)/S(0.5)/S(1.0)/S(2.0) are supplied
+    directly (site coefficients F(T) are the caller's job — NBCC 2020
+    tabulates Sa at these periods per location).  Interpolation between
+    the ordinates is LINEAR IN log(T) (documented simplification of the
+    NBCC 4.1.8.4(9) "linear interpolation" rule — log-period
+    interpolation tracks the tabulated 1/T-like decay closely and is
+    smooth across the octave-spaced points):
+
+    * ``T <= 0.2 s``: S = S(0.2)  (the code plateau);
+    * ``0.2 < T < 2.0``: log-T linear between the bracketing ordinates;
+    * ``T >= 2.0 s``: S = S(2.0) * (2.0/T)  (1/T decay — NBCC's higher-
+      period ordinates S(5)/S(10) are not requested; documented).
+    """
+    for label, val in (("Sa02", Sa02), ("Sa05", Sa05), ("Sa10", Sa10),
+                       ("Sa20", Sa20)):
+        v = float(val)
+        if not (math.isfinite(v) and v >= 0.0):
+            raise ValueError(f"{label} must be a finite value >= 0")
+    if not (math.isfinite(T) and T >= 0.0):
+        raise ValueError("period T must be a finite value >= 0")
+    pts = ((0.2, float(Sa02)), (0.5, float(Sa05)), (1.0, float(Sa10)),
+           (2.0, float(Sa20)))
+    if T <= pts[0][0]:
+        return pts[0][1]
+    if T >= pts[-1][0]:
+        return pts[-1][1] * (pts[-1][0] / T)
+    for (t0, s0), (t1, s1) in zip(pts, pts[1:]):
+        if t0 <= T <= t1:
+            f = (math.log(T) - math.log(t0)) / (math.log(t1) - math.log(t0))
+            return s0 + (s1 - s0) * f
+    return pts[-1][1]  # pragma: no cover - unreachable
+
+
+def nbcc_seismic_elf(model: BuildingModel, Sa02: float, Sa05: float,
+                     Sa10: float, Sa20: float, RdRo: float,
+                     Ie: float = 1.0, system: str = "other",
+                     direction: str = "X", name: str = "NELF"
+                     ) -> LoadPattern:
+    """NBCC 2020 equivalent-static seismic pattern (4.1.8.11).
+
+    * approximate period ``Ta = coeff * hn^0.75`` with coeff per
+      ``system``: "steel_mf" 0.085, "concrete_mf" 0.075, "other" 0.05
+      (Table in 4.1.8.11(3); hn = top-story elevation);
+    * base shear ``V = S(Ta) * Mv * Ie * W / (Rd*Ro)`` with ``Mv = 1``
+      FIXED (higher-mode factor for regular short/moderate buildings —
+      documented simplification) and S(T) per
+      :func:`nbcc_spectrum_value`;
+    * caps per 4.1.8.11(2): floor ``V >= S(2.0)*Mv*Ie*W/(Rd*Ro)`` and
+      cap ``V <= max(2/3*S(0.2), S(0.5))*Ie*W/(Rd*Ro)``.  NBCC applies
+      the upper cap only for Rd >= 1.5; ``RdRo`` arrives as a product so
+      the condition cannot be checked — the cap is applied
+      unconditionally (documented; every ductile system has Rd >= 1.5);
+    * vertical distribution 4.1.8.11(7): a top force
+      ``Ft = 0.07*Ta*V <= 0.25*V`` when ``Ta > 0.7 s`` (else 0), the
+      remainder ``(V - Ft)`` spread as ``w_x h_x / sum(w h)``.
+
+    Result: a story-force :class:`LoadPattern` of kind ``"quake"``
+    stored under ``name`` (replacing an existing pattern) and returned.
+    """
+    if direction not in ("X", "Y"):
+        raise ValueError(f"direction must be X|Y, got {direction!r}")
+    if system not in NBCC_TA_COEFF:
+        raise ValueError(f"system must be one of "
+                         f"{tuple(NBCC_TA_COEFF)}, got {system!r}")
+    for label, val in (("RdRo", RdRo), ("Ie", Ie)):
+        if (isinstance(val, bool) or not isinstance(val, (int, float))
+                or not math.isfinite(val) or val <= 0.0):
+            raise ValueError(f"{label} must be a finite value > 0")
+    if not model.stories:
+        raise ValueError("model has no stories to load")
+    hn = max(s.elevation for s in model.stories)
+    if hn <= 0.0:
+        raise ValueError("building height (top-story elevation) must be > 0")
+
+    Ta = NBCC_TA_COEFF[system] * hn ** 0.75
+    S_Ta = nbcc_spectrum_value(Ta, Sa02, Sa05, Sa10, Sa20)
+    Mv = 1.0
+    masses = model.compute_story_masses()
+    weights = {s.name: masses.get(s.name, 0.0) * G_ACCEL
+               for s in model.stories}
+    W = sum(weights.values())
+    RR, IeF = float(RdRo), float(Ie)
+    V = S_Ta * Mv * IeF * W / RR
+    V_min = float(Sa20) * Mv * IeF * W / RR
+    V_max = max(2.0 / 3.0 * float(Sa02), float(Sa05)) * IeF * W / RR
+    V = min(max(V, V_min), V_max)
+
+    Ft = 0.07 * Ta * V if Ta > 0.7 else 0.0
+    Ft = min(Ft, 0.25 * V)
+    denom = sum(weights[s.name] * s.elevation for s in model.stories)
+    top = max(model.stories, key=lambda s: s.elevation)
+    pat = LoadPattern(name, "quake")
+    for s in model.stories:
+        f = ((V - Ft) * weights[s.name] * s.elevation / denom
+             if denom > 0.0 else 0.0)
+        if s.name == top.name:
+            f += Ft
+        pat.story_forces.append(StoryForce(
+            s.name,
+            fx=f if direction == "X" else 0.0,
+            fy=f if direction == "Y" else 0.0))
+    model.patterns[name] = pat
+    return pat

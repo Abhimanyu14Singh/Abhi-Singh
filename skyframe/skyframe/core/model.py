@@ -475,6 +475,11 @@ class ShellRegion:
     #   False)} — every mesh node of the region gets a grounded vertical
     #   spring of stiffness kz x its tributary area (compression-only via
     #   the v0.12 Elastic-with-Eneg machinery).  Shell behavior only.
+    wind_cp: Optional[float] = None        # v0.23 wind pressure coefficient:
+    #   regions with wind_cp set are loaded by make_shell_wind_pattern
+    #   (skyframe.core.builder) with pressure q*Cp — slabs as AreaLoads
+    #   (positive Cp = downward), shell walls as per-mesh-node NodalLoads
+    #   along the region's corner-ordering normal.  None = not wind-loaded.
 
     @property
     def area(self) -> float:
@@ -517,7 +522,8 @@ class ShellRegion:
                 "openings": [op.to_dict() for op in self.openings],
                 "pier": self.pier,
                 "area_spring": (dict(self.area_spring)
-                                if self.area_spring else None)}
+                                if self.area_spring else None),
+                "wind_cp": self.wind_cp}
 
 
 # --------------------------------------------------------------------------- #
@@ -1514,6 +1520,13 @@ class BuildingModel:
                     raise ValueError(f"Shell {region.uid}: openings {a} and "
                                      f"{b} overlap")
         self._validate_area_spring(region)          # v0.22
+        # v0.23 wind pressure coefficient: None or a finite number
+        cp = getattr(region, "wind_cp", None)
+        if cp is not None and (isinstance(cp, bool)
+                               or not isinstance(cp, (int, float))
+                               or not math.isfinite(cp)):
+            raise ValueError(f"Shell {region.uid}: wind_cp must be a finite "
+                             f"number or None, got {cp!r}")
 
     def pattern(self, name: str, kind: str = "other") -> LoadPattern:
         if name not in self.patterns:
@@ -2713,7 +2726,9 @@ class BuildingModel:
                                   float(o["u1"]), float(o["v1"]))
                           for o in (rd.get("openings") or [])],
                 pier=str(rd.get("pier", "")),
-                area_spring=asp))
+                area_spring=asp,
+                wind_cp=(None if rd.get("wind_cp") is None
+                         else float(rd["wind_cp"]))))
         mdl.base_fixity = d.get("base_fixity", "fixed")
         if mdl.base_fixity not in ("fixed", "pinned"):
             raise ValueError(f"base_fixity must be fixed|pinned, got "

@@ -180,6 +180,41 @@ new field, see CONTRACT.md "v0.22 additions"):
   antisymmetric force-couple field; slab-less stories keep the legacy
   equal split.
 
+v0.23 additions:
+
+* ``POST /api/design/steel`` accepts optional ``code: "AISC360"
+  (default) | "EC3"`` — "EC3" routes to the EN 1993-1-1 member checks
+  (:mod:`skyframe.design.steel_ec3`: §6.2 cross-section, §6.3.1 buckling
+  curves, §6.3.3 Annex B interaction; ``Fy`` read as fy, ``Lb`` ignored —
+  LTB deferred).  Same response shape; ``code`` echoed exactly when the
+  request carries it (a code-less request stays bit-identical);
+* ``POST /api/design/concrete`` accepts optional ``code: "ACI318"
+  (default) | "EC2"`` — "EC2" routes to the EN 1992-1-1 checks
+  (:mod:`skyframe.design.concrete_ec2`: stress-block flexure with
+  gamma_C/gamma_S, §6.2.2 VRd,c + §6.2.3 VRd,s, strain-compatibility
+  columns; ``fc`` read as fck <= 50 MPa, rebar ``fy`` as fyk);
+* ``POST /api/pattern/nbcc-wind`` — NBCC 2020 static wind story forces
+  (body ``{q (kPa), exposure?: "open"|"rough", name?, direction?, Cp?,
+  Iw?}``; p = Iw*q*Ce(z)*Cg*Cp with Cg = 2.0);
+* ``POST /api/pattern/nbcc-elf`` — NBCC 2020 equivalent-static seismic
+  (body ``{Sa02, Sa05, Sa10, Sa20, RdRo, Ie?, system?: "steel_mf"|
+  "concrete_mf"|"other", name?, direction?}``; V = S(Ta)*Ie*W/(RdRo)
+  with the 4.1.8.11 floor/cap and the Ft top-force distribution);
+* ``POST /api/pattern/shell-wind`` — Cp wind from per-region
+  ``ShellRegion.wind_cp`` (body ``{q (kPa), name?}``): slabs get
+  AreaLoads q*Cp (positive = downward), shell walls get per-mesh-node
+  NodalLoads q*Cp*A_trib along the region's corner-ordering normal; 400
+  when no region carries ``wind_cp``.  ``POST /api/model`` round-trips
+  ``shells[*].wind_cp`` (finite number or null);
+* ``POST /api/design/seismic341`` — AISC 341 SMF joint screens (body
+  ``{combo?, columns?: [uids]|"auto", Fy?, Ry?}``): per beam-column
+  joint the E3-1 strong-column/weak-beam ratio and the J10-11 panel-zone
+  demand/capacity; response ``{preliminary, combo, columns, joints,
+  summary}``;
+* ``POST /api/design/composite`` rows gain ``camber`` (+ ``defl_DL``) —
+  the 0.8x pre-composite dead-load-deflection shop-camber
+  recommendation, floored to 5 mm steps (zero < 20 mm or span < 7.5 m).
+
 Saved models live as ``<name>.skyframe.json`` files in ``~/.skyframe/models``
 (override with the ``SKYFRAME_MODELS_DIR`` environment variable; the
 directory is created on demand).  Names must match ``[A-Za-z0-9 _-]{1,60}``.
@@ -791,15 +826,25 @@ def create_app() -> Flask:
     # --------------------------------------------- v0.6: preliminary design
     @app.post("/api/design/steel")
     def design_steel():
-        """Preliminary AISC 360 checks for a case/combo (runs analysis).
+        """Preliminary AISC 360 / EC3 checks for a case/combo (runs analysis).
 
-        Body: {"case": "<name>", optional "Fy","kx","ky","Lb"}.
+        Body: {"case": "<name>", optional "Fy","kx","ky","Lb",
+        "code": "AISC360" (default) | "EC3"}.  v0.23: ``code == "EC3"``
+        routes to :mod:`skyframe.design.steel_ec3` (EN 1993-1-1 §6.2/6.3;
+        ``Fy`` is read as fy, ``Lb`` is ignored — LTB deferred) with the
+        same response shape; the ``code`` key is echoed back exactly when
+        the request carries it (the code-less request/response is
+        bit-identical to pre-v0.23).
         """
         if not _OPENSEES_OK:
             return jsonify({"error": "OpenSeesPy is not available"}), 400
         from skyframe.design.steel import (check_members,
                                            check_members_envelope, summarize)
         body = request.get_json(silent=True) or {}
+        code = body.get("code")
+        if code is not None and code not in ("AISC360", "EC3"):
+            return jsonify({"error": "'code' must be 'AISC360' or "
+                                     "'EC3'"}), 400
         case = body.get("case")
         combos = body.get("combos")     # v0.9: True or ["name", ...]
         if not combos and (not isinstance(case, str) or not case):
@@ -810,27 +855,52 @@ def create_app() -> Flask:
         try:
             results = OpenSeesEngine(_state["model"]).run()
             src, factors = _maybe_reduce_live(results, body)
-            if combos:
+            if code == "EC3":
+                from skyframe.design.steel_ec3 import (
+                    check_members_ec3, check_members_ec3_envelope,
+                    summarize_ec3)
+                kw3 = {"fy": kw["Fy"]} if "Fy" in kw else {}
+                for k in ("kx", "ky"):
+                    if k in kw:
+                        kw3[k] = kw[k]
+                if combos:
+                    names = combos if isinstance(combos, list) else None
+                    checks = check_members_ec3_envelope(
+                        _state["model"], src, combos=names, **kw3)
+                else:
+                    checks = check_members_ec3(_state["model"], src, case,
+                                               **kw3)
+                summ = summarize_ec3(checks)
+            elif combos:
                 names = combos if isinstance(combos, list) else None
                 checks = check_members_envelope(
                     _state["model"], src, combos=names, **kw)
+                summ = summarize(checks)
             else:
                 checks = check_members(_state["model"], src, case, **kw)
+                summ = summarize(checks)
         except Exception as exc:
             return jsonify({"error": str(exc)}), 400
         payload = {"preliminary": True, "case": case, "combos": combos,
                    "checks": [c.to_dict() for c in checks],
-                   "summary": summarize(checks)}
+                   "summary": summ}
+        if code is not None:
+            payload["code"] = code
         if factors is not None:
             payload["live_reduction"] = factors
         return jsonify(payload)
 
     @app.post("/api/design/concrete")
     def design_concrete():
-        """Preliminary ACI 318 checks for a case/combo (runs analysis).
+        """Preliminary ACI 318 / EC2 checks for a case/combo (runs analysis).
 
         Body: {"case": "<name>", "rebar": {uid: RebarLayout fields},
-               optional "fc"}.
+               optional "fc", "code": "ACI318" (default) | "EC2"}.
+        v0.23: ``code == "EC2"`` routes to
+        :mod:`skyframe.design.concrete_ec2` (EN 1992-1-1; ``fc`` is read
+        as the characteristic fck <= 50 MPa, the rebar ``fy`` as fyk)
+        with the same response shape; ``code`` is echoed exactly when the
+        request carries it (code-less = bit-identical to pre-v0.23).
         """
         if not _OPENSEES_OK:
             return jsonify({"error": "OpenSeesPy is not available"}), 400
@@ -839,6 +909,10 @@ def create_app() -> Flask:
             check_concrete_members_envelope)
         from skyframe.design.concrete import summarize as summ_c
         body = request.get_json(silent=True) or {}
+        code = body.get("code")
+        if code is not None and code not in ("ACI318", "EC2"):
+            return jsonify({"error": "'code' must be 'ACI318' or "
+                                     "'EC2'"}), 400
         case = body.get("case")
         combos = body.get("combos")     # v0.9: True or ["name", ...]
         if not combos and (not isinstance(case, str) or not case):
@@ -849,24 +923,41 @@ def create_app() -> Flask:
                                      "object"}), 400
         try:
             rebar = {uid: RebarLayout(**fields) for uid, fields in raw.items()}
-            kw = {"fc": float(body["fc"])} if isinstance(
-                body.get("fc"), (int, float)) else {}
+            fc = (float(body["fc"]) if isinstance(body.get("fc"),
+                                                  (int, float)) else None)
             results = OpenSeesEngine(_state["model"]).run()
             src, factors = _maybe_reduce_live(results, body)
-            if combos:
-                names = combos if isinstance(combos, list) else None
-                checks = check_concrete_members_envelope(
-                    _state["model"], src, rebar, combos=names, **kw)
+            names = combos if isinstance(combos, list) else None
+            if code == "EC2":
+                from skyframe.design.concrete_ec2 import (
+                    check_concrete_members_ec2,
+                    check_concrete_members_ec2_envelope, summarize_ec2)
+                kw = {"fck": fc} if fc is not None else {}
+                if combos:
+                    checks = check_concrete_members_ec2_envelope(
+                        _state["model"], src, rebar, combos=names, **kw)
+                else:
+                    checks = check_concrete_members_ec2(
+                        _state["model"], src, case, rebar, **kw)
+                summ = summarize_ec2(checks)
             else:
-                checks = check_concrete_members(
-                    _state["model"], src, case, rebar, **kw)
+                kw = {"fc": fc} if fc is not None else {}
+                if combos:
+                    checks = check_concrete_members_envelope(
+                        _state["model"], src, rebar, combos=names, **kw)
+                else:
+                    checks = check_concrete_members(
+                        _state["model"], src, case, rebar, **kw)
+                summ = summ_c(checks)
         except (TypeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 400
         except Exception as exc:
             return jsonify({"error": str(exc)}), 400
         payload = {"preliminary": True, "case": case, "combos": combos,
                    "checks": [c.to_dict() for c in checks],
-                   "summary": summ_c(checks)}
+                   "summary": summ}
+        if code is not None:
+            payload["code"] = code
         if factors is not None:
             payload["live_reduction"] = factors
         return jsonify(payload)
@@ -1357,6 +1448,149 @@ def create_app() -> Flask:
             apply_suggestions(model, suggestions)
             payload["model"] = model.to_dict()
         return jsonify(payload)
+
+    # ------------------------- v0.23: NBCC lateral + shell wind + AISC 341
+    @app.post("/api/pattern/nbcc-wind")
+    def pattern_nbcc_wind():
+        """NBCC 2020 static-procedure wind pattern (story forces).
+
+        Body: ``{q (kPa, required), exposure?: "open"|"rough", name?,
+        direction?: "X"|"Y", Cp?, Iw?}`` — see
+        :func:`skyframe.core.codes.nbcc_wind_pattern`.
+        """
+        body = request.get_json(silent=True) or {}
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        name = body.get("name", "NWIND")
+        if not isinstance(name, str) or not name.strip() or len(name) > 60:
+            return jsonify({"error": "'name' must be a non-empty string "
+                                     "(max 60 chars)"}), 400
+        try:
+            from skyframe.core.codes import nbcc_wind_pattern
+            kw = {}
+            cp = _num(body, "Cp", default=None)
+            if cp is not None:
+                kw["cp_total"] = cp
+            iw = _num(body, "Iw", default=None)
+            if iw is not None:
+                kw["Iw"] = iw
+            nbcc_wind_pattern(
+                _state["model"], q=_num(body, "q", required=True),
+                exposure=body.get("exposure", "open"),
+                name=name.strip(),
+                direction=body.get("direction", "X"), **kw)
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(_state["model"].to_dict())
+
+    @app.post("/api/pattern/nbcc-elf")
+    def pattern_nbcc_elf():
+        """NBCC 2020 equivalent-static seismic pattern (story forces).
+
+        Body: ``{Sa02, Sa05, Sa10, Sa20, RdRo (all required), Ie?,
+        system?: "steel_mf"|"concrete_mf"|"other", name?, direction?}``
+        — see :func:`skyframe.core.codes.nbcc_seismic_elf`.
+        """
+        body = request.get_json(silent=True) or {}
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        name = body.get("name", "NELF")
+        if not isinstance(name, str) or not name.strip() or len(name) > 60:
+            return jsonify({"error": "'name' must be a non-empty string "
+                                     "(max 60 chars)"}), 400
+        try:
+            from skyframe.core.codes import nbcc_seismic_elf
+            nbcc_seismic_elf(
+                _state["model"],
+                Sa02=_num(body, "Sa02", required=True),
+                Sa05=_num(body, "Sa05", required=True),
+                Sa10=_num(body, "Sa10", required=True),
+                Sa20=_num(body, "Sa20", required=True),
+                RdRo=_num(body, "RdRo", required=True),
+                Ie=_num(body, "Ie", default=1.0),
+                system=body.get("system", "other"),
+                direction=body.get("direction", "X"),
+                name=name.strip())
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(_state["model"].to_dict())
+
+    @app.post("/api/pattern/shell-wind")
+    def pattern_shell_wind():
+        """Cp wind pattern from per-region ``wind_cp`` values.
+
+        Body: ``{q (kPa, required), name?}`` — see
+        :func:`skyframe.core.builder.make_shell_wind_pattern` (400 when
+        no shell region carries ``wind_cp``).
+        """
+        body = request.get_json(silent=True) or {}
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        name = body.get("name", "SWIND")
+        if not isinstance(name, str) or not name.strip() or len(name) > 60:
+            return jsonify({"error": "'name' must be a non-empty string "
+                                     "(max 60 chars)"}), 400
+        try:
+            from skyframe.core.builder import make_shell_wind_pattern
+            make_shell_wind_pattern(
+                _state["model"], q=_num(body, "q", required=True),
+                name=name.strip())
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(_state["model"].to_dict())
+
+    @app.post("/api/design/seismic341")
+    def design_seismic341():
+        """AISC 341 SMF joint screens: SCWB (E3-1) + panel zone (runs
+        analysis).
+
+        Body: ``{combo?: name (default: the first additive combo),
+        columns?: [uids] | "auto" (default), Fy?, Ry?}``.  Response:
+        ``{preliminary, combo, columns, joints: [JointCheck341...],
+        summary}``; 400 on an unknown combo/uid or when the model has no
+        additive combo and none is named.
+        """
+        if not _OPENSEES_OK:
+            return jsonify({"error": "OpenSeesPy is not available"}), 400
+        from skyframe.design.seismic341 import (check_seismic341,
+                                                summarize_341)
+        body = request.get_json(silent=True) or {}
+        model = _state["model"]
+        combo = body.get("combo")
+        if combo is None:
+            combo = next((name for name, cb in model.combos.items()
+                          if getattr(cb, "combo_type", "add") == "add"),
+                         None)
+            if combo is None:
+                return jsonify({"error": "no additive combo to check — "
+                                         "supply 'combo' (a case/combo "
+                                         "name)"}), 400
+        if not isinstance(combo, str) or not combo:
+            return jsonify({"error": "'combo' must be a case/combo name "
+                                     "string"}), 400
+        columns = body.get("columns", "auto")
+        if not (columns == "auto"
+                or (isinstance(columns, list)
+                    and all(isinstance(c, str) and c for c in columns))):
+            return jsonify({"error": "'columns' must be \"auto\" or a "
+                                     "list of column uid strings"}), 400
+        try:
+            kw = {}
+            for key in ("Fy", "Ry"):
+                v = _num(body, key, default=None)
+                if v is not None:
+                    kw[key] = v
+            results = OpenSeesEngine(model).run()
+            checks = check_seismic341(model, results, combo,
+                                      columns=columns, **kw)
+        except (ValueError, TypeError, KeyError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"preliminary": True, "combo": combo,
+                        "columns": columns,
+                        "joints": [c.to_dict() for c in checks],
+                        "summary": summarize_341(checks)})
 
     # --------------------------------------------- v0.6: model importers
     @app.post("/api/import/<fmt>")

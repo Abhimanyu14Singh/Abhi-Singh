@@ -224,3 +224,96 @@ def make_wind_pattern(model: BuildingModel, name: str, direction: str,
             fy=force if direction == "Y" else 0.0))
     model.patterns[name] = pat
     return pat
+
+
+# --------------------------------------------------------------------------- #
+# v0.23: Cp wind on shell objects
+# --------------------------------------------------------------------------- #
+def _region_normal(region) -> tuple:
+    """Unit plane normal of a shell region from its corner ordering.
+
+    Right-hand rule over the counter-clockwise corners:
+    ``n = (c1 - c0) x (c3 - c0)``, normalized.  For a slab drawn CCW seen
+    from above this is +Z; for a wall it is the horizontal normal on the
+    side the corners run counter-clockwise from.
+    """
+    c = [tuple(map(float, p)) for p in region.corners]
+    ux = (c[1][0] - c[0][0], c[1][1] - c[0][1], c[1][2] - c[0][2])
+    vy = (c[3][0] - c[0][0], c[3][1] - c[0][1], c[3][2] - c[0][2])
+    n = (ux[1] * vy[2] - ux[2] * vy[1],
+         ux[2] * vy[0] - ux[0] * vy[2],
+         ux[0] * vy[1] - ux[1] * vy[0])
+    ln = math.sqrt(n[0] ** 2 + n[1] ** 2 + n[2] ** 2)
+    if ln < 1e-12:
+        raise ValueError(f"Shell {region.uid}: degenerate corner geometry")
+    return (n[0] / ln, n[1] / ln, n[2] / ln)
+
+
+def make_shell_wind_pattern(model: BuildingModel, q: float,
+                            name: str = "SWIND") -> LoadPattern:
+    """Create (or replace) a wind LoadPattern from per-region Cp values.
+
+    Every shell region with ``wind_cp`` set is loaded with the pressure
+    ``p = q * Cp`` (kPa; ``q`` = design velocity pressure, code-agnostic —
+    pair with :func:`wind_qz` or an NBCC ``q*Ce*Cg`` product):
+
+    * **slab regions** (``kind == "slab"``, shell or membrane behavior) —
+      one :class:`AreaLoad` of ``q*Cp`` (kPa).  AreaLoads are
+      GRAVITY-DOWN, so positive Cp = pressure on the TOP surface acting
+      downward and negative Cp (uplift/suction) acts upward — the usual
+      roof-suction case is a NEGATIVE ``wind_cp``.
+    * **wall regions** (``kind == "wall"``, always shell behavior) — the
+      AreaLoad machinery only carries gravity loads, so the pressure is
+      applied as equivalent :class:`NodalLoad` forces
+      ``F_i = q * Cp * A_trib,i`` at every FE mesh node of the region
+      (the exact mesh tributary areas from
+      :func:`skyframe.core.mesh.mesh_model` — the same quarter-element
+      areas the engine uses for area loads, so the resultant equals
+      ``q*Cp*net_area`` exactly), directed along the region's UNIT PLANE
+      NORMAL from the counter-clockwise corner ordering
+      (:func:`_region_normal`; positive Cp pushes ALONG that normal —
+      draw the wall so the normal points the way the wind pushes, or
+      flip the Cp sign).  The nodal loads are BAKED at the current mesh:
+      change ``mesh_size``/``openings`` and the pattern must be
+      regenerated (the engine meshes deterministically, so an unchanged
+      model always finds the nodes).
+
+    The pattern is stored under ``name`` with kind ``"wind"`` (an
+    existing pattern of that name is replaced) and returned.  Raises
+    ``ValueError`` when ``q`` is not a positive finite number or when NO
+    region carries ``wind_cp``.
+    """
+    from .mesh import mesh_model
+    from .model import AreaLoad, NodalLoad
+
+    if (isinstance(q, bool) or not isinstance(q, (int, float))
+            or not math.isfinite(q) or q <= 0.0):
+        raise ValueError(f"q must be a finite value > 0 (kPa), got {q!r}")
+    regions = [r for r in model.shells
+               if getattr(r, "wind_cp", None) is not None]
+    if not regions:
+        raise ValueError("no shell region has wind_cp set — assign Cp "
+                         "values before generating the pattern")
+
+    pat = LoadPattern(name, "wind")
+    mesh = None
+    for r in regions:
+        cp = float(r.wind_cp)
+        if r.kind == "slab":
+            pat.area_loads.append(AreaLoad(r.uid, float(q) * cp))
+            continue
+        # wall: equivalent nodal loads along the region normal
+        if mesh is None:
+            mesh = mesh_model(model)
+        n = _region_normal(r)
+        trib = mesh.region_trib.get(r.uid) or {}
+        if not trib:
+            raise ValueError(f"Shell {r.uid}: no mesh nodes to load "
+                             "(wall wind_cp needs shell behavior)")
+        for pidx, area in trib.items():
+            f = float(q) * cp * area                    # kN
+            px, py, pz = mesh.points[pidx]
+            pat.nodal_loads.append(NodalLoad(
+                (px, py, pz), fx=f * n[0], fy=f * n[1], fz=f * n[2]))
+    model.patterns[name] = pat
+    return pat
