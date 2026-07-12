@@ -115,6 +115,8 @@ export function normalizeModel(m) {
       o && isFinite(o.u0) && isFinite(o.v0) && isFinite(o.u1) && isFinite(o.v1));
     // v0.15 — wall pier label (design grouping; "" = not a pier)
     s.pier = typeof s.pier === "string" ? s.pier : "";
+    // v0.23 — optional wind pressure coefficient (number | null round-trips)
+    s.wind_cp = (s.wind_cp == null || !isFinite(s.wind_cp)) ? null : +s.wind_cp;
   }
   // v0.15 — model-level "auto-label all walls as piers" flag
   m.auto_pier_walls = !!m.auto_pier_walls;

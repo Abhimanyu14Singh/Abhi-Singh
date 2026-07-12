@@ -584,6 +584,7 @@
               <button class="seg-btn" data-dk="punching" title="Slab punching (two-way) shear at columns (v0.18)">Punching</button>
               <button class="seg-btn" data-dk="composite" title="Composite steel beam design — studs, partial composite action, deflection (v0.20)">Composite</button>
               <button class="seg-btn" data-dk="slab" title="Two-way slab flexural design by column/middle strips (v0.20)">Slab</button>
+              <button class="seg-btn" data-dk="seismic341" title="AISC 341 seismic joint checks — strong-column/weak-beam + panel zones (v0.23)">Seismic 341</button>
             </div>
             <span class="prelim-badge" title="These checks are screening-level only — not a substitute for a full code design">PRELIMINARY — screening only</span>
             <span class="toolbar-spacer"></span>
@@ -681,6 +682,18 @@
             </div>
             <div class="pane-tools">
               <span class="muted" id="compositeNote"></span>
+            </div>
+          </div>
+
+          <!-- ---- v0.23: AISC 341 seismic joint checks (Seismic 341 sub-tab) ---- -->
+          <div class="s341-panel hidden" id="s341Panel">
+            <div class="design-form" id="s341Form"></div>
+            <div class="design-summary hidden" id="s341Summary"></div>
+            <div class="table-scroll">
+              <table class="data-table design-table" id="s341Table"></table>
+            </div>
+            <div class="pane-tools">
+              <span class="muted" id="s341Note"></span>
             </div>
           </div>
 

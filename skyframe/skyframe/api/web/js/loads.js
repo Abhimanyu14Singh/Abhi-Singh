@@ -7,7 +7,7 @@
 
 import * as ME from "./modeledit.js";
 import { spectrumChart, thSparkline } from "./charts.js";
-import { asce7SpectrumPreview, spectrumParameters, elfCs } from "./mock.js";
+import { asce7SpectrumPreview, spectrumParameters, elfCs, nbccElfInfo } from "./mock.js";
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fmt = (v, d = 2) => (v == null || !isFinite(v)) ? "—" :
@@ -40,6 +40,14 @@ export class LoadsEditor {
     // v0.10 — RS directional combination + notional loads
     this.onRsDirectional = opts.onRsDirectional || null;
     this.onNotional = opts.onNotional || null;
+    // v0.19 — pattern live loading + auto construction sequence (the host
+    // passed these all along; the constructor previously dropped them)
+    this.onPatternLive = opts.onPatternLive || null;
+    this.onAutoSequence = opts.onAutoSequence || null;
+    // v0.23 — NBCC wind / seismic (ELF) + shell wind pattern
+    this.onNbccWind = opts.onNbccWind || null;
+    this.onNbccElf = opts.onNbccElf || null;
+    this.onShellWind = opts.onShellWind || null;
     this._wind = { name: "WX", direction: "X", V: 40, exposure: "C", Cp: 0.8 };
     // v0.7 code-tool card state (persisted across re-renders)
     this._sw = { name: "SW", factor: 1.0 };
@@ -50,6 +58,11 @@ export class LoadsEditor {
     // v0.10 card state (persisted across re-renders)
     this._rsDir = { name: "RS-Dir", name_x: "", name_y: "", method: "100_30" };
     this._notional = { name: "NOTIONAL", direction: "X", coeff: 0.002, gravity_pattern: "DEAD" };
+    // v0.23 — NBCC card state (persisted across re-renders)
+    this._nbccWind = { name: "NBCC-WX", direction: "X", q: 0.45, exposure: "open" };
+    this._nbccElf = { name: "EQ-NBCC", Sa02: 0.65, Sa05: 0.4, Sa10: 0.2, Sa20: 0.1,
+      RdRo: 4.0, Ie: 1.0, direction: "X" };
+    this._shellWind = { name: "WIND-SHELL", q: 0.5 };
   }
 
   /** mutation helpers — structural edits re-render, value edits don't */
@@ -376,10 +389,11 @@ export class LoadsEditor {
      auto load combos, code response-spectrum (with live preview) and ELF.
      Each mirrors the wind card: fill inputs → callback → host re-adopts. */
   _codeToolsSection(m) {
-    const sec = this._section("ls-codetools", "Code tools (ASCE 7)",
-      "One-click ASCE 7-16 helpers — self-weight, load combinations, code " +
-      "response spectrum and equivalent lateral force. Each mutates the model " +
-      "(live backend or local mock) and refreshes the editors below.",
+    const sec = this._section("ls-codetools", "Code tools (ASCE 7 · NBCC)",
+      "One-click code helpers — self-weight, load combinations, code " +
+      "response spectrum, equivalent lateral force and the NBCC wind / " +
+      "seismic generators. Each mutates the model (live backend or local " +
+      "mock) and refreshes the editors below.",
       null, null);
     const grid = document.createElement("div");
     grid.className = "code-tools";
@@ -388,6 +402,9 @@ export class LoadsEditor {
       this._autoCombosCard(m),
       this._codeRsCard(m),
       this._elfCard(m),
+      this._nbccWindCard(m),      // v0.23
+      this._nbccElfCard(m),       // v0.23
+      this._shellWindCard(m),     // v0.23
       this._patternLiveCard(m),
       this._autoSequenceCard(m),
     );
@@ -577,6 +594,155 @@ export class LoadsEditor {
           pattern: $("seqPattern").value },
         "Sequence case creation failed"));
     if (!this.onAutoSequence || !deads.length) $("seqGen").disabled = true;
+    return card;
+  }
+
+  /* ---- v0.23: NBCC wind pattern (POST /api/pattern/nbcc-wind) */
+  _nbccWindCard(m) {
+    const card = document.createElement("div");
+    card.className = "wind-card code-card";
+    card.id = "nbccWindCard";
+    const s = this._nbccWind;
+    card.innerHTML = `
+      <div class="wind-head">
+        <b>NBCC wind</b>
+        <span class="muted">§4.1.7 static procedure → story forces</span>
+      </div>
+      <div class="wind-fields">
+        <label class="rs-field"><span>name</span>
+          <input id="nwName" type="text" value="${esc(s.name)}" spellcheck="false"></label>
+        <label class="rs-field"><span>direction</span>
+          <select id="nwDir">
+            <option value="X"${s.direction === "X" ? " selected" : ""}>X</option>
+            <option value="Y"${s.direction === "Y" ? " selected" : ""}>Y</option>
+          </select></label>
+        <label class="rs-field"><span>q <span class="unit">kPa</span></span>
+          <input id="nwQ" type="number" min="0.05" step="0.05" value="${s.q}"
+            title="Reference velocity pressure q (1-in-50-year)"></label>
+        <label class="rs-field"><span>exposure</span>
+          <select id="nwExp">
+            <option value="open"${s.exposure === "open" ? " selected" : ""}>open</option>
+            <option value="rough"${s.exposure === "rough" ? " selected" : ""}>rough</option>
+          </select></label>
+        <button class="btn btn-small" id="nwGen">Create NBCC wind</button>
+      </div>
+      <p class="code-note muted">External pressure <b>p = I<sub>w</sub>·q·Ce·Cg·Cp</b> —
+        windward Ce(z) power-law profile plus a constant leeward suction at Ce(h),
+        summed to per-story forces on the face width (mock: Cg 2.0, Cp +0.8/−0.5,
+        I<sub>w</sub> 1.0; live via POST /api/pattern/nbcc-wind).</p>`;
+    const $ = id => card.querySelector("#" + id);
+    $("nwName").addEventListener("change", e => { s.name = e.target.value.trim() || "NBCC-WX"; e.target.value = s.name; });
+    $("nwDir").addEventListener("change", e => { s.direction = e.target.value; });
+    $("nwQ").addEventListener("change", e => {
+      const v = parseFloat(e.target.value);
+      if (isFinite(v) && v > 0) s.q = v; else e.target.value = String(s.q);
+    });
+    $("nwExp").addEventListener("change", e => { s.exposure = e.target.value; });
+    $("nwGen").addEventListener("click", () =>
+      this._runTool($("nwGen"), this.onNbccWind, { ...s }, "NBCC wind generation failed"));
+    if (!this.onNbccWind) $("nwGen").disabled = true;
+    return card;
+  }
+
+  /* ---- v0.23: NBCC seismic ELF pattern (POST /api/pattern/nbcc-elf) */
+  _nbccElfCard(m) {
+    const card = document.createElement("div");
+    card.className = "wind-card code-card";
+    card.id = "nbccElfCard";
+    const s = this._nbccElf;
+    const stories = m.stories || [];
+    const hn = stories.length ? stories[stories.length - 1].elevation : 1;
+    card.innerHTML = `
+      <div class="wind-head">
+        <b>NBCC seismic (ELF)</b>
+        <span class="muted">§4.1.8.11 equivalent static force</span>
+      </div>
+      <div class="wind-fields">
+        <label class="rs-field"><span>name</span>
+          <input id="neName" type="text" value="${esc(s.name)}" spellcheck="false"></label>
+        <label class="rs-field"><span>Sa(0.2) <span class="unit">g</span></span>
+          <input id="neSa02" type="number" min="0" step="0.05" value="${s.Sa02}"></label>
+        <label class="rs-field"><span>Sa(0.5) <span class="unit">g</span></span>
+          <input id="neSa05" type="number" min="0" step="0.05" value="${s.Sa05}"></label>
+        <label class="rs-field"><span>Sa(1.0) <span class="unit">g</span></span>
+          <input id="neSa10" type="number" min="0" step="0.05" value="${s.Sa10}"></label>
+        <label class="rs-field"><span>Sa(2.0) <span class="unit">g</span></span>
+          <input id="neSa20" type="number" min="0" step="0.05" value="${s.Sa20}"></label>
+        <label class="rs-field"><span>Rd·Ro</span>
+          <input id="neRdRo" type="number" min="0.5" step="0.5" value="${s.RdRo}"
+            title="Combined ductility × overstrength force reduction"></label>
+        <label class="rs-field"><span>Ie</span>
+          <input id="neIe" type="number" min="0.5" step="0.05" value="${s.Ie}"></label>
+        <label class="rs-field"><span>direction</span>
+          <select id="neDir">
+            <option value="X"${s.direction === "X" ? " selected" : ""}>X</option>
+            <option value="Y"${s.direction === "Y" ? " selected" : ""}>Y</option>
+          </select></label>
+        <button class="btn btn-small" id="neCreate">Create NBCC ELF pattern</button>
+      </div>
+      <p class="code-note muted" id="neReadout"></p>`;
+    const $ = id => card.querySelector("#" + id);
+    const readout = () => {
+      const r = nbccElfInfo(s, hn);
+      $("neReadout").innerHTML = `Base shear <b>V = ${fmt(r.Cs, 4)}·W</b> ` +
+        `(S(Ta) ${fmt(r.S, 3)} g · Ta ≈ ${fmt(r.Ta, 3)} s · hn ${fmt(hn, 1)} m). ` +
+        `Distribution Wx·hx/ΣWi·hi with the Ft top force when Ta &gt; 0.7 s — ` +
+        `computed from the model mass (live via POST /api/pattern/nbcc-elf).`;
+    };
+    $("neName").addEventListener("change", e => { s.name = e.target.value.trim() || "EQ-NBCC"; e.target.value = s.name; });
+    const bind = (id, key, min) => $(id).addEventListener("change", e => {
+      const v = parseFloat(e.target.value);
+      if (isFinite(v) && v >= min) { s[key] = v; readout(); }
+      else e.target.value = String(s[key]);
+    });
+    bind("neSa02", "Sa02", 0); bind("neSa05", "Sa05", 0);
+    bind("neSa10", "Sa10", 0); bind("neSa20", "Sa20", 0);
+    bind("neRdRo", "RdRo", 0.5); bind("neIe", "Ie", 0.1);
+    $("neDir").addEventListener("change", e => { s.direction = e.target.value; });
+    $("neCreate").addEventListener("click", () =>
+      this._runTool($("neCreate"), this.onNbccElf, { ...s }, "NBCC ELF pattern creation failed"));
+    if (!this.onNbccElf) $("neCreate").disabled = true;
+    readout();
+    return card;
+  }
+
+  /* ---- v0.23: shell wind pattern (POST /api/pattern/shell-wind) — mini card
+     turning per-region wind_cp coefficients into a wind pattern. */
+  _shellWindCard(m) {
+    const card = document.createElement("div");
+    card.className = "wind-card code-card";
+    card.id = "shellWindCard";
+    const s = this._shellWind;
+    const nCp = (m.shells || []).filter(sh =>
+      sh.wind_cp != null && isFinite(sh.wind_cp)).length;
+    card.innerHTML = `
+      <div class="wind-head">
+        <b>Shell wind pattern</b>
+        <span class="muted">q·Cp pressure on tagged regions</span>
+      </div>
+      <div class="wind-fields">
+        <label class="rs-field"><span>name</span>
+          <input id="shwName" type="text" value="${esc(s.name)}" spellcheck="false"></label>
+        <label class="rs-field"><span>q <span class="unit">kPa</span></span>
+          <input id="shwQ" type="number" min="0.05" step="0.05" value="${s.q}"></label>
+        <button class="btn btn-small" id="shwGen">Generate</button>
+      </div>
+      <p class="code-note muted">Applies <b>p = q·Cp</b> to every shell region with a
+        <b>Wind Cp</b> (Model mode → shell properties) — currently
+        <b>${nCp}</b> region${nCp === 1 ? "" : "s"} tagged. The mock sums the
+        region area loads into story forces along each wall's plan normal.</p>`;
+    const $ = id => card.querySelector("#" + id);
+    $("shwName").addEventListener("change", e => { s.name = e.target.value.trim() || "WIND-SHELL"; e.target.value = s.name; });
+    $("shwQ").addEventListener("change", e => {
+      const v = parseFloat(e.target.value);
+      if (isFinite(v) && v > 0) s.q = v; else e.target.value = String(s.q);
+    });
+    $("shwGen").addEventListener("click", () =>
+      this._runTool($("shwGen"), this.onShellWind, { ...s }, "Shell wind generation failed"));
+    if (!this.onShellWind || !nCp) {
+      $("shwGen").disabled = true;
+      if (!nCp) $("shwGen").title = "Assign a Wind Cp to a shell region first (Model mode)";
+    }
     return card;
   }
 

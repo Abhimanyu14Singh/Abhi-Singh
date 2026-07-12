@@ -10,7 +10,9 @@ import { mockModel, mockResults, mockSectionLibrary, mockModelFiles, mockWindPat
   mockDesignWall, mockDesignPunching, mockVirtualWork,
   mockPatternLive, mockAutoSequence, mockPerformancePoint,
   mockDesignComposite, mockDesignSlab, mockVibration,
-  mockDesignerUpsert, mockDesignerDelete, mockDesignerPmm } from "./mock.js";
+  mockDesignerUpsert, mockDesignerDelete, mockDesignerPmm,
+  mockNbccWindPattern, mockNbccElfPattern, mockShellWindPattern,
+  mockDesignSeismic341 } from "./mock.js";
 import { PlanEditor } from "./draw.js";
 import { SectionDesigner } from "./secdesigner.js";   // v0.21
 import { ElevEditor } from "./elev.js";
@@ -76,6 +78,12 @@ const store = {
   designSort: { key: "ratio", dir: -1 },
   designFilter: "",
   designAllCombos: false, // v0.9 — check the design envelope over all combos
+  // v0.23 — design-code selects (echoed back by the check endpoints)
+  steelCode: "AISC360",   // "AISC360" | "EC3"
+  concreteCode: "ACI318", // "ACI318" | "EC2"
+  // v0.23 — AISC 341 seismic joint checks (Design → Seismic 341)
+  s341Result: null,       // last POST /api/design/seismic341 response
+  s341Combo: null,        // combo checked
   // v0.12 — auto section optimization (Steel sub-tab)
   optCase: null,          // case/combo used for optimization
   optTarget: 0.95,        // target D/C ratio
@@ -318,6 +326,24 @@ async function designPunching(body) {
   }
   await new Promise(r => setTimeout(r, 250));
   return mockDesignPunching(store.model, body);
+}
+
+/* ---- v0.23: AISC 341 seismic joint checks. Same convention as designCheck —
+   the live path syncs the working model first, then POSTs; mock / missing
+   endpoint synthesizes locally. */
+async function designSeismic341(body) {
+  if (!store.mock) {
+    try {
+      const payload = JSON.parse(JSON.stringify(store.model));
+      delete payload._mock_params;
+      await postModel(payload);
+      return await api("/api/design/seismic341", body);
+    } catch (e) {
+      console.warn("Seismic 341 endpoint unavailable, using mock:", e.message);
+    }
+  }
+  await new Promise(r => setTimeout(r, 250));
+  return mockDesignSeismic341(store.model, body);
 }
 
 /* ---- v0.20: composite beam design + slab flexural design. Same convention
@@ -599,6 +625,61 @@ async function createNotionalPattern(params) {
   ME.normalizeModel(store.model);
   markDirty();
   toast("Notional pattern created",
+    `“${params.name}” computed locally (${store.mock ? "mock mode" : "backend lacks endpoint"})`, "info", 5000);
+  return store.model;
+}
+
+/* ---- v0.23: NBCC wind / seismic ELF + shell wind patterns.
+   Each mirrors generateWindPattern: the live path syncs the working model,
+   POSTs the endpoint and adopts the echoed model dict; ?mock=1 / a missing
+   endpoint computes the pattern locally. */
+async function createNbccWindPattern(params) {
+  if (!store.mock) {
+    try {
+      await codeToolLive("/api/pattern/nbcc-wind", params);
+      toast("NBCC wind pattern created",
+        `“${params.name}” · ${params.direction} · q=${fmt(params.q, 2)} kPa via POST /api/pattern/nbcc-wind`, "info", 5000);
+      return store.model;
+    } catch (e) { console.warn("NBCC wind endpoint unavailable, computing locally:", e.message); }
+  }
+  mockNbccWindPattern(store.model, params);
+  ME.normalizeModel(store.model);
+  markDirty();
+  toast("NBCC wind pattern created",
+    `“${params.name}” computed locally (${store.mock ? "mock mode" : "backend lacks endpoint"})`, "info", 5000);
+  return store.model;
+}
+
+async function createNbccElfPattern(params) {
+  if (!store.mock) {
+    try {
+      await codeToolLive("/api/pattern/nbcc-elf", params);
+      toast("NBCC ELF pattern created",
+        `“${params.name}” · ${params.direction} · V = S(Ta)·Ie·W/(Rd·Ro) via POST /api/pattern/nbcc-elf`, "info", 5000);
+      return store.model;
+    } catch (e) { console.warn("NBCC ELF endpoint unavailable, computing locally:", e.message); }
+  }
+  mockNbccElfPattern(store.model, params);
+  ME.normalizeModel(store.model);
+  markDirty();
+  toast("NBCC ELF pattern created",
+    `“${params.name}” computed locally (${store.mock ? "mock mode" : "backend lacks endpoint"})`, "info", 5000);
+  return store.model;
+}
+
+async function createShellWindPattern(params) {
+  if (!store.mock) {
+    try {
+      await codeToolLive("/api/pattern/shell-wind", params);
+      toast("Shell wind pattern created",
+        `“${params.name}” · q=${fmt(params.q, 2)} kPa on Cp-tagged regions via POST /api/pattern/shell-wind`, "info", 5000);
+      return store.model;
+    } catch (e) { console.warn("Shell-wind endpoint unavailable, computing locally:", e.message); }
+  }
+  mockShellWindPattern(store.model, params);   // throws when no region has a Cp
+  ME.normalizeModel(store.model);
+  markDirty();
+  toast("Shell wind pattern created",
     `“${params.name}” computed locally (${store.mock ? "mock mode" : "backend lacks endpoint"})`, "info", 5000);
   return store.model;
 }
@@ -1373,6 +1454,17 @@ function renderProps() {
           <input id="propMesh" type="number" step="0.25" min="0.25"
             value="${mesh === undefined ? "" : mesh}" placeholder="${mesh === undefined ? "mixed" : ""}"></div>
       </div>`;
+    // v0.23 — optional wind pressure coefficient (blank = none)
+    {
+      const wcp = commonVal(shells, x => x.wind_cp ?? null);
+      html += `
+      <div class="field"><label for="propWindCp">Wind Cp <span class="unit">pressure coefficient · blank = none</span></label>
+        <input id="propWindCp" type="number" step="0.1"
+          value="${wcp == null ? "" : wcp}" placeholder="${wcp === undefined ? "mixed" : "— none —"}">
+      </div>
+      <p class="muted" style="font-size:11px">Regions with a Cp receive <b>p = q·Cp</b> from the
+        <b>Shell wind pattern</b> code tool (Loads mode). Clear the field to drop the coefficient.</p>`;
+    }
     /* v0.15 — wall piers: label + model-level auto-label toggle */
     if (walls.length) {
       const pierV = commonVal(walls, x => x.pier || "");
@@ -1626,6 +1718,19 @@ function renderProps() {
     const v = parseFloat(e.target.value);
     if (!isFinite(v) || v <= 0) return;
     for (const s of shells) s.mesh_size = v;
+    markDirty();
+  });
+  // v0.23 — wind Cp: blank clears (null round-trips), a number assigns
+  on("propWindCp", "change", e => {
+    const raw = e.target.value.trim();
+    if (raw === "") {
+      for (const s of shells) s.wind_cp = null;
+      markDirty();
+      return;
+    }
+    const v = parseFloat(raw);
+    if (!isFinite(v)) { renderProps(); return; }     // reject garbage, re-sync
+    for (const s of shells) s.wind_cp = v;
     markDirty();
   });
   on("propAreaPat", "change", e => { store.loadPattern = e.target.value; renderProps(); });
@@ -3168,6 +3273,7 @@ function setResultsAvailable(on) {
     renderDesignForm(); renderDesignTable(); renderOptimizePanel(); renderLlrPanel();
     renderWallPanel(); renderPunchPanel(); renderDriftPanel();       // v0.18
     renderCompositePanel(); renderSlabPanel(); renderVibTable();     // v0.20
+    renderS341Panel();                                               // v0.23
   }
   else if (store.tab === "design" || store.tab === "drift") switchTab("view3d");
   if (!on) {                                                         // v0.18
@@ -4457,7 +4563,8 @@ function designCaseOptions() {
 }
 
 function setDesignKind(kind) {
-  store.designKind = ["concrete", "wall", "punching", "composite", "slab"].includes(kind) ? kind : "steel";
+  store.designKind = ["concrete", "wall", "punching", "composite", "slab",
+    "seismic341"].includes(kind) ? kind : "steel";
   document.querySelectorAll("#designKindToggle .seg-btn").forEach(b =>
     b.classList.toggle("is-active", b.dataset.dk === store.designKind));
   // v0.18 — Wall / Punching sub-tabs swap out the whole steel/concrete block
@@ -4473,6 +4580,7 @@ function setDesignKind(kind) {
   renderPunchPanel();             // v0.18 (also refreshes plan halos)
   renderCompositePanel();         // v0.20
   renderSlabPanel();              // v0.20
+  renderS341Panel();              // v0.23 (also refreshes plan dots)
 }
 
 /** The check control form: case selector, params (Fy or rebar), Check button. */
@@ -4493,15 +4601,26 @@ function renderDesignForm() {
       <label class="allcombos-check"><input type="checkbox" id="designAllCombos"${allOn ? " checked" : ""}${nCombos ? "" : " disabled"}>
         All combinations${nCombos ? ` <span class="unit">${nCombos}</span>` : ""}</label></label>`;
 
+  // v0.23 — design-code select (steel: AISC 360 / EC3 · concrete: ACI 318 / EC2)
+  const codeSel = (kind) => {
+    const [cur, opts] = kind === "steel"
+      ? [store.steelCode, [["AISC360", "AISC 360"], ["EC3", "EC3"]]]
+      : [store.concreteCode, [["ACI318", "ACI 318"], ["EC2", "EC2"]]];
+    return `<label class="rs-field"><span>design code</span>
+      <select id="designCode" title="Design code sent with the check request and echoed in the results">${opts.map(([v, l]) =>
+        `<option value="${v}"${v === cur ? " selected" : ""}>${l}</option>`).join("")}</select></label>`;
+  };
+
   if (store.designKind === "steel") {
     form.innerHTML = `<div class="design-form-row">
       ${caseSel}
+      ${codeSel("steel")}
       <label class="rs-field"><span>Fy <span class="unit">kPa</span></span>
         <input id="designFy" type="number" min="1" step="5000" value="${store.steelFy}"></label>
       <button class="btn btn-run design-check" id="designCheckBtn">
         <span class="spinner hidden" id="designSpinner"></span><span>Check steel</span></button>
     </div>
-    <p class="muted design-note">AISC-H1 axial-flexure interaction screening — φPn, φMn from section properties.</p>`;
+    <p class="muted design-note">Axial-flexure interaction screening (AISC H1 / EC3 §6.3-style) — φPn, φMn from section properties.</p>`;
     $("designFy").addEventListener("change", e => {
       const v = parseFloat(e.target.value);
       if (isFinite(v) && v > 0) store.steelFy = v;
@@ -4513,6 +4632,7 @@ function renderDesignForm() {
         <input data-rb="${key}" type="number" step="${step}" min="0" value="${d[key]}"></label>`;
     form.innerHTML = `<div class="design-form-row">
       ${caseSel}
+      ${codeSel("concrete")}
       <label class="rs-field"><span>f'c <span class="unit">kPa</span></span>
         <input id="designFc" type="number" min="1" step="5000" value="${store.concreteFc}"></label>
     </div>
@@ -4546,6 +4666,12 @@ function renderDesignForm() {
     });
   }
   $("designCaseSelect").addEventListener("change", e => { store.designCase = e.target.value; });
+  // v0.23 — design-code select
+  const codeIn = $("designCode");
+  if (codeIn) codeIn.addEventListener("change", e => {
+    if (store.designKind === "steel") store.steelCode = e.target.value;
+    else store.concreteCode = e.target.value;
+  });
   const cb = $("designAllCombos");
   if (cb) cb.addEventListener("change", e => {
     store.designAllCombos = e.target.checked;
@@ -4635,7 +4761,8 @@ async function runDesignCheck() {
   if (store.llReduction) Object.assign(target, { live_reduction: true, live_case: "LIVE" });
   try {
     if (store.designKind === "steel") {
-      store.steelResult = await designCheck("steel", { ...target, Fy: store.steelFy });
+      store.steelResult = await designCheck("steel",
+        { ...target, Fy: store.steelFy, code: store.steelCode });   // v0.23 code
     } else {
       // apply the default rebar to every beam & column
       const rebar = {};
@@ -4645,7 +4772,7 @@ async function runDesignCheck() {
       }
       store.rebar = rebar;
       store.concreteResult = await designCheck("concrete",
-        { ...target, fc: store.concreteFc, rebar });
+        { ...target, fc: store.concreteFc, rebar, code: store.concreteCode });
     }
     // v0.16 — remember whether this run carried the LL-reduction flags
     { const r0 = designResult(); if (r0) r0.ll_reduction = !!store.llReduction; }
@@ -4728,6 +4855,10 @@ function renderDesignTable() {
     (res.ll_reduction
       ? `<span class="ds-item ds-llr" title="Checks ran with {live_reduction:true, live_case:'LIVE'} — column live axial demand reduced per ASCE 7 §4.7">LL reduction applied</span>`
       : "") +
+    // v0.23 — design-code echo from the check response
+    (res.code
+      ? `<span class="ds-item ds-code" title="Design code echoed by the check endpoint">code <b>${esc(res.code)}</b></span>`
+      : "") +
     `<span class="ds-item ds-prelim">PRELIMINARY · ${esc(res.case)}</span>`;
 
   ctrls.classList.remove("hidden");
@@ -4779,7 +4910,8 @@ function renderDesignTable() {
     <td class="txt">${chip(x.status)}</td></tr>`).join("");
   table.innerHTML = head + `<tbody>${body || `<tr><td class="txt dim">No members match the filter</td></tr>`}</tbody>`;
   $("designCount").textContent =
-    `${rows.length} of ${res.checks.length} members · ${store.designKind} · ${caseLabel(res.case)}`;
+    `${rows.length} of ${res.checks.length} members · ${store.designKind}` +
+    `${res.code ? ` · ${res.code}` : ""} · ${caseLabel(res.case)}`;
   // v0.16 — biaxial-method footnote (visible when any biaxial check exists)
   $("designFootnote").classList.toggle("hidden",
     !res.checks.some(c => c.biaxial));
@@ -5145,6 +5277,177 @@ function renderPunchTable() {
 }
 
 /* ================================================================
+   v0.23 — AISC 341 SEISMIC JOINT CHECKS (Design → Seismic 341)
+   POST /api/design/seismic341 {combo?, columns?: "auto"|[uids]} →
+   {joints: [{point: [x,y,z], scwb_ratio, pz_demand, pz_capacity,
+   pz_ratio?, status}]}. Strong-column/weak-beam ΣM*pc/ΣM*pb (fails
+   when < 1.0) + panel-zone shear D/C. Joints failing SCWB get a red
+   dot glyph at their plan position while the card is active
+   (punching-halo precedent). Response fields render defensively.
+   ================================================================ */
+function s341PzRatio(j) {
+  if (isFinite(j.pz_ratio)) return j.pz_ratio;
+  return (isFinite(j.pz_demand) && j.pz_capacity > 0)
+    ? j.pz_demand / j.pz_capacity : 0;
+}
+
+function renderS341Panel() {
+  const panel = $("s341Panel");
+  if (!panel) return;
+  const on = store.designKind === "seismic341" && !!store.results;
+  panel.classList.toggle("hidden", !on);
+  syncS341Halos();
+  if (!on) return;
+  const opts = designCaseOptions();
+  if (!store.s341Combo || !opts.includes(store.s341Combo)) {
+    // prefer a seismic combo (341 joint demands are EQ-governed)
+    store.s341Combo = opts.find(n =>
+      store.results.combos && store.results.combos[n] && /E[XY]|EQ/i.test(n)) ||
+      opts[0] || null;
+  }
+  $("s341Form").innerHTML = `<div class="design-form-row">
+    <label class="rs-field"><span>combo</span>
+      <select id="s341ComboSelect">${opts.map(n =>
+        `<option value="${esc(n)}"${n === store.s341Combo ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
+    <label class="rs-field"><span>columns</span>
+      <select id="s341Columns" title="Which beam-column joints to check — auto picks every moment-frame joint">
+        <option value="auto" selected>auto</option>
+      </select></label>
+    <button class="btn btn-run design-check" id="s341CheckBtn" title="POST /api/design/seismic341">
+      <span class="spinner hidden" id="s341Spinner"></span><span>Run</span></button>
+    <button class="chip csv-btn${store.s341Result ? "" : " hidden"}" id="csvS341"
+      title="Download the joint checks as CSV (unrounded)">⬇ CSV</button>
+  </div>
+  <p class="muted design-note">AISC 341 seismic joint screening — strong-column/weak-beam
+    ΣM*<sub>pc</sub>/ΣM*<sub>pb</sub> ≥ 1.0 (§E3-4a) and panel-zone shear demand vs capacity.
+    Joints failing SCWB pulse as red dots at their plan position while this card is active.</p>`;
+  $("s341ComboSelect").addEventListener("change", e => { store.s341Combo = e.target.value; });
+  $("s341CheckBtn").addEventListener("click", runS341Check);
+  const csv = $("csvS341");
+  if (csv) csv.addEventListener("click", () => downloadCsv("seismic341"));
+  renderS341Table();
+}
+
+async function runS341Check() {
+  const btn = $("s341CheckBtn");
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  $("s341Spinner").classList.remove("hidden");
+  try {
+    store.s341Result = await designSeismic341({
+      combo: store.s341Combo || undefined,
+      columns: "auto",
+    });
+    renderS341Panel();                        // re-renders table + plan dots
+    const joints = (store.s341Result && store.s341Result.joints) || [];
+    const nScwb = joints.filter(j => isFinite(j.scwb_ratio) && j.scwb_ratio < 1).length;
+    const ng = joints.filter(j => j.status === "NG").length;
+    toast("Seismic 341 checks complete",
+      `${joints.length} joints · ${ng} NG · ${nScwb} SCWB fail${nScwb === 1 ? "" : "s"}` +
+      `${nScwb ? " · red dots mark them in the plan editor" : ""}`,
+      ng ? "error" : "info", 5000);
+  } catch (err) {
+    toast("Seismic 341 check failed", err.message, "error", 8000);
+  } finally {
+    const b = $("s341CheckBtn"), s = $("s341Spinner");
+    if (b) b.disabled = false;
+    if (s) s.classList.add("hidden");
+  }
+}
+
+/** Joints sorted worst-first: SCWB fails first (smallest ratio), then by
+    panel-zone D/C descending. */
+function s341Rows() {
+  const joints = (store.s341Result && store.s341Result.joints) || [];
+  return [...joints].sort((a, b) => {
+    const fa = isFinite(a.scwb_ratio) && a.scwb_ratio < 1;
+    const fb = isFinite(b.scwb_ratio) && b.scwb_ratio < 1;
+    if (fa !== fb) return fa ? -1 : 1;
+    if (fa) return (a.scwb_ratio || 0) - (b.scwb_ratio || 0);
+    return s341PzRatio(b) - s341PzRatio(a);
+  });
+}
+
+const s341JointLabel = j => Array.isArray(j.point)
+  ? `(${fmt(j.point[0], 1)}, ${fmt(j.point[1], 1)}, ${fmt(j.point[2], 1)})`
+  : "—";
+
+/** Plan dot positions for SCWB-failing joints — only while the Seismic 341
+    card is the active design sub-tab, on the drawn story's elevation. */
+function s341Halos() {
+  if (store.designKind !== "seismic341") return [];
+  const joints = (store.s341Result && store.s341Result.joints) || [];
+  if (!joints.length || !store.model) return [];
+  const st = (store.model.stories || []).find(s => s.name === store.story);
+  if (!st) return [];
+  return joints
+    .filter(j => Array.isArray(j.point) && j.point.length >= 3 &&
+      isFinite(j.scwb_ratio) && j.scwb_ratio < 1 &&
+      Math.abs(j.point[2] - st.elevation) < 0.01)
+    .map((j, i) => ({ uid: `s341-${i}`, x: j.point[0], y: j.point[1],
+      r: 0.4, dot: true }));
+}
+function syncS341Halos() { if (planEditor) planEditor.renderStatic(); }
+
+function renderS341Table() {
+  const table = $("s341Table"), summary = $("s341Summary");
+  const res = store.s341Result;
+  $("s341Note").textContent =
+    "AISC 341 screening — SCWB is the strong-column/weak-beam moment ratio ΣM*pc/ΣM*pb " +
+    "(≥ 1.0 required; smaller is worse), PZ the panel-zone shear demand vs capacity. " +
+    "NG joints need column upsizing, doubler plates or both. Screening only.";
+  if (!res || !res.joints || !res.joints.length) {
+    summary.classList.add("hidden");
+    table.innerHTML = `<tbody><tr><td class="txt dim">No seismic 341 check yet — pick a seismic combo and press “Run”.</td></tr></tbody>`;
+    return;
+  }
+  const rows = s341Rows();
+  const ng = rows.filter(j => j.status === "NG").length;
+  const nScwb = rows.filter(j => isFinite(j.scwb_ratio) && j.scwb_ratio < 1).length;
+  const worst = rows[0];
+  summary.classList.remove("hidden");
+  summary.innerHTML =
+    `<span class="ds-item"><b>${rows.length}</b> joints</span>` +
+    `<span class="ds-item ds-ok"><b>${rows.length - ng}</b> OK</span>` +
+    `<span class="ds-item ds-ng"><b>${ng}</b> NG</span>` +
+    `<span class="ds-item"><b class="${nScwb ? "ds-over" : ""}">${nScwb}</b> SCWB fail${nScwb === 1 ? "" : "s"}</span>` +
+    (worst ? `<span class="ds-item">worst <b class="${worst.status === "NG" ? "ds-over" : ""}">` +
+      `${s341JointLabel(worst)} · SCWB ${fmt(worst.scwb_ratio, 3)}</b></span>` : "") +
+    `<span class="ds-item ds-prelim">PRELIMINARY · ${esc(res.combo || store.s341Combo || "")}</span>`;
+
+  // SCWB fails when the ratio drops BELOW 1.0 (inverse of a D/C chip)
+  const scwbChip = r => {
+    if (!isFinite(r)) return `<span class="dim">—</span>`;
+    const cls = r < 1 ? "rc-over" : r < 1.1 ? "rc-near" : "rc-ok";
+    return `<span class="ratio-chip ${cls}">${fmt(r, 3)}</span>`;
+  };
+  const dcChip = r => {
+    const cls = r > 1 ? "rc-over" : r > 0.85 ? "rc-near" : "rc-ok";
+    return `<span class="ratio-chip ${cls}">${fmt(r, 3)}</span>`;
+  };
+  const chip = st => `<span class="status-chip st-${st === "NG" ? "ng" : "ok"}">${esc(st)}</span>`;
+  const head = `<thead><tr>
+    <th class="txt">Joint</th>
+    <th title="Strong-column/weak-beam ΣM*pc/ΣM*pb — must be ≥ 1.0">SCWB ratio</th>
+    <th title="Panel-zone shear demand">PZ demand kN</th>
+    <th title="Panel-zone shear capacity">PZ capacity kN</th>
+    <th title="Panel-zone demand / capacity">PZ D/C</th>
+    <th class="txt">Status</th></tr></thead>`;
+  const body = rows.map(j => {
+    const scwbFail = isFinite(j.scwb_ratio) && j.scwb_ratio < 1;
+    return `<tr class="design-row s341-row${j.status === "NG" ? " over" : ""}">
+      <td class="txt">${s341JointLabel(j)}${scwbFail
+        ? ` <span class="punch-halo-glyph" title="red dot shown at this joint's plan position">●</span>` : ""}</td>
+      <td>${scwbChip(j.scwb_ratio)}</td>
+      <td>${fmt(j.pz_demand, 1)}</td>
+      <td class="dim">${fmt(j.pz_capacity, 1)}</td>
+      <td>${dcChip(s341PzRatio(j))}</td>
+      <td class="txt">${chip(j.status || "OK")}</td></tr>`;
+  }).join("");
+  table.innerHTML = head + `<tbody>${body}</tbody>`;
+}
+
+/* ================================================================
    v0.20 — COMPOSITE BEAM DESIGN (Design → Composite)
    POST /api/design/composite {combos?, fc_prime?, t_slab?, hr?, stud_d?,
    rib_spacing?, shored?} → {beams: [{uid, story, applicable, reason?,
@@ -5304,14 +5607,19 @@ function renderCompositeTable() {
     <th title="Mu / φMn(partial)">D/C</th>
     <th title="Bare steel beam under wet concrete (unshored construction)">pre-comp D/C</th>
     <th title="Live-load deflection of the transformed section">Δ_LL mm</th>
+    <th title="Recommended camber for unshored construction (dash = none)">camber mm</th>
     <th class="txt">Status</th></tr></thead>`;
   const body = rows.map(x => {
     if (x.applicable === false) return `<tr data-uid="${esc(x.uid)}"
         class="design-row comp-row comp-na" title="${esc(x.reason || "not applicable")}">
       <td class="txt">${esc(x.uid)}</td>
       <td class="txt dim">${esc(x.story || "—")}</td>
-      <td class="txt dim" colspan="9">n/a — ${esc(x.reason || "not applicable")}</td>
+      <td class="txt dim" colspan="10">n/a — ${esc(x.reason || "not applicable")}</td>
       <td class="txt">${chip("n/a")}</td></tr>`;
+    // v0.23 — camber arrives in metres; display mm, dimmed dash when 0/absent
+    const camberCell = (isFinite(x.camber) && x.camber > 0)
+      ? `<td>${fmt(x.camber * 1000, 0)}</td>`
+      : `<td class="dim">—</td>`;
     return `<tr data-uid="${esc(x.uid)}" class="design-row comp-row${compGovRatio(x) > 1 ? " over" : ""}"
         title="Click to highlight ${esc(x.uid)} in the 2D plan and 3D view">
       <td class="txt">${esc(x.uid)}</td>
@@ -5325,6 +5633,7 @@ function renderCompositeTable() {
       <td>${dcChip(x.ratio || 0)}</td>
       <td>${dcChip(x.precomp_ratio || 0)}</td>
       <td class="${x.defl_limit_ok === false ? "exceed" : "dim"}">${fmt((x.defl_LL || 0) * 1000, 1)}${x.defl_limit_ok === false ? " ✕" : ""}</td>
+      ${camberCell}
       <td class="txt">${chip(x.status || "OK")}</td></tr>`;
   }).join("");
   table.innerHTML = head + `<tbody>${body}</tbody>`;
@@ -6213,13 +6522,26 @@ function csvRows(kind) {
     return [
       ["beam", "story", "applicable", "reason", "beff_m", "tc_m", "phiMn_full_kNm",
         "n_studs", "sumQn_kN", "ratio_composite", "phiMn_partial_kNm", "Mu_kNm",
-        "ratio", "precomp_ratio", "I_equiv_m4", "defl_LL_m", "defl_limit_ok", "status"],
+        "ratio", "precomp_ratio", "I_equiv_m4", "defl_LL_m", "defl_limit_ok",
+        "camber_m", "status"],
       ...compositeRows().map(x => [x.uid, x.story ?? "",
         x.applicable === false ? "false" : "true", x.reason || "",
         x.beff ?? "", x.tc ?? "", x.phiMn_full ?? "", x.n_studs ?? "", x.sumQn ?? "",
         x.ratio_composite ?? "", x.phiMn_partial ?? "", x.Mu ?? "", x.ratio ?? "",
         x.precomp_ratio ?? "", x.I_equiv ?? "", x.defl_LL ?? "",
-        x.defl_limit_ok == null ? "" : String(!!x.defl_limit_ok), x.status ?? ""]),
+        x.defl_limit_ok == null ? "" : String(!!x.defl_limit_ok),
+        x.camber ?? "", x.status ?? ""]),
+    ];
+  }
+  if (kind === "seismic341") {
+    if (!store.s341Result || !store.s341Result.joints) return null;
+    return [
+      ["x_m", "y_m", "z_m", "scwb_ratio", "pz_demand_kN", "pz_capacity_kN",
+        "pz_ratio", "status"],
+      ...s341Rows().map(j => [
+        ...(Array.isArray(j.point) ? j.point : ["", "", ""]),
+        j.scwb_ratio ?? "", j.pz_demand ?? "", j.pz_capacity ?? "",
+        isFinite(j.pz_ratio) ? j.pz_ratio : s341PzRatio(j), j.status ?? ""]),
     ];
   }
   if (kind === "slab") {
@@ -6341,6 +6663,7 @@ function csvFileName(kind) {
     : kind === "wall" ? `${store.wallResult?.params?.combos?.length ?? "all"}combos`
     : kind === "punching" ? `${store.punchResult?.columns?.[0]?.case || store.punchCase || ""}`
     : kind === "composite" ? `${store.compositeResult?.params?.combos?.length ?? "all"}combos`
+    : kind === "seismic341" ? `${store.s341Result?.combo || store.s341Combo || ""}`
     : kind === "slab" ? `${store.slabResult?.params?.case || store.slabCase || ""}`
     : kind === "design" ? `${store.designKind}-${designResult()?.case || ""}`
     : caseLabel(store.caseName) + (caseData()?.min ? `-${store.envSide}` : "");
@@ -6963,7 +7286,8 @@ async function boot() {
     onErase: handleErase,
     onSelect: handleSelect,
     onReadout: t => { $("planReadout").textContent = t; },
-    getHalos: () => punchHalos(),                  // v0.18 punching D/C > 1 rings
+    // v0.18 punching D/C > 1 rings · v0.23 AISC 341 SCWB-fail red dots
+    getHalos: () => [...punchHalos(), ...s341Halos()],
   });
   elevEditor = new ElevEditor($("elevSvg"), {          // v0.5
     getModel: () => store.model,
@@ -6999,6 +7323,10 @@ async function boot() {
     // v0.19 — pattern live loading + auto construction sequence
     onPatternLive: generatePatternLive,
     onAutoSequence: createAutoSequence,
+    // v0.23 — NBCC wind / seismic ELF + shell wind
+    onNbccWind: createNbccWindPattern,
+    onNbccElf: createNbccElfPattern,
+    onShellWind: createShellWindPattern,
   });
   wire();
   try {
@@ -7089,6 +7417,11 @@ async function boot() {
     designerPmmFetch, mockDesignerUpsert, mockDesignerDelete, mockDesignerPmm,
     // v0.22 — edge constraints, layered shells, line/area springs
     syncEdgeConstraintsUI, selObjects,
+    // v0.23 — design codes, NBCC tools, seismic 341, shell wind, camber
+    createNbccWindPattern, createNbccElfPattern, createShellWindPattern,
+    renderS341Panel, runS341Check, s341Rows, s341Halos, syncS341Halos,
+    designSeismic341, mockNbccWindPattern, mockNbccElfPattern,
+    mockShellWindPattern, mockDesignSeismic341,
   };
 }
 

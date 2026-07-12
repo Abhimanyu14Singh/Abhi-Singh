@@ -430,8 +430,20 @@ export class PlanEditor {
     }
 
     // v0.18: punching-check halos — red pulsing rings at failing column
-    // positions (opts.getHalos → [{uid, x, y, r}]) while the card is active.
+    // positions (opts.getHalos → [{uid, x, y, r, dot?}]) while the card is
+    // active. v0.23: dot:true renders a filled red dot glyph instead of a
+    // ring (AISC 341 SCWB joint failures).
     for (const hp of (this.opts.getHalos ? this.opts.getHalos() || [] : [])) {
+      if (hp.dot) {
+        this.gElems.appendChild(el("circle", {
+          cx: hp.x, cy: hp.y, r: hp.r || 0.35,
+          class: "punch-halo",
+          fill: "rgba(230,103,103,0.85)", stroke: "rgba(230,103,103,0.95)",
+          "stroke-width": 1.5, "vector-effect": "non-scaling-stroke",
+          "pointer-events": "none", "data-ref": `punchhalo:${hp.uid || ""}`,
+        }));
+        continue;
+      }
       this.gElems.appendChild(el("circle", {
         cx: hp.x, cy: hp.y, r: hp.r || 0.6,
         class: "punch-halo",

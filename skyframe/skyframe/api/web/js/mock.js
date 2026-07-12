@@ -1744,6 +1744,188 @@ export function elfCs(SDS, SD1, R, Ie, hn) {
 }
 
 /* ================================================================
+   v0.23 — NBCC code tools (wind + seismic ELF) and shell wind
+   ================================================================ */
+
+/** NBCC exposure factor Ce(z) — NBCC 2015/2020 §4.1.7.1:
+    open terrain Ce = (z/10)^0.2 ≥ 0.9; rough terrain Ce = 0.7·(z/12)^0.3
+    ≥ 0.7. z in metres. */
+function _nbccCe(z, exposure) {
+  return exposure === "rough"
+    ? Math.max(0.7 * Math.pow(Math.max(z, 0.1) / 12, 0.3), 0.7)
+    : Math.max(Math.pow(Math.max(z, 0.1) / 10, 0.2), 0.9);
+}
+
+/** POST /api/pattern/nbcc-wind — NBCC static wind procedure (§4.1.7),
+    honest simplified form: external pressure p = Iw·q·Ce·Cg·Cp with
+    Iw = 1.0 (normal importance), gust factor Cg = 2.0 and the flat-faced
+    building coefficients Cp = +0.8 windward / −0.5 leeward. The windward
+    leg uses Ce(z) at each story's elevation (power-law exposure profile);
+    the leeward suction is constant with height at Ce(h) of the roof, per
+    the NBCC figure. Story force F = [q·Ce(z)·Cg·0.8 + q·Ce(h)·Cg·0.5]
+    × face width × tributary height. p: {q kPa, exposure "open"|"rough",
+    name?, direction "X"|"Y"}. */
+export function mockNbccWindPattern(model, p = {}) {
+  const name = (p.name || "NBCC-WX").trim() || "NBCC-WX";
+  const dirX = p.direction !== "Y";
+  const q = isFinite(p.q) && p.q > 0 ? p.q : 0.45;         // kPa reference velocity pressure
+  const exp_ = p.exposure === "rough" ? "rough" : "open";
+  const Cg = 2.0, CpWw = 0.8, CpLee = 0.5, Iw = 1.0;
+
+  const g = model.grid || { x_lines: [0, 18], y_lines: [0, 12] };
+  const width = dirX
+    ? (g.y_lines[g.y_lines.length - 1] - g.y_lines[0])     // face ⟂ X wind
+    : (g.x_lines[g.x_lines.length - 1] - g.x_lines[0]);
+  const stories = model.stories || [];
+  const hn = stories.length ? stories[stories.length - 1].elevation : 10;
+  const pLee = Iw * q * _nbccCe(hn, exp_) * Cg * CpLee;    // kPa, constant
+
+  const story_forces = stories.map((st, i) => {
+    const hAbove = i + 1 < stories.length ? stories[i + 1].height : 0;
+    const trib = st.height / 2 + hAbove / 2;               // ground half sheds to base
+    const pWw = Iw * q * _nbccCe(st.elevation, exp_) * Cg * CpWw;   // kPa
+    const F = +((pWw + pLee) * Math.max(width, 1) * trib).toFixed(2);
+    return { story: st.name, fx: dirX ? F : 0, fy: dirX ? 0 : F };
+  });
+
+  model.patterns = model.patterns || {};
+  model.patterns[name] = {
+    name, kind: "other", member_loads: [], area_loads: [], story_forces,
+    wind: { code: "NBCC", direction: dirX ? "X" : "Y", q, exposure: exp_ },
+  };
+  return model;
+}
+
+/** NBCC design spectral acceleration S(T) — linear interpolation between the
+    site-adjusted Sa(0.2)/Sa(0.5)/Sa(1.0)/Sa(2.0) ordinates, flat at Sa(0.2)
+    below 0.2 s and Sa(4.0) = Sa(2.0)/2 beyond 2 s (§4.1.8.4(7)). */
+function _nbccS(T, Sa02, Sa05, Sa10, Sa20) {
+  const pts = [[0.2, Sa02], [0.5, Sa05], [1.0, Sa10], [2.0, Sa20], [4.0, Sa20 / 2]];
+  if (T <= pts[0][0]) return pts[0][1];
+  for (let i = 1; i < pts.length; i++) {
+    if (T <= pts[i][0]) {
+      const [t0, s0] = pts[i - 1], [t1, s1] = pts[i];
+      return s0 + (s1 - s0) * (T - t0) / (t1 - t0);
+    }
+  }
+  return pts[pts.length - 1][1];
+}
+
+/** Client-side readout for the NBCC ELF card (matches mockNbccElfPattern):
+    Ta (§4.1.8.11(3), moment-frame form 0.085·hn^0.75), S(Ta) and the base
+    shear coefficient V/W = S(Ta)·Mv·Ie/(Rd·Ro) with the code's upper cap
+    max(2/3·S(0.2), S(0.5))·Ie/(RdRo) and lower bound S(4.0)·Ie/(RdRo). */
+export function nbccElfInfo(p = {}, hn = 10) {
+  const Sa02 = isFinite(p.Sa02) ? p.Sa02 : 0.65;
+  const Sa05 = isFinite(p.Sa05) ? p.Sa05 : 0.4;
+  const Sa10 = isFinite(p.Sa10) ? p.Sa10 : 0.2;
+  const Sa20 = isFinite(p.Sa20) ? p.Sa20 : 0.1;
+  const RdRo = isFinite(p.RdRo) && p.RdRo > 0 ? p.RdRo : 4.0;
+  const Ie = isFinite(p.Ie) && p.Ie > 0 ? p.Ie : 1.0;
+  // Ta by system: steel MRF 0.085·hn^0.75 (default) · concrete MRF 0.075
+  // · braced/walls/other 0.05 (§4.1.8.11(3))
+  const ct = p.system === "concrete_mrf" ? 0.075
+    : (p.system === "braced" || p.system === "wall" || p.system === "other") ? 0.05
+    : 0.085;
+  const Ta = ct * Math.pow(Math.max(hn || 1, 0.1), 0.75);
+  const Mv = 1.0;                                          // mock higher-mode factor
+  const S = _nbccS(Ta, Sa02, Sa05, Sa10, Sa20);
+  let Cs = S * Mv * Ie / RdRo;
+  Cs = Math.min(Cs, Math.max((2 / 3) * Sa02, Sa05) * Ie / RdRo);  // §4.1.8.11(2)(c)
+  Cs = Math.max(Cs, (Sa20 / 2) * Mv * Ie / RdRo);                 // ≥ S(4.0) floor
+  return { Ta, S, Cs };
+}
+
+/** POST /api/pattern/nbcc-elf — NBCC equivalent static force procedure
+    (§4.1.8.11). V = S(Ta)·Mv·Ie·W/(Rd·Ro) with the code cap/floor (see
+    nbccElfInfo); a top force Ft = 0.07·Ta·V ≤ 0.25·V peels off when
+    Ta > 0.7 s and the remainder distributes as Wx·hx/ΣWi·hi (§4.1.8.11(7)).
+    p: {Sa02, Sa05, Sa10, Sa20, RdRo, Ie?, system?, name?, direction}. */
+export function mockNbccElfPattern(model, p = {}) {
+  const name = (p.name || "EQ-NBCC").trim() || "EQ-NBCC";
+  const dirX = p.direction !== "Y";
+  const stories = model.stories || [];
+  const sm = model.story_masses || {};
+  const hn = stories.length ? stories[stories.length - 1].elevation : 1;
+  const { Ta, S, Cs } = nbccElfInfo(p, hn);
+  const W = Object.values(sm).reduce((a, b) => a + b, 0) * G;      // kN
+  const V = Cs * W;
+  const Ft = Ta > 0.7 ? Math.min(0.07 * Ta * V, 0.25 * V) : 0;     // top force
+  const wh = stories.map(s => (sm[s.name] || 0) * G * s.elevation);
+  const sumWh = wh.reduce((a, b) => a + b, 0) || 1;
+  const story_forces = stories.map((s, i) => {
+    let F = (V - Ft) * wh[i] / sumWh;
+    if (i === stories.length - 1) F += Ft;                         // Ft at the roof
+    F = +F.toFixed(2);
+    return { story: s.name, fx: dirX ? F : 0, fy: dirX ? 0 : F };
+  });
+  model.patterns = model.patterns || {};
+  model.patterns[name] = {
+    name, kind: "quake", member_loads: [], area_loads: [], story_forces,
+    elf: { code: "NBCC", Sa02: p.Sa02, Sa05: p.Sa05, Sa10: p.Sa10, Sa20: p.Sa20,
+      RdRo: p.RdRo, Ie: p.Ie ?? 1.0, S: +S.toFixed(4), Ta: +Ta.toFixed(3),
+      V: +V.toFixed(2) },
+  };
+  return model;
+}
+
+/** Plan area + unit normal of a shell region (first-two-edges cross product;
+    exact for the planar quads the editor draws). */
+function _regionAreaNormal(sh) {
+  const c = sh.corners || [];
+  if (c.length < 3) return { area: 0, n: [0, 0, 1] };
+  // shoelace-style: sum of cross products of consecutive edge vectors
+  let nx = 0, ny = 0, nz = 0;
+  for (let i = 1; i + 1 < c.length; i++) {
+    const u = [c[i][0] - c[0][0], c[i][1] - c[0][1], c[i][2] - c[0][2]];
+    const v = [c[i + 1][0] - c[0][0], c[i + 1][1] - c[0][1], c[i + 1][2] - c[0][2]];
+    nx += u[1] * v[2] - u[2] * v[1];
+    ny += u[2] * v[0] - u[0] * v[2];
+    nz += u[0] * v[1] - u[1] * v[0];
+  }
+  const L = Math.hypot(nx, ny, nz);
+  return { area: L / 2, n: L > 1e-12 ? [nx / L, ny / L, nz / L] : [0, 0, 1] };
+}
+
+/** POST /api/pattern/shell-wind — wind pressure on shell regions carrying a
+    wind_cp coefficient. p: {q kPa, name?}. Each tagged region gets an area
+    load q·Cp; the mock then SUMS those area loads client-side into story
+    forces along each region's plan normal (F = q·Cp·area, walls only — a
+    horizontal region's normal has no lateral component). Throws when no
+    region carries a Cp so the card can toast a useful error. */
+export function mockShellWindPattern(model, p = {}) {
+  const name = (p.name || "WIND-SHELL").trim() || "WIND-SHELL";
+  const q = isFinite(p.q) && p.q > 0 ? p.q : 0.5;                  // kPa
+  const tagged = (model.shells || []).filter(s => s.wind_cp != null && isFinite(s.wind_cp));
+  if (!tagged.length)
+    throw new Error("no shell region has a Wind Cp — assign one in Model mode → shell properties");
+  const area_loads = [];
+  const storyF = {};                                               // story -> [fx, fy]
+  for (const sh of tagged) {
+    const pr = q * sh.wind_cp;                                     // kPa on the region
+    area_loads.push({ region_uid: sh.uid, q: +pr.toFixed(4) });
+    const { area, n } = _regionAreaNormal(sh);
+    const F = pr * area;                                           // kN along the normal
+    const st = sh.story || (model.stories && model.stories[0] && model.stories[0].name);
+    if (!st) continue;
+    if (!storyF[st]) storyF[st] = [0, 0];
+    storyF[st][0] += F * n[0];
+    storyF[st][1] += F * n[1];
+  }
+  const story_forces = (model.stories || [])
+    .filter(s => storyF[s.name])
+    .map(s => ({ story: s.name,
+      fx: +storyF[s.name][0].toFixed(2), fy: +storyF[s.name][1].toFixed(2) }))
+    .filter(f => Math.abs(f.fx) > 1e-9 || Math.abs(f.fy) > 1e-9);
+  model.patterns = model.patterns || {};
+  model.patterns[name] = {
+    name, kind: "other", member_loads: [], area_loads, story_forces,
+    wind: { code: "shell", q },
+  };
+  return model;
+}
+
+/* ================================================================
    v0.3 — mock section library + mock model-file store
    ================================================================ */
 
@@ -1898,14 +2080,35 @@ export function mockLiveReduction(model) {
   return out;
 }
 
+/** v0.23 — apply a design-code calibration factor to every valid check.
+    The EC screening (γM partial factors vs φ resistance factors) runs a
+    touch hotter than the US codes in this mock so switching the code select
+    visibly changes ratios/statuses. Statuses + summary are recomputed. */
+function _applyCodeScale(res, k) {
+  for (const c of res.checks || []) {
+    if (c.status === "N/A") continue;
+    c.ratio = +((c.ratio || 0) * k).toFixed(3);
+    if (isFinite(c.ratio_biaxial) && c.ratio_biaxial != null)
+      c.ratio_biaxial = +(c.ratio_biaxial * k).toFixed(3);
+    const gov = (c.biaxial && isFinite(c.ratio_biaxial)) ? c.ratio_biaxial : c.ratio;
+    c.status = gov <= 1.0 ? "OK" : "NG";
+  }
+  res.summary = _summary(res.checks || []);
+  return res;
+}
+
 /** POST /api/design/steel — AISC-H1-style interaction screening (mock).
-    Accepts {case} or {combos:true|[names]} (v0.9 envelope over combos) and the
-    v0.16 {live_reduction, live_case} flags (columns get Pu × R). */
+    Accepts {case} or {combos:true|[names]} (v0.9 envelope over combos), the
+    v0.16 {live_reduction, live_case} flags (columns get Pu × R) and the
+    v0.23 {code: "AISC360"|"EC3"} design-code select (echoed back). */
 export function mockDesignSteel(model, body = {}) {
   const Fy = isFinite(body.Fy) && body.Fy > 0 ? body.Fy : 345000;   // kPa (≈345 MPa)
+  const code = body.code === "EC3" ? "EC3" : "AISC360";             // v0.23
   const llr = body.live_reduction ? mockLiveReduction(model) : null;
   const res = _designEnvelope(model, body, caseName => _steelChecks(model, caseName, Fy, llr));
   if (body.live_reduction) res.live_reduction = true;
+  res.code = code;
+  if (code === "EC3") _applyCodeScale(res, 1.05);
   return res;
 }
 
@@ -2073,11 +2276,14 @@ export function mockOptimize(model, body = {}) {
     biaxial fields: biaxial, ratio_biaxial, method "bresler"|"contour"|"uniaxial". */
 export function mockDesignConcrete(model, body = {}) {
   const fc = isFinite(body.fc) && body.fc > 0 ? body.fc : 30000;   // kPa (≈30 MPa)
+  const code = body.code === "EC2" ? "EC2" : "ACI318";             // v0.23
   const rebar = body.rebar || {};
   const llr = body.live_reduction ? mockLiveReduction(model) : null;
   const res = _designEnvelope(model, body,
     caseName => _concreteChecks(model, caseName, fc, rebar, llr));
   if (body.live_reduction) res.live_reduction = true;
+  res.code = code;
+  if (code === "EC2") _applyCodeScale(res, 1.05);
   return res;
 }
 
@@ -2333,6 +2539,55 @@ export function mockDesignPunching(model, body = {}) {
   return { columns };
 }
 
+/** POST /api/design/seismic341 — AISC 341 seismic joint screening (mock).
+    body {combo?, columns?: "auto"|[uids]} → {joints: [{point: [x,y,z],
+    scwb_ratio, pz_demand, pz_capacity, pz_ratio, status}], combo}.
+    Strong-column/weak-beam ΣM*pc/ΣM*pb ≥ 1.0 (E3-1) and panel-zone shear
+    demand vs φRv. Deterministic demo intent: interior joints of the lowest
+    two stories; one joint fails SCWB (< 1.0) and one runs the panel zone
+    over 1.0 so both failure modes render. */
+export function mockDesignSeismic341(model, body = {}) {
+  const rnd = mulberry32(341);
+  const jit = a => 1 + (rnd() - 0.5) * 2 * a;
+  const all = Object.keys(model.combos || {});
+  const combo = (body.combo && (all.includes(body.combo) ||
+      (model.cases || {})[body.combo])) ? body.combo
+    : all.find(n => /E[XY]|EQ/i.test(n)) || all[0] ||
+      Object.keys(model.cases || {})[0] || "EQX";
+
+  const stories = (model.stories || []).slice(0, 2);      // lowest two
+  const names = new Set(stories.map(s => s.name));
+  let cols = (model.members || [])
+    .filter(m => m.kind === "column" && names.has(m.story));
+  if (Array.isArray(body.columns) && body.columns.length) {
+    const want = new Set(body.columns);
+    cols = cols.filter(m => want.has(m.uid));
+  }
+  // interior joints first (columns nearest the plan centroid), up to 8
+  const cx = cols.length ? cols.reduce((a, m) => a + m.pi[0], 0) / cols.length : 0;
+  const cy = cols.length ? cols.reduce((a, m) => a + m.pi[1], 0) / cols.length : 0;
+  const picked = [...cols].sort((a, b) =>
+    Math.hypot(a.pi[0] - cx, a.pi[1] - cy) - Math.hypot(b.pi[0] - cx, b.pi[1] - cy))
+    .slice(0, 8);
+
+  // SCWB / panel-zone intents — one SCWB fail (0.87), one PZ fail (1.12)
+  const scwbT = [0.87, 1.12, 1.24, 1.38, 1.05, 1.51, 1.19, 1.62];
+  const pzT = [0.94, 1.12, 0.66, 0.58, 0.81, 0.47, 0.73, 0.52];
+  const joints = picked.map((mm, i) => {
+    const zTop = Math.max(mm.pi[2], mm.pj[2]);
+    const scwb_ratio = +(scwbT[i % scwbT.length] * jit(0.03)).toFixed(3);
+    const pz_capacity = +(1450 * jit(0.06)).toFixed(1);   // kN — φ·0.6·Fy·dc·tw-ish
+    const pz_ratio = +(pzT[i % pzT.length] * jit(0.03)).toFixed(3);
+    const pz_demand = +(pz_ratio * pz_capacity).toFixed(1);
+    return {
+      point: [mm.pi[0], mm.pi[1], +zTop.toFixed(3)],
+      scwb_ratio, pz_demand, pz_capacity, pz_ratio,
+      status: (scwb_ratio < 1.0 || pz_ratio > 1.0) ? "NG" : "OK",
+    };
+  });
+  return { joints, combo };
+}
+
 /** POST /api/results/virtual-work — member contributions to the roof drift
     (virtual work of a unit roof load). body {case, direction "X"|"Y"} →
     {contributions: {uid: m}, total, roof_disp} with total = Σ contributions
@@ -2582,9 +2837,16 @@ export function mockDesignComposite(model, body = {}) {
     const I_equiv = +(1.8e-3 * (0.75 + 0.5 * ratio_composite) * jit(0.05)).toFixed(6);
     const defl_LL = +(5 * (model.live_udl ?? 10) * L ** 4 / (384 * E * I_equiv)).toFixed(5);
     const defl_limit_ok = defl_LL <= L / 360 + 1e-12;
+    // v0.23 — recommended camber (m): unshored beams get ~80 % of the bare
+    // steel wet-concrete deflection rounded to 5 mm; stiff spans (< 10 mm
+    // estimate — every other beam in the demo intent) camber 0, so the dim
+    // "—" rendering is exercised. Shored construction never cambers.
+    const camT = [0.020, 0, 0.025, 0.015, 0];
+    const camber = shored ? 0 : camT[i % camT.length];
     return { uid: mm.uid, story: mm.story, applicable: true,
       beff, tc, phiMn_full, n_studs, sumQn, ratio_composite,
       phiMn_partial, Mu, ratio, precomp_ratio, I_equiv, defl_LL, defl_limit_ok,
+      camber,
       status: (ratio > 1 || precomp_ratio > 1 || !defl_limit_ok) ? "NG" : "OK" };
   });
   return { beams: out, params: { combos, fc_prime: fc, t_slab, hr,
