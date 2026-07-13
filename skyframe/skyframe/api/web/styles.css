@@ -1979,3 +1979,50 @@ tr.cm-active td { background: var(--accent-ghost) !important; }
 .layer-row input, .layer-row select { padding: 3px 6px; font-size: 12px; min-width: 0; }
 .layer-mv:disabled { opacity: .3; cursor: default; }
 .layer-note { font-size: 10.5px; line-height: 1.5; margin-top: 6px; }
+
+/* ================================================================
+   v0.24/v0.25 — analysis parity UI (geometric select, TH damping model,
+   staged time-dependent, Ritz basis toggle, FNA, cracked-slab card)
+   ================================================================ */
+
+/* geometric-nonlinearity select (static case rows + pushover head) */
+.geom-field select { max-width: 220px; }
+.lc-row .geom-field { flex-direction: row; align-items: center; gap: 6px; }
+.lc-row .geom-field span { text-transform: none; letter-spacing: 0; }
+
+/* TH damping model + per-mode zeta list */
+.th-damping-controls {
+  margin: 6px 0 2px; padding: 8px 10px; border: 1px solid var(--border-soft);
+  border-radius: 8px; background: var(--surface-1);
+  display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap;
+}
+.th-zeta-panel { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.th-zeta-panel.hidden { display: none; }
+.th-zeta-input { width: 240px !important; font-family: var(--mono, monospace); }
+.th-zeta-hint { font-size: 11px; padding-bottom: 5px; }
+
+/* staged time-dependent (creep/shrinkage) block */
+.staged-td-controls {
+  margin: 6px 0 2px; padding: 8px 10px; border: 1px solid var(--border-soft);
+  border-radius: 8px; background: var(--surface-1);
+}
+.staged-td-toggle { display: inline-flex; }
+.staged-td-panel { margin-top: 10px; display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+.staged-td-panel.hidden { display: none; }
+.staged-td-panel .rs-field input[type="number"] { width: 84px; }
+.staged-td-panel .rs-field input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent); margin: 5px 0; }
+.staged-td-hint { flex-basis: 100%; margin: 0; }
+
+/* buckling stressed-state base select */
+.buck-base-select { max-width: 160px; }
+
+/* modal basis (Ritz) controls */
+.ritz-n-field { flex-direction: row !important; align-items: center; gap: 6px; }
+.ritz-n-field input { width: 56px !important; }
+.pane-tools .seg-toggle { flex: 0 0 auto; }
+
+/* cracked-slab card */
+#crackedCard .design-form { margin-top: 8px; }
+#crackedCard .design-form-row { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+#crackedCard .design-summary { margin: 10px 0 4px; }
+#crackedSummary .status-chip { margin-right: 8px; }

@@ -1065,9 +1065,15 @@ export function deletePattern(model, name) {
 
 /** Names of combos that reference a static case. */
 export function caseRefs(model, name) {
-  return Object.values(model.combos || {})
-    .filter(cb => (cb.cases || {})[name] !== undefined)
-    .map(cb => cb.name);
+  return [
+    ...Object.values(model.combos || {})
+      .filter(cb => (cb.cases || {})[name] !== undefined)
+      .map(cb => cb.name),
+    // v0.25 — buckling cases may buckle FROM this case's stressed state
+    ...Object.values(model.buckling_cases || {})
+      .filter(bc => bc.base_case === name)
+      .map(bc => `buckling ${bc.name}`),
+  ];
 }
 
 export function addCase(model, base = "CASE") {
@@ -1086,6 +1092,9 @@ export function renameCase(model, oldName, newName) {
       delete cb.cases[oldName];
     }
   }
+  // v0.25 — buckling stressed-state references follow the rename
+  for (const bc of Object.values(model.buckling_cases || {}))
+    if (bc.base_case === oldName) bc.base_case = newName;
   return true;
 }
 

@@ -7210,6 +7210,24 @@ function wire() {
     store.thStory = e.target.value;
     renderThTab();
   });
+  /* ---- v0.24: Fast Nonlinear Analysis of the selected TH case */
+  $("thFnaBtn").addEventListener("click", runFna);
+
+  /* ---- v0.24: modal basis toggle (Eigen / Ritz X / Y / XY) + vector count */
+  document.querySelectorAll("#modalBasisToggle .seg-btn").forEach(b =>
+    b.addEventListener("click", () => setModalBasis(b.dataset.basis)));
+  $("ritzNInput").addEventListener("change", () => {
+    const v = parseInt($("ritzNInput").value, 10);
+    store.ritzN = (isFinite(v) && v >= 1) ? v : null;
+    if (store.modalBasis !== "eigen") setModalBasis(store.modalBasis);  // refetch
+  });
+
+  /* ---- v0.25: cracked-slab analysis card (Story tab) */
+  $("crackedRunBtn").addEventListener("click", runCracked);
+  $("crackedClearBtn").addEventListener("click", clearCracked);
+  $("crackedCaseSelect").addEventListener("change", e => {
+    store.crackedCase = e.target.value;
+  });
 
   /* ---- v0.5: pushover tab, view toggle, elevation line, diaphragm */
   $("poCaseSelect").addEventListener("change", e => {
