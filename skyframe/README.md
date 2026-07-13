@@ -52,18 +52,25 @@ skyframe/
 
 ## Install the desktop app (built by GitHub Actions)
 
-Every push to the main branches (and every `v*` tag) triggers the
-**Build SkyFrame desktop app** workflow (`.github/workflows/build-desktop.yml`),
-which runs the full 42-benchmark validation suite and then produces
-ready-to-run installers:
+The **Build installers** workflow (`.github/workflows/build-installers.yml`)
+produces ready-to-run Windows, macOS and Linux apps — the OpenSees solver is
+bundled, so **no Python install is needed to run them**. Two ways to get one:
 
-1. GitHub → **Actions** → *Build SkyFrame desktop app* → latest green run
-   (or **Run workflow** to build on demand).
-2. Download the artifact for your OS: `SkyFrame-windows` (zip) or
-   `SkyFrame-linux` (tar.gz). Tagged releases (`v0.2.0` …) get the same files
-   attached on the **Releases** page.
-3. Unpack anywhere and run `SkyFrame` (`SkyFrame.exe` on Windows). No Python,
-   no license server — the OpenSees solver is bundled and smoke-tested in CI.
+**A. On demand (quick, needs a GitHub login to download)**
+1. GitHub → **Actions** → *Build installers* → **Run workflow**.
+2. When the run finishes, scroll to its **Artifacts** and download
+   `SkyFrame-windows`, `SkyFrame-macos`, or `SkyFrame-linux`.
+3. Unzip, then run `SkyFrame` (`SkyFrame.exe` on Windows).
+
+**B. A shareable release (no login to download)**
+1. Push a version tag: `git tag v1.11.0 && git push origin v1.11.0`.
+2. The workflow attaches per-OS archives to the repo's **Releases** page —
+   anyone can download `SkyFrame-windows.zip` / `SkyFrame-<os>.tar.gz` there.
+3. Unpack anywhere and run `SkyFrame`.
+
+The full 630-test validation suite is the **local** release gate
+(`packaging/build.sh` runs it); CI skips it to keep Actions minutes low and
+still boots + health-checks the frozen binary on every OS before publishing.
 
 The desktop shell is [pywebview](https://pywebview.flowrl.com/) — a native OS
 webview (Edge WebView2 / WebKitGTK / WKWebView) around the same app, an

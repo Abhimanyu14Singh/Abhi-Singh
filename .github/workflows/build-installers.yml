@@ -1,0 +1,130 @@
+name: Build installers
+
+# Produces ready-to-run SkyFrame desktop apps for Windows, macOS and Linux.
+#
+# HOW TO GET AN INSTALLER
+#   * Quick (one build):  Actions tab -> "Build installers" -> Run workflow.
+#     When it finishes, download the artifact for your OS from that run's
+#     "Artifacts" section (needs a GitHub login).
+#   * Shareable release:  push a version tag, e.g.
+#         git tag v1.11.0 && git push origin v1.11.0
+#     The installers are then attached to a GitHub *Release* — anyone can
+#     download them from the repo's Releases page with no login.
+#
+# The full 630-test validation suite is the LOCAL release gate
+# (packaging/build.sh runs it). This workflow deliberately skips it to keep
+# Actions minutes low and guarantee installers are produced; it still boots
+# and health-checks the frozen binary on every OS before publishing.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write            # the release job needs this to publish assets
+
+jobs:
+  build:
+    name: Build ${{ matrix.os_name }}
+    strategy:
+      fail-fast: false        # a failing OS must not sink the others
+      matrix:
+        include:
+          - os: windows-latest
+            os_name: windows
+            python: "3.12"    # openseespywin's binary module targets 3.12
+          - os: ubuntu-latest
+            os_name: linux
+            python: "3.11"
+          - os: macos-13       # Intel runner: openseespymac wheels are x86_64
+            os_name: macos
+            python: "3.11"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: skyframe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: System deps (Linux only)
+        if: matrix.os_name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libblas3 liblapack3 \
+            libgtk-3-0 libwebkit2gtk-4.1-0 gir1.2-webkit2-4.1
+
+      - name: Install app + build tools
+        run: |
+          python -m pip install --upgrade pip wheel setuptools
+          pip install ".[desktop]" pyinstaller
+
+      - name: Sanity-check the OpenSees import (unfrozen)
+        run: python -c "import openseespy.opensees as ops; print('OpenSees import OK')"
+
+      - name: Freeze with PyInstaller
+        run: >
+          pyinstaller --noconfirm
+          --distpath packaging/dist --workpath packaging/build
+          packaging/skyframe.spec
+
+      - name: Smoke-test the frozen binary (boots + /api/health)
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          bin="packaging/dist/SkyFrame/SkyFrameCLI"
+          [ "${{ matrix.os_name }}" = "windows" ] && bin="${bin}.exe"
+          "$bin" --smoke
+
+      - name: Upload the app folder as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SkyFrame-${{ matrix.os_name }}
+          path: skyframe/packaging/dist/SkyFrame
+          if-no-files-found: error
+
+  release:
+    name: Publish release (tags only)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts        # -> artifacts/SkyFrame-<os>/SkyFrame/...
+
+      - name: Package one archive per OS
+        run: |
+          set -eux
+          cd artifacts
+          for d in SkyFrame-*; do
+            os="${d#SkyFrame-}"
+            if [ "$os" = "windows" ]; then
+              (cd "$d" && zip -qr "../SkyFrame-windows.zip" SkyFrame)
+            else
+              tar -C "$d" -czf "SkyFrame-${os}.tar.gz" SkyFrame
+            fi
+          done
+          ls -la
+
+      - name: Attach installers to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/SkyFrame-windows.zip
+            artifacts/SkyFrame-*.tar.gz
+          generate_release_notes: true
+          body: |
+            SkyFrame standalone desktop apps. Download the archive for your OS,
+            unpack it anywhere, and run **SkyFrame** (`SkyFrame.exe` on Windows).
+            No Python install required. If the desktop window doesn't open, run
+            `SkyFrameCLI --server-only` and open http://127.0.0.1:8600 in a browser.
