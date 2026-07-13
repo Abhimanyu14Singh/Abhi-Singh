@@ -9,6 +9,11 @@ Modes:
     skyframe                  native desktop window (default)
     skyframe --server-only    headless HTTP server (CI / remote use)
     skyframe --smoke          boot, self-check /api/health, exit 0/1
+
+If the native window can't start — most often a frozen Windows build where
+pywebview's pythonnet/.NET host (``Python.Runtime.dll``) fails to initialize
+under PyInstaller — the app does NOT crash: it opens in the default browser
+and keeps serving. The full app is identical either way.
 """
 
 from __future__ import annotations
@@ -84,19 +89,42 @@ def main(argv: list[str] | None = None) -> int:
 
     url = f"http://127.0.0.1:{port}/"
     if args.server_only:
-        print(f"SkyFrame running at {url}  (Ctrl+C to quit)")
+        _serve_forever(url)
+        return 0
+
+    # Default: try the native desktop window (pywebview). If the GUI stack is
+    # unavailable — most commonly a frozen Windows build where pythonnet
+    # (clr / Python.Runtime.dll) fails to initialize under PyInstaller — fall
+    # back to opening the app in the default browser instead of crashing.
+    try:
+        import webview  # deferred: GUI libs not needed for headless modes
+        webview.create_window(WINDOW_TITLE, url, width=1440, height=900,
+                              min_size=(1100, 700))
+        webview.start()
+        return 0
+    except Exception as exc:  # noqa: BLE001 — degrade gracefully, never crash
+        print(f"SkyFrame: native window unavailable "
+              f"({exc.__class__.__name__}: {exc}).\n"
+              f"Opening in your default browser instead.", file=sys.stderr)
         try:
-            while True:
-                time.sleep(3600)
-        except KeyboardInterrupt:
-            return 0
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            pass
+        _serve_forever(url)
+        return 0
 
-    import webview  # deferred: GUI libs not needed for headless modes
 
-    webview.create_window(WINDOW_TITLE, url, width=1440, height=900,
-                          min_size=(1100, 700))
-    webview.start()
-    return 0
+def _serve_forever(url: str) -> None:
+    """Print the local URL and block until interrupted (headless / fallback)."""
+    print(f"SkyFrame running at {url}\n"
+          f"Leave this running and use the browser tab; Ctrl+C to quit.",
+          flush=True)
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":
