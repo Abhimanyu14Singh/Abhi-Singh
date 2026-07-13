@@ -68,7 +68,16 @@
     </div>
   </header>
 
+  <!-- ============ ETABS MENU BAR (built by js/etabs.js) ============ -->
+  <div class="etabs-menubar" id="etabsMenubar" role="menubar" aria-label="Main menu"></div>
+
   <div class="workspace">
+
+    <!-- ETABS left tool palette + dockable model explorer (js/etabs.js) -->
+    <div class="etabs-palette" id="etabsPalette" role="toolbar" aria-label="Draw tools"></div>
+    <aside class="etabs-explorer" id="etabsExplorer" aria-label="Model explorer"></aside>
+
+    <div class="etabs-canvas" id="etabsCanvas">
 
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-inner hidden" id="drawSidebar">
@@ -1076,10 +1085,12 @@
         </div>
       </section>
     </main>
+    </div><!-- /etabs-canvas -->
   </div>
 
-  <footer class="footer">
-    <span>Solver: OpenSees 3.7 · Units: kN, m, s</span>
+  <footer class="footer etabs-statusbar">
+    <div class="etabs-status" id="etabsStatus"></div>
+    <span class="footer-solver">Solver: OpenSees 3.7 · Units: kN, m, s</span>
     <span class="footer-right" id="footerInfo"></span>
   </footer>
 

@@ -20,6 +20,7 @@ import { ElevEditor } from "./elev.js";
 import { LoadsEditor } from "./loads.js";
 import { openReport, buildReportHtml } from "./report.js";
 import * as ME from "./modeledit.js";
+import { initEtabs } from "./etabs.js";   // ETABS-style chrome (menu bar, palette, explorer, status bar)
 
 /* ------------------------------------------------ state */
 const store = {
@@ -7784,7 +7785,15 @@ async function boot() {
     renderS341Panel, runS341Check, s341Rows, s341Halos, syncS341Halos,
     designSeismic341, mockNbccWindPattern, mockNbccElfPattern,
     mockShellWindPattern, mockDesignSeismic341,
+    // ETABS-restructure — entrypoints the new chrome (js/etabs.js) delegates to
+    fileNew, fileSave, openFileDialog, openSaveAs, setView, setElevLine,
+    stepStory, setStory, rebuildStorySelect, syncStoryBadges, toast,
   };
+
+  // ETABS-style chrome — menu bar, tool palette, model explorer, status bar.
+  // Delegates to the store/functions exposed above; never re-implements logic.
+  try { initEtabs(window.__sky); }
+  catch (err) { console.error("etabs chrome init failed", err); }
 }
 
 boot();

@@ -560,6 +560,7 @@ export class PlanEditor {
       Returns {x, y, dPx} (dPx = screen distance to the raw point). */
   snap(w) {
     const m = this.opts.getModel();
+    if (this.snapEnabled === false) return { x: w.x, y: w.y, dPx: Infinity };
     const r = snapGrids(m, w);
     return { x: r.x, y: r.y, dPx: r.d * this.scale };
   }

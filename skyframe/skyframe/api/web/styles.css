@@ -2026,3 +2026,174 @@ tr.cm-active td { background: var(--accent-ghost) !important; }
 #crackedCard .design-form-row { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
 #crackedCard .design-summary { margin: 10px 0 4px; }
 #crackedSummary .status-chip { margin-right: 8px; }
+
+/* ============================================================
+   ETABS-STYLE CHROME — menu bar · tool palette · model explorer · status bar
+   (built by js/etabs.js; delegates to existing app entrypoints)
+   ============================================================ */
+
+/* Superseded topbar controls — the ETABS menu bar + status bar replace them.
+   Kept in the DOM (still wired) but hidden so the app reads as one workspace. */
+#fileMenuWrap, #modeSwitch { display: none !important; }
+
+/* ---- top menu bar */
+.etabs-menubar {
+  display: flex; align-items: stretch; gap: 1px;
+  height: 30px; padding: 0 8px; flex: none;
+  background: var(--surface-1); border-bottom: 1px solid var(--border);
+  position: relative; z-index: 60;
+}
+.etabs-menu-wrap { position: relative; display: flex; }
+.etabs-menu-btn {
+  font: inherit; font-size: 12.5px; font-weight: 550; color: var(--text-2);
+  background: none; border: none; border-radius: 5px;
+  padding: 0 11px; cursor: pointer; white-space: nowrap;
+}
+.etabs-menu-btn:hover { background: var(--surface-3); color: var(--text-1); }
+.etabs-menu-wrap.open .etabs-menu-btn { background: var(--surface-3); color: var(--text-1); }
+.etabs-menu {
+  position: absolute; top: calc(100% + 3px); left: 0; z-index: 90;
+  min-width: 220px; max-height: 78vh; overflow-y: auto; padding: 5px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 8px; display: flex; flex-direction: column; gap: 1px;
+}
+.etabs-menu-item {
+  display: grid; grid-template-columns: 16px 1fr auto; align-items: center; gap: 8px;
+  font: inherit; font-size: 12.5px; font-weight: 500; color: var(--text-1);
+  background: none; border: none; border-radius: 5px;
+  padding: 6px 9px; cursor: pointer; text-align: left; white-space: nowrap;
+}
+.etabs-menu-item:hover { background: var(--surface-3); }
+.etabs-menu-item.is-disabled { color: var(--text-3); cursor: default; }
+.etabs-menu-item.is-disabled:hover { background: none; }
+.etabs-menu-item .mi-check { color: var(--accent); font-size: 11px; visibility: hidden; text-align: center; }
+.etabs-menu-item.checked .mi-check { visibility: visible; }
+.etabs-menu-item .mi-hint { font-size: 10.5px; color: var(--text-3); font-weight: 400; }
+.etabs-menu-item kbd {
+  font: 600 10px var(--mono); color: var(--text-3);
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 5px;
+}
+.etabs-menu-sep { height: 1px; background: var(--border-soft); margin: 4px 6px; }
+
+/* ---- workspace ordering: palette · explorer · canvas */
+.workspace { --palette-w: 46px; --explorer-w: 236px; }
+.etabs-palette {
+  width: var(--palette-w); flex: none;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px 0; background: var(--surface-1);
+  border-right: 1px solid var(--border);
+}
+.etabs-tool {
+  width: 32px; height: 32px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-2); background: none;
+  border: 1px solid transparent; border-radius: 6px; cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.etabs-tool svg { width: 17px; height: 17px; }
+.etabs-tool:hover { background: var(--surface-3); color: var(--text-1); }
+.etabs-tool.is-active {
+  color: var(--accent); border-color: rgba(53,181,229,.45);
+  background: var(--accent-ghost);
+}
+
+/* ---- model explorer (dockable / collapsible) */
+.etabs-explorer {
+  width: var(--explorer-w); flex: none;
+  display: flex; flex-direction: column; min-height: 0;
+  background: var(--surface-1); border-right: 1px solid var(--border);
+  overflow: hidden; transition: width .16s ease;
+}
+.workspace.explorer-collapsed .etabs-explorer { width: 0; border-right: none; }
+.ex-head {
+  display: flex; align-items: center; justify-content: space-between;
+  height: 30px; padding: 0 6px 0 12px; flex: none;
+  border-bottom: 1px solid var(--border-soft);
+}
+.ex-title {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1px; color: var(--text-3);
+}
+.ex-collapse {
+  width: 20px; height: 20px; display: flex; align-items: center; justify-content: center;
+  color: var(--text-3); background: none; border: none; border-radius: 4px;
+  cursor: pointer; font-size: 10px;
+}
+.ex-collapse:hover { color: var(--text-1); background: var(--surface-3); }
+.ex-body { flex: 1; overflow-y: auto; padding: 6px 6px 12px; }
+.ex-group { margin-bottom: 2px; }
+.ex-group-head {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  font: inherit; font-size: 12px; font-weight: 650; color: var(--text-2);
+  background: none; border: none; border-radius: 5px;
+  padding: 5px 6px; cursor: pointer; text-align: left;
+}
+.ex-group-head:hover { background: var(--surface-2); color: var(--text-1); }
+.ex-caret { display: inline-block; font-size: 9px; color: var(--text-3); transition: transform .12s; transform: rotate(0deg); }
+.ex-group.open .ex-caret { transform: rotate(90deg); }
+.ex-leaves { display: none; flex-direction: column; padding: 2px 0 4px 14px; }
+.ex-group.open .ex-leaves { display: flex; }
+.ex-leaf {
+  font: inherit; font-size: 12px; font-weight: 450; color: var(--text-2);
+  background: none; border: none; border-left: 1px solid var(--border-soft);
+  border-radius: 0 5px 5px 0; padding: 4px 8px; cursor: pointer;
+  text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ex-leaf:hover { background: var(--surface-3); color: var(--text-1); border-left-color: var(--accent); }
+
+/* ---- canvas wrapper (keeps sidebar-toggle offset math intact) */
+.etabs-canvas { position: relative; flex: 1; min-width: 0; display: flex; }
+
+/* ---- bottom status bar (footer repurposed) */
+.etabs-statusbar { height: 30px; gap: 12px; }
+.footer-solver { flex: none; white-space: nowrap; }
+.etabs-status {
+  display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;
+  overflow-x: auto;
+}
+.etabs-status::-webkit-scrollbar { height: 0; }
+.sb-item { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.sb-lbl { color: var(--text-3); font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px; }
+.sb-select {
+  width: auto; min-width: 72px; padding: 2px 6px; height: 22px;
+  font-size: 11px; background: var(--surface-2); color: var(--text-1);
+}
+.sb-units { color: var(--text-2); font-variant-numeric: tabular-nums; }
+.sb-coord { color: var(--text-2); font-variant-numeric: tabular-nums; min-width: 90px; }
+.sb-sepv { width: 1px; height: 15px; background: var(--border); flex: none; }
+.sb-chip {
+  font: inherit; font-size: 11px; font-weight: 600; color: var(--text-3);
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 5px; padding: 2px 9px; cursor: pointer; flex: none;
+}
+.sb-chip:hover { color: var(--text-1); border-color: #2e3947; }
+.sb-chip.is-on { color: var(--accent); border-color: rgba(53,181,229,.45); background: var(--accent-ghost); }
+.sb-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; flex: none; }
+.sb-seg-btn {
+  font: inherit; font-size: 11px; font-weight: 600; color: var(--text-3);
+  background: var(--surface-2); border: none; border-right: 1px solid var(--border);
+  padding: 2px 10px; cursor: pointer;
+}
+.sb-seg-btn:last-child { border-right: none; }
+.sb-seg-btn:hover { color: var(--text-1); }
+.sb-seg-btn.is-active { color: #041018; background: var(--accent); }
+.sb-spacer { flex: 1; }
+.sb-status { color: var(--text-3); font-size: 11px; white-space: nowrap; flex: none; }
+.sb-status.is-running { color: var(--accent); }
+.sb-status.is-solved { color: var(--green); }
+.sb-status.is-error { color: var(--red); }
+.sb-run {
+  font: inherit; font-size: 11px; font-weight: 700; letter-spacing: .5px;
+  text-transform: uppercase; color: #041018; background: var(--accent-dim);
+  border: none; border-radius: 5px; padding: 3px 14px; cursor: pointer; flex: none;
+}
+.sb-run:hover { background: var(--accent); }
+
+/* ---- optional light theme (Options → Theme · Light) */
+:root[data-theme="light"] {
+  --bg: #eef1f5; --surface-1: #f7f9fb; --surface-2: #ffffff; --surface-3: #e7ecf2;
+  --border: #d3dae2; --border-soft: #e2e7ee;
+  --text-1: #182430; --text-2: #47566a; --text-3: #7d8b9c;
+  --accent-ghost: rgba(30,154,212,0.12);
+}
