@@ -1,5 +1,26 @@
 # SkyFrame changelog
 
+## 1.11.0
+
+### Analysis UI + performance & public API (wrap-up release)
+- **Analysis features in the UI**: geometric-nonlinearity select
+  (Linear / P-Delta / Corotational) on cases and pushover, per-mode
+  damping editors, an Eigen/Ritz basis toggle on the Modal tab, FNA
+  runs through the standard time-history pipeline, the cracked-slab
+  card with 3D quad tinting, buckle-from-state selection, and
+  time-dependent staging with a column-shortening table.
+- **Measured engine speedups**: elastic-domain reuse (reset instead of
+  rebuild per case), superposition hoisting, and geometry memos —
+  1.64x on frames, 1.60x on many-case models (median-of-3, honest;
+  shell models are native-solver-bound at ~1.0x, documented in
+  docs/PERF_NOTES.md). Results verified bit-identical against the
+  preserved slow path on four model shapes in CI.
+- **Public Python API** (skyframe.client): open/save/run, all analysis
+  helpers (modal/ritz/fna/pushover/cracked), endpoint-identical design
+  wrappers, and table extractors — the scripting counterpart to the
+  ETABS OAPI. Every example in docs/PUBLIC_API.md runs under test.
+- 630 tests (13 new).
+
 ## 1.10.0
 
 ### Analysis Waves 1 & 2 — ETABS analysis parity

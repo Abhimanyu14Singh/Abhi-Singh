@@ -3356,3 +3356,68 @@ MODULUS (deterministic hand method — NOT OpenSees TDConcrete), chi =
   `pushover_cases[*].geometric`, `buckling_cases[*].base_case`,
   `staged_cases[*].time_dependent` (pre-v0.25 files load unchanged:
   absent keys default to linear/None).
+
+# v0.26 additions — performance + public API
+
+Units everywhere: kN, m, kPa, tonne, s.  No new mechanics: a measured
+engine performance pass (results BIT-IDENTICAL, see below) and the
+public Python scripting facade `skyframe.client`.
+
+## Engine performance (`docs/PERF_NOTES.md` for profiles + numbers)
+
+* ELASTIC-DOMAIN REUSE: linear/Newton static case solves and the
+  center-of-rigidity unit-load solves reuse the already-assembled
+  OpenSees domain — previous load pattern + time series removed,
+  `ops.reset()` (revert-to-start), re-load, re-solve — instead of a
+  full `ops.wipe()` rebuild per solve.  Ownership token: set ONLY by
+  `OpenSeesEngine._elastic_domain` (a weakref to the engine whose
+  DEFAULT elastic build lives in the interpreter); ANY `_build()` call
+  clears it first, so hinged / P-Delta / corotational / TH / pushover /
+  eigen builds are never mistaken for a reusable domain and interleaved
+  engines stay isolated (tested).  Verified bit-identical (node disps,
+  reactions, element local forces) on frame and shell models before the
+  code was written; guarded continuously by the full-dict identity
+  tests in `tests/test_perf_api.py`.
+* `SKYFRAME_SLOW_PATH=1` (env, read per solve) forces the pre-v0.26
+  rebuild-per-case path — the A/B reference for the identity tests and
+  an escape hatch.
+* `_superpose` lookup hoisting (same float ops, same order — the
+  accumulator's first step `0.0 + f0*x` IS `sum()`'s leading step) and
+  pure-geometry memos (`_local_axes` per member, `_eff_props` per
+  section, unsplit-member station fast path): bit-identical by
+  construction, covered by the same identity tests.
+* HONEST BOUNDS: measured medians 1.64x (8-story frame), 1.60x
+  (12-case model), 1.01x (shell-heavy — that model is ~95% native
+  eigen/factorization kernels, deliberately untouched: changing the
+  eigen solver would change the modal floats).  KNOWN PRE-EXISTING
+  NON-DETERMINISM, now documented: the ARPACK eigen solve is not
+  run-to-run deterministic (last-bit floats, eigenvector signs) even in
+  the unmodified engine; the identity tests therefore compare
+  `results["modal"]` periods to 1e-9 relative and everything else
+  EXACTLY.  CI timing guard: optimized median <= 0.9x slow-path median
+  (generous; measured ~0.65x).
+
+## Public Python API (`skyframe.client`, `docs/PUBLIC_API.md`)
+
+THIN wrappers only (no new logic; the endpoint and the facade can never
+disagree): `quick_building` (re-export), `open_model(path)` /
+`save_model(model, path)` (the gallery JSON format), `run(model)` ->
+`AnalysisResults` (`.to_dict()` == the `POST /api/analyze` payload),
+`run_modal(model, num_modes=None)`, `run_ritz(model, n=None,
+direction="X")`, `run_fna(model, case)`, `run_pushover(model, case)`,
+`run_cracked(model, case, cracked_ratio=0.35, fr_factor=0.62,
+max_iter=10, tol=0.02)`, `design_steel` / `design_concrete` /
+`design_wall` / `design_punching` (same kwargs and payload shapes as
+their endpoints; optional `results=` reuses an existing `run()` bundle),
+and `to_dataframe(results, table)` -> list-of-dicts for `"drifts"` |
+`"reactions"` | `"member_forces"` (one row per case/combo per story /
+support node / member end) | `"design"` (flattens a design payload's
+checks/piers/columns).  Everything in `skyframe.client.__all__` is the
+stable surface.  Every fenced python example in `docs/PUBLIC_API.md` is
+executed by `tests/test_perf_api.py::test_public_api_doc_examples`.
+
+## API
+
+* No endpoint changes.  `POST /api/analyze` payloads are bit-identical
+  to v0.25 (modal caveat above applies to consecutive runs of ANY
+  version).

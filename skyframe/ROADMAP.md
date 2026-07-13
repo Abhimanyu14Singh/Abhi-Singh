@@ -143,11 +143,14 @@ scrutinized benchmark tests.
 - [x] 6. Wall/slab openings; elevation-view drawing (Wave 6)
 - [x] 7. Nonlinear static pushover (OpenSees fiber hinges) (Wave 6)
 
-## Status — v1.10 released 🎉 (analysis-parity releases)
-All waves above are complete, pinned by a 617-test suite. The app builds
+## Status — v1.11 released 🎉 (wrap-up)
+All waves above are complete, pinned by a 630-test suite. The app builds
 standalone locally (`packaging/build.sh`). Analysis Waves 1-2 closed the
-ETABS analysis gaps: Ritz, FNA, modal damping, corotational, stressed
-buckling, cracked floors, time-dependent staging.
+ETABS analysis gaps (Ritz, FNA, modal damping, corotational, stressed
+buckling, cracked floors, time-dependent staging); the wrap-up release
+exposed them in the UI, shipped measured engine speedups (1.6x on frame
+workloads, docs/PERF_NOTES.md) and the public Python API
+(skyframe.client, docs/PUBLIC_API.md).
 
 ## Scheduled waves toward ETABS v23 parity
 Driven by `docs/ETABS23_GAP_MATRIX.md` (compiled from CSI ETABS v23 docs
