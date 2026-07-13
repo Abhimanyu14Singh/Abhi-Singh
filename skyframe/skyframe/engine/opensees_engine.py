@@ -153,6 +153,7 @@ import math
 import os
 import sys
 import warnings
+import weakref
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -238,6 +239,39 @@ CORO_INCREMENTS = 10
 # The AAEM closed form pins the tests: a load applied at t0 and held gives
 # delta(t)/delta_elastic = 1 + chi*phi(t - t0) exactly.
 TD_CHI = 0.8
+
+# --------------------------------------------------------------------------- #
+# v0.26 elastic-domain reuse
+# --------------------------------------------------------------------------- #
+# OpenSees keeps ONE global domain; rebuilding it from scratch for every
+# linear static case / CR unit-load solve dominated the profile on typical
+# buildings.  Instead, the LAST standard elastic build is tracked here and
+# reused by the whitelisted flows (run_static's linear path and the
+# center-of-rigidity unit-load solves): the previous load pattern + time
+# series are removed and ``ops.reset()`` reverts every node/element to its
+# initial (zero, revertToStart) state — verified BIT-IDENTICAL to a fresh
+# build on frame and shell models (displacements, reactions, element local
+# forces).  ``owner`` is the engine whose DEFAULT elastic build currently
+# lives in the interpreter (set ONLY by ``_elastic_domain``; ANY ``_build``
+# call clears it first, so hinged/P-Delta/TH/pushover/eigen builds can never
+# be mistaken for a reusable elastic domain); ``loaded`` records that a
+# Plain pattern (tag 1) + Linear timeSeries (tag 1) are present and must be
+# removed before reuse.  ``SKYFRAME_SLOW_PATH=1`` disables reuse entirely
+# (the pre-v0.26 rebuild-per-case behavior, kept for A/B identity checks).
+# ``owner`` is a weakref so the token never keeps a dead engine (and its
+# result caches) alive.
+_REUSE: Dict[str, object] = {"owner": None, "loaded": False}
+
+
+def _reuse_owner():
+    """The engine owning the live elastic domain, or None."""
+    ref = _REUSE["owner"]
+    return ref() if ref is not None else None
+
+
+def _slow_path() -> bool:
+    """True when SKYFRAME_SLOW_PATH=1 forces the rebuild-per-case path."""
+    return os.environ.get("SKYFRAME_SLOW_PATH") == "1"
 
 
 def aci209_creep(phi_inf: float, t: float) -> float:
@@ -1365,6 +1399,12 @@ class OpenSeesEngine:
         # the shell section E; set (on a FRESH engine) by run_cracked's
         # driver before any analysis.  Empty = the exact standard build.
         self._quad_stiff_scale: Dict[int, float] = {}
+        # v0.26 pure-geometry memos (the model is frozen once the engine is
+        # constructed): member uid -> _local_axes(member), section name ->
+        # _eff_props(section).  Same values, computed once instead of per
+        # case in the station/deflection recovery.
+        self._axes_cache: Dict[str, tuple] = {}
+        self._effp_cache: Dict[str, Tuple[float, float, float, float]] = {}
 
     # ------------------------------------------------------------------ API
     def run(self) -> AnalysisResults:
@@ -1622,6 +1662,37 @@ class OpenSeesEngine:
                  "dup": info["dup"], "K": info["K"]}
                 for orig, info in asm.pz_joints.items()]
 
+    def _elastic_domain(self) -> _Assembly:
+        """The standard elastic build, reusing the live domain when possible.
+
+        v0.26: when THIS engine's default elastic build is what currently
+        lives in the OpenSees interpreter (see module-level ``_REUSE``),
+        the previous solve's load pattern/time series are removed and the
+        domain is reverted to its initial state with ``ops.reset()``
+        instead of a full ``ops.wipe()`` rebuild — bit-identical (verified
+        on frame and shell models: node displacements, reactions and
+        element local forces match a fresh build exactly; nonlinear
+        uniaxial materials revert to their virgin state, so the Newton
+        path starts from the identical point too).  Only the two
+        whitelisted flows call this (linear/Newton ``run_static`` and the
+        CR unit-load solves); every other analysis keeps its explicit
+        ``_build``, which clears the reuse token first.  Set
+        ``SKYFRAME_SLOW_PATH=1`` to force the pre-v0.26 rebuild-per-case
+        behavior.
+        """
+        if (not _slow_path() and _reuse_owner() is self
+                and self._asm is not None):
+            if _REUSE["loaded"]:
+                ops.remove("loadPattern", 1)
+                ops.remove("timeSeries", 1)
+                ops.reset()
+                _REUSE["loaded"] = False
+            return self._asm
+        asm = self._build()
+        _REUSE["owner"] = weakref.ref(self)
+        _REUSE["loaded"] = False
+        return asm
+
     def run_static(self, case_name: str) -> CaseResults:
         """Solve one static load case (cached per engine instance)."""
         if case_name in self._case_cache:
@@ -1636,11 +1707,12 @@ class OpenSeesEngine:
             self._case_cache[case_name] = result
             return result
 
-        asm = self._build()
+        asm = self._elastic_domain()
         self._seg_span_loads = {}
         self._seg_fef = {}
         ops.timeSeries("Linear", 1)
         ops.pattern("Plain", 1, 1)
+        _REUSE["loaded"] = True
         for pat_name, scale in case.patterns.items():
             self._apply_pattern(asm, pat_name, scale)
 
@@ -1826,6 +1898,10 @@ class OpenSeesEngine:
         transformation, with a ``warnings.warn`` naming the members.
         """
         model = self.model
+        # v0.26: ANY rebuild wipes the interpreter — whatever elastic domain
+        # was tracked as reusable is gone (see _REUSE / _elastic_domain).
+        _REUSE["owner"] = None
+        _REUSE["loaded"] = False
         transf_name = (transf if transf is not None
                        else ("PDelta" if pdelta else "Linear"))
         coro_release_fallback: List[str] = []
@@ -3620,14 +3696,21 @@ class OpenSeesEngine:
             xs = [k * L / (_N_STATIONS - 1) for k in range(_N_STATIONS)]
             cols: Dict[str, List[float]] = {k: [] for k in
                                             ("N", "V2", "V3", "T", "M2", "M3")}
+            # v0.26: unsplit members (the common case) always land in their
+            # only segment — identical to the linear search (0 - 1e-9 <= x
+            # <= L + 1e-9 holds for every station of an unsplit member)
+            single = segs[0] if len(segs) == 1 else None
             for x in xs:
-                seg = None
-                for s in segs:
-                    if s.x0 - 1e-9 <= x <= s.x0 + s.length + 1e-9:
-                        seg = s
-                        break
-                if seg is None:            # numerical safety net
-                    seg = segs[-1]
+                if single is not None:
+                    seg = single
+                else:
+                    seg = None
+                    for s in segs:
+                        if s.x0 - 1e-9 <= x <= s.x0 + s.length + 1e-9:
+                            seg = s
+                            break
+                    if seg is None:        # numerical safety net
+                        seg = segs[-1]
                 xi = min(max(x - seg.x0, 0.0), seg.length)
                 recs = self._seg_span_loads.get((m.uid, seg.index), ())
                 vals = _section_forces(corrected[seg.index][:6], recs, xi)
@@ -3663,12 +3746,18 @@ class OpenSeesEngine:
         model = self.model
         sec = model.sections[m.section]
         mat = model.materials[sec.material]
-        _, I22_eff, I33_eff, _ = self._eff_props(sec)
+        effp = self._effp_cache.get(m.section)    # v0.26 memo (same values)
+        if effp is None:
+            effp = self._effp_cache[m.section] = self._eff_props(sec)
+        _, I22_eff, I33_eff, _ = effp
         EIz = mat.E * I33_eff                     # x-y plane (dy)
         EIy = mat.E * I22_eff                     # x-z plane (dz)
         if EIz <= 0.0 or EIy <= 0.0:              # pragma: no cover
             return None
-        _, yax, zax, _, _ = _local_axes(m)
+        axes = self._axes_cache.get(m.uid)        # v0.26 memo (same values)
+        if axes is None:
+            axes = self._axes_cache[m.uid] = _local_axes(m)
+        _, yax, zax, _, _ = axes
 
         def tdisp(tag: int, ax: Vec3) -> float:
             d = node_disp.get(tag)
@@ -3694,14 +3783,18 @@ class OpenSeesEngine:
 
         dy: List[float] = []
         dz: List[float] = []
+        single = segs[0] if len(segs) == 1 else None    # v0.26 (see above)
         for x in xs:
-            seg = None
-            for s in segs:
-                if s.x0 - 1e-9 <= x <= s.x0 + s.length + 1e-9:
-                    seg = s
-                    break
-            if seg is None:                        # numerical safety net
-                seg = segs[-1]
+            if single is not None:
+                seg = single
+            else:
+                seg = None
+                for s in segs:
+                    if s.x0 - 1e-9 <= x <= s.x0 + s.length + 1e-9:
+                        seg = s
+                        break
+                if seg is None:                    # numerical safety net
+                    seg = segs[-1]
             xi = min(max(x - seg.x0, 0.0), seg.length)
             vy_i, th_y, vz_i, th_z, recs, fi = params[seg.index]
             dy.append(float(
@@ -4272,7 +4365,7 @@ class OpenSeesEngine:
         otherwise.
         """
         model = self.model
-        asm = self._build()
+        asm = self._elastic_domain()        # v0.26: one build for all solves
         if not asm.masters:
             return {}
         master_xy = {s: (asm.node_coords[t][0], asm.node_coords[t][1])
@@ -4294,18 +4387,21 @@ class OpenSeesEngine:
             else:                                       # pragma: no cover
                 entry["cr_x"], entry["cr_y"] = float(mx), float(my)
             props[s.name] = entry
-        # restore the elastic assembly for the caller (identical geometry)
-        self._build()
+        # restore the pristine elastic assembly for the caller (identical
+        # geometry; v0.26: a reset of the reused domain when available —
+        # bit-identical to the pre-v0.26 rebuild)
+        self._elastic_domain()
         return props
 
     def _master_rz(self, story: str, load_vec: Tuple[float, ...]) -> float:
         """Diaphragm-master rz under a single unit load at that master."""
-        asm = self._build()
+        asm = self._elastic_domain()        # v0.26: no rebuild per unit load
         mtag = asm.masters[story]
         self._seg_span_loads = {}
         self._seg_fef = {}
         ops.timeSeries("Linear", 1)
         ops.pattern("Plain", 1, 1)
+        _REUSE["loaded"] = True
         ops.load(mtag, *load_vec)
         self._setup_analysis(asm)
         if ops.analyze(1) != 0:                          # pragma: no cover
@@ -4526,44 +4622,60 @@ class OpenSeesEngine:
                         acc[i] += f * x
             return out
 
+        # v0.26 NOTE: every superposition below hoists the per-part row/
+        # column lookups out of the inner loops (the profile showed the
+        # repeated ``res.X[uid][key][i]`` chains dominating combo assembly).
+        # The float ARITHMETIC is untouched — each output value is still
+        # ``sum(f * x)`` over the SAME parts in the SAME order, so the
+        # results are bit-identical to the pre-v0.26 loops.
         base = {k: sum(f * res.base[k] for res, f in parts)
                 for k in ("FX", "FY", "FZ", "MX", "MY", "MZ")}
         story: Dict[str, Dict[str, float]] = {}
         for s_name, s0 in parts[0][0].story.items():
-            story[s_name] = {k: sum(f * res.story[s_name][k] for res, f in parts)
+            rows = [(f, res.story[s_name]) for res, f in parts]
+            story[s_name] = {k: sum(f * row[k] for f, row in rows)
                              for k in s0}
+        def acc_cols(cols: List[Tuple[float, List[float]]]) -> List[float]:
+            """``[sum(f * col[i] for f, col in cols) for i]``, unrolled.
+
+            Bit-identical to the ``sum()`` form: the first term is
+            ``0.0 + f0*x`` (exactly ``sum``'s leading ``0 +`` step — it
+            also normalizes a ``-0.0`` product the same way) and the
+            remaining parts accumulate in the same order.
+            """
+            f0, col0 = cols[0]
+            acc = [0.0 + f0 * x for x in col0]
+            for f, col in cols[1:]:
+                for i, x in enumerate(col):
+                    acc[i] += f * x
+            return acc
+
         member_stations: Dict[str, Dict[str, List[float]]] = {}
         for uid, st0 in parts[0][0].member_stations.items():
             entry: Dict[str, List[float]] = {"x": list(st0["x"])}
+            sts = [(f, res.member_stations[uid]) for res, f in parts]
             for key in ("N", "V2", "V3", "T", "M2", "M3"):
-                entry[key] = [
-                    sum(f * res.member_stations[uid][key][i]
-                        for res, f in parts)
-                    for i in range(len(st0[key]))]
+                entry[key] = acc_cols([(f, st[key]) for f, st in sts])
             member_stations[uid] = entry
         # v0.16: transverse deflection stations superpose linearly (a member
         # present in every part — offset/truss members are absent everywhere)
         member_deflections: Dict[str, Dict[str, List[float]]] = {}
         for uid, md0 in parts[0][0].member_deflections.items():
             entry_d: Dict[str, List[float]] = {"x": list(md0["x"])}
+            mds = [(f, res.member_deflections[uid]) for res, f in parts]
             for key in ("dy", "dz"):
-                entry_d[key] = [
-                    sum(f * res.member_deflections[uid][key][i]
-                        for res, f in parts)
-                    for i in range(len(md0[key]))]
+                entry_d[key] = acc_cols([(f, md[key]) for f, md in mds])
             member_deflections[uid] = entry_d
         # shell stress resultants superpose linearly too (v0.4)
         shell_forces: Dict[int, List[float]] = {}
-        for qi, v0 in parts[0][0].shell_forces.items():
-            shell_forces[qi] = [
-                sum(f * res.shell_forces[qi][i] for res, f in parts)
-                for i in range(len(v0))]
+        for qi in parts[0][0].shell_forces:
+            shell_forces[qi] = acc_cols(
+                [(f, res.shell_forces[qi]) for res, f in parts])
         # v0.15: shell nodal forces (pier free-body kernel) likewise
         shell_nodal: Dict[int, List[float]] = {}
-        for qi, v0 in parts[0][0].shell_nodal.items():
-            shell_nodal[qi] = [
-                sum(f * res.shell_nodal[qi][i] for res, f in parts)
-                for i in range(len(v0))]
+        for qi in parts[0][0].shell_nodal:
+            shell_nodal[qi] = acc_cols(
+                [(f, res.shell_nodal[qi]) for res, f in parts])
         return CaseResults(
             name=name,
             node_disp=comb_vecs(lambda r: r.node_disp),
