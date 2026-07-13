@@ -5,6 +5,16 @@ const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
 const near = (a, b, tol = 1e-6) =>
   Math.abs(a[0] - b[0]) < tol && Math.abs(a[1] - b[1]) < tol && Math.abs(a[2] - b[2]) < tol;
 
+/* v0.25 — geometric-nonlinearity options (static + pushover cases) */
+export const GEOMETRIC_OPTIONS = ["linear", "pdelta", "corotational"];
+
+/** Resolved geometric level of a static case (CONTRACT v0.25 precedence:
+    a non-"linear" `geometric` wins; otherwise the legacy `pdelta` bool). */
+export function effectiveGeometric(c) {
+  if (c.geometric && c.geometric !== "linear") return c.geometric;
+  return c.pdelta ? "pdelta" : "linear";
+}
+
 /** Ensure every v0.2/v0.3 collection exists so the editor can run against an
     older backend model dict. */
 export function normalizeModel(m) {
@@ -41,6 +51,8 @@ export function normalizeModel(m) {
     c.name = c.name || n;
     c.patterns = c.patterns || {};
     c.pdelta = !!c.pdelta;
+    // v0.25 — geometric nonlinearity level; legacy pdelta bool kept in sync
+    c.geometric = GEOMETRIC_OPTIONS.includes(c.geometric) ? c.geometric : "linear";
   }
   for (const [n, cb] of Object.entries(m.combos)) {
     cb.name = cb.name || n;
@@ -98,6 +110,12 @@ export function normalizeModel(m) {
     tc.hardening = isFinite(tc.hardening) ? tc.hardening : 0.02;
     // v0.13 — optional reference to a library time-history function ("" = inline)
     tc.function = typeof tc.function === "string" ? tc.function : "";
+    // v0.24 — damping model ("rayleigh" default) + per-mode ratios
+    tc.damping_model = tc.damping_model === "modal" ? "modal" : "rayleigh";
+    tc.modal_zeta = Array.isArray(tc.modal_zeta)
+      ? tc.modal_zeta.map(Number).filter(z => isFinite(z) && z > 0 && z < 1)
+      : null;
+    if (tc.modal_zeta && !tc.modal_zeta.length) tc.modal_zeta = null;
   }
   for (const [n, rc] of Object.entries(m.rs_cases)) {
     rc.name = rc.name || n;
@@ -159,6 +177,8 @@ export function normalizeModel(m) {
     pc.My = (pc.My && typeof pc.My === "object") ? pc.My : {};
     if (pc.default_My != null && !isFinite(pc.default_My)) delete pc.default_My;
     pc.hardening = isFinite(pc.hardening) ? pc.hardening : 0.02;
+    // v0.25 — geometric nonlinearity of the push ("linear" = pre-v0.25 build)
+    pc.geometric = GEOMETRIC_OPTIONS.includes(pc.geometric) ? pc.geometric : "linear";
   }
   m.diaphragm = m.diaphragm === "none" ? "none" : "rigid";
   m.story_diaphragm = (m.story_diaphragm && typeof m.story_diaphragm === "object")
@@ -191,6 +211,19 @@ export function normalizeModel(m) {
     sc.stages = "per_story";
     sc.include_live = (sc.include_live && typeof sc.include_live === "object")
       ? sc.include_live : {};
+    // v0.25 — time-dependent (creep/shrinkage) staged construction: null keeps
+    // the elastic run; the object requires days_per_story > 0. Unknown keys
+    // (t_eval, materials) are preserved for round-tripping.
+    if (sc.time_dependent && typeof sc.time_dependent === "object") {
+      const td = sc.time_dependent;
+      td.days_per_story = (isFinite(td.days_per_story) && td.days_per_story > 0)
+        ? +td.days_per_story : 30;
+      td.creep_coeff = (isFinite(td.creep_coeff) && td.creep_coeff >= 0)
+        ? +td.creep_coeff : 2.0;
+      td.shrinkage = (isFinite(td.shrinkage) && td.shrinkage >= 0)
+        ? +td.shrinkage : 300e-6;
+      td.aging = !!td.aging;
+    } else sc.time_dependent = null;
   }
   // v0.10 — buckling cases (linearized eigenvalue) + RS directional combos
   m.buckling_cases = m.buckling_cases || {};
@@ -198,6 +231,8 @@ export function normalizeModel(m) {
     bc.name = bc.name || n;
     bc.gravity = (bc.gravity && typeof bc.gravity === "object") ? bc.gravity : {};
     bc.num_modes = (isFinite(bc.num_modes) && bc.num_modes >= 1) ? Math.round(bc.num_modes) : 3;
+    // v0.25 — optional stressed-state base: name of a static case, else null
+    bc.base_case = (typeof bc.base_case === "string" && bc.base_case) ? bc.base_case : null;
   }
   m.rs_combos = m.rs_combos || {};
   for (const [n, rcmb] of Object.entries(m.rs_combos)) {
@@ -825,7 +860,7 @@ export function addPushoverCase(model) {
   const name = uniqueKey(model.pushover_cases, "PUSH");
   model.pushover_cases[name] = {
     name, direction: "X", gravity: { DEAD: 1.0 }, target_drift: 0.02,
-    steps: 100, My: {}, default_My: 250, hardening: 0.02,
+    steps: 100, My: {}, default_My: 250, hardening: 0.02, geometric: "linear",
   };
   return name;
 }
@@ -1037,7 +1072,7 @@ export function caseRefs(model, name) {
 
 export function addCase(model, base = "CASE") {
   const name = uniqueKey(model.cases, base);
-  model.cases[name] = { name, patterns: {}, pdelta: false };
+  model.cases[name] = { name, patterns: {}, pdelta: false, geometric: "linear" };
   return name;
 }
 
@@ -1116,7 +1151,7 @@ export function addBucklingCase(model, base = "BUCK") {
   model.buckling_cases = model.buckling_cases || {};
   const name = uniqueKey(model.buckling_cases, base);
   const grav = (model.patterns && model.patterns.DEAD) ? { DEAD: 1.0 } : {};
-  model.buckling_cases[name] = { name, gravity: grav, num_modes: 3 };
+  model.buckling_cases[name] = { name, gravity: grav, num_modes: 3, base_case: null };
   return name;
 }
 
@@ -1760,6 +1795,7 @@ export function addThCase(model, base = "TH") {
   model.th_cases[name] = {
     name, direction: "X", accel: sineRecord(),
     dt: 0.02, damping: 0.05, scale: 1.0, function: "",
+    damping_model: "rayleigh", modal_zeta: null,
   };
   return name;
 }
@@ -1784,6 +1820,7 @@ export function addStagedCase(model, base = "STAGE") {
     : (patternNames(model)[0] || "DEAD");
   model.staged_cases[name] = {
     name, pattern: pat, stages: "per_story", include_live: {},
+    time_dependent: null,
   };
   return name;
 }

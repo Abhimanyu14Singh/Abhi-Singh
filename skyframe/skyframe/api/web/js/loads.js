@@ -986,9 +986,37 @@ export class LoadsEditor {
     return wrap;
   }
 
+  /** v0.25 — geometric-nonlinearity select for a static/pushover case.
+      Shows the EFFECTIVE level (a non-"linear" `geometric` wins, else the
+      legacy `pdelta` bool); changing it writes `geometric` and, when
+      `syncPdelta`, keeps the legacy bool in sync for old models/backends. */
+  _geometricSelect(c, className, syncPdelta = true) {
+    const wrap = document.createElement("label");
+    wrap.className = "rs-field geom-field" + (className ? ` ${className}` : "");
+    wrap.title = "Geometric nonlinearity — linear, P-Δ (geometric stiffness) " +
+      "or large displacement (corotational frame elements)";
+    const span = document.createElement("span");
+    span.textContent = "geometric";
+    const sel = document.createElement("select");
+    sel.className = "geom-select";
+    sel.innerHTML = `
+      <option value="linear">Linear</option>
+      <option value="pdelta">P-Delta</option>
+      <option value="corotational">Large displacement (corotational)</option>`;
+    sel.value = syncPdelta ? ME.effectiveGeometric(c) : (c.geometric || "linear");
+    sel.addEventListener("change", () => {
+      c.geometric = sel.value;
+      if (syncPdelta) c.pdelta = sel.value === "pdelta";
+      this._mutated(false);
+    });
+    wrap.append(span, sel);
+    return wrap;
+  }
+
   _casesSection(m) {
     const sec = this._section("ls-cases", "Static load cases",
-      "Each case sums pattern × factor. P-Δ runs the case with geometric stiffness.",
+      "Each case sums pattern × factor. <b>Geometric</b> picks the nonlinearity: " +
+      "P-Δ (geometric stiffness) or large-displacement (corotational).",
       "+ Add case", () => { ME.addCase(m); this._mutated(); });
 
     const list = document.createElement("div");
@@ -1006,14 +1034,9 @@ export class LoadsEditor {
         nu => ME.renameCase(m, name, nu)));
       row.appendChild(this._factorChips(c.patterns, patPool, "Add a pattern to this case"));
 
-      const pd = document.createElement("label");
-      pd.className = "pd-toggle" + (c.pdelta ? " is-on" : "");
-      pd.title = "Include P-Δ (second-order) effects for this case";
-      const cb = document.createElement("input");
-      cb.type = "checkbox"; cb.checked = !!c.pdelta;
-      cb.addEventListener("change", () => { c.pdelta = cb.checked; this._mutated(); });
-      pd.append(cb, document.createTextNode("P-Δ"));
-      row.appendChild(pd);
+      // v0.25 — geometric-nonlinearity select (replaces the P-Δ toggle);
+      // the legacy pdelta bool is kept in sync for old models/backends.
+      row.appendChild(this._geometricSelect(c, "lc-geom"));
 
       const refs = ME.caseRefs(m, name);
       row.appendChild(this._delBtn(refs, `case ${name}`, () => {
@@ -1401,6 +1424,9 @@ export class LoadsEditor {
     }));
     card.appendChild(head);
 
+    /* v0.24: damping model (Rayleigh / per-mode modal) + zeta list */
+    card.appendChild(this._thDamping(m, tc));
+
     /* v0.6: nonlinear (plastic-hinge) controls */
     card.appendChild(this._thNonlinear(m, tc));
 
@@ -1505,6 +1531,81 @@ export class LoadsEditor {
     body.append(leftCol, right);
     card.appendChild(body);
     return card;
+  }
+
+  /* ---- v0.24: damping-model block for a TH case. "rayleigh" (default) is
+     the exact pre-v0.24 path; "modal" reveals a per-mode ζ list editor
+     (comma-separated; the engine truncates/pads with the LAST value to the
+     computed mode count — empty list = the flat damping in every mode). */
+  _thDamping(m, tc) {
+    const wrap = document.createElement("div");
+    wrap.className = "th-damping-controls";
+
+    const lbl = document.createElement("label");
+    lbl.className = "rs-field th-damping-field";
+    lbl.title = "Rayleigh (two-anchor, pre-v0.24 exact) or per-mode modal damping";
+    const s = document.createElement("span");
+    s.textContent = "damping model";
+    const sel = document.createElement("select");
+    sel.className = "th-damping-model";
+    sel.innerHTML = `<option value="rayleigh">Rayleigh</option>
+      <option value="modal">Modal (per-mode ζ)</option>`;
+    sel.value = tc.damping_model === "modal" ? "modal" : "rayleigh";
+    lbl.append(s, sel);
+    wrap.appendChild(lbl);
+
+    const panel = document.createElement("div");
+    panel.className = "th-zeta-panel" + (sel.value === "modal" ? "" : " hidden");
+    const zlbl = document.createElement("label");
+    zlbl.className = "rs-field th-zeta-field";
+    const zs = document.createElement("span");
+    zs.textContent = "modal ζ list";
+    const zin = document.createElement("input");
+    zin.type = "text";
+    zin.className = "th-zeta-input";
+    zin.spellcheck = false;
+    zin.placeholder = "0.05, 0.03, 0.02, …";
+    const fillZeta = () => {
+      zin.value = (tc.modal_zeta || []).map(z => +(+z).toFixed(4)).join(", ");
+    };
+    fillZeta();
+    zlbl.append(zs, zin);
+    const hint = document.createElement("span");
+    hint.className = "muted th-zeta-hint";
+    const syncHint = () => {
+      const zl = tc.modal_zeta || [];
+      hint.innerHTML = zl.length
+        ? `${zl.length} ratio${zl.length === 1 ? "" : "s"} — modes beyond the list ` +
+          `are <b>padded with the last value</b> (${fmt(zl[zl.length - 1], 3)})`
+        : `empty — the flat damping ζ = ${fmt(tc.damping, 3)} applies in every mode`;
+    };
+    syncHint();
+    zin.addEventListener("change", () => {
+      const txt = zin.value.trim();
+      if (!txt) {
+        tc.modal_zeta = null;
+        this._mutated(false); fillZeta(); syncHint();
+        return;
+      }
+      const vals = txt.split(/[\s,;]+/).filter(Boolean).map(Number);
+      if (vals.some(v => !isFinite(v) || v <= 0 || v >= 1)) {
+        this.toast("Bad ζ list", "Each per-mode ratio must be a number in (0, 1)", "error", 5000);
+        fillZeta();
+        return;
+      }
+      tc.modal_zeta = vals;
+      this._mutated(false);
+      fillZeta(); syncHint();
+    });
+    panel.append(zlbl, hint);
+    wrap.appendChild(panel);
+
+    sel.addEventListener("change", () => {
+      tc.damping_model = sel.value === "modal" ? "modal" : "rayleigh";
+      panel.classList.toggle("hidden", tc.damping_model !== "modal");
+      this._mutated(false);
+    });
+    return wrap;
   }
 
   /* ---- v0.6: nonlinear plastic-hinge block for a TH case (reuses the
@@ -1732,6 +1833,8 @@ export class LoadsEditor {
       v => { pc.steps = Math.round(v); })));
     head.appendChild(mkField("hardening", mkNum(pc.hardening, "0.01", 0,
       v => { if (v >= 1) return false; pc.hardening = v; })));
+    // v0.25 — large-displacement pushover (PushoverCase.geometric; no legacy bool)
+    head.appendChild(this._geometricSelect(pc, "po-geom", false));
     head.appendChild(this._delBtn(null, `pushover case ${name}`, () => {
       if (ME.deletePushoverCase(m, name)) this._mutated();
     }));
@@ -1917,6 +2020,27 @@ export class LoadsEditor {
     });
     head.appendChild(mkField("modes", modesIn));
 
+    // v0.25 — buckle FROM a stressed state: a static case solved through the
+    // full engine first; λ then multiplies the buckling gravity ONLY, given
+    // that held base state.
+    const baseSel = document.createElement("select");
+    baseSel.className = "buck-base-select";
+    baseSel.title = "Buckle from the stressed state of a static case (held, " +
+      "never scaled) — λ multiplies this case's gravity only";
+    const caseNames = Object.keys(m.cases || {});
+    baseSel.innerHTML = `<option value="">— none —</option>` +
+      caseNames.map(n =>
+        `<option value="${esc(n)}"${bc.base_case === n ? " selected" : ""}>${esc(n)}</option>`).join("");
+    if (bc.base_case && !caseNames.includes(bc.base_case))
+      baseSel.insertAdjacentHTML("beforeend",
+        `<option value="${esc(bc.base_case)}" selected>${esc(bc.base_case)} (missing)</option>`);
+    baseSel.value = bc.base_case || "";
+    baseSel.addEventListener("change", () => {
+      bc.base_case = baseSel.value || null;
+      this._mutated(false); syncNote();
+    });
+    head.appendChild(mkField("buckle from state of", baseSel));
+
     head.appendChild(this._delBtn(null, `buckling case ${name}`, () => {
       if (ME.deleteBucklingCase(m, name)) this._mutated();
     }));
@@ -1938,7 +2062,11 @@ export class LoadsEditor {
     note.className = "muted staged-note";
     const syncNote = () => {
       note.innerHTML = `Reports the first <b>${bc.num_modes}</b> critical load factor${bc.num_modes === 1 ? "" : "s"} λ. ` +
-        `The applied gravity buckles the structure when scaled by λ — <b>λ &lt; 1 is unsafe</b>.`;
+        `The applied gravity buckles the structure when scaled by λ — <b>λ &lt; 1 is unsafe</b>.` +
+        (bc.base_case
+          ? ` Base state <b>${esc(bc.base_case)}</b> is solved through the full engine first and ` +
+            `<b>held</b> — λ scales the buckling gravity only, on top of that stressed state.`
+          : "");
     };
     syncNote();
     card.appendChild(note);
@@ -2007,12 +2135,97 @@ export class LoadsEditor {
       "Add a live pattern applied at the end"));
     card.appendChild(live);
 
+    /* v0.25 — time-dependent (creep/shrinkage) staged construction */
+    card.appendChild(this._stagedTimeDependent(sc));
+
     const note = document.createElement("p");
     note.className = "muted staged-note";
     note.innerHTML = `Stages <b>per story</b> (bottom → top). Upper stories settle less than a ` +
       `one-shot run — the “slab built level” effect. Every partial structure must be stable on its own.`;
     card.appendChild(note);
     return card;
+  }
+
+  /* ---- v0.25: time-dependent (AAEM creep/shrinkage) block for a staged
+     case. Off (null) keeps the elastic staged run bit-identical; on, the
+     fields mirror StagedCase.time_dependent (days_per_story required > 0).
+     Results gain a per-story column-shortening report. */
+  _stagedTimeDependent(sc) {
+    const wrap = document.createElement("div");
+    wrap.className = "staged-td-controls";
+
+    const toggle = document.createElement("label");
+    toggle.className = "pd-toggle staged-td-toggle" + (sc.time_dependent ? " is-on" : "");
+    toggle.title = "Age-adjusted effective-modulus creep + shrinkage staged run " +
+      "(ACI 209 curves) — results gain a per-story column-shortening report";
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = !!sc.time_dependent;
+    cb.className = "staged-td-cb";
+    toggle.append(cb, document.createTextNode("Time-dependent (creep/shrinkage)"));
+    wrap.appendChild(toggle);
+
+    const panel = document.createElement("div");
+    panel.className = "staged-td-panel" + (sc.time_dependent ? "" : " hidden");
+    wrap.appendChild(panel);
+
+    const mkField = (label, node, title) => {
+      const w = document.createElement("label");
+      w.className = "rs-field";
+      if (title) w.title = title;
+      const s = document.createElement("span");
+      s.innerHTML = label;
+      w.append(s, node);
+      return w;
+    };
+    const mkNum = (get, set, step, min) => {
+      const i = document.createElement("input");
+      i.type = "number"; i.step = step; i.min = String(min);
+      i.value = String(get());
+      i.addEventListener("change", () => {
+        const v = parseFloat(i.value);
+        if (isFinite(v) && v >= min && set(v) !== false) this._mutated(false);
+        else i.value = String(get());
+      });
+      return i;
+    };
+
+    const fillPanel = () => {
+      panel.textContent = "";
+      const td = sc.time_dependent;
+      if (!td) return;
+      panel.appendChild(mkField("days / story", mkNum(
+        () => td.days_per_story, v => { if (v <= 0) return false; td.days_per_story = v; },
+        "1", 0.5), "Casting cycle — story j is cast at j·d; stage k's loads arrive at (k+1)·d"));
+      panel.appendChild(mkField("creep φ<sub>∞</sub>", mkNum(
+        () => td.creep_coeff, v => { td.creep_coeff = v; }, "0.1", 0),
+        "Ultimate creep coefficient (ACI 209 φ(t) = φ∞·(t/(10+t))^0.6)"));
+      panel.appendChild(mkField("shrinkage ε<sub>∞</sub>", mkNum(
+        () => td.shrinkage, v => { td.shrinkage = v; }, "0.00005", 0),
+        "Ultimate shrinkage strain (ACI 209 ε(t) = ε∞·t/(35+t)) — e.g. 0.0003"));
+      const aging = document.createElement("input");
+      aging.type = "checkbox"; aging.checked = !!td.aging;
+      aging.addEventListener("change", () => { td.aging = aging.checked; this._mutated(false); });
+      panel.appendChild(mkField("aging E(t)", aging,
+        "Scale each story's loading-age modulus by the ACI 209 growth curve √(t/(4+0.85t))"));
+      const hint = document.createElement("p");
+      hint.className = "muted staged-note staged-td-hint";
+      hint.innerHTML = "Age-adjusted effective modulus (χ = 0.8, ACI 209 curves) at t → ∞. " +
+        "Results carry a per-story <b>shortening</b> report (elastic vs time-dependent) " +
+        "in the Story Results tab.";
+      panel.appendChild(hint);
+    };
+    fillPanel();
+
+    cb.addEventListener("change", () => {
+      sc.time_dependent = cb.checked
+        ? { days_per_story: 30, creep_coeff: 2.0, shrinkage: 300e-6, aging: false }
+        : null;
+      toggle.classList.toggle("is-on", cb.checked);
+      panel.classList.toggle("hidden", !cb.checked);
+      fillPanel();
+      this._mutated(false);
+    });
+    return wrap;
   }
 
   /* ============================================================ combos */

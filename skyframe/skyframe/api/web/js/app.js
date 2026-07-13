@@ -12,7 +12,8 @@ import { mockModel, mockResults, mockSectionLibrary, mockModelFiles, mockWindPat
   mockDesignComposite, mockDesignSlab, mockVibration,
   mockDesignerUpsert, mockDesignerDelete, mockDesignerPmm,
   mockNbccWindPattern, mockNbccElfPattern, mockShellWindPattern,
-  mockDesignSeismic341 } from "./mock.js";
+  mockDesignSeismic341,
+  mockRitz, mockFna, mockCracked } from "./mock.js";
 import { PlanEditor } from "./draw.js";
 import { SectionDesigner } from "./secdesigner.js";   // v0.21
 import { ElevEditor } from "./elev.js";
@@ -120,6 +121,13 @@ const store = {
   slabCase: null,          // case/combo for the slab design
   vibResult: null,         // last POST /api/results/vibration response
   vibParams: { live_factor: 0.5, beta: 0.03, ap_limit: 0.005 },
+  // v0.24 — modal basis: "eigen" (the solve's modes) | "ritz:X|Y|XY"
+  modalBasis: "eigen",
+  ritzN: null,             // requested vector count (null → model.num_modes)
+  ritzCache: {},           // "dir:n" -> RitzResults dict (cleared on re-solve)
+  // v0.25 — cracked-slab analysis (POST /api/analyze/cracked)
+  crackedResult: null,     // last cracked response (flat case dict + cracking)
+  crackedCase: null,       // static case iterated
 };
 
 const $ = id => document.getElementById(id);
@@ -190,6 +198,24 @@ async function postModel(payload) {
     return payload;                                // mock backend accepts locally
   }
   return api("/api/model", payload);
+}
+
+/* ---- v0.24/v0.25: analysis-parity endpoints (Ritz / FNA / cracked).
+   Live path syncs the working model first, then POSTs. Backend errors are
+   RETHROWN (never silently mocked) — a 400 carries a meaningful message
+   (unsupported FNA nonlinearity, bad ratio, unknown case). Mock mode
+   computes locally. */
+async function analyzeExtra(path, body) {
+  if (store.mock) {
+    await new Promise(r => setTimeout(r, 250));
+    if (path === "ritz") return mockRitz(store.model, body);
+    if (path === "fna") return mockFna(store.model, body);
+    return mockCracked(store.model, body);
+  }
+  const payload = JSON.parse(JSON.stringify(store.model));
+  delete payload._mock_params;
+  await postModel(payload);
+  return api(`/api/analyze/${path}`, body);
 }
 
 /* ---- v0.6: design checks. Live path syncs the working model first (the
@@ -3337,6 +3363,8 @@ function renderResultsTabs() {
   syncEnvToggle();
   syncStagedBadge();
   renderStoryTab();
+  renderStagedShortening();                        // v0.25
+  renderCrackedCard();                             // v0.25
   renderModalTab();
   renderReactionsTab();
   renderForcesTab();
@@ -3528,8 +3556,191 @@ function cmcrPlanSvg(cc) {
   return svg;
 }
 
+/* ---- v0.25: staged time-dependent per-story column shortening.
+   Rendered in the Story tab whenever the selected staged case carries the
+   "shortening" report ({story: {uz_elastic, uz_time_dependent, delta}} —
+   mean cumulative uz at the story's column tops; negative = down). */
+function renderStagedShortening() {
+  const block = $("stagedShortBlock");
+  const cd = caseData();
+  const sh = (isStagedCase(store.caseName) && cd && cd.shortening) || null;
+  block.classList.toggle("hidden", !sh);
+  if (!sh) return;
+  const r = store.results;
+  $("stagedShortNote").textContent =
+    `${caseLabel(store.caseName)} — elastic staged pass vs age-adjusted effective-modulus pass`;
+  const mm = v => fmt((v || 0) * 1000, 2);
+  const maxAbs = Math.max(...Object.values(sh).map(e => Math.abs(e.delta || 0)), 1e-12);
+  const head = `<thead><tr>
+    <th class="txt">Story</th><th>Elev m</th>
+    <th>uz elastic mm</th><th>uz time-dep mm</th>
+    <th>Δ creep+shrink mm</th><th class="txt">Δ share</th></tr></thead>`;
+  const rows = [...r.story_order].reverse()
+    .filter(s => sh[s])
+    .map(s => {
+      const e = sh[s];
+      const w = Math.min(100, Math.abs(e.delta || 0) / maxAbs * 100);
+      return `<tr>
+        <td class="txt">${esc(s)}</td>
+        <td class="dim">${fmt(r.story_elev[s], 1)}</td>
+        <td>${mm(e.uz_elastic)}</td>
+        <td>${mm(e.uz_time_dependent)}</td>
+        <td>${mm(e.delta)}</td>
+        <td class="txt"><span class="part-bar-wrap"><span class="part-bar"><i class="pr" style="width:${w.toFixed(1)}%"></i></span></span></td>
+      </tr>`;
+    }).join("");
+  $("stagedShortTable").innerHTML = head +
+    `<tbody>${rows || `<tr><td class="txt dim">No shortening entries reported</td></tr>`}</tbody>`;
+}
+
+/* ================================================================
+   v0.25 — CRACKED-SLAB ANALYSIS (POST /api/analyze/cracked)
+   Iterates a static case: slab quads whose extreme-fiber bending stress
+   exceeds fr get their stiffness scaled by cracked_ratio until the cracked
+   set stabilizes. The response is the final iteration's case results +
+   {cracking, iterations, converged, …}. Cracked quads are tinted in the
+   3D view when the cracking indices map onto results.shell_quads;
+   otherwise the card falls back to a count + per-region list.
+   ================================================================ */
+function renderCrackedCard() {
+  const sel = $("crackedCaseSelect");
+  const names = Object.keys(store.model?.cases || {});
+  sel.textContent = "";
+  for (const n of names) {
+    const o = document.createElement("option");
+    o.value = n; o.textContent = n;
+    sel.appendChild(o);
+  }
+  if (!store.crackedCase || !names.includes(store.crackedCase))
+    store.crackedCase = names[0] || null;
+  if (store.crackedCase) sel.value = store.crackedCase;
+  $("crackedRunBtn").disabled = !names.length;
+  renderCrackedResult();
+}
+
+function crackedTint(res) {
+  // cracking keys are shell_forces/shell_quads indices — mappable when they
+  // all fall inside the CURRENT results' quad list
+  const quads = store.results?.shell_quads || [];
+  if (!quads.length) return null;
+  const map = {};
+  let any = false;
+  for (const [k, e] of Object.entries(res.cracking || {})) {
+    const i = parseInt(k, 10);
+    if (!isFinite(i) || i < 0 || i >= quads.length) return null;   // unmappable
+    if (e.cracked) { map[i] = true; any = true; }
+  }
+  return any ? map : {};
+}
+
+function renderCrackedResult() {
+  const res = store.crackedResult;
+  $("crackedSummary").classList.toggle("hidden", !res);
+  $("crackedClearBtn").disabled = !res;
+  const wbox = $("crackedWarnings");
+  wbox.textContent = "";
+  wbox.classList.add("hidden");
+  if (!res) {
+    $("crackedTable").innerHTML = "";
+    $("crackedNote").textContent = "";
+    viewer.setQuadTint(null);
+    $("legendCracked").classList.add("hidden");
+    return;
+  }
+  const entries = Object.values(res.cracking || {});
+  const cracked = entries.filter(e => e.cracked);
+  // deflection readout: peak downward uz of the cracked state vs the elastic case
+  const maxDown = nd => Math.max(...Object.values(nd || {})
+    .map(d => (Array.isArray(d) && isFinite(d[2])) ? -d[2] : 0), 0);
+  const uzCr = maxDown(res.node_disp);
+  const elastic = store.results?.cases?.[res.case];
+  const uzEl = elastic ? maxDown(elastic.node_disp) : null;
+  const amp = (uzEl && uzEl > 1e-12) ? uzCr / uzEl : null;
+  $("crackedSummary").innerHTML =
+    `<span class="status-chip ${res.converged ? "st-ok" : "st-ng"}">${res.converged ? "converged" : "not converged"}</span>
+     <b>${cracked.length}</b> of ${entries.length} slab quads cracked ·
+     ${res.iterations} iteration${res.iterations === 1 ? "" : "s"} ·
+     ratio ${fmt(res.cracked_ratio, 2)} · f<sub>r</sub> factor ${fmt(res.fr_factor ?? 0.62, 2)} ·
+     max deflection ${fmt(uzCr * 1000, 2)} mm` +
+    (amp != null ? ` <span class="muted">(${fmt(amp, 2)}× elastic)</span>` : "");
+  const warns = res.cracked_warnings || [];
+  wbox.classList.toggle("hidden", !warns.length);
+  for (const w of warns) {
+    const div = document.createElement("div");
+    div.className = "po-warn-item";
+    div.textContent = `⚠ ${w}`;
+    wbox.appendChild(div);
+  }
+  // per-region rollup table (Ma/Mcr in kN·m/m)
+  const byRegion = {};
+  for (const e of entries) {
+    const g = byRegion[e.region] || (byRegion[e.region] = { n: 0, nc: 0, Ma: 0, Mcr: e.Mcr });
+    g.n++;
+    if (e.cracked) g.nc++;
+    g.Ma = Math.max(g.Ma, e.Ma || 0);
+  }
+  const head = `<thead><tr>
+    <th class="txt">Slab region</th><th>quads</th><th>cracked</th>
+    <th>max Ma kN·m/m</th><th>Mcr kN·m/m</th><th class="txt">state</th></tr></thead>`;
+  const rows = Object.entries(byRegion).map(([reg, g]) => `<tr${g.nc ? ` class="over"` : ""}>
+    <td class="txt">${esc(reg)}</td>
+    <td>${g.n}</td><td>${g.nc}</td>
+    <td>${fmt(g.Ma, 2)}</td><td>${fmt(g.Mcr, 2)}</td>
+    <td class="txt">${g.nc
+      ? `<span class="status-chip st-ng">cracked</span>`
+      : `<span class="status-chip st-ok">uncracked</span>`}</td></tr>`).join("");
+  $("crackedTable").innerHTML = head +
+    `<tbody>${rows || `<tr><td class="txt dim">No slab quads tracked — the model has no shell-behavior slabs</td></tr>`}</tbody>`;
+  // 3D tint (fallback: count + list already shown in the table)
+  const tint = crackedTint(res);
+  viewer.setQuadTint(tint);
+  $("legendCracked").classList.toggle("hidden", !(tint && Object.keys(tint).length));
+  $("crackedNote").textContent = tint
+    ? (Object.keys(tint).length
+      ? `Cracked quads are tinted amber in the 3D view · case ${res.case}`
+      : `No quad exceeded the modulus of rupture — nothing to tint · case ${res.case}`)
+    : `Cracking map indices do not match the current 3D mesh — showing the per-region rollup only · ` +
+      `cracked quad indices: ${Object.entries(res.cracking || {})
+        .filter(([, e]) => e.cracked).map(([k]) => k).slice(0, 40).join(", ") || "—"}`;
+}
+
+async function runCracked() {
+  const caseName = $("crackedCaseSelect").value;
+  if (!caseName) return;
+  const ratio = parseFloat($("crackedRatioInput").value);
+  if (!(isFinite(ratio) && ratio > 0 && ratio <= 1)) {
+    toast("Bad cracked ratio", "The cracked stiffness ratio must be in (0, 1]", "error", 5000);
+    return;
+  }
+  store.crackedCase = caseName;
+  const btn = $("crackedRunBtn");
+  btn.disabled = true;
+  $("crackedSpinner").classList.remove("hidden");
+  try {
+    store.crackedResult = await analyzeExtra("cracked",
+      { case: caseName, cracked_ratio: ratio });
+    renderCrackedResult();
+    const nc = Object.values(store.crackedResult.cracking || {})
+      .filter(e => e.cracked).length;
+    toast("Cracked analysis complete",
+      `${caseName} — ${nc} quad${nc === 1 ? "" : "s"} cracked in ${store.crackedResult.iterations} iterations`,
+      "info", 4500);
+  } catch (err) {
+    toast("Cracked analysis failed", err.message, "error", 8000);
+  } finally {
+    btn.disabled = false;
+    $("crackedSpinner").classList.add("hidden");
+  }
+}
+
+function clearCracked() {
+  store.crackedResult = null;
+  renderCrackedResult();
+}
+
 /* ---- modal tab */
 function renderModalTab() {
+  syncModalBasisUI();                              // v0.24 — basis toggle/badge
   const modal = store.results.modal;
   if (!modal || !modal.periods || !modal.periods.length) {
     $("modalTable").innerHTML = `<tbody><tr><td class="txt dim">No modal results</td></tr></tbody>`;
@@ -3574,6 +3785,84 @@ function viewModeIn3D(idx) {
   $("modeSelect").value = String(idx);
   syncOverlayUI();
   switchTab("view3d");
+}
+
+/* ---- v0.24: modal basis — eigen modes vs load-dependent Ritz vectors.
+   Ritz results are ModalResults-shaped (periods / frequencies /
+   participation / shapes + direction + warnings), so they render through
+   the SAME modal table, mode select and 3D mode-shape animation: the
+   active basis is swapped into store.results.modal (the solve's eigen
+   modes are kept in results._eigenModal and restored on "Eigen"). */
+function ritzRequestN() {
+  const v = parseInt($("ritzNInput").value, 10);
+  if (isFinite(v) && v >= 1) return v;
+  return store.model?.num_modes || (store.results?.modal?.periods?.length) || 6;
+}
+
+function applyModalBasis(modalDict, basis) {
+  const r = store.results;
+  if (!r) return;
+  if (basis !== "eigen" && !r._eigenModal) r._eigenModal = r.modal;
+  r.modal = basis === "eigen" ? (r._eigenModal || r.modal) : modalDict;
+  store.modalBasis = basis;
+  const nModes = (r.modal.periods || []).length;
+  if (store.overlay.modeIndex >= nModes) store.overlay.modeIndex = Math.max(nModes - 1, 0);
+  rebuildModeSelect();
+  renderModalTab();
+  syncOverlayUI();          // viewer re-reads results.modal.shapes (marks dirty)
+}
+
+async function setModalBasis(basis) {
+  if (!store.results) return;
+  if (basis === "eigen") {
+    applyModalBasis(null, "eigen");
+    return;
+  }
+  const direction = basis.slice(5);                // "ritz:X" -> "X"
+  const n = ritzRequestN();
+  const key = `${direction}:${n}`;
+  let res = store.ritzCache[key];
+  if (!res) {
+    $("ritzSpinner").classList.remove("hidden");
+    try {
+      res = await analyzeExtra("ritz", { n, direction });
+      store.ritzCache[key] = res;
+    } catch (err) {
+      toast("Ritz analysis failed", err.message, "error", 8000);
+      syncModalBasisUI();                          // snap the toggle back
+      return;
+    } finally {
+      $("ritzSpinner").classList.add("hidden");
+    }
+  }
+  applyModalBasis(res, basis);
+}
+
+function syncModalBasisUI() {
+  const basis = store.modalBasis;
+  document.querySelectorAll("#modalBasisToggle .seg-btn").forEach(b =>
+    b.classList.toggle("is-active", b.dataset.basis === basis));
+  const modal = store.results && store.results.modal;
+  const isRitz = basis !== "eigen" && modal;
+  $("ritzBadge").classList.toggle("hidden", !isRitz);
+  const note = $("modalBasisNote");
+  if (isRitz) {
+    const k = (modal.periods || []).length;
+    note.textContent = `Ritz basis · direction ${modal.direction || basis.slice(5)}` +
+      ` · ${k} vector${k === 1 ? "" : "s"} — participation totals ≥ the ${k}-mode eigen totals`;
+  } else {
+    note.textContent = "Periods, mass participation and participation factors Γ";
+  }
+  const wbox = $("ritzWarnings");
+  wbox.textContent = "";
+  const warns = (isRitz && modal.warnings) || [];
+  wbox.classList.toggle("hidden", !warns.length);
+  for (const w of warns) {
+    const div = document.createElement("div");
+    div.className = "po-warn-item";
+    div.textContent = `⚠ ${w}`;
+    wbox.appendChild(div);
+  }
 }
 
 /* ---- reactions tab */
@@ -3711,13 +4000,20 @@ function renderThTab() {
   const td = thData();
   if (!td) return;
   const r = store.results;
-  const tc = (store.model.th_cases || {})[store.thCase] || {};
+  // v0.24 — FNA entries reference their source TH case for the meta line
+  const baseCase = td._case || store.thCase;
+  const tc = (store.model.th_cases || {})[baseCase] || {};
   const dirX = tc.direction !== "Y";
   const story = store.thStory;
 
+  const damp = tc.damping_model === "modal" && (tc.modal_zeta || []).length
+    ? `modal ζ [${tc.modal_zeta.map(z => fmt(z, 3)).join(", ")}]`
+    : `ζ ${fmt(tc.damping ?? 0.05, 3)}`;
   $("thMeta").textContent =
     `${td.t.length} steps · ${fmt(td.t[td.t.length - 1] || 0, 1)} s · ` +
-    `dir ${dirX ? "X" : "Y"} · ζ ${fmt(tc.damping ?? 0.05, 3)}`;
+    `dir ${dirX ? "X" : "Y"} · ${damp}`;
+  $("thFnaBadge").classList.toggle("hidden", !td._fna);
+  $("thFnaBtn").disabled = !!td._fna;              // already an FNA record
 
   const box = $("thCharts");
   box.textContent = "";
@@ -3786,6 +4082,37 @@ function renderThTab() {
   } else {
     // clear a stale amber highlight when the active case is linear
     if (viewer.highlight.uids) viewer.setHighlight(null);
+  }
+}
+
+/* ---- v0.24: Fast Nonlinear Analysis of the selected TH case. The response
+   is THResults-shaped, so it renders through the SAME TH pipeline: it lands
+   in results.th_cases under "<case> · FNA" (with the FNA badge) and the
+   selector switches to it. Unsupported nonlinearity (hinges, fp isolators,
+   …) is a backend 400 whose message names direct integration — surfaced. */
+async function runFna() {
+  const td = thData();
+  if (!td) return;
+  const caseName = td._case || store.thCase;
+  const btn = $("thFnaBtn");
+  btn.disabled = true;
+  $("thFnaSpinner").classList.remove("hidden");
+  try {
+    const res = await analyzeExtra("fna", { case: caseName });
+    res._fna = true;
+    res._case = caseName;
+    const key = `${caseName} · FNA`;
+    store.results.th_cases[key] = res;
+    store.thCase = key;
+    rebuildThSelects();
+    renderThTab();
+    toast("FNA complete", `${caseName} — Wilson modal superposition with device pseudo-forces`, "info", 4000);
+  } catch (err) {
+    toast("FNA not available for this case", err.message, "error", 9000);
+  } finally {
+    btn.disabled = false;
+    $("thFnaSpinner").classList.add("hidden");
+    renderThTab();                                 // re-sync the button state
   }
 }
 
@@ -3981,9 +4308,14 @@ function renderBucklingTab() {
   const factors = bd.factors || [];
   const gravStr = Object.entries(bd.gravity || {})
     .map(([p, f]) => `${fmt(f, 2)}×${p}`).join(" + ") || "—";
+  // v0.25 — stressed-state base case (from the result when it carries it,
+  // else from the model's buckling case definition)
+  const baseCase = bd.base_case ||
+    (store.model?.buckling_cases?.[store.buckCase]?.base_case) || null;
   $("buckMeta").textContent =
     `gravity ${gravStr} · ${factors.length} mode${factors.length === 1 ? "" : "s"}` +
-    (factors.length ? ` · λ₁ = ${fmt(factors[0], 3)}` : "");
+    (factors.length ? ` · λ₁ = ${fmt(factors[0], 3)}` : "") +
+    (baseCase ? ` · from state of ${baseCase}` : "");
 
   // warnings (e.g. λ < 1)
   const wbox = $("buckWarnings");
@@ -4020,7 +4352,10 @@ function renderBucklingTab() {
 
   $("buckNote").textContent =
     "Critical load factor λ scales the applied gravity state to the buckling load. " +
-    "λ < 1 means the structure buckles below the applied gravity.";
+    "λ < 1 means the structure buckles below the applied gravity." +
+    (baseCase
+      ? ` Base state ${baseCase} is held (never scaled) — λ multiplies this case's gravity only.`
+      : "");
 }
 
 function viewBucklingModeIn3D(caseName, idx) {
@@ -6791,6 +7126,15 @@ async function doRun() {
     store.vibResult = null;
     clearVibTimer();
     viewer.setMemberColors(null);
+    // v0.24/v0.25 — fresh solve: eigen basis, empty Ritz cache, no cracked state
+    store.modalBasis = "eigen";
+    store.ritzCache = {};
+    store.crackedResult = null;
+    viewer.setQuadTint(null);
+    $("legendCracked").classList.add("hidden");
+    if (!$("ritzNInput").value)
+      $("ritzNInput").value = String(store.model?.num_modes ||
+        (results.modal?.periods?.length) || 6);
     if (!caseNames().includes(store.caseName)) store.caseName = null;
     rebuildCaseSelect();
     rebuildModeSelect();

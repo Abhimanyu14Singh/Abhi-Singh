@@ -1032,6 +1032,35 @@ export function mockResults(model) {
       udlOf(sc.pattern || "DEAD"));
     const pct = maxOne > 1e-9 ? +(100 * maxDiff / maxOne).toFixed(3) : 0.0;
     stagedState.comparison = { column_axial_max_diff_pct: pct, oneshot_case: oneshot };
+    /* v0.25 — time-dependent staged runs report per-story column shortening:
+       elastic staged pass vs the AAEM creep/shrinkage pass (χ = 0.8; the
+       shrinkage share grows with elevation — cumulative -eps_sh·z). */
+    if (sc.time_dependent && isFinite(sc.time_dependent.days_per_story)) {
+      const td = sc.time_dependent;
+      const chi = 0.8;
+      const phi = isFinite(td.creep_coeff) ? td.creep_coeff : 2.0;
+      const eps = isFinite(td.shrinkage) ? td.shrinkage : 300e-6;
+      const shortening = {};
+      for (const s of storyOrder) {
+        const z = storyElev[s];
+        let sum = 0, n = 0;
+        for (const [t, p] of Object.entries(nodes)) {
+          if (Math.abs(p[2] - z) > 1e-6) continue;
+          const d = stagedState.node_disp[t];
+          if (!d) continue;
+          sum += d[2]; n++;
+        }
+        const uzEl = n ? sum / n : 0;
+        // AAEM closed form on the held-load share + member shrinkage -eps·z
+        const uzTd = uzEl * (1 + chi * phi) - eps * z * 0.55 * jit(0.04);
+        shortening[s] = {
+          uz_elastic: +uzEl.toFixed(7),
+          uz_time_dependent: +uzTd.toFixed(7),
+          delta: +(uzTd - uzEl).toFixed(7),
+        };
+      }
+      stagedState.shortening = shortening;
+    }
     staged[name] = stagedState;
   }
 
@@ -1131,7 +1160,18 @@ export function mockResults(model) {
     const warnings = [];
     if (factors.length && factors[0] < 1)
       warnings.push(`critical load factor λ₁ = ${factors[0]} < 1 — the structure buckles below the applied gravity load`);
-    buckling[name] = { factors, modes, gravity: { ...(bc.gravity || {}) }, warnings };
+    /* v0.25 — buckling from a stressed base state: the held base axials eat a
+       share of the capacity (Kg linear in N ⇒ λ(base) = λ(none) − P0 exactly
+       for a shared distribution — mocked as a flat ~35 % knockdown). */
+    const baseCase = (typeof bc.base_case === "string" && bc.base_case) ? bc.base_case : null;
+    if (baseCase) {
+      for (let i = 0; i < factors.length; i++)
+        factors[i] = +Math.max(factors[i] * 0.65, 0.05).toFixed(3);
+      if (factors.length && factors[0] < 1 && !warnings.length)
+        warnings.push(`critical load factor λ₁ = ${factors[0]} < 1 — the structure buckles below the applied gravity load`);
+    }
+    buckling[name] = { factors, modes, gravity: { ...(bc.gravity || {}) }, warnings,
+                       base_case: baseCase };
   }
 
   /* ---- v0.8: center of mass / center of rigidity per story. Present only
@@ -3022,4 +3062,131 @@ export function mockDesignerPmm(model, { name, axis = "33" } = {}) {
     properties: { A: pr.A, I33: pr.I33, I22: pr.I22, J: pr.J,
       cy: pr.cy, cz: pr.cz },
   };
+}
+
+/* ================================================================
+   v0.24/v0.25 — mock analysis endpoints: Ritz vectors, FNA, cracked slabs
+   ================================================================ */
+
+/** Mock POST /api/analyze/ritz — load-dependent Ritz vectors.
+    The mock relabels the eigen mock: takes the first n eigen modes whose
+    sway matches the requested direction ("XY" keeps both), renumbers them
+    and returns the ModalResults-compatible RitzResults shape
+    {periods, frequencies, participation, shapes, direction, warnings}. */
+export function mockRitz(model, body = {}) {
+  const direction = ["X", "Y", "XY"].includes(body.direction) ? body.direction : "X";
+  const n = (Number.isInteger(body.n) && body.n >= 1) ? body.n
+    : (model.num_modes || 6);
+  const modal = mockResults(model).modal;
+  const keep = [];
+  modal.participation.forEach((p, i) => {
+    const isX = (p.ux || 0) >= (p.uy || 0) && (p.ux || 0) >= (p.rz || 0);
+    const isY = (p.uy || 0) > (p.ux || 0) && (p.uy || 0) >= (p.rz || 0);
+    if (direction === "XY" || (direction === "X" && isX) ||
+        (direction === "Y" && isY) || (!isX && !isY)) keep.push(i);
+  });
+  const idx = keep.slice(0, n);
+  const warnings = [];
+  if (idx.length < n)
+    warnings.push(`load-reachable subspace exhausted after ${idx.length} of ` +
+      `${n} requested Ritz vectors (direction ${direction})`);
+  const participation = idx.map((src, k) => ({
+    ...modal.participation[src],
+    mode: k + 1,
+    // the Ritz guarantee: total participation ≥ the same-count eigen total —
+    // nudge the retained modes up a whisker to mimic the folded-in residual
+    ux: Math.min((modal.participation[src].ux || 0) * 1.04, 1),
+    uy: Math.min((modal.participation[src].uy || 0) * 1.04, 1),
+  }));
+  return {
+    periods: idx.map(i => modal.periods[i]),
+    frequencies: idx.map(i => modal.frequencies[i]),
+    participation,
+    shapes: Object.fromEntries(idx.map((src, k) =>
+      [String(k + 1), JSON.parse(JSON.stringify(modal.shapes[String(src + 1)] || {}))])),
+    direction,
+    warnings,
+  };
+}
+
+/** Mock POST /api/analyze/fna — Fast Nonlinear Analysis of one TH case.
+    FNA of a linear (device-link-only) case IS modal superposition, so the
+    mock returns the standard TH mock record for that case with the FNA
+    metadata; hinged (nonlinear) cases throw the backend's honest-scope
+    error naming direct integration as the fallback. */
+export function mockFna(model, body = {}) {
+  const name = body.case;
+  const tc = (model.th_cases || {})[name];
+  if (!tc) throw new Error(`Unknown TH case '${name}'`);
+  if (tc.nonlinear)
+    throw new Error(`FNA supports device-link nonlinearity only — TH case ` +
+      `'${name}' has plastic hinges; use run_time_history (direct ` +
+      `integration) instead`);
+  const rec = JSON.parse(JSON.stringify(mockResults(model).th_cases[name]));
+  rec.case = name;
+  rec.method = "FNA";
+  return rec;
+}
+
+/** Mock POST /api/analyze/cracked — floor-cracking iterative stiffness.
+    Returns the final iteration's case-results shape + {cracking, iterations,
+    converged, cracked_ratio, fr_factor, cracked_warnings, case, method}.
+    The mock cracks a midspan band of every slab region (largest bending)
+    and amplifies vertical deflections by the softened stiffness share. */
+export function mockCracked(model, body = {}) {
+  const name = body.case;
+  if (!model.cases || !model.cases[name])
+    throw new Error(`Unknown static case '${name}'`);
+  const ratio = body.cracked_ratio != null ? +body.cracked_ratio : 0.35;
+  if (!(isFinite(ratio) && ratio > 0 && ratio <= 1))
+    throw new Error(`cracked_ratio must be a finite value in (0, 1], got ${body.cracked_ratio}`);
+  const r = mockResults(model);
+  const cd = JSON.parse(JSON.stringify(r.cases[name] ||
+    Object.values(r.cases)[0] || {}));
+  const regionOf = {};
+  for (const sh of (model.shells || [])) regionOf[sh.uid] = sh;
+  const cracking = {};
+  const quads = r.shell_quads || [];
+  quads.forEach((q, i) => {
+    const sh = regionOf[q.region];
+    if (!sh || sh.kind !== "slab") return;         // walls never crack here
+    // quad centre in region-plan coordinates → midspan band cracks
+    const c = [0, 0];
+    for (const tg of q.nodes) {
+      const p = r.nodes[tg];
+      c[0] += p[0] / 4; c[1] += p[1] / 4;
+    }
+    const xs = sh.corners.map(p => p[0]), ys = sh.corners.map(p => p[1]);
+    const Lu = Math.max(...xs) - Math.min(...xs) || 1;
+    const Lv = Math.max(...ys) - Math.min(...ys) || 1;
+    const u = (c[0] - Math.min(...xs)) / Lu, v = (c[1] - Math.min(...ys)) / Lv;
+    // sagging bubble: Ma peaks at midspan; Mcr from fr·t²/6 (t = 150 mm slab)
+    const bubble = Math.sin(Math.PI * Math.min(Math.max(u, 0), 1)) *
+      Math.sin(Math.PI * Math.min(Math.max(v, 0), 1));
+    const Mcr = 11.6;                              // 0.62·√30 MPa · 0.15²/6 → kN·m/m
+    const Ma = +(Mcr * 1.6 * bubble).toFixed(3);
+    cracking[String(i)] = {
+      region: q.region,
+      cracked: Ma > Mcr,
+      Ma,
+      Mcr,
+    };
+  });
+  const nCracked = Object.values(cracking).filter(e => e.cracked).length;
+  // cracked midspans soften the floor: scale vertical node displacements by
+  // a share of 1/ratio (all-cracked ⇒ exactly 1/ratio, per the contract pin)
+  const nTracked = Object.keys(cracking).length || 1;
+  const soften = 1 + (1 / ratio - 1) * (nCracked / nTracked);
+  for (const d of Object.values(cd.node_disp || {}))
+    if (Array.isArray(d)) d[2] = +(d[2] * soften).toFixed(9);
+  cd.cracking = cracking;
+  cd.iterations = nCracked ? 3 : 1;
+  cd.converged = true;
+  cd.cracked_ratio = ratio;
+  cd.fr_factor = 0.62;
+  cd.cracked_warnings = nCracked ? [] :
+    ["no slab quad exceeded the modulus of rupture — the elastic case governs"];
+  cd.case = name;
+  cd.method = "cracked";
+  return cd;
 }

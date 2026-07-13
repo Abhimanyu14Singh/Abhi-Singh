@@ -412,6 +412,7 @@
               <span class="hidden" id="legendLink"><i style="background:var(--green)"></i>link</span>
               <span class="hidden" id="legendSpring"><i style="background:#2fbf74"></i>spring</span>
               <span class="hidden" id="legendDeformed"><i style="background:var(--accent)"></i>deformed</span>
+              <span class="hidden" id="legendCracked"><i class="area" style="background:rgba(224,120,60,.45);border-color:rgba(230,140,80,.9)"></i>cracked quad</span>
             </div>
             <div class="contour-legend hidden" id="contourLegend">
               <div class="cl-title" id="contourLegendTitle">M11 <span class="unit">kN·m/m</span></div>
@@ -513,6 +514,56 @@
               </div>
             </div>
           </div>
+
+          <!-- v0.25: staged time-dependent per-story column shortening -->
+          <div class="diag-block hidden" id="stagedShortBlock">
+            <div class="diag-head">
+              <div>
+                <h3>Column shortening <span class="muted">staged · creep + shrinkage</span></h3>
+                <p class="muted" id="stagedShortNote"></p>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table class="data-table" id="stagedShortTable"></table>
+            </div>
+            <p class="muted diag-legend">
+              Mean cumulative vertical displacement at each story's column tops —
+              <b>elastic</b> staged pass vs the <b>time-dependent</b> (age-adjusted
+              effective modulus) pass; <b>Δ</b> is the creep + shrinkage share.
+              Negative = downward.
+            </p>
+          </div>
+
+          <!-- v0.25: floor-cracking iterative stiffness (POST /api/analyze/cracked) -->
+          <div class="diag-block" id="crackedCard">
+            <div class="diag-head">
+              <div>
+                <h3>Cracked-slab analysis <span class="muted">iterative stiffness · ACI 318 modulus of rupture</span></h3>
+                <p class="muted">Iterates a static case — slab quads whose extreme-fiber bending stress
+                  exceeds f<sub>r</sub> get their stiffness scaled by the cracked ratio, until the cracked set stabilizes.</p>
+              </div>
+            </div>
+            <div class="design-form">
+              <div class="design-form-row">
+                <label class="rs-field"><span>static case</span>
+                  <select id="crackedCaseSelect" title="Static load case to iterate"></select></label>
+                <label class="rs-field"><span>cracked ratio</span>
+                  <input id="crackedRatioInput" type="number" min="0.05" max="1" step="0.05" value="0.35"
+                    title="Flat stiffness retention of a cracked quad (Branson simplified) — in (0, 1]"></label>
+                <button class="btn btn-run design-check" id="crackedRunBtn"
+                  title="Run the cracked-slab iteration and tint cracked quads in the 3D view">
+                  <span class="spinner hidden" id="crackedSpinner"></span><span>Run</span></button>
+                <button class="btn design-check" id="crackedClearBtn" disabled
+                  title="Clear the cracked result and the 3D quad tint">Clear</button>
+              </div>
+            </div>
+            <div class="design-summary hidden" id="crackedSummary"></div>
+            <div class="po-warnings hidden" id="crackedWarnings"></div>
+            <div class="table-scroll">
+              <table class="data-table" id="crackedTable"></table>
+            </div>
+            <p class="muted diag-legend" id="crackedNote"></p>
+          </div>
         </div>
       </section>
 
@@ -524,9 +575,25 @@
         </div>
         <div class="pane-content hidden" id="content-modal">
           <div class="pane-tools">
-            <span class="muted">Periods, mass participation and participation factors Γ</span>
+            <!-- v0.24: modal basis — eigen modes or load-dependent Ritz vectors -->
+            <div class="seg-toggle" id="modalBasisToggle"
+              title="Modal basis — eigenvectors (from the solve) or load-dependent Ritz vectors (POST /api/analyze/ritz)">
+              <button class="seg-btn is-active" data-basis="eigen">Eigen</button>
+              <button class="seg-btn" data-basis="ritz:X">Ritz X</button>
+              <button class="seg-btn" data-basis="ritz:Y">Ritz Y</button>
+              <button class="seg-btn" data-basis="ritz:XY">Ritz XY</button>
+            </div>
+            <label class="rs-field ritz-n-field" title="Number of Ritz vectors requested (fewer may come back when the load-reachable subspace is exhausted)">
+              <span>vectors</span>
+              <input id="ritzNInput" type="number" min="1" max="60" step="1">
+            </label>
+            <span class="spinner hidden" id="ritzSpinner"></span>
+            <span class="prelim-badge nl-badge hidden" id="ritzBadge"
+              title="Load-dependent Ritz vectors (WYD) — participation totals are ≥ the same-count eigen totals">RITZ</span>
+            <span class="muted" id="modalBasisNote">Periods, mass participation and participation factors Γ</span>
             <button class="chip csv-btn" id="csvModal" title="Download this table as CSV (unrounded)">⬇ CSV</button>
           </div>
+          <div class="po-warnings hidden" id="ritzWarnings"></div>
           <div class="table-scroll">
             <table class="data-table" id="modalTable"></table>
           </div>
@@ -765,6 +832,12 @@
               <label class="case-select-wrap"><span>Story</span>
                 <select id="thStorySelect" class="case-select"></select></label>
               <span class="muted" id="thMeta"></span>
+              <!-- v0.24: Fast Nonlinear Analysis of the selected TH case -->
+              <span class="prelim-badge nl-badge hidden" id="thFnaBadge"
+                title="Fast Nonlinear Analysis — modal superposition of the linear structure with nonlinear device-link pseudo-forces (POST /api/analyze/fna)">FNA</span>
+              <button class="btn btn-small" id="thFnaBtn"
+                title="Run Fast Nonlinear Analysis (Wilson FNA) on this TH case — device-link nonlinearity only; unsupported cases report the direct-integration fallback">
+                <span class="spinner hidden" id="thFnaSpinner"></span>Run FNA</button>
             </div>
             <button class="chip csv-btn" id="csvTh" title="Download the peaks table as CSV (unrounded)">⬇ CSV</button>
           </div>

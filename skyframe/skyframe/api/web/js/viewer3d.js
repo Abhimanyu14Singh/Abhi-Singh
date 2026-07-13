@@ -106,6 +106,7 @@ export class Viewer3D {
     this.labelsOn = true;
     this.highlight = { uids: null, color: "#e0a020" };            // v0.6
     this.memberColors = null;                                     // v0.18 {uid: css}
+    this.quadTint = null;                                         // v0.25 {quad idx: css|true}
 
     // camera
     this.yaw = 0.7; this.pitch = 0.42; this.dist = 40;
@@ -193,6 +194,14 @@ export class Viewer3D {
       virtual-work shares). Highlight/hover still win. Falsy/empty clears. */
   setMemberColors(map) {
     this.memberColors = (map && Object.keys(map).length) ? map : null;
+    this._dirty = true;
+  }
+
+  /** v0.25 — per-quad tint map {shell_quads index: cssColor | true} (cracked
+      slab quads). Indices key into results.shell_quads; `true` uses the
+      default cracked amber. Falsy/empty clears. */
+  setQuadTint(map) {
+    this.quadTint = (map && Object.keys(map).length) ? map : null;
     this._dirty = true;
   }
 
@@ -769,6 +778,36 @@ export class Viewer3D {
         ctx.globalAlpha = 1;
         this._segsScreen.push({ x1: s.a.x, y1: s.a.y, x2: s.b.x, y2: s.b.y, seg });
       }
+    }
+
+    // ---- v0.25: per-quad tint (cracked slab quads) — translucent overlay
+    // painted after the depth-sorted scene so coplanar shell fills never
+    // hide it; skipped under deformed/modal/buckling overlays.
+    if (!overlayActive && this.quadTint && this.results &&
+        this.results.shell_quads && this.results.shell_quads.length && this._nodeXYZ) {
+      const DEFAULT_TINT = "rgba(224, 120, 60, 0.45)";
+      this.results.shell_quads.forEach((q, i) => {
+        const tint = this.quadTint[i] !== undefined ? this.quadTint[i] : this.quadTint[String(i)];
+        if (!tint) return;
+        const pts = [];
+        let ok = true;
+        for (const t of q.nodes) {
+          const p = this._nodeXYZ[t];
+          if (!p) { ok = false; break; }
+          const pc = P.toCam(p);
+          if (pc[2] < P.near) { ok = false; break; }
+          pts.push(P.proj(pc));
+        }
+        if (!ok) return;
+        ctx.beginPath();
+        pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.closePath();
+        ctx.fillStyle = typeof tint === "string" ? tint : DEFAULT_TINT;
+        ctx.fill();
+        ctx.strokeStyle = "rgba(230, 140, 80, 0.9)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      });
     }
 
     // ---- FE shell mesh lines (subtle, once analyzed)
