@@ -3421,3 +3421,112 @@ executed by `tests/test_perf_api.py::test_public_api_doc_examples`.
 * No endpoint changes.  `POST /api/analyze` payloads are bit-identical
   to v0.25 (modal caveat above applies to consecutive runs of ANY
   version).
+
+# v1.12 additions — ETABS material-property parity (analysis-only)
+
+Expands the `Material` dataclass toward ETABS material definitions.  ALL
+new fields are optional and keyword-defaulted; the positional signature
+`Material(name, E, nu, unit_weight)` is preserved and old models load
+unchanged (`material_type="concrete"`, every optional `None`), so every
+engine fallback fires exactly as before — the full pre-change test suite
+is byte-identical.  Scope is ANALYSIS-ONLY: no design-code fields (phi
+factors, detailing, code family) are added, and no case/combo type
+changes.
+
+## `Material` (`skyframe.core.model`)
+
+New fields appended AFTER `unit_weight` (defaults in parens):
+
+```
+material_type: str  = "concrete"   # one of MATERIAL_TYPES
+symmetry:      str  = "isotropic"  # "isotropic" | "uniaxial"
+mass_density:  float|None = None   # tonne/m^3; None => unit_weight/g
+alpha:         float|None = None   # 1/degC;   None => model.thermal_alpha
+fc:            float|None = None   # kPa (concrete f'c)
+fy:            float|None = None   # kPa (steel/rebar/tendon Fy)
+fu:            float|None = None   # kPa (steel/rebar/tendon Fu)
+Ry:            float = 1.1         # expected/specified yield ratio
+damping:       float = 0.0         # per-material modal damping ratio
+lightweight:   bool  = False       # lightweight-concrete flag
+lam:           float = 1.0         # lightweight lambda (fr knockdown)
+color:         str   = ""          # display hex swatch (cosmetic)
+notes:         str   = ""          # free text (cosmetic)
+```
+
+Module constants: `MATERIAL_TYPES = ("steel","concrete","rebar","tendon",
+"masonry","aluminum","coldformed","other")`, `MATERIAL_SYMMETRY =
+("isotropic","uniaxial")` (orthotropic/anisotropic are REJECTED by
+validation — out of analysis scope).
+
+Derived read-only properties: `G = E/(2*(1+nu))` (unchanged);
+`mass_per_volume` -> `mass_density if set else unit_weight/G_ACCEL` (the
+SINGLE source both self-mass paths read); `Fye` -> `Ry*fy` (None when fy
+None); `Fue` -> `Ry*fu` (None when fu None).
+
+`to_dict` = `asdict(self)` plus echoed derived `G`, `mass_per_volume`,
+`Fye`, `Fue` (for UI/report; never re-read on load).  Optional None
+fields serialize as JSON `null`.  `from_dict` reads every new key
+defensively (numeric optionals through `_optf` -> None on absent/null,
+else `float`), so `BuildingModel.from_dict(old.to_dict())` round-trips
+all fields exactly.
+
+Validation (in `BuildingModel.validate`, per material): `material_type`
+in `MATERIAL_TYPES`; `symmetry` in `MATERIAL_SYMMETRY`; `E` finite `> 0`;
+isotropic `nu` in `[0, 0.5)` (skipped for uniaxial); `mass_density` (if
+set) finite `> 0`; `alpha` (if set) finite; `fc`/`fy`/`fu` (if set)
+finite `> 0`; `Ry` in `(0, 2]`; `damping` in `[0, 1)`; `lam` finite
+`> 0`.
+
+Library: `default_material_library()` -> the four ETABS built-ins
+(`A992Fy50` steel, `4000Psi` concrete, `A615Gr60` rebar, `A416Gr270`
+tendon) in SI consistent units; `library_material(name)` and
+`BuildingModel.add_library_material(name)` (KeyError on unknown name).
+
+## Engine wiring (analysis wins; None/default is bit-identical)
+
+* **Per-material thermal alpha.**  `_apply_thermal` and the staged
+  shrinkage->dT pattern use `mat.alpha` when set, else
+  `model.thermal_alpha` (precedence: material over model-wide).  The
+  `eps_sh -> dT` identity `alpha*dT*L = -eps_sh*L` holds for any alpha,
+  so the same alpha is used for the load and the fixed-end force.
+* **fc / fy pickup.**  No code change at the six consumer sites
+  (engine layered shell + fiber PMM, `cracked.py`, `hinges.py`): they
+  already read `getattr(mat,'fc'/'fy',...) or <fallback>`.  With the
+  attribute now present, a set value flows through and `None` still
+  falls back (`None or X == X`).
+* **Ry -> expected strength.**  `hinges.auto_backbone` defaults
+  `expected_factor` to `mat.Ry`; `PushoverCase.hinge_params['expected
+  _factor']` (and the function kwarg) still override.  `Ry == 1.1` is
+  bit-identical.
+* **Lightweight lambda.**  `cracked.py` modulus of rupture
+  `fr = fr_factor * mat.lam * sqrt(fc'[MPa])`.  `lam == 1.0` is
+  bit-identical.
+* **mass_density -> self-mass.**  `BuildingModel.mass_source_mode`
+  (`"weight"` | `"element_self_mass"`, one of `MASS_SOURCE_MODES`,
+  round-tripped).  `"weight"` (default) is the unchanged gravity-derived
+  story-mass path.  `"element_self_mass"` lumps `mat.mass_per_volume *
+  volume` (frame `A*L`, shell `t*net_area`) as translational nodal mass
+  (dof 1..3), split equally over element end/corner nodes, decoupling
+  mass from weight.  Both paths read `Material.mass_per_volume`, so with
+  no material overriding `mass_density` the element total equals the
+  weight/g total.
+
+`fu` is stored/round-tripped and reserved for the fiber/hinge hardening
+ceiling (no fallback change until consumed).
+
+## API
+
+* `GET  /api/materials/library` — the four ETABS default materials as
+  `{name: Material.to_dict()}` (derived `G`/`Fye`/`Fue`/`mass_per_volume`
+  echoed).
+* `POST /api/materials/library/<name>` — add one library material to the
+  current model (404 on unknown name).
+* `POST /api/model` round-trips every new `Material` field and
+  `model.mass_source_mode`; pre-v1.12 files load unchanged.
+
+Tests: `tests/test_materials.py` (38 cases) — round-trip, per-type
+library defaults, back-compat minimal/null load, validation, per-material
+alpha changing a thermal axial force (None == model default), mass_density
+scaling a modal period (None == weight/g, 2x -> sqrt(2) period, element
+total == rho*V), and fc/fy/Ry/lambda flowing into the cracked-slab Mcr and
+the ASCE-41 hinge backbone with the None fallback preserved.

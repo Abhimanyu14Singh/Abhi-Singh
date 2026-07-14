@@ -257,6 +257,18 @@ v0.25 additions (analysis parity II):
   ``shortening`` report) — 400 on bad values, pre-v0.25 files load
   unchanged.
 
+v1.12 (ETABS material parity):
+* ``GET  /api/materials/library`` — built-in ETABS default materials
+  (A992Fy50, 4000Psi, A615Gr60, A416Gr270) as ``{name: Material dict}``
+  with derived ``G``/``Fye``/``Fue``/``mass_per_volume`` echoes.
+* ``POST /api/materials/library/<name>`` — add one library material to the
+  current model (404 on an unknown name).
+* ``POST /api/model`` round-trips every new ``Material`` field
+  (``material_type``, ``symmetry``, ``mass_density``, ``alpha``, ``fc``,
+  ``fy``, ``fu``, ``Ry``, ``damping``, ``lightweight``, ``lam``, ``color``,
+  ``notes``) and ``model.mass_source_mode`` ("weight" | "element_self_mass");
+  pre-v1.12 files load unchanged (type=concrete, all optionals null).
+
 Saved models live as ``<name>.skyframe.json`` files in ``~/.skyframe/models``
 (override with the ``SKYFRAME_MODELS_DIR`` environment variable; the
 directory is created on demand).  Names must match ``[A-Za-z0-9 _-]{1,60}``.
@@ -281,6 +293,7 @@ from skyframe.core.codes import (apply_asce7_combinations, asce7_elf,
                                  live_load_reduction, make_rs_case_from_code,
                                  reduce_live_demands)
 from skyframe.core.model import (BuildingModel, GridSystem,
+                                 default_material_library,
                                  make_notional_pattern)
 from skyframe.core.sections_library import library_to_dict
 
@@ -480,6 +493,26 @@ def create_app() -> Flask:
     @app.get("/api/sections/library")
     def sections_library():
         return jsonify(library_to_dict())
+
+    # ------------------------------------------ v1.12: ETABS material library
+    @app.get("/api/materials/library")
+    def materials_library():
+        """Built-in ETABS-standard default materials (SI consistent units).
+
+        Returns ``{name: Material.to_dict()}`` including derived G / Fye /
+        Fue / mass_per_volume echoes; POST /api/model round-trips every field.
+        """
+        return jsonify({k: v.to_dict()
+                        for k, v in default_material_library().items()})
+
+    @app.post("/api/materials/library/<name>")
+    def add_library_material(name: str):
+        """Add a named default-library material to the current model (v1.12)."""
+        try:
+            _state["model"].add_library_material(name)
+        except KeyError as exc:
+            return jsonify({"error": str(exc)}), 404
+        return jsonify(_state["model"].to_dict())
 
     # --------------------------------------------- v0.4: auto wind pattern
     @app.post("/api/pattern/wind")

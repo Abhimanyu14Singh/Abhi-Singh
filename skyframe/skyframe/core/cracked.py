@@ -166,7 +166,11 @@ def cracked_analysis(model: BuildingModel, case_name: str,
                 ssec = model.shell_sections[region.section]
                 mat = model.materials[ssec.material]
                 fc_kpa = getattr(mat, "fc", 0.0) or fc_from_E(mat.E)
-                fr_kpa = fr_factor * math.sqrt(fc_kpa / 1000.0) * 1000.0
+                # v1.12: lightweight-concrete knockdown lambda on the modulus
+                # of rupture (fr = fr_factor*lam*sqrt(fc'[MPa])); lam defaults
+                # to 1.0 so normal-weight concrete is bit-identical.
+                lam = getattr(mat, "lam", 1.0)
+                fr_kpa = fr_factor * lam * math.sqrt(fc_kpa / 1000.0) * 1000.0
                 t = ssec.total_thickness
                 quad_meta[qi] = {"region": region.uid,
                                  "Mcr": fr_kpa * t * t / 6.0}

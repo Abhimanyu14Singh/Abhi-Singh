@@ -152,7 +152,7 @@ def concrete_hinge_backbone(b: float, h: float, fc: float, E: float,
 
 
 def auto_backbone(model: BuildingModel, m: FrameMember, *,
-                  expected_factor: float = RY_DEFAULT, rho: float = 0.01,
+                  expected_factor: Optional[float] = None, rho: float = 0.01,
                   rho_prime: float = 0.0,
                   fy_bar: float = 420000.0) -> Optional[dict]:
     """Backbone for one ``hinges == "auto_m3"`` member, or None + reason.
@@ -162,17 +162,23 @@ def auto_backbone(model: BuildingModel, m: FrameMember, *,
     default, documented); otherwise the concrete path needs drawing dims
     b/h > 0.  Returns ``None`` when neither applies (the engine warns and
     leaves the member elastic).
+
+    v1.12: ``expected_factor`` defaults to the material's ``Ry`` (1.1 for
+    steel, bit-identical to the old ``RY_DEFAULT``); an explicit kwarg (from
+    ``PushoverCase.hinge_params['expected_factor']``) still overrides it.
     """
     sec = model.sections[m.section]
     mat = model.materials[sec.material]
     E = mat.E
     I = sec.I33 * sec.mod_I33
     L = m.length
+    ef = (expected_factor if expected_factor is not None
+          else getattr(mat, "Ry", RY_DEFAULT))
     props = design_properties(sec.name)
     if props is not None:
         Fy = getattr(mat, "fy", 0.0) or 345000.0          # kPa (A992)
         return steel_hinge_backbone(props, Fy, E, I, L,
-                                    expected_factor=expected_factor)
+                                    expected_factor=ef)
     if sec.b > 0.0 and sec.h > 0.0:
         from skyframe.design.wall import fc_from_E
         fc = getattr(mat, "fc", 0.0) or fc_from_E(E)

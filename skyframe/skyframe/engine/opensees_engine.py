@@ -2953,27 +2953,34 @@ class OpenSeesEngine:
                 return
             node_mass.setdefault(ntag, [0.0] * 6)[dof - 1] += value
 
-        story_masses = model.compute_story_masses()
-        lx, ly = model.plan_extents()
-        for s in model.stories:
-            m = story_masses.get(s.name, 0.0)
-            if m <= 0.0:
-                continue
-            if s.name in asm.masters:
-                master = asm.masters[s.name]
-                add(master, 1, m)
-                add(master, 2, m)
-                add(master, 6, m * (lx * lx + ly * ly) / 12.0)
-            else:
-                nodes = asm.story_nodes[s.name]
-                if not nodes:
-                    warnings.warn(f"Story {s.name!r}: mass {m} t has no nodes "
-                                  "to lump onto; ignored")
+        # v1.12: two mutually exclusive self-mass sources.  "weight" (default)
+        # lumps the gravity-derived story masses exactly as before; the opt-in
+        # "element_self_mass" mode lumps per-element ``mass_per_volume*volume``
+        # instead (mass decoupled from weight, ETABS parity).
+        if getattr(model, "mass_source_mode", "weight") == "element_self_mass":
+            self._add_element_self_mass(asm, add)
+        else:
+            story_masses = model.compute_story_masses()
+            lx, ly = model.plan_extents()
+            for s in model.stories:
+                m = story_masses.get(s.name, 0.0)
+                if m <= 0.0:
                     continue
-                each = m / len(nodes)
-                for t in nodes:
-                    add(t, 1, each)
-                    add(t, 2, each)
+                if s.name in asm.masters:
+                    master = asm.masters[s.name]
+                    add(master, 1, m)
+                    add(master, 2, m)
+                    add(master, 6, m * (lx * lx + ly * ly) / 12.0)
+                else:
+                    nodes = asm.story_nodes[s.name]
+                    if not nodes:
+                        warnings.warn(f"Story {s.name!r}: mass {m} t has no "
+                                      "nodes to lump onto; ignored")
+                        continue
+                    each = m / len(nodes)
+                    for t in nodes:
+                        add(t, 1, each)
+                        add(t, 2, each)
 
         for nm in model.nodal_masses:
             t = self._find_node(asm, nm.point)
@@ -2986,6 +2993,69 @@ class OpenSeesEngine:
             for dof in range(1, 7):
                 if mv[dof - 1] > 0.0:
                     asm.mass_map[(t, dof)] = mv[dof - 1]
+
+    def _add_element_self_mass(self, asm: _Assembly, add) -> None:
+        """Lump per-element self-mass as translational nodal mass (v1.12).
+
+        Each frame member contributes ``mat.mass_per_volume * A * L`` split
+        equally to its two end nodes; each shell region contributes
+        ``mat.mass_per_volume * t * net_area`` split equally over its corner
+        nodes.  ``Material.mass_per_volume`` is the single source (explicit
+        ``mass_density`` when set, else ``unit_weight/g``), so with no material
+        overriding ``mass_density`` this equals the weight/g total, only lumped
+        at element nodes instead of story masters.  Only translational DOFs
+        (1..3) receive mass.  An element whose geometric node is not an FE
+        structural node (e.g. displaced by a rigid-end offset) is skipped with
+        a ``UserWarning`` rather than losing the whole build.
+        """
+        model = self.model
+
+        def node_at(point) -> Optional[int]:
+            try:
+                return self._find_node(asm, point)
+            except ValueError:
+                return None
+
+        for m in model.members:
+            sec = model.sections.get(m.section)
+            mat = model.materials.get(sec.material) if sec else None
+            if sec is None or mat is None:
+                continue
+            mass = mat.mass_per_volume * sec.A * m.length
+            if mass <= 0.0:
+                continue
+            tags = [node_at(m.pi), node_at(m.pj)]
+            tags = [t for t in tags if t is not None]
+            if not tags:
+                warnings.warn(f"element_self_mass: member {m.uid!r} has no FE "
+                              "end node; its self-mass is ignored", UserWarning)
+                continue
+            each = mass / len(tags)
+            for t in tags:
+                add(t, 1, each)
+                add(t, 2, each)
+                add(t, 3, each)
+
+        for r in model.shells:
+            ssec = model.shell_sections.get(r.section)
+            mat = model.materials.get(ssec.material) if ssec else None
+            if ssec is None or mat is None:
+                continue
+            mass = mat.mass_per_volume * ssec.total_thickness * r.net_area
+            if mass <= 0.0:
+                continue
+            tags = [node_at(c) for c in r.corners]
+            tags = [t for t in tags if t is not None]
+            if not tags:
+                warnings.warn(f"element_self_mass: shell {r.uid!r} has no FE "
+                              "corner node; its self-mass is ignored",
+                              UserWarning)
+                continue
+            each = mass / len(tags)
+            for t in tags:
+                add(t, 1, each)
+                add(t, 2, each)
+                add(t, 3, each)
 
     @staticmethod
     def _eff_props(sec: FrameSection) -> Tuple[float, float, float, float]:
@@ -3574,7 +3644,12 @@ class OpenSeesEngine:
         sec = model.sections[member.section]
         mat = model.materials[sec.material]
         A_eff = sec.A * sec.mod_A
-        alpha = getattr(model, "thermal_alpha", 1.2e-5)
+        # v1.12: prefer the material's own thermal-expansion coefficient;
+        # fall back to the model-wide thermal_alpha when the material leaves
+        # ``alpha`` unset (bit-identical to the pre-v1.12 path).
+        mat_alpha = getattr(mat, "alpha", None)
+        alpha = (mat_alpha if mat_alpha is not None
+                 else getattr(model, "thermal_alpha", 1.2e-5))
         N = mat.E * A_eff * alpha * dT           # E*A*alpha*dT (kN)
         xax, yax, zax, _, _ = _local_axes(member)
 
@@ -5344,7 +5419,7 @@ class OpenSeesEngine:
         documented).
         """
         model = self.model
-        alpha = getattr(model, "thermal_alpha", 1.2e-5)
+        model_alpha = getattr(model, "thermal_alpha", 1.2e-5)
         sidx = {s.name: i for i, s in enumerate(model.stories)}
         pat = LoadPattern("__td_shrinkage__", "other")
         for m in model.members:
@@ -5356,6 +5431,13 @@ class OpenSeesEngine:
                      else max(tdn["t_eval"] - j * tdn["d"], 0.0))
             eps = aci209_shrinkage(tdn["eps_inf"], t_age)
             if eps > 0.0:
+                # v1.12: the eps_sh -> dT identity ``alpha*dT*L = -eps_sh*L``
+                # holds for ANY alpha, so use the member material's own alpha
+                # when set (else the model-wide value); _apply_thermal reads
+                # the same alpha so N = E*A*alpha*dT reproduces -eps_sh*E*A.
+                mat = model.materials.get(sec.material)
+                mat_alpha = getattr(mat, "alpha", None) if mat else None
+                alpha = mat_alpha if mat_alpha is not None else model_alpha
                 pat.thermal_loads.append(ThermalLoad(m.uid, -eps / alpha))
         return pat
 

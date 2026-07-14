@@ -46,21 +46,132 @@ def _polygon_area3d(pts: List[Tuple[float, float, float]]) -> float:
 # --------------------------------------------------------------------------- #
 # Properties
 # --------------------------------------------------------------------------- #
+# v1.12 ETABS material parity — enumerations for Material.material_type /
+# Material.symmetry.  ``orthotropic``/``anisotropic`` are intentionally absent
+# (rejected by validation; out of analysis scope).
+MATERIAL_TYPES = ("steel", "concrete", "rebar", "tendon", "masonry",
+                  "aluminum", "coldformed", "other")
+MATERIAL_SYMMETRY = ("isotropic", "uniaxial")
+
+# v1.12 self-mass source modes (BuildingModel.mass_source_mode).
+MASS_SOURCE_MODES = ("weight", "element_self_mass")
+
+
+def _optf(v) -> Optional[float]:
+    """Coerce an optional numeric JSON field.
+
+    ``None``/absent -> ``None``; anything else -> ``float(v)``.  Used by the
+    material loader so new strength/density fields round-trip as null instead
+    of being forced to a numeric default.
+    """
+    if v is None:
+        return None
+    return float(v)
+
+
 @dataclass
 class Material:
     name: str
     E: float                    # kPa
     nu: float = 0.2
-    unit_weight: float = 24.0   # kN/m^3 (used for self-mass if enabled)
+    unit_weight: float = 24.0   # kN/m^3 (self-weight; also self-mass default)
+    # --- v1.12 ETABS material parity (all optional, analysis-only) --------- #
+    # New fields are appended AFTER unit_weight so the positional signature
+    # ``Material(name, E, nu, unit_weight)`` is preserved for old callers.
+    material_type: str = "concrete"        # one of MATERIAL_TYPES
+    symmetry: str = "isotropic"            # "isotropic" | "uniaxial"
+    mass_density: Optional[float] = None   # tonne/m^3; None => unit_weight/g
+    alpha: Optional[float] = None          # 1/degC; None => model.thermal_alpha
+    fc: Optional[float] = None             # kPa (concrete f'c)
+    fy: Optional[float] = None             # kPa (steel/rebar/tendon Fy)
+    fu: Optional[float] = None             # kPa (steel/rebar/tendon Fu)
+    Ry: float = 1.1                        # expected/specified yield ratio
+    damping: float = 0.0                   # per-material modal damping ratio
+    lightweight: bool = False              # lightweight-concrete flag
+    lam: float = 1.0                       # lightweight lambda (fr knockdown)
+    color: str = ""                        # display hex swatch (cosmetic)
+    notes: str = ""                        # free-text notes (cosmetic)
 
     @property
     def G(self) -> float:
         return self.E / (2.0 * (1.0 + self.nu))
 
+    @property
+    def mass_per_volume(self) -> float:
+        """Mass per unit volume (tonne/m^3): explicit ``mass_density`` when
+        set, else the weight-derived ``unit_weight / g``.
+
+        This single property is the source both self-mass paths read, so the
+        opt-in ``element_self_mass`` source equals the legacy weight/g mass
+        exactly when ``mass_density`` is ``None``.
+        """
+        if self.mass_density is not None:
+            return self.mass_density
+        return self.unit_weight / G_ACCEL
+
+    @property
+    def Fye(self) -> Optional[float]:
+        """Expected yield stress ``Ry*fy`` (kPa); ``None`` when ``fy`` unset."""
+        return self.Ry * self.fy if self.fy is not None else None
+
+    @property
+    def Fue(self) -> Optional[float]:
+        """Expected tensile stress ``Ry*fu`` (kPa); ``None`` when ``fu`` unset."""
+        return self.Ry * self.fu if self.fu is not None else None
+
     def to_dict(self) -> dict:
         d = asdict(self)
+        # Derived read-only values echoed for the UI / report (never re-read
+        # on load).  Optional None fields already serialise as JSON null.
         d["G"] = self.G
+        d["mass_per_volume"] = self.mass_per_volume
+        d["Fye"] = self.Fye
+        d["Fue"] = self.Fue
         return d
+
+
+def default_material_library() -> Dict[str, "Material"]:
+    """ETABS-standard default materials in SkyFrame consistent units.
+
+    Units: force=kN, length=m, stress=kPa, mass=tonne, temp=degC, g=9.80665.
+    ``mass_density``/``alpha`` carry their explicit values (equal to the auto
+    default ``unit_weight/g`` / ``model.thermal_alpha``).  Derived G/Fye/Fue
+    come from the :class:`Material` properties.
+    """
+    return {
+        "A992Fy50": Material(
+            name="A992Fy50", E=199_947_980.0, nu=0.3, unit_weight=76.9729,
+            material_type="steel", symmetry="isotropic",
+            mass_density=7.8490, alpha=1.170e-5,
+            fy=344_740.0, fu=448_160.0, Ry=1.1, color="#3b6ea5"),
+        "4000Psi": Material(
+            name="4000Psi", E=24_855_600.0, nu=0.2, unit_weight=23.5631,
+            material_type="concrete", symmetry="isotropic",
+            mass_density=2.4028, alpha=9.900e-6,
+            fc=27_580.0, color="#8a8f98"),
+        "A615Gr60": Material(
+            name="A615Gr60", E=199_947_980.0, nu=0.3, unit_weight=76.9729,
+            material_type="rebar", symmetry="uniaxial",
+            mass_density=7.8490, alpha=1.170e-5,
+            fy=413_690.0, fu=620_530.0, Ry=1.25, color="#c0603a"),
+        "A416Gr270": Material(
+            name="A416Gr270", E=196_501_000.0, nu=0.3, unit_weight=76.9729,
+            material_type="tendon", symmetry="uniaxial",
+            mass_density=7.8490, alpha=1.170e-5,
+            fy=1_689_900.0, fu=1_861_580.0, Ry=1.1, color="#9a7bce"),
+    }
+
+
+def library_material(name: str) -> "Material":
+    """Return a fresh ETABS default-library :class:`Material` by name.
+
+    Raises ``KeyError`` when ``name`` is not one of the built-ins.
+    """
+    lib = default_material_library()
+    if name not in lib:
+        raise KeyError(f"No default material named {name!r}; choose from "
+                       f"{sorted(lib)}")
+    return lib[name]
 
 
 @dataclass
@@ -1347,6 +1458,12 @@ class BuildingModel:
     story_masses: Dict[str, float] = field(default_factory=dict)   # tonne (explicit)
     mass_from_patterns: Dict[str, float] = field(default_factory=dict)  # pattern -> factor (legacy)
     mass_source: Dict[str, float] = field(default_factory=dict)  # v0.4: pattern -> factor
+    # v1.12: how the engine builds self-mass.  "weight" (default) lumps the
+    # gravity-derived story masses exactly as before (bit-identical); the
+    # opt-in "element_self_mass" mode instead lumps each element's
+    # ``mat.mass_per_volume * volume`` as translational nodal mass, decoupling
+    # mass from weight (ETABS parity).  One of MASS_SOURCE_MODES.
+    mass_source_mode: str = "weight"
     patterns: Dict[str, LoadPattern] = field(default_factory=dict)
     cases: Dict[str, LoadCase] = field(default_factory=dict)
     combos: Dict[str, LoadCombo] = field(default_factory=dict)
@@ -1383,6 +1500,14 @@ class BuildingModel:
     def add_material(self, mat: Material) -> Material:
         self.materials[mat.name] = mat
         return mat
+
+    def add_library_material(self, name: str) -> Material:
+        """Add (and return) an ETABS default-library material by name (v1.12).
+
+        Thin wrapper over :func:`library_material`; raises ``KeyError`` for an
+        unknown library name.
+        """
+        return self.add_material(library_material(name))
 
     def add_section(self, sec: FrameSection) -> FrameSection:
         if sec.material not in self.materials:
@@ -2574,8 +2699,58 @@ class BuildingModel:
         return None
 
     # ---------------- validation ----------------
+    @staticmethod
+    def _validate_material(mat: Material) -> None:
+        """Validate one material's analysis fields (v1.12 ETABS parity).
+
+        Optional strength/density fields are only checked when set (``None``
+        means "use the engine fallback"), so a minimal old material
+        (name/E/nu/unit_weight) always passes.
+        """
+        if mat.material_type not in MATERIAL_TYPES:
+            raise ValueError(f"Material {mat.name!r}: material_type must be one "
+                             f"of {MATERIAL_TYPES}, got {mat.material_type!r}")
+        if mat.symmetry not in MATERIAL_SYMMETRY:
+            raise ValueError(f"Material {mat.name!r}: symmetry {mat.symmetry!r} "
+                             "not supported (orthotropic/anisotropic are out "
+                             "of analysis scope)")
+        if not (isinstance(mat.E, (int, float)) and math.isfinite(mat.E)
+                and mat.E > 0.0):
+            raise ValueError(f"Material {mat.name!r}: E must be finite and > 0 "
+                             f"(got {mat.E!r})")
+        if mat.symmetry == "isotropic":
+            if not (isinstance(mat.nu, (int, float)) and math.isfinite(mat.nu)
+                    and 0.0 <= mat.nu < 0.5):
+                raise ValueError(f"Material {mat.name!r}: isotropic nu must be "
+                                 f"in [0, 0.5) (got {mat.nu!r})")
+        if mat.mass_density is not None:
+            if not (math.isfinite(mat.mass_density) and mat.mass_density > 0.0):
+                raise ValueError(f"Material {mat.name!r}: mass_density must be "
+                                 f"finite and > 0 (got {mat.mass_density!r})")
+        if mat.alpha is not None and not math.isfinite(mat.alpha):
+            raise ValueError(f"Material {mat.name!r}: alpha must be finite "
+                             f"(got {mat.alpha!r})")
+        for _k, _v in (("fc", mat.fc), ("fy", mat.fy), ("fu", mat.fu)):
+            if _v is not None and not (math.isfinite(_v) and _v > 0.0):
+                raise ValueError(f"Material {mat.name!r}: {_k} must be finite "
+                                 f"and > 0 (got {_v!r})")
+        if not (isinstance(mat.Ry, (int, float)) and math.isfinite(mat.Ry)
+                and 0.0 < mat.Ry <= 2.0):
+            raise ValueError(f"Material {mat.name!r}: Ry must be in (0, 2] "
+                             f"(got {mat.Ry!r})")
+        if not (isinstance(mat.damping, (int, float))
+                and math.isfinite(mat.damping) and 0.0 <= mat.damping < 1.0):
+            raise ValueError(f"Material {mat.name!r}: damping must be in "
+                             f"[0, 1) (got {mat.damping!r})")
+        if not (isinstance(mat.lam, (int, float)) and math.isfinite(mat.lam)
+                and mat.lam > 0.0):
+            raise ValueError(f"Material {mat.name!r}: lam must be finite and "
+                             f"> 0 (got {mat.lam!r})")
+
     def validate(self) -> None:
         """Cross-reference validation; raises ValueError on the first issue."""
+        for mat in self.materials.values():
+            self._validate_material(mat)
         for sec in self.sections.values():
             if sec.material not in self.materials:
                 raise ValueError(f"Section {sec.name}: unknown material "
@@ -2704,6 +2879,10 @@ class BuildingModel:
                 and math.isfinite(self.thermal_alpha)):
             raise ValueError(f"thermal_alpha must be finite (got "
                              f"{self.thermal_alpha!r})")
+        if self.mass_source_mode not in MASS_SOURCE_MODES:
+            raise ValueError(f"mass_source_mode must be one of "
+                             f"{MASS_SOURCE_MODES}, got "
+                             f"{self.mass_source_mode!r}")
         if not (isinstance(self.deflection_limit, (int, float))
                 and math.isfinite(self.deflection_limit)
                 and self.deflection_limit > 0.0):
@@ -2783,6 +2962,7 @@ class BuildingModel:
             "story_masses": self.compute_story_masses(),
             "mass_from_patterns": dict(self.mass_from_patterns),
             "mass_source": dict(self.mass_source),
+            "mass_source_mode": self.mass_source_mode,
             "patterns": {k: v.to_dict() for k, v in self.patterns.items()},
             "cases": {k: v.to_dict() for k, v in self.cases.items()},
             "combos": {k: v.to_dict() for k, v in self.combos.items()},
@@ -2819,10 +2999,27 @@ class BuildingModel:
             raise ValueError("model must be a JSON object")
         mdl = cls(name=str(d.get("name", "Untitled Building")))
         for name, md in (d.get("materials") or {}).items():
+            # v1.12 ETABS material parity: every new field is read defensively
+            # so old files (name/E/nu/unit_weight only) rebuild with
+            # material_type=concrete and all optionals None -> every engine
+            # fallback fires exactly as before.
             mdl.materials[name] = Material(
                 name=md.get("name", name), E=float(md["E"]),
                 nu=float(md.get("nu", 0.2)),
-                unit_weight=float(md.get("unit_weight", 24.0)))
+                unit_weight=float(md.get("unit_weight", 24.0)),
+                material_type=str(md.get("material_type", "concrete")),
+                symmetry=str(md.get("symmetry", "isotropic")),
+                mass_density=_optf(md.get("mass_density")),
+                alpha=_optf(md.get("alpha")),
+                fc=_optf(md.get("fc")),
+                fy=_optf(md.get("fy")),
+                fu=_optf(md.get("fu")),
+                Ry=float(md.get("Ry", 1.1)),
+                damping=float(md.get("damping", 0.0)),
+                lightweight=bool(md.get("lightweight", False)),
+                lam=float(md.get("lam", 1.0)),
+                color=str(md.get("color", "")),
+                notes=str(md.get("notes", "")))
         for name, sd in (d.get("sections") or {}).items():
             mdl.sections[name] = FrameSection(
                 name=sd.get("name", name), material=sd["material"],
@@ -2952,6 +3149,8 @@ class BuildingModel:
         # compute_story_masses falls back to mass_from_patterns
         mdl.mass_source = {
             k: float(v) for k, v in (d.get("mass_source") or {}).items()}
+        # v1.12 self-mass source mode; absent (pre-v1.12 files) => "weight".
+        mdl.mass_source_mode = str(d.get("mass_source_mode", "weight"))
         for name, pd in (d.get("patterns") or {}).items():
             pat = LoadPattern(pd.get("name", name), pd.get("kind", "other"))
             # v0.7 self-weight factor; absent (pre-v0.7 files) => 0.0
