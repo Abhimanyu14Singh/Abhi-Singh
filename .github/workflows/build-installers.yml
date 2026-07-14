@@ -20,7 +20,6 @@ on:
   workflow_dispatch:
   push:
     tags: ["v*"]
-    branches: ["claude/etabs-opensees-ui-rebuild-kt2zwh"]
 
 permissions:
   contents: write            # the release job needs this to publish assets
