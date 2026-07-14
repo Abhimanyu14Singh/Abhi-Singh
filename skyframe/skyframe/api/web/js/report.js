@@ -169,9 +169,12 @@ export function buildReportHtml(model, results, opts = {}) {
     ]]);
 
   const matTable = table(
-    [{ label: "Material", txt: true }, "E (kPa)", "ν", "γ (kN/m³)"],
+    [{ label: "Material", txt: true }, { label: "Type", txt: true },
+     "E (kPa)", "ν", "γ (kN/m³)", "f'c (kPa)", "Fy (kPa)", "α (1/°C)"],
     Object.values(model.materials || {}).map(m =>
-      [T(m.name), fmt(m.E, 0), fmt(m.nu, 2), fmt(m.unit_weight, 0)]));
+      [T(m.name), D(m.material_type || "concrete"),
+       fmt(m.E, 0), fmt(m.nu, 2), fmt(m.unit_weight, 0),
+       fmt(m.fc, 0), fmt(m.fy, 0), sci(m.alpha)]));
 
   const secTable = table(
     [{ label: "Frame section", txt: true }, { label: "Geometry", txt: true },

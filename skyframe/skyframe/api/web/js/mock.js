@@ -1,7 +1,7 @@
 /* SkyFrame mock backend — matches CONTRACT.md shapes so the UI is fully
    explorable without the Flask server (offline / ?mock=1). */
 
-import { designerProps } from "./modeledit.js";   // v0.21 — shoelace properties
+import { designerProps, blankMaterial } from "./modeledit.js";   // v0.21 — shoelace properties
 
 const G = 9.80665;
 
@@ -270,7 +270,7 @@ export function mockModel(p = {}) {
 
   return {
     name: o.name,
-    materials: { CONC: { name: "CONC", E: o.E, nu: 0.2, unit_weight: 24 } },
+    materials: { CONC: Object.assign(blankMaterial("CONC"), { E: o.E }) },
     sections: {
       COL: { name: "COL", material: "CONC", b: o.column_size, h: o.column_size,
         mod_A: 1, mod_I33: 1, mod_I22: 1, mod_J: 1 },

@@ -2267,6 +2267,352 @@ function shellLayeredDetails(m, s) {
   return det;
 }
 
+/* ================================================================
+   Material Property Data — ETABS-style material editor (analysis-only).
+   Replaces the flat E/ν table with an expandable, type-gated dialog that
+   writes straight into store.model.materials[name] and markDirty()s. Numeric
+   "unset" stays null (grey placeholder) so the backend fallbacks keep firing;
+   validation mirrors the backend (E>0; 0≤ν<0.5; strengths>0; 0<Ry≤2;
+   0≤damping<1; λ>0). Reuses mgrDel/toast/markDirty/renderSectionMgr.
+   ================================================================ */
+const G_ACCEL = 9.80665;                       // m/s² — weight↔mass bridge
+const matExpanded = new Set();                 // material names currently open
+
+const fmtNum = v => (v == null || !isFinite(v)) ? "—"
+  : Math.abs(v) >= 1000 ? Math.round(v).toLocaleString("en-US")
+  : String(+(+v).toPrecision(5));
+
+/** Labelled field row: <span label + unit> · control. */
+function mpdRow(label, unit, control, opts = {}) {
+  const row = document.createElement("div");
+  row.className = "mpd-field" + (opts.wide ? " wide" : "");
+  const lab = document.createElement("span");
+  lab.className = "mpd-label";
+  lab.textContent = label;
+  if (unit) {
+    const u = document.createElement("span");
+    u.className = "mpd-unit";
+    u.textContent = unit;
+    lab.appendChild(u);
+  }
+  if (opts.title) row.title = opts.title;
+  row.append(lab, control);
+  return row;
+}
+
+/** Grouped section with a title and a 2-column field grid. */
+function mpdSection(title, rows) {
+  const sec = document.createElement("div");
+  sec.className = "mpd-sec";
+  const h = document.createElement("div");
+  h.className = "mpd-sec-title";
+  h.textContent = title;
+  sec.appendChild(h);
+  const grid = document.createElement("div");
+  grid.className = "mpd-grid";
+  rows.forEach(r => r && grid.appendChild(r));
+  sec.appendChild(grid);
+  return sec;
+}
+
+/** Read-only derived value (G, Fye). */
+function mpdReadonly(getText) {
+  const s = document.createElement("span");
+  s.className = "mpd-derived";
+  s.textContent = getText();
+  return s;
+}
+
+/** <select> from [value,label] pairs. */
+function mpdSelect(options, value, onChange) {
+  const s = document.createElement("select");
+  for (const [v, lbl] of options) {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = lbl; o.selected = v === value;
+    s.appendChild(o);
+  }
+  s.addEventListener("change", () => onChange(s.value));
+  return s;
+}
+
+/** Null-aware numeric input bound to mat[field]; reverts on invalid input.
+    allowNull lets an empty field store null ("auto / typed default"). */
+function mpdNum(mat, field, { step = "any", allowNull = false, placeholder = "",
+                              title = "", validate = v => isFinite(v), after } = {}) {
+  const inp = document.createElement("input");
+  inp.type = "number";
+  inp.step = step;
+  inp.value = mat[field] == null ? "" : String(mat[field]);
+  if (placeholder) inp.placeholder = placeholder;
+  if (title) inp.title = title;
+  const revert = () => { inp.value = mat[field] == null ? "" : String(mat[field]); };
+  inp.addEventListener("change", () => {
+    const raw = inp.value.trim();
+    if (raw === "") {
+      if (allowNull) { mat[field] = null; markDirty(); after && after(); }
+      else revert();
+      return;
+    }
+    const v = parseFloat(raw);
+    if (isFinite(v) && validate(v)) { mat[field] = v; markDirty(); after && after(); }
+    else revert();
+  });
+  return inp;
+}
+
+/** Build the expandable panel body for one material. */
+function buildMaterialPanel(m, name, mat, swatch) {
+  const type = mat.material_type || "concrete";
+  const sym = mat.symmetry || "isotropic";
+  const panel = document.createElement("div");
+  panel.className = "mpd-panel";
+
+  const gText = () => {
+    if (sym === "uniaxial") return "n/a (uniaxial)";
+    const g = mat.E / (2 * (1 + mat.nu));
+    return isFinite(g) ? fmtNum(g) + " kPa" : "—";
+  };
+  const fyeText = () => {
+    if (mat.fy == null || mat.Ry == null) return "—";
+    const v = mat.Ry * mat.fy;
+    return isFinite(v) ? fmtNum(v) + " kPa" : "—";
+  };
+  const massPlace = () => {
+    const uw = mat.unit_weight;
+    return (uw != null && isFinite(uw)) ? `auto ${(uw / G_ACCEL).toFixed(4)}` : "auto";
+  };
+  const alphaPlace = () => {
+    const a = (m.thermal_alpha != null && isFinite(m.thermal_alpha)) ? m.thermal_alpha : 1.2e-5;
+    return `auto ${a.toExponential(2)}`;
+  };
+
+  /* ---- General Data ---- */
+  const nameIn = document.createElement("input");
+  nameIn.type = "text"; nameIn.value = name;
+  nameIn.addEventListener("change", () => {
+    const nn = nameIn.value.trim();
+    if (!ME.renameMaterial(m, name, nn)) {
+      nameIn.value = name;
+      toast("Rename failed", "Name empty or already in use", "error", 4000);
+    } else {
+      if (matExpanded.has(name)) { matExpanded.delete(name); matExpanded.add(nn); }
+      markDirty(); renderSectionMgr();
+    }
+  });
+  const typeSel = mpdSelect(ME.MATERIAL_TYPES.map(t => [t, t]), type, v => {
+    ME.applyMaterialType(mat, v); markDirty(); renderSectionMgr();
+  });
+  const symSel = mpdSelect([["isotropic", "isotropic"], ["uniaxial", "uniaxial"]], sym, v => {
+    mat.symmetry = v; markDirty(); renderSectionMgr();
+  });
+  const colorIn = document.createElement("input");
+  colorIn.type = "color";
+  colorIn.value = /^#[0-9a-f]{6}$/i.test(mat.color || "") ? mat.color : "#8a8f98";
+  colorIn.addEventListener("input", () => {
+    mat.color = colorIn.value;
+    if (swatch) swatch.style.background = colorIn.value;
+    markDirty();
+  });
+  const notesIn = document.createElement("textarea");
+  notesIn.className = "mpd-notes"; notesIn.rows = 2; notesIn.value = mat.notes || "";
+  notesIn.placeholder = "Free-text notes (cosmetic; round-tripped)";
+  notesIn.addEventListener("change", () => { mat.notes = notesIn.value; markDirty(); });
+
+  const notesRow = mpdRow("Notes", "", notesIn, { wide: true });
+
+  /* ---- Weight and Mass ---- */
+  const massInp = mpdNum(mat, "mass_density", { step: "0.001", validate: v => v > 0,
+    title: "Mass per unit volume (drives modal / RS / TH inertia)" });
+  const autoMass = mat.mass_density == null;
+  massInp.disabled = autoMass;
+  if (autoMass) massInp.placeholder = massPlace();
+  const autoWrap = document.createElement("label");
+  autoWrap.className = "mpd-inline-chk";
+  const autoChk = document.createElement("input");
+  autoChk.type = "checkbox"; autoChk.checked = autoMass;
+  autoChk.title = "Derive mass from weight (unit_weight / g) — leaves mass_density null";
+  autoChk.addEventListener("change", () => {
+    if (autoChk.checked) {
+      mat.mass_density = null;
+      massInp.value = ""; massInp.placeholder = massPlace(); massInp.disabled = true;
+    } else {
+      const uw = mat.unit_weight;
+      const start = (uw != null && isFinite(uw)) ? +(uw / G_ACCEL).toFixed(4) : 0;
+      mat.mass_density = start;
+      massInp.value = String(start); massInp.disabled = false; massInp.focus();
+    }
+    markDirty();
+  });
+  autoWrap.append(autoChk, document.createTextNode("Auto (= W/g)"));
+  const massBox = document.createElement("div");
+  massBox.className = "mpd-mass";
+  massBox.append(massInp, autoWrap);
+
+  const uwIn = mpdNum(mat, "unit_weight", { step: "0.5", validate: v => v > 0,
+    title: "Weight per unit volume — self-weight gravity load",
+    after: () => { if (autoChk.checked) massInp.placeholder = massPlace(); } });
+
+  /* ---- Mechanical Property Data ---- */
+  const gDisp = mpdReadonly(gText);
+  const eIn = mpdNum(mat, "E", { step: "1000000", validate: v => v > 0,
+    title: "Modulus of elasticity", after: () => { gDisp.textContent = gText(); } });
+  const nuIn = mpdNum(mat, "nu", { step: "0.05", validate: v => v >= 0 && v < 0.5,
+    after: () => { gDisp.textContent = gText(); } });
+  if (sym === "uniaxial") { nuIn.disabled = true; nuIn.title = "Ignored for uniaxial (rebar / tendon)"; }
+  const alphaIn = mpdNum(mat, "alpha", { step: "1e-6", allowNull: true, validate: v => v > 0,
+    placeholder: alphaPlace(), title: "Coefficient of thermal expansion (blank → model default)" });
+
+  /* ---- Design / Analysis Strength (type-gated) ---- */
+  const fyeDisp = mpdReadonly(fyeText);
+  let strengthSec = null;
+  if (type === "concrete" || type === "masonry") {
+    const fcIn = mpdNum(mat, "fc", { step: "1000", allowNull: true, validate: v => v > 0,
+      placeholder: "auto (from E)", title: "Specified compressive strength f'c (blank → fc_from_E)" });
+    const lwChk = document.createElement("input");
+    lwChk.type = "checkbox"; lwChk.checked = !!mat.lightweight;
+    lwChk.addEventListener("change", () => { mat.lightweight = lwChk.checked; markDirty(); });
+    const lamIn = mpdNum(mat, "lam", { step: "0.05", validate: v => v > 0,
+      title: "Lightweight λ — multiplies the cracked-slab modulus of rupture" });
+    strengthSec = mpdSection("Design / Analysis Strength", [
+      mpdRow("Compressive strength f'c", "kPa", fcIn),
+      mpdRow("Lightweight concrete", "", lwChk),
+      mpdRow("Lightweight factor λ", "-", lamIn),
+    ]);
+  } else if (type === "steel" || type === "coldformed" || type === "rebar") {
+    const fyIn = mpdNum(mat, "fy", { step: "1000", allowNull: true, validate: v => v > 0,
+      placeholder: "auto", title: "Yield stress Fy", after: () => { fyeDisp.textContent = fyeText(); } });
+    const fuIn = mpdNum(mat, "fu", { step: "1000", allowNull: true, validate: v => v > 0,
+      title: "Tensile / ultimate stress Fu" });
+    const ryIn = mpdNum(mat, "Ry", { step: "0.05", validate: v => v > 0 && v <= 2,
+      title: "Expected/specified yield ratio — Fye = Ry·Fy",
+      after: () => { fyeDisp.textContent = fyeText(); } });
+    strengthSec = mpdSection("Design / Analysis Strength", [
+      mpdRow("Yield stress Fy", "kPa", fyIn),
+      mpdRow("Tensile stress Fu", "kPa", fuIn),
+      mpdRow("Overstrength Ry", "-", ryIn),
+      mpdRow("Expected yield Fye", "kPa", fyeDisp, { title: "Ry · Fy (read-only)" }),
+    ]);
+  } else if (type === "tendon") {
+    const fyIn = mpdNum(mat, "fy", { step: "1000", allowNull: true, validate: v => v > 0,
+      placeholder: "auto", title: "Yield stress Fy" });
+    const fuIn = mpdNum(mat, "fu", { step: "1000", allowNull: true, validate: v => v > 0,
+      title: "Tensile / ultimate stress Fu" });
+    strengthSec = mpdSection("Design / Analysis Strength", [
+      mpdRow("Yield stress Fy", "kPa", fyIn),
+      mpdRow("Tensile stress Fu", "kPa", fuIn),
+    ]);
+  } else {
+    const none = document.createElement("p");
+    none.className = "mpd-none";
+    none.textContent = "No design/analysis strength fields for this material type — elastic properties only.";
+    strengthSec = document.createElement("div");
+    strengthSec.className = "mpd-sec";
+    const h = document.createElement("div");
+    h.className = "mpd-sec-title"; h.textContent = "Design / Analysis Strength";
+    strengthSec.append(h, none);
+  }
+
+  /* ---- Material Damping ---- */
+  const dampIn = mpdNum(mat, "damping", { step: "0.01", validate: v => v >= 0 && v < 1,
+    title: "Per-material modal damping ratio (0 = use case damping only)" });
+
+  panel.append(
+    mpdSection("General Data", [
+      mpdRow("Name", "", nameIn),
+      mpdRow("Material Type", "", typeSel),
+      mpdRow("Directional Symmetry", "", symSel),
+      mpdRow("Display Color", "", colorIn),
+      notesRow,
+    ]),
+    mpdSection("Weight and Mass", [
+      mpdRow("Weight per Volume", "kN/m³", uwIn),
+      mpdRow("Mass per Volume", "t/m³", massBox),
+    ]),
+    mpdSection((sym === "uniaxial" ? "Uniaxial" : "Isotropic") + " Mechanical Property Data", [
+      mpdRow("Modulus of Elasticity E", "kPa", eIn),
+      mpdRow("Poisson Ratio ν", "-", nuIn),
+      mpdRow("Shear Modulus G", "kPa", gDisp, { title: "E / (2·(1+ν)) — read-only" }),
+      mpdRow("Thermal Expansion α", "1/°C", alphaIn),
+    ]),
+    strengthSec,
+    mpdSection("Material Damping", [
+      mpdRow("Modal Damping Ratio", "-", dampIn),
+    ]),
+  );
+  return panel;
+}
+
+/** Render the whole materials list (header rows + expandable panels + library). */
+function renderMaterialEditor(m, box) {
+  for (const name of Object.keys(m.materials)) {
+    const mat = m.materials[name];
+    const type = mat.material_type || "concrete";
+    const wrap = document.createElement("div");
+    wrap.className = "mpd-mat";
+
+    const head = document.createElement("div");
+    head.className = "mpd-head";
+    head.setAttribute("role", "button");
+    head.tabIndex = 0;
+    const expanded = matExpanded.has(name);
+    head.setAttribute("aria-expanded", expanded ? "true" : "false");
+    if (expanded) head.classList.add("open");
+
+    const caret = document.createElement("span");
+    caret.className = "mpd-caret"; caret.innerHTML = "&#9656;";
+    const swatch = document.createElement("span");
+    swatch.className = "mpd-swatch"; swatch.style.background = mat.color || "#8a8f98";
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "mpd-name"; nameSpan.textContent = name;
+    const badge = document.createElement("span");
+    badge.className = "mpd-badge mpd-badge-" + type; badge.textContent = type;
+    const spacer = document.createElement("span");
+    spacer.className = "mpd-head-spacer";
+    const used = ME.materialInUse(m, name);
+    const del = mgrDel(used, used ? "In use by sections" : "Delete material", e => {
+      e.stopPropagation();
+      delete m.materials[name]; matExpanded.delete(name); markDirty(); renderSectionMgr();
+    });
+
+    head.append(caret, swatch, nameSpan, badge, spacer, del);
+    const toggle = () => {
+      if (matExpanded.has(name)) matExpanded.delete(name); else matExpanded.add(name);
+      renderSectionMgr();
+    };
+    head.addEventListener("click", toggle);
+    head.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+    });
+    wrap.appendChild(head);
+    if (expanded) wrap.appendChild(buildMaterialPanel(m, name, mat, swatch));
+    box.appendChild(wrap);
+  }
+
+  /* ---- Add from library ---- */
+  const lib = document.createElement("div");
+  lib.className = "mpd-lib";
+  const lbl = document.createElement("span");
+  lbl.className = "mpd-lib-lbl"; lbl.textContent = "Add from library";
+  const sel = document.createElement("select");
+  sel.className = "mini-select";
+  for (const entry of ME.DEFAULT_LIBRARY) {
+    const o = document.createElement("option");
+    o.value = entry.name; o.textContent = `${entry.name} · ${entry.material_type}`;
+    sel.appendChild(o);
+  }
+  const addBtn = document.createElement("button");
+  addBtn.className = "btn btn-small"; addBtn.textContent = "+ Add";
+  addBtn.addEventListener("click", () => {
+    const entry = ME.DEFAULT_LIBRARY.find(e => e.name === sel.value);
+    if (!entry) return;
+    const added = ME.addLibraryMaterial(m, entry);
+    matExpanded.add(added); markDirty(); renderSectionMgr();
+    toast("Material added", `${added} (${entry.material_type}) added from the ETABS default library`, "info", 4000);
+  });
+  lib.append(lbl, sel, addBtn);
+  box.appendChild(lib);
+}
+
 function renderSectionMgr() {
   const m = store.model;
 
@@ -2338,33 +2684,7 @@ function renderSectionMgr() {
 
   const matBox = $("materialRows");
   matBox.textContent = "";
-  matBox.appendChild(mgrRow(["Name", "E (kPa)", "Poisson ν", "", ""], "mgr-row head"));
-  for (const [name, mat] of Object.entries(m.materials)) {
-    const nameIn = mgrInput(name);
-    nameIn.addEventListener("change", () => {
-      if (!ME.renameMaterial(m, name, nameIn.value.trim())) {
-        nameIn.value = name;
-        toast("Rename failed", "Name empty or already in use", "error", 4000);
-      } else { markDirty(); renderSectionMgr(); }
-    });
-    const nuIn = mgrInput(String(mat.nu), { type: "number" });
-    nuIn.step = "0.05";
-    nuIn.addEventListener("change", () => {
-      const v = parseFloat(nuIn.value);
-      if (isFinite(v) && v >= 0 && v < 0.5) { mat.nu = v; markDirty(); }
-      else nuIn.value = String(mat.nu);
-    });
-    const used = ME.materialInUse(m, name);
-    matBox.appendChild(mgrRow([
-      nameIn,
-      mgrNum(mat.E, "1000000", v => mat.E = v),
-      nuIn,
-      "",
-      mgrDel(used, used ? "In use by sections" : "Delete material", () => {
-        delete m.materials[name]; markDirty(); renderSectionMgr();
-      }),
-    ]));
-  }
+  renderMaterialEditor(m, matBox);
 
   /* v0.21 — designer (polygon + rebar) sections: list + re-edit launcher */
   const dsBox = $("designerSectionRows");

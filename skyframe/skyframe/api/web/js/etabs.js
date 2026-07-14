@@ -6,6 +6,8 @@
    / switchTab / doRun and the existing managers (Section Manager, Grid editor,
    Section Designer, gallery, import, loads editor sections, design sub-tabs). */
 
+import { icon, TOOL_ICON, MENU_ICON, EXGROUP_ICON, EXLEAF_ICON, VIEW_ICON } from "./icons.js";
+
 export function initEtabs(sky) {
   const S = sky.store;
   const $ = id => document.getElementById(id);
@@ -261,7 +263,9 @@ export function initEtabs(sky) {
 
   menubar.textContent = "";
   menus.forEach(([name, items]) => {
-    const btn = el("button", { class: "etabs-menu-btn", role: "menuitem", "aria-haspopup": "true", "aria-expanded": "false", "data-menu": name, text: name });
+    const btn = el("button", { class: "etabs-menu-btn", role: "menuitem", "aria-haspopup": "true", "aria-expanded": "false", "data-menu": name });
+    if (MENU_ICON[name]) btn.insertAdjacentHTML("afterbegin", icon(MENU_ICON[name], "etabs-menu-ico"));
+    btn.appendChild(document.createTextNode(name));
     const dd = el("div", { class: "etabs-menu hidden", role: "menu" });
     items.forEach(item => {
       if (item.sep) { dd.appendChild(el("div", { class: "etabs-menu-sep" })); return; }
@@ -288,18 +292,6 @@ export function initEtabs(sky) {
   }, true);
 
   /* ================= LEFT TOOL PALETTE ================= */
-  const ICON = {
-    select: '<path d="M4 1.5 12.5 9H8.4L6 14 4 13l2.2-4.6L4 8.6z" fill="currentColor"/>',
-    column: '<rect x="5" y="5" width="6" height="6" fill="currentColor"/>',
-    beam: '<path d="M2 12 14 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="2" cy="12" r="1.8" fill="currentColor"/><circle cx="14" cy="4" r="1.8" fill="currentColor"/>',
-    brace: '<path d="M2.5 13.5 13.5 2.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="3 2.4"/>',
-    wall: '<path d="M2 11 14 5" stroke="currentColor" stroke-width="5" stroke-linecap="butt"/>',
-    slab: '<rect x="2.5" y="3.5" width="11" height="9" fill="currentColor" opacity=".35"/><rect x="2.5" y="3.5" width="11" height="9" fill="none" stroke="currentColor" stroke-width="1.4"/>',
-    link: '<path d="M1.5 8h2l1.5-3 2 6 2-6 2 6 1.5-3h2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>',
-    spring: '<path d="M8 1.5v1.5l-2.4 1 2.4 1-2.4 1 2.4 1-2.4 1 2.4 1v1.5M3.5 12.5h9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>',
-    linespring: '<path d="M2 7h12M4 7l-1.6 3M7 7l-1.6 3M10 7l-1.6 3M13 7l-1.6 3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>',
-    erase: '<path d="M6.5 3.5 13 10l-3 3H7l-4.5-4.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>',
-  };
   const PALETTE = [
     ["select", "Select", "V"], ["column", "Column", "C"], ["beam", "Beam", "B"],
     ["brace", "Brace", "X"], ["wall", "Wall", "W"], ["slab", "Slab", "S"],
@@ -311,7 +303,7 @@ export function initEtabs(sky) {
   PALETTE.forEach(([tool, label, key]) => {
     const b = el("button", {
       class: "etabs-tool", "data-tool": tool, title: `${label} (${key})`, "aria-label": label,
-      html: `<svg viewBox="0 0 16 16" aria-hidden="true">${ICON[tool]}</svg>`,
+      html: icon(TOOL_ICON[tool]),
     });
     b.addEventListener("click", () => drawTool(tool));
     palette.appendChild(b);
@@ -381,6 +373,7 @@ export function initEtabs(sky) {
     const grp = el("div", { class: "ex-group open" });
     const gh = el("button", { class: "ex-group-head" }, [
       el("span", { class: "ex-caret", html: "&#9656;" }),
+      el("span", { class: "ex-ico", html: icon(EXGROUP_ICON[group] || "exgroup-model") }),
       el("span", { text: group }),
     ]);
     gh.addEventListener("click", () => grp.classList.toggle("open"));
@@ -388,7 +381,10 @@ export function initEtabs(sky) {
     const list = el("div", { class: "ex-leaves" });
     leaves.forEach(([label, fn]) => {
       const key = "n" + (exKey++);
-      const leaf = el("button", { class: "ex-leaf", "data-node": key, text: label });
+      const leaf = el("button", { class: "ex-leaf", "data-node": key }, [
+        el("span", { class: "ex-ico", html: icon(EXLEAF_ICON[label] || "exleaf-frames") }),
+        el("span", { class: "ex-leaf-lbl", text: label }),
+      ]);
       leaf.addEventListener("click", () => { fn(); });
       nodeMap[label] = fn;
       list.appendChild(leaf);
@@ -410,11 +406,11 @@ export function initEtabs(sky) {
   const storySel = el("select", { class: "sb-select", title: "Active story", "aria-label": "Active story" });
   storySel.addEventListener("change", () => sky.setStory(storySel.value));
   const coordEl = el("span", { class: "sb-coord", text: "—, — m" });
-  const snapChip = el("button", { class: "sb-chip", title: "Toggle grid snap", text: "Snap" });
+  const snapChip = el("button", { class: "sb-chip", title: "Toggle grid snap", html: icon("status-snap", "sb-ico") }, "Snap");
   snapChip.addEventListener("click", () => toggleSnap());
   const viewSeg = el("div", { class: "sb-seg", role: "group", "aria-label": "View" });
   [["plan", "Plan"], ["elev", "Elev"], ["view3d", "3D"]].forEach(([v, lbl]) => {
-    const b = el("button", { class: "sb-seg-btn", "data-view": v, text: lbl });
+    const b = el("button", { class: "sb-seg-btn", "data-view": v, html: icon(VIEW_ICON[v], "sb-ico") }, lbl);
     b.addEventListener("click", () => {
       if (v === "view3d") showResult("view3d");
       else setView(v);
@@ -422,7 +418,7 @@ export function initEtabs(sky) {
     viewSeg.appendChild(b);
   });
   const runStatus = el("span", { class: "sb-status", id: "sbStatusText", text: "Ready" });
-  const runBtn = el("button", { class: "sb-run", title: "Run analysis (R)", text: "Run" });
+  const runBtn = el("button", { class: "sb-run", title: "Run analysis (R)", html: icon("status-run", "sb-ico") }, "Run");
   runBtn.addEventListener("click", () => runNow());
 
   status.append(

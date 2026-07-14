@@ -25,6 +25,26 @@ export function normalizeModel(m) {
   m.shells = m.shells || [];
   m.patterns = m.patterns || {};
   m.members = m.members || [];
+  // Materials — back-fill the ETABS "Material Property Data" shape onto older
+  // saved models (which carry only name/E/ν/γ). Missing numeric strengths and
+  // mass/α become null ("auto / typed default") — never 0 — so the backend
+  // fallbacks (fc_from_E, model.thermal_alpha, γ/g) keep firing unchanged.
+  for (const mat of Object.values(m.materials)) {
+    if (!mat || typeof mat !== "object") continue;
+    if (mat.material_type == null) mat.material_type = "concrete";
+    if (mat.symmetry == null) mat.symmetry = "isotropic";
+    if (!("mass_density" in mat)) mat.mass_density = null;
+    if (!("alpha" in mat)) mat.alpha = null;
+    if (!("fc" in mat)) mat.fc = null;
+    if (!("fy" in mat)) mat.fy = null;
+    if (!("fu" in mat)) mat.fu = null;
+    if (mat.Ry == null) mat.Ry = 1.1;
+    if (mat.damping == null) mat.damping = 0;
+    if (mat.lightweight == null) mat.lightweight = false;
+    if (mat.lam == null) mat.lam = 1;
+    if (mat.color == null) mat.color = mat.material_type === "steel" ? "#3b6ea5" : "#8a8f98";
+    if (mat.notes == null) mat.notes = "";
+  }
   for (const mm of m.members) if (mm.releases == null) mm.releases = "";
   // v0.19 — ASCE 41 auto-hinge assignment (absent = "none");
   // v0.21 — "fiber_pmm" fiber P-M-M hinges (designer sections)
@@ -421,10 +441,82 @@ export function defaultShellSection(model) {
   return "SH200";
 }
 
+/* ================================================================
+   Materials — ETABS "Material Property Data" model mirror (analysis-only).
+   Numeric "unset" is stored as null (never 0) so the backend fallbacks fire
+   (fc→fc_from_E, alpha→model.thermal_alpha, mass_density→unit_weight/g, …).
+   ================================================================ */
+export const MATERIAL_TYPES = ["steel", "concrete", "rebar", "tendon", "masonry", "aluminum", "coldformed", "other"];
+
+// Representative SI stamps (force=kN, length=m, stress=kPa, mass=tonne,
+// g=9.80665) applied by applyMaterialType() when the user switches a
+// material's type in the dialog. The four mapped rows mirror DEFAULT_LIBRARY.
+const MATERIAL_TYPE_DEFAULTS = {
+  steel:      { E: 199947980, nu: 0.3,  unit_weight: 76.9729, color: "#3b6ea5", symmetry: "isotropic", fc: null,  fy: 344740,  fu: 448160,  Ry: 1.1  },
+  concrete:   { E: 24855600,  nu: 0.2,  unit_weight: 23.5631, color: "#8a8f98", symmetry: "isotropic", fc: 27580, fy: null,    fu: null,    Ry: 1.1  },
+  rebar:      { E: 199947980, nu: 0.3,  unit_weight: 76.9729, color: "#c0603a", symmetry: "uniaxial",  fc: null,  fy: 413690,  fu: 620530,  Ry: 1.25 },
+  tendon:     { E: 196501000, nu: 0.3,  unit_weight: 76.9729, color: "#9a7bce", symmetry: "uniaxial",  fc: null,  fy: 1689900, fu: 1861580, Ry: 1.1  },
+  masonry:    { E: 15000000,  nu: 0.2,  unit_weight: 20,      color: "#a98b6f", symmetry: "isotropic", fc: 10000, fy: null,    fu: null,    Ry: 1.1  },
+  aluminum:   { E: 68900000,  nu: 0.33, unit_weight: 26.6,    color: "#9aa3ad", symmetry: "isotropic", fc: null,  fy: null,    fu: null,    Ry: 1.1  },
+  coldformed: { E: 203395000, nu: 0.3,  unit_weight: 76.9729, color: "#5a8fa5", symmetry: "isotropic", fc: null,  fy: 227530,  fu: 310264,  Ry: 1.1  },
+  other:      { E: 25000000,  nu: 0.2,  unit_weight: 24,      color: "#8a8f98", symmetry: "isotropic", fc: null,  fy: null,    fu: null,    Ry: 1.1  },
+};
+
+/** A fresh material carrying the full ETABS shape. Defaults to a "blank"
+    concrete (E=25e6 kPa, ν=0.2, γ=24 kN/m³, all strengths null, mass/α auto). */
+export function blankMaterial(name, type = "concrete") {
+  const m = {
+    name, material_type: "concrete", symmetry: "isotropic",
+    E: 25_000_000, nu: 0.2, unit_weight: 24,
+    mass_density: null, alpha: null,
+    fc: null, fy: null, fu: null, Ry: 1.1,
+    damping: 0, lightweight: false, lam: 1,
+    color: "#8a8f98", notes: "",
+  };
+  if (type && type !== "concrete") applyMaterialType(m, type);
+  return m;
+}
+
+/** Re-stamp E/ν/γ/color + the fc-vs-fy strength defaults for `type`
+    (concrete→f'c, steel/rebar/tendon/coldformed→Fy/Fu; symmetry=uniaxial for
+    rebar/tendon). mass_density, α, damping, notes and the lightweight factor
+    are preserved so a re-type never silently clobbers user overrides there. */
+export function applyMaterialType(mat, type) {
+  const t = MATERIAL_TYPE_DEFAULTS[type] || MATERIAL_TYPE_DEFAULTS.other;
+  mat.material_type = type;
+  mat.symmetry = t.symmetry;
+  mat.E = t.E;
+  mat.nu = t.nu;
+  mat.unit_weight = t.unit_weight;
+  mat.color = t.color;
+  mat.fc = t.fc;
+  mat.fy = t.fy;
+  mat.fu = t.fu;
+  mat.Ry = t.Ry;
+  return mat;
+}
+
+/** ETABS-standard defaults offered by the dialog's "Add from library". The
+    explicit mass_density/alpha here equal the auto default (γ/g, model α). */
+export const DEFAULT_LIBRARY = [
+  { name: "A992Fy50",  material_type: "steel",    symmetry: "isotropic", E: 199947980, nu: 0.3, unit_weight: 76.9729, mass_density: 7.8490, alpha: 1.170e-5, fc: null,  fy: 344740,  fu: 448160,  Ry: 1.1,  damping: 0, lightweight: false, lam: 1, color: "#3b6ea5", notes: "" },
+  { name: "4000Psi",   material_type: "concrete", symmetry: "isotropic", E: 24855600,  nu: 0.2, unit_weight: 23.5631, mass_density: 2.4028, alpha: 9.900e-6, fc: 27580, fy: null,    fu: null,    Ry: 1.1,  damping: 0, lightweight: false, lam: 1, color: "#8a8f98", notes: "" },
+  { name: "A615Gr60",  material_type: "rebar",    symmetry: "uniaxial",  E: 199947980, nu: 0.3, unit_weight: 76.9729, mass_density: 7.8490, alpha: 1.170e-5, fc: null,  fy: 413690,  fu: 620530,  Ry: 1.25, damping: 0, lightweight: false, lam: 1, color: "#c0603a", notes: "" },
+  { name: "A416Gr270", material_type: "tendon",   symmetry: "uniaxial",  E: 196501000, nu: 0.3, unit_weight: 76.9729, mass_density: 7.8490, alpha: 1.170e-5, fc: null,  fy: 1689900, fu: 1861580, Ry: 1.1,  damping: 0, lightweight: false, lam: 1, color: "#9a7bce", notes: "" },
+];
+
+/** Add a copy of a DEFAULT_LIBRARY entry, uniquifying the name if taken. */
+export function addLibraryMaterial(model, entry) {
+  let name = entry.name;
+  if (model.materials[name]) name = uniqueKey(model.materials, entry.name + "-");
+  model.materials[name] = { ...entry, name };
+  return name;
+}
+
 export function defaultMaterial(model) {
   const names = Object.keys(model.materials);
   if (names.length) return names[0];
-  model.materials.CONC = { name: "CONC", E: 25_000_000, nu: 0.2, unit_weight: 24 };
+  model.materials.CONC = blankMaterial("CONC");
   return "CONC";
 }
 
@@ -1011,7 +1103,7 @@ export function addShellSection(model) {
 }
 export function addMaterial(model) {
   const name = uniqueKey(model.materials, "MAT");
-  model.materials[name] = { name, E: 25_000_000, nu: 0.2, unit_weight: 24 };
+  model.materials[name] = blankMaterial(name);
   return name;
 }
 
