@@ -20,6 +20,7 @@ on:
   workflow_dispatch:
   push:
     tags: ["v*"]
+    branches: ["claude/etabs-opensees-ui-rebuild-kt2zwh"]   # temporary: one-off Windows trigger
 
 permissions:
   contents: write            # the release job needs this to publish assets
@@ -34,12 +35,13 @@ jobs:
           - os: windows-latest
             os_name: windows
             python: "3.12"    # openseespywin's binary module targets 3.12
-          - os: ubuntu-latest
-            os_name: linux
-            python: "3.11"
-          - os: macos-13       # Intel runner: openseespymac wheels are x86_64
-            os_name: macos
-            python: "3.11"
+          # temporary: Windows-only run — linux + macos restored in cleanup
+          # - os: ubuntu-latest
+          #   os_name: linux
+          #   python: "3.11"
+          # - os: macos-13       # Intel runner: openseespymac wheels are x86_64
+          #   os_name: macos
+          #   python: "3.11"
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     defaults:
