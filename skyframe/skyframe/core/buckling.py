@@ -298,6 +298,13 @@ def assemble_elastic_stiffness(model: BuildingModel
                 + [6 * idx[tj] + k for k in range(6)])
         K[np.ix_(dofs, dofs)] += kg
         ele.append((m, T, np.array(dofs), E * A / L, L))
+    from .modifiers import shear_enabled
+    timo = sorted(m.uid for m in model.members
+                  if m.section in model.sections
+                  and shear_enabled(model.sections[m.section]))
+    if timo:
+        warn.append("shear deformation (As2/As3) ignored: Euler-Bernoulli "
+                    f"stiffness used for member(s) {timo}")
     return K, tag_of, coords, ele, warn
 
 
@@ -487,7 +494,8 @@ def _gravity_nodal_vector(model: BuildingModel, gravity: Dict[str, float],
                 mat = model.materials.get(sec.material) if sec else None
                 if sec is None or mat is None:
                     continue
-                w = swf * sec.A * mat.unit_weight * m.length
+                w = (swf * sec.A * mat.unit_weight * m.length
+                     * getattr(sec, "mod_weight", 1.0))
                 ti, tj = tag_of.get(_pkey(m.pi)), tag_of.get(_pkey(m.pj))
                 add(ti, 0.0, 0.0, -fac * w / 2.0)
                 add(tj, 0.0, 0.0, -fac * w / 2.0)

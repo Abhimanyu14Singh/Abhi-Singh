@@ -3530,3 +3530,153 @@ alpha changing a thermal axial force (None == model default), mass_density
 scaling a modal period (None == weight/g, 2x -> sqrt(2) period, element
 total == rho*V), and fc/fy/Ry/lambda flowing into the cracked-slab Mcr and
 the ASCE-41 hinge backbone with the None fallback preserved.
+
+---
+
+## Frame shear deformation and full property modifiers; shell membrane/bending modifiers
+
+Analysis-only.  Every new field is appended to its dataclass, round-trips
+through `to_dict`/`from_dict` (absent keys load as the defaults), and the
+defaults reproduce the previous results bit-for-bit (pinned by tests that
+compare full result dicts).  Solver-agnostic math: `skyframe.core.modifiers`;
+shell OpenSees wiring: `skyframe.engine.shell_modifiers`.
+
+### `FrameSection` (new fields)
+
+```jsonc
+"sections": {"<name>": { ...existing...,
+  "As2": null,                 // m^2 shear area, local 2 (V2, major-axis bending); null = auto/none
+  "As3": null,                 // m^2 shear area, local 3 (V3, minor-axis bending)
+  "shear_deformation": false,  // true = auto-fill unset As2/As3 from the shape
+  "mod_As2": 1.0, "mod_As3": 1.0,   // > 0, scale the shear areas
+  "mod_mass": 1.0,             // >= 0, element self-MASS multiplier
+  "mod_weight": 1.0            // >= 0, self-WEIGHT load multiplier
+}}
+```
+
+* **Enabling.** Shear deformation is ON when `shear_deformation` is true OR
+  `As2`/`As3` is set.  Otherwise the member stays the Euler-Bernoulli
+  `elasticBeamColumn` (the legacy path).
+* **Auto shear areas** (only for an enabled section, only for unset areas):
+  an AISC library W-shape (matched by section name) gives `As2 = d*tw` (web)
+  and `As3 = 5/3*bf*tf` (5/6 of both flanges), using the AISC 15th ed.
+  Table 1-1 `tw`/`tf` values held in `skyframe.core.modifiers`.  A section
+  with drawing `b, h > 0` gives `5/6*A` in both directions (rectangle rule;
+  Section Designer mirrors use their bbox `b/h`, so they get this rule too).
+  A direction that cannot be resolved is treated as shear-RIGID
+  (`Av = 1e10*A`).  If neither direction resolves, the member falls back to
+  Euler with a warning.
+* **Element.** An enabled member becomes OpenSees `ElasticTimoshenkoBeam`
+  `(E, G, A*mod_A, J*mod_J, I22*mod_I22, I33*mod_I33, Avy, Avz)` with
+  `Avy = As2*mod_As2` and `Avz = As3*mod_As3`.  The shear areas are used
+  directly, so any shear coefficient is already inside `As`.
+* **Euler fallback** (`UserWarning` naming the reason and the members).
+  Each case below was probed on the shipped openseespy:
+  * moment releases (`releases` non-empty): the element has no `-release`;
+  * `PDelta` / `Corotational` builds (P-Delta / large-displacement cases,
+    and pushovers that use them): the element ignores geometric stiffness
+    (probed: a compressed member gives the same tip deflection under
+    Linear and PDelta), so the whole build uses Euler for these members;
+  * no shear area resolvable.
+  Axial-only (Truss) and fiber-PMM hinge members keep their own element
+  types, unchanged.
+* **What works on Timoshenko members:**
+  * rigid end offsets (the arms stay stiff `elasticBeamColumn`);
+  * shell-edge splits, pushover hinge duplicates and panel zones;
+  * modal, response-spectrum and time-history analysis.
+* **Member loads.**
+  * Full-span UDL uses native `beamUniform` (probed exact, including the
+    axial `wx`).
+  * `beamPoint` is rejected by ElasticTimoshenkoBeam, so span point loads,
+    partial UDLs and trapezoids take the exact fixed-end-force path.  This
+    uses Timoshenko interdependent shape functions with
+    `phi = 12EI/(G*Av*L_seg^2)` per bending plane (exact by Betti's
+    theorem).
+* **Recovery.**
+  * Station forces are unchanged (pure statics).
+  * `member_deflections` adds the exact shear term
+    `-(Mb(x) - Mb(0))/(G*Av)` (`v'' = Mb/EI - Mb''/(G Av)`).
+  * `run_virtual_work` adds `V2*v2/(G*Avy) + V3*v3/(G*Avz)`, so the
+    unit-load identity still holds.
+* **Not covered:** `skyframe.core.buckling` / `ritz` (numpy Euler
+  stiffness) ignore shear deformation.  `assemble_elastic_stiffness`
+  appends a warning listing the affected members.
+
+### Mass / weight modifiers (frame `mod_mass`/`mod_weight`, shell `mass`/`weight`)
+
+* **`mod_weight` / shell `weight`** scale that element's self-weight load.
+  This covers:
+  * the engine self-weight member/area loads;
+  * self-weight totals and centroids;
+  * the weight-derived story mass in `compute_story_masses`;
+  * `story_gravity_loads` (notional loads);
+  * the buckling reference gravity.
+* **`mod_mass` / shell `mass`** scale that element's self-MASS in
+  `mass_source_mode == "element_self_mass"` (`mass_per_volume * volume *
+  mod`).  In the default `"weight"` mode, story mass comes from the
+  (weight-modified) loads.  There is no element self-mass to scale, so a
+  non-1 mass modifier there raises a `UserWarning` (ETABS semantics: the
+  mass modifier acts on element self mass).  It is never silently ignored.
+
+### `ShellSection` (new fields; element local axes 1 = x, 2 = y, 3 = normal)
+
+```jsonc
+"shell_sections": {"<name>": { ...existing...,
+  "f11": 1.0, "f22": 1.0, "f12": 1.0,   // membrane: N11, N22, N12 stiffness
+  "m11": 1.0, "m22": 1.0, "m12": 1.0,   // bending:  M11, M22, M12 stiffness
+  "v13": 1.0, "v23": 1.0,               // transverse shear: V13 (Vxz), V23 (Vyz)
+  "mass": 1.0, "weight": 1.0            // >= 0 (see above); stiffness factors > 0
+}}
+```
+
+Target resultant stiffness, applied after `mod` and any cracked-slab scale
+(`E' = E*mod*scale`, `Q` = isotropic plane-stress matrix of `E', nu`):
+
+* membrane `A = h * Q~(f11, f22, f12)`;
+* bending `B = h^3/12 * Q~(m11, m22, m12)`;
+* shear `S13 = v13 * 5/6*G'*h`, `S23 = v23 * 5/6*G'*h`.
+
+`Q~` scales `Q11` by `k11`, `Q22` by `k22`, `Q66` by `k12`, and the Poisson
+coupling `Q12` by `sqrt(k11*k22)`.  That keeps it positive definite and
+gives a plain factor when `k11 == k22`.  **All eight factors are honoured
+exactly** in linear builds, by one of three paths:
+
+1. All eight factors are 1.0: the legacy
+   `ElasticMembranePlateSection(E', nu, h, 0)` call (bit-identical).
+2. `f11 == f22 == f12 = f` and `m11 == m22 == m12 == v13 == v23 = b`:
+   `ElasticMembranePlateSection(E'*f, nu, h, 0, Ep_mod = b/f)`.  Probed:
+   `Ep_mod` scales plate bending AND transverse shear and leaves membrane
+   stiffness untouched.  This covers uniform membrane-only and uniform
+   (bending + shear) cases, e.g. f = 0.25 or b = 0.25 exactly.
+3. Anything else (directional 11/22/12 factors, or shear factors that
+   differ from the bending factor, e.g. the ETABS cracked slab
+   `m11 = m22 = m12 = 0.25` with shear untouched): an exactly equivalent
+   3-layer orthotropic `LayeredShell`, built as
+   `ElasticOrthotropic` + `PlateFiber`.
+   * Skin / core / skin layers of equal thickness `t`, with
+     `t^2 = 2*max eig(A^-1 B)`, `D_skin = B/(2t^3)` and
+     `D_core = (A - B/t^2)/t`.
+   * The layer transverse shear moduli are `S/(3t)`.
+   * This is exact because LayeredShell integrates each layer at its
+     mid-plane and sums shear as `sum(G_k t_k)`.  Both were probed: a forced
+     layered build reproduces path 2 to 1e-9.
+   * The `ElasticOrthotropic` `Gyz` slot carries `G13` (LayeredShell routes
+     the section's gamma_13 there; probed).
+
+Not honoured, with a `UserWarning`: nonlinear builds of `layered` (v0.22)
+sections, where only `mod` scales E.  Edge-tie chains (v0.22) keep
+`E*mod`.  `ShellSection.mod` itself is unchanged.
+
+### API
+
+No new endpoints: `POST /api/model` / `GET /api/model` carry every new
+field through `BuildingModel.to_dict`/`from_dict`.  Validation
+(`add_section`, `add_shell_section`, `validate`) raises `ValueError` naming
+the field when a value is bad:
+
+* `mod_As2`, `mod_As3` and the shell `f/m/v` factors must be finite and > 0;
+* the `mass`/`weight` modifiers must be finite and >= 0;
+* `As2`/`As3` must be null or finite and > 0;
+* `shear_deformation` must be a bool.
+
+Tests: `tests/test_modifiers_shear.py` (40 cases).
