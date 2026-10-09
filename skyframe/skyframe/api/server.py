@@ -1034,6 +1034,20 @@ def create_app() -> Flask:
             return jsonify({"error": str(exc)}), 400
 
     # ------------------------------------------- v0.24: analysis parity I
+    @app.post("/api/analyze/load_participation")
+    def analyze_load_participation():
+        """Modal load participation ratios of the current model (v1.13).
+
+        Returns ``{"acceleration": {UX|UY|UZ: {static, dynamic}},
+        "patterns": {name: {static, dynamic}}}`` in percent; 400 on error.
+        Computed on demand (it costs extra solves, so /api/analyze omits it).
+        """
+        try:
+            res = OpenSeesEngine(_state["model"]).run_load_participation()
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(res)
+
     @app.post("/api/analyze/ritz")
     def analyze_ritz():
         """Load-dependent Ritz vectors (self-contained numpy; v0.24).

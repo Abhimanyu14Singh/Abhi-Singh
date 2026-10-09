@@ -1184,15 +1184,25 @@ class ModalResults:
     frequencies: List[float]                    # Hz
     participation: List[Dict[str, float]]       # per-mode mass ratios
     shapes: Dict[int, Dict[int, List[float]]]   # mode -> tag -> 6 dof values
+    load_participation: Dict[str, Dict[str, Dict[str, float]]] = field(
+        default_factory=dict)
+    #   v1.13: Wilson static/dynamic load participation ratios (percent),
+    #   see skyframe.engine.modalcombo.load_participation; set by
+    #   run(load_participation=True) / run_load_participation()
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "periods": list(self.periods),
             "frequencies": list(self.frequencies),
             "participation": [dict(p) for p in self.participation],
             "shapes": {str(m): {str(t): list(v) for t, v in sh.items()}
                        for m, sh in self.shapes.items()},
         }
+        if self.load_participation:
+            d["load_participation"] = {
+                g: {k: dict(v) for k, v in grp.items()}
+                for g, grp in self.load_participation.items()}
+        return d
 
 
 @dataclass
@@ -1535,7 +1545,7 @@ class OpenSeesEngine:
         self._effp_cache: Dict[str, Tuple[float, float, float, float]] = {}
 
     # ------------------------------------------------------------------ API
-    def run(self) -> AnalysisResults:
+    def run(self, load_participation: bool = False) -> AnalysisResults:
         """Run every load case, combo, RS case, TH case, and modal analysis.
 
         v0.4: time-history cases are skipped (with a top-level results
@@ -1592,6 +1602,13 @@ class OpenSeesEngine:
                 modal = ModalResults([], [], [], {})
         else:
             modal = ModalResults([], [], [], {})
+        # v1.13 modal load participation ratios (ETABS table parity).  Opt-in:
+        # it costs 3 + n_patterns extra solves, so plain runs skip it (see
+        # run_load_participation / POST /api/analyze/load_participation).
+        if (load_participation and modal.periods
+                and not modal.load_participation):
+            from . import modalcombo as _mc
+            modal.load_participation = _mc.load_participation(self, modal)
         rs_cases: Dict[str, CaseResults] = {}
         for name in model.rs_cases:
             if runs(name):
@@ -6694,9 +6711,14 @@ class OpenSeesEngine:
             omegas.append(omega)
             per_mode.append(self._modal_static(loads))
 
-        rho = (np.eye(len(omegas)) if rs.combo_method == "SRSS"
-               else _cqc_matrix(omegas, rs.damping))
-        result = self._combine_rsa(name, per_mode, rho)
+        from . import modalcombo as _mc            # v1.13 ETABS methods
+        if _mc.is_legacy(rs):
+            rho = (np.eye(len(omegas)) if rs.combo_method == "SRSS"
+                   else _cqc_matrix(omegas, rs.damping))
+            result = self._combine_rsa(name, per_mode, rho)
+        else:
+            result = _mc.run_rs_extended(self, rs, name, modal, per_mode,
+                                         omegas, spectrum, mass_map)
         self._rs_cache[name] = result
         return result
 
@@ -7148,6 +7170,19 @@ class OpenSeesEngine:
         return result
 
     # ------------------------------------- frequency domain (steady/PSD)
+    def run_load_participation(self) -> dict:
+        """Modal load participation ratios (ETABS table), on demand.
+
+        Runs the modal analysis and returns ``{"acceleration": {UX|UY|UZ:
+        {static, dynamic}}, "patterns": {name: {static, dynamic}}}``
+        (percent); see :func:`skyframe.engine.modalcombo.load_participation`.
+        """
+        from . import modalcombo as _mc
+        modal = self.run_modal()
+        if not modal.periods:
+            return {"acceleration": {}, "patterns": {}}
+        return _mc.load_participation(self, modal)
+
     def run_steady_state(self, name: str) -> dict:
         """Run one steady-state case (see :mod:`skyframe.engine.frequency`)."""
         from skyframe.engine.frequency import run_steady_state

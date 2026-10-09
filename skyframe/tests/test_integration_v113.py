@@ -52,3 +52,32 @@ def test_skipping_one_frequency_case_leaves_the_other_identical():
     mdl.cases_not_run = ["SS"]
     part = OpenSeesEngine(mdl).run().to_dict()
     assert part["psd"]["PSD"]["rms"] == full["psd"]["PSD"]["rms"]
+
+
+# --------------------------------------------------------------------------- #
+# Modal load participation is on demand (it costs 3 + n_patterns solves)
+# --------------------------------------------------------------------------- #
+def test_plain_run_omits_load_participation():
+    res = OpenSeesEngine(_model_with_cases()).run().to_dict()
+    assert "load_participation" not in res["modal"]
+
+
+def test_on_demand_load_participation_equals_opt_in_run():
+    mdl = _model_with_cases()
+    via_run = OpenSeesEngine(mdl).run(load_participation=True).to_dict()
+    direct = OpenSeesEngine(mdl).run_load_participation()
+    assert direct == via_run["modal"]["load_participation"]
+    # SDOF with its one mode: every massed load is fully captured
+    assert direct["acceleration"]["UX"]["dynamic"] == pytest.approx(100.0)
+
+
+def test_load_participation_endpoint():
+    from skyframe.api.server import create_app
+    client = create_app().test_client()
+    r = client.post("/api/model", json=_model_with_cases().to_dict())
+    assert r.status_code == 200
+    r = client.post("/api/analyze/load_participation")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert set(body) == {"acceleration", "patterns"}
+    assert set(body["acceleration"]) == {"UX", "UY", "UZ"}
