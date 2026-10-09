@@ -126,12 +126,16 @@ export function initEtabs(sky) {
       { label: "Stories…", act: "def-stories", fn: () => sky.openGridEditor() },
       { sep: true },
       { label: "Load Patterns…", act: "def-patterns", fn: () => gotoLoads("ls-patterns") },
+      { label: "Load Cases…", act: "def-loadcases", hint: "all types", fn: () => sky.openLoadCases() },
       { label: "Static Load Cases…", act: "def-cases", fn: () => gotoLoads("ls-cases") },
       { label: "Response-Spectrum Cases…", act: "def-rs", fn: () => gotoLoads("ls-rs") },
       { label: "Time-History Cases…", act: "def-th", fn: () => gotoLoads("ls-th") },
       { label: "Pushover Cases…", act: "def-pushover", fn: () => gotoLoads("ls-pushover") },
       { label: "Buckling Cases…", act: "def-buckling", fn: () => gotoLoads("ls-buckling") },
       { label: "Staged Cases…", act: "def-staged", fn: () => gotoLoads("ls-staged") },
+      { label: "Steady-State Cases…", act: "def-ss", fn: () => sky.openFreqCase("steady_state") },
+      { label: "Power Spectral Density Cases…", act: "def-psd", fn: () => sky.openFreqCase("psd") },
+      { label: "Frequency Functions (SS / PSD)…", act: "def-freqfn", fn: () => sky.openFreqFunctions() },
       { label: "Load Combinations…", act: "def-combos", fn: () => gotoLoads("ls-combos") },
       { label: "Functions (RS / TH)…", act: "def-functions", fn: () => gotoLoads("ls-functions") },
       { label: "Section Cuts…", act: "def-cuts", fn: () => gotoLoads("ls-cuts") },
@@ -190,6 +194,7 @@ export function initEtabs(sky) {
       { label: "Buckling Cases…", act: "an-buck", fn: () => gotoLoads("ls-buckling") },
       { label: "Pushover Cases…", act: "an-po", fn: () => gotoLoads("ls-pushover") },
       { label: "Staged Construction…", act: "an-staged", fn: () => gotoLoads("ls-staged") },
+      { label: "Frequency-Domain Cases (SS / PSD)…", act: "an-freq", fn: () => gotoLoads("ls-freq") },
     ]],
     ["Display", [
       { label: "3D / Deformed View", act: "dis-view3d", fn: () => showResult("view3d") },
@@ -206,6 +211,7 @@ export function initEtabs(sky) {
       { label: "Time History", act: "dis-th", fn: () => showResult("th") },
       { label: "Pushover + Performance", act: "dis-pushover", fn: () => showResult("pushover") },
       { label: "Buckling", act: "dis-buckling", fn: () => showResult("buckling") },
+      { label: "Frequency-Domain Results…", act: "dis-freq", hint: "SS / PSD", fn: () => sky.openFreqResults() },
       { label: "Load Takedown", act: "dis-takedown", fn: () => showResult("takedown") },
       { label: "Section Cuts", act: "dis-cuts", fn: () => showResult("cuts") },
       { label: "Wall Piers", act: "dis-piers", fn: () => showResult("piers") },
@@ -411,6 +417,7 @@ export function initEtabs(sky) {
         nr ? el("span", { class: "ex-notrun", text: "not run" }) : null,
       ]);
       leaf.addEventListener("click", () => {
+        if ((c.kind === "steady_state" || c.kind === "psd") && sky.openFreqCase) return void sky.openFreqCase(c.kind, c.name);
         const a = KIND_ANCHOR[c.kind];
         if (a) gotoLoads(a); else showResult("modal");
       });

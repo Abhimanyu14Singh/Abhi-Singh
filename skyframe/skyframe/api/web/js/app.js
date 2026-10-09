@@ -26,6 +26,7 @@ import { initEtabs } from "./etabs.js";   // ETABS-style chrome (menu bar, palet
 // analysis-setup dialogs and the Nonlinear Material Data (stress–strain) section
 import U from "./units.js";
 import * as DLG from "./analysisdlg.js";
+import { installCaseDialogs } from "./casedlg.js";   // Define > Load Cases parity dialogs
 import { buildStressStrainSection } from "./sscurve.js";
 
 /* ------------------------------------------------ state */
@@ -8388,6 +8389,8 @@ async function boot() {
     notRunEntries, syncRunStatusBadge, fetchMaterialCurve, fetchUnitsTable,
     mockMaterialCurve, keepSetup, markDirty,
   };
+
+  installCaseDialogs(window.__sky);   // adds openLoadCases / openFreqCase / … to __sky
 
   // ETABS-style chrome — menu bar, tool palette, model explorer, status bar.
   // Delegates to the store/functions exposed above; never re-implements logic.
