@@ -27,6 +27,9 @@ from .loads_ext import (GroundDisplacement, area_load_to_dict,  # noqa: F401
 from skyframe.core.frequency_cases import (  # noqa: F401  (re-exported)
     FrequencyFunction, FrequencyLoad, PSDCase, SteadyStateCase,
     frequency_from_dict, frequency_to_dict, validate_frequency)
+from skyframe.core.nonlinear_static import (  # noqa: F401  (re-exported)
+    NonlinearStaticCase, nls_from_dict, nls_to_dict,
+    validate_nonlinear_static)
 from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
     PDELTA_INCLUDE_IN, PDELTA_METHODS, pdelta_defaults, pdelta_from_dict,
     pdelta_to_dict, validate_pdelta_options)
@@ -1828,6 +1831,13 @@ class BuildingModel:
     # to_dict only when not the defaults.
     pdelta_options: Dict[str, object] = field(
         default_factory=pdelta_defaults)
+    # Nonlinear Static load cases + case chaining (skyframe.core.
+    # nonlinear_static); modal_from_case: MODAL eigen solve on the end
+    # state of that nonlinear static case (None = elastic).  Emitted by
+    # to_dict only when used.
+    nonlinear_static_cases: Dict[str, "NonlinearStaticCase"] = field(
+        default_factory=dict)
+    modal_from_case: Optional[str] = None
 
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
@@ -2671,7 +2681,9 @@ class BuildingModel:
             raise ValueError(f"{nm}: target_load must be a finite non-zero "
                              "value")
         if po.start_from is not None:
-            if po.start_from not in self.cases:
+            if (po.start_from not in self.cases
+                    and po.start_from not in getattr(
+                        self, "nonlinear_static_cases", {})):
                 raise ValueError(f"{nm}: start_from references unknown "
                                  f"static load case {po.start_from!r}")
             if po.gravity:
@@ -3114,7 +3126,9 @@ class BuildingModel:
                           ("staged", self.staged_cases),
                           ("buckling", self.buckling_cases),
                           ("steady_state", self.steady_state_cases),
-                          ("psd", self.psd_cases)):
+                          ("psd", self.psd_cases),
+                          ("nonlinear_static",
+                           getattr(self, "nonlinear_static_cases", {}))):
             for n in src:
                 out.setdefault(n, kind)
         out.setdefault(MODAL_CASE, "modal")
@@ -3482,6 +3496,17 @@ class BuildingModel:
 
         validate_frequency(self)            # frequency-domain cases
         self._validate_pdelta_options()
+        self._validate_nonlinear_static()
+
+    def _validate_nonlinear_static(self) -> None:
+        """Nonlinear static cases / chains (see core.nonlinear_static)."""
+        validate_nonlinear_static(self)
+
+    def add_nonlinear_static_case(self, name: str, loads, **kw
+                                  ) -> "NonlinearStaticCase":
+        """Add a Nonlinear Static case (core.nonlinear_static)."""
+        from skyframe.core.nonlinear_static import add_nonlinear_static_case
+        return add_nonlinear_static_case(self, name, loads, **kw)
 
     def _validate_pdelta_options(self) -> None:
         """Model-wide P-Delta options (see core.pdelta_options)."""
@@ -3585,6 +3610,7 @@ class BuildingModel:
 
             **frequency_to_dict(self),      # frequency-domain (if non-empty)
             **pdelta_to_dict(self),         # P-Delta options (if not default)
+            **nls_to_dict(self),            # nonlinear static (if used)
         }
 
     @classmethod
@@ -3938,6 +3964,7 @@ class BuildingModel:
 
         frequency_from_dict(mdl, d)         # frequency-domain (absent = {})
         pdelta_from_dict(mdl, d)            # P-Delta options (absent = none)
+        nls_from_dict(mdl, d)               # nonlinear static (absent = {})
         mdl.validate()
         return mdl
 

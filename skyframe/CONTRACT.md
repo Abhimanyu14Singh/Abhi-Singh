@@ -5418,3 +5418,142 @@ Every consumer below works with polygon regions:
   and deflection within 3% (both shell and membrane).
 * Load equilibrium and area / self-weight sums (L, T and U shapes, a
   triangle, polygon openings) are exact to 1e-9.
+
+## Nonlinear static load cases and case chaining
+
+ETABS Define > Load Cases > Nonlinear Static (gap audit A4) and
+"Initial conditions: continue from state at end of nonlinear case" (A5).
+Model side `skyframe/core/nonlinear_static.py`, solver
+`skyframe/engine/nonlinear_static.py`. A model that uses neither field
+serializes, validates and analyzes byte-identically to before (no new
+model or results key).
+
+### Model JSON (both keys emitted only when used)
+
+```
+"nonlinear_static_cases": {
+  "<name>": {
+    "name": "<name>",
+    "loads": [{"pattern": "DEAD", "scale": 1.0}, ...],  # >= 1; patterns may repeat (scales add)
+    "load_application": "load_control" | "displacement_control",
+    "steps": 10,                       # int 1..10000
+    "control_point": [x, y, z] | null, # monitored joint, OR
+    "control_story": "Story3" | null,  # its diaphragm master (else lowest-tag story node)
+                                       # neither: the pushover roof control node
+    "control_dof": "UX"|"UY"|"UZ"|"RX"|"RY"|"RZ",
+    "target_disp": null | m or rad,    # displacement_control: required, != 0; the TOTAL
+                                       # monitored displacement at the end of the case
+                                       # (including the start_from state)
+    "geometric": "none" | "p_delta" | "large_displacement",  # Linear | PDelta | Corotational
+    "start_from": null | "<nonlinear static case>",
+    "hinges": "column_base"|"all_ends"|"asce41", "My": {uid: kN*m},
+    "default_My": null | kN*m, "hardening": 0.02, "hinge_params": {...}
+  }
+},
+"modal_from_case": null | "<nonlinear static case>"
+```
+
+The hinge fields are exactly the `PushoverCase` ones and go through the
+same hinge-insertion machinery (`_build(hinge_case=case)`): Steel01
+column_base/all_ends springs with `My`/`default_My`, or `asce41`
+member-assigned `auto_m3` / `fiber_pmm` hinges. The default (no My)
+inserts no hinge. Tension/compression-only members, gap/hook/isolator
+links, compression-only springs and nonlinear layered shells behave as in
+a pushover. The model-wide P-Delta options do NOT apply (a hinged build,
+as for pushover); use `geometric`. Python:
+`model.add_nonlinear_static_case(name, loads, **fields)` (`loads` may be
+the list or a `{pattern: scale}` dict).
+
+Validation (`ValueError`): unknown pattern / story / member, empty loads,
+bad enums, steps out of range, control_point and control_story both
+given, displacement_control without target_disp, name already used by
+another case kind (or MODAL), `start_from` unknown or itself, a
+`start_from` CYCLE ("circular start_from reference A -> B -> A"), a chain
+mixing `geometric` values, `modal_from_case` not a nonlinear static case,
+a pushover whose `start_from` names a nonlinear static case of a different
+geometric (none<->linear, p_delta<->pdelta,
+large_displacement<->corotational).
+
+### Solution (one domain per chain)
+
+The chain `[root, ..., target]` (following `start_from`) is solved in ONE
+OpenSees domain, built once with the TARGET case's hinge definition and the
+chain's transformation. Stage k adds its loads in Plain pattern `100 + k`
+(Linear series) and is solved with Newton (NormDispIncr 1e-8, 50 its;
+NewtonLineSearch retry, then a 10-substep retry) by LoadControl(1/steps)
+or DisplacementControl(monitored DOF, (target - start)/steps; a diaphragm
+slave drives its master for UX/UY/RZ); then `loadConst -time 0` and the
+next stage continues from that END STATE. A non-converging START stage
+fails the case (`case_status` "failed"); a non-converging TARGET stage
+returns the last converged state with `converged: false` and a warning.
+
+### Results JSON (`results["nonlinear_static"][name]`, only when any ran)
+
+The final CUMULATIVE state (start_from chain included) in the static-case
+shape — `node_disp, reactions, base, member_forces, member_stations,
+member_deflections, story` (+ `shell_forces`) — plus:
+
+```
+"nonlinear": {
+  "chain": ["GRAV", "PUSH"], "load_application": ..., "geometric": ...,
+  "converged": true, "final_load_factor": 1.0,       # lambda of THIS case's loads
+  "history": {"step": [0..n], "load_factor": [...],  # entry 0 = initial (start) state
+              "disp": [...],                         # monitored DOF, total
+              "base": {"FX": [...], ..., "MZ": [...]},  # total base reaction per step
+              "monitored": {"node": tag, "dof": "UX", "point": [x, y, z]}},
+  "hinge_rotations": {uid: peak |rot| over this case},
+  "yielded": [uids],              # Steel01: |rot| > My/k; asce41/fiber: state != elastic
+  "hinges": [...],                # asce41 / fiber per-hinge histories (pushover shape)
+  "warnings": [...]
+}
+```
+
+Reactions fold a support's hinge duplicate into the support node (the
+Transformation handler leaves the column shear on the duplicate); spring
+reactions are added as in static cases. Member stations use the applied
+span loads scaled by each stage's final load factor. Story shears are those
+of the effective pattern factors sum(stage scale x lambda).
+
+### Chaining into pushover and modal
+
+* `PushoverCase.start_from` may name a nonlinear static case: the push
+  continues in the same domain from that chain's end state (pushover
+  hinges govern the build; the capacity-curve displacement is measured
+  past that state; base shear = push load factor x reference, unchanged).
+* `modal_from_case`: the MODAL eigen solve (and everything consuming it:
+  RS, modal TH/FNA, frequency-domain cases, load participation, the
+  nonlinear TH Rayleigh fit) uses the TANGENT stiffness at the end of that
+  case's chain (P-Delta stressed and/or yielded state); masses unchanged.
+
+### Run control and combos
+
+`case_kinds()` gains `"nonlinear_static"`. Dependencies (transitive,
+status `run_as_dependency`): a nonlinear static case needs its
+`start_from`; a pushover needs a nonlinear static `start_from`; MODAL
+needs `modal_from_case`. Each case re-solves its own chain (results do not
+depend on run order). Combos: REJECTED — a nonlinear static case in any
+load combination raises "nonlinear static results are a path-dependent
+state, not superposable; define a nonlinear static case with the combined
+loads instead" (`core/combos_ext._REJECT`). Nonlinear static results are
+not fed to takedown / section cuts / piers / deflection checks / seismic
+diagnostics.
+
+### Validation (`tests/test_nonlinear_static.py`)
+
+* Elastic load control == linear static (1e-9, steps 1 and 7);
+  `p_delta` == per-case P-Delta (1e-7; tip = 1/(3EI/L^3 - P/L) to 1e-6);
+  `large_displacement` == per-case corotational (1e-6).
+* EPP cantilever (My 30 kN*m, L 3 m, target 0.03 m): V = 10.000 = My/L,
+  base moment 30.000, hinge rotation 0.0082222 = My/k_t + (d - d_y)/L.
+* Tension-only X brace (H 10, 4 x 3 m): tension 12.49999 = H/cos,
+  compression -1.3e-5 (slack).
+* Chained gravity -> lateral == combined case == linear static; 3-level
+  P-Delta chain == combined P-Delta case; pushover from a nonlinear
+  gravity case == pushover with the same `gravity`.
+* Modal from a P-Delta gravity case (P = 0.6 Pcr_s): T = 0.72552 s vs
+  elastic 0.45886 s; == T0/sqrt(1 - P/Pcr_s) and == model-wide
+  `iterative_loads` (1e-6); 2-story frame translational modes ==
+  iterative (1e-4); yielded-hinge state matches the hand series-spring
+  SDOF (1e-3).
+* Cycle detection, validation, run-control dependency status, combo
+  rejection, round trip, byte-identical defaults.

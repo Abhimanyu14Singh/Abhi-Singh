@@ -263,8 +263,10 @@ def _plan_pattern(engine, asm, case, dof: int) -> PushPlan:
 def resolve_gravity(model, case) -> Dict[str, float]:
     """The gravity stage: ``gravity`` or the ``start_from`` case patterns."""
     sf = getattr(case, "start_from", None)
-    if sf:
+    if sf and sf in model.cases:
         return dict(model.cases[sf].patterns)
+    if sf:                      # a nonlinear static case: chained state
+        return {}
     return case.gravity
 
 

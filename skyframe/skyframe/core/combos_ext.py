@@ -38,6 +38,9 @@ _REJECT = {
     "psd": ("power-spectral-density results are statistical responses and "
             "cannot be combined"),
     "modal": "modal results are mode shapes, not a load state",
+    "nonlinear_static": ("nonlinear static results are a path-dependent "
+                         "state, not superposable; define a nonlinear "
+                         "static case with the combined loads instead"),
 }
 
 
@@ -61,7 +64,8 @@ def member_kind(model, name: str) -> Optional[str]:
     for kind, attr in (("pushover", "pushover_cases"),
                        ("buckling", "buckling_cases"),
                        ("steady_state", "steady_state_cases"),
-                       ("psd", "psd_cases")):
+                       ("psd", "psd_cases"),
+                       ("nonlinear_static", "nonlinear_static_cases")):
         if name in (getattr(model, attr, None) or {}):
             return kind
     from skyframe.core.model import MODAL_CASE
