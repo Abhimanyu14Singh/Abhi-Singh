@@ -170,6 +170,7 @@ from skyframe.core import framemesh as _fm
 from skyframe.engine.shell_modifiers import elastic_shell_section
 from skyframe.engine import pdelta as _pdelta      # model-wide P-Delta
 from skyframe.engine import diaphragms as _dgm     # named diaphragms/add. mass
+from skyframe.engine import tendons as _tdn        # PT tendons / hyperstatic
 
 from skyframe.core import springprops as _sprp     # B9/B11 named springs
 from skyframe.engine import hysteresis as _hyst    # B9/B11 builders
@@ -1503,6 +1504,11 @@ class AnalysisResults:
     diaphragms: Dict[str, object] = field(default_factory=dict)
     #   named diaphragms (engine/diaphragms.py; only when assigned)
 
+    tendons: Dict[str, dict] = field(default_factory=dict)
+    hyperstatic: Dict[str, dict] = field(default_factory=dict)
+    #   PT tendons report / hyperstatic cases (engine/tendons.py; emitted
+    #   only when non-empty)
+
     def to_dict(self) -> dict:
         d = {
             "model_name": self.model_name,
@@ -1558,6 +1564,11 @@ class AnalysisResults:
 
         if self.diaphragms:              # named diaphragms (only when used)
             d["diaphragms"] = self.diaphragms
+
+        if self.tendons:                 # PT tendons (only when defined)
+            d["tendons"] = self.tendons
+        if self.hyperstatic:             # hyperstatic cases (only when run)
+            d["hyperstatic"] = self.hyperstatic
         return d
 
 
@@ -1796,6 +1807,12 @@ class OpenSeesEngine:
                 res = attempt(name, lambda n=name: self.run_staged(n))
                 if res is not None:
                     staged[name] = res
+        hyperstatic: Dict[str, dict] = {}      # PT hyperstatic cases
+        for name in getattr(model, "hyperstatic_cases", None) or {}:
+            if runs(name):
+                res = attempt(name, lambda n=name: self.run_hyperstatic(n))
+                if res is not None:
+                    hyperstatic[name] = res
         # extended load combinations (CONTRACT "Load combinations: RS/TH/
         # nested members and ABS/SRSS/Range types"): evaluated once every
         # member analysis has run; dicts are then restored to model order
@@ -1949,6 +1966,9 @@ class OpenSeesEngine:
             nonlinear_static=nls_res,
 
             diaphragms=diaphragms,
+
+            tendons=(_tdn.report(self) if _tdn.has_tendons(model) else {}),
+            hyperstatic=hyperstatic,
         )
 
     def _run_plan(self) -> dict:
@@ -1982,6 +2002,9 @@ class OpenSeesEngine:
             if status.get(n) == "finished" and base:
                 need(base, n)
         self._nls_plan(status, need)
+        for n, hc in (getattr(model, "hyperstatic_cases", None) or {}).items():
+            if status.get(n) == "finished":          # PT hyperstatic
+                need(hc["case"], n)
         return {"status": status, "notes": notes}
 
     def _nls_plan(self, status: Dict[str, str], need) -> None:
@@ -2003,6 +2026,10 @@ class OpenSeesEngine:
                     if status.get(dep) == "not_run":
                         need(dep, n)
                         changed = True
+
+    def run_hyperstatic(self, name: str) -> dict:
+        """Run one PT hyperstatic case (engine/tendons.py)."""
+        return _tdn.run_hyperstatic(self, name)
 
     def run_nonlinear_static(self, name: str):
         """Run one nonlinear static case (engine/nonlinear_static.py)."""
@@ -4367,6 +4394,8 @@ class OpenSeesEngine:
                      getattr(nl, "mz", 0.0) * scale)
         if getattr(pat, "ground_displacements", None):
             self._apply_ground_displacements(asm, pat, scale)
+        if getattr(model, "tendons", None):       # PT tendons as loads
+            _tdn.apply_pattern_tendons(self, asm, pat_name, scale)
 
         acc_tors = getattr(pat, "accidental_torsion", False)
         ecc = getattr(pat, "ecc", 0.05)

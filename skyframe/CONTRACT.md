@@ -6194,3 +6194,154 @@ device (TH Newton) links.  FNA rejects them, so use direct integration.
   * the bearing types run under gravity plus lateral load;
   * a TH with a nonlinear named spring runs;
   * round trips match, and validation rejects bad inputs.
+
+## Post-tensioning tendons (as loads) and hyperstatic case
+
+ETABS "model tendons as loads" (analysis only, no design checks).  Code:
+`skyframe/core/tendons.py` (mechanics, validation) and
+`skyframe/engine/tendons.py` (load application, hyperstatic case).  With no
+tendons and no hyperstatic cases every model dict and results JSON is
+byte-identical to before (neither new key is emitted).
+
+### Model
+
+`BuildingModel.tendons` (list; `to_dict` key `"tendons"` only when
+non-empty) holds tendon objects.  `validate()` normalises them in place to
+the canonical form:
+
+```
+{"uid": "T1",
+ "points": [[x, y, z], ...],     # >= 2 profile points (m)
+ "sags": [s, ...],               # one per segment, m (0 = straight)
+ "drape_dir": [0, 0, -1],        # sag direction (default: down)
+ "material": "A416Gr270",        # model material, else default library
+ "area": 0.00099,                # m^2, > 0
+ "jacking_stress": 1.395e6,      # kPa, > 0;  P0 = jacking_stress * area
+ "jacking_end": "start" | "end" | "both",
+ "losses": {"friction_mu": 0, "wobble_k": 0,      # -, 1/m
+            "anchor_set": 0,                       # m (draw-in)
+            "long_term_fraction": 0},              # 0 <= f < 1
+ "host": ["B1", ...],            # frame uids OR shell-region uids
+ "pattern": "PT",                # existing load pattern
+ "n_sub": 16}                    # sub-pieces per segment, 1..200
+```
+
+Input shortcuts: `"profile": {"start", "end", "sag"}` (one parabola) or a
+list of contiguous such objects (`"segments"` is an alias); `"host"` may be
+a single uid string; `sags` defaults to zeros (a polyline).
+
+`BuildingModel.hyperstatic_cases` (`{name: {"case": <static case>}}`,
+emitted only when non-empty) adds the case kind `"hyperstatic"` to
+`case_kinds()`.  The case can be listed in `cases_not_run`; a running
+hyperstatic case runs its static case as a dependency.
+
+Validation rejects: bad or duplicate uid, unknown pattern or material,
+zero-length segment, a drape_dir parallel to the chord of a curved
+segment, area/jacking_stress <= 0, unknown jacking_end or losses keys,
+negative losses, long_term_fraction >= 1, and mixed or unknown hosts.  It
+also rejects axial-only host members and a tendon point that projects onto
+no host member axis.  A hyperstatic case must reference an existing static
+case that applies at least one tendon pattern, and its name must not be
+used by another case.
+
+### Mechanics
+
+* Segment k runs from `A = points[k]` to `B = points[k+1]`, with chord
+  `Lc = |B - A|`.  Its shape is
+  `p(u) = A + u (B - A) + 4 s u (1 - u) d`, where `d` is the unit part of
+  drape_dir perpendicular to the chord.
+* The tendon force vector is `T(u) = P p'(u) / Lc` (small-slope basis):
+  its chord component is P.  On a straight segment this is the exact
+  tendon force.
+* Losses are measured from the jacking end along the arc length `x`, with
+  `alpha` the cumulative tangent-angle change (exact for parabolas, kinks
+  included):
+  * friction: `P_f = P0 exp(-(mu alpha + k x))`;
+  * anchor set: `P = min(P_f, 2 P* - P_f)`, where
+    `2 int max(P_f - P*, 0) dx = anchor_set * E * area`.  The set length
+    is where `P_f = P*`, or the whole tendon;
+  * `"both"`: the larger of the two one-end profiles;
+  * long-term: `P_eff = (1 - long_term_fraction) P`.
+* Equivalent loads: the tendon is cut into `n_sub` sub-pieces per segment,
+  and also split where the host member changes.  Each sub-piece carries
+  the P of its mid-point.  The concrete receives:
+  * point forces `T_right - T_left` at every sub-piece end.  These are
+    the anchors (`+T(0)` at the start, `-T(1)` at the end), kink forces
+    and friction steps;
+  * on curved pieces, the uniform curvature load `-(8 P s / Lc^2) d` per
+    unit chord length (the uplift `w = 8 P e / L^2`).
+
+  The set is exactly self-equilibrated (zero net force and moment).
+* Frame hosts receive these loads as member loads (global point, partial
+  UDL and concentrated moment) at the projections of the tendon points on
+  the member axis, plus the eccentricity couples `(p - c) x F`.  The
+  distributed couple of an eccentric curvature load is lumped at each
+  sub-piece mid-point, which is the only discretisation error.
+* Shell hosts get nodal loads at the nearest mesh node of the host
+  regions, with the transfer couple.  Equilibrium is exact.  The lumping is
+  intended for a straight plan path through the slab.
+* Every analysis that applies the pattern applies the tendon loads, via
+  `OpenSeesEngine._apply_pattern`.  This covers static, P-Delta, nonlinear
+  static, model-wide P-Delta, combos (by superposition) and so on.  Two
+  limitations: tendon loads carry no mass, and they are not seen by the
+  closed-form buckling geometric stiffness or the story-split staged
+  pattern.
+
+### Results
+
+* `results["tendons"][uid]` (only when tendons exist) contains:
+  * `pattern`, `P0`, `length`;
+  * `anchor_set_length: {"start", "end"}`;
+  * `stations: {"s", "alpha", "P", "points"}`, at the sub-piece
+    boundaries, with P effective after all losses;
+  * `segment_uplift` (`8 P_avg s / Lc^2` per segment);
+  * `equivalent_loads: {"points": [{point, force}],
+    "lines": [{segment, u1, u2, force}], "net_force", "net_moment"}`.
+* `results["hyperstatic"][name]` (only for run cases) contains
+  `{"case", "tendon_patterns": {pattern: scale}, "reactions": {tag: [6]},
+  "base", "members": {uid: {"x", "hosts_tendon", "total", "primary",
+  "secondary"}}}`.  Each of total/primary/secondary is
+  `{N, V2, V3, T, M2, M3}` at the member's output stations, in the
+  engine's station sign convention.
+  * Primary forces are those of the concrete section under the tendon
+    force alone: `F = -T` at the tendon point p, so `N = -T.x` and
+    `M = (p - c) x (-T)` in the local axes.  A tendon below the centroid
+    therefore gives `M3 = -P e`.
+  * At an anchor, a member end or an interior FE node, the station uses
+    the sub-piece on the member side.
+  * Secondary = total - primary.  Primary reactions are zero, so the
+    secondary reactions are the PT case reactions.
+
+### Validation (`tests/test_tendons.py`, 30 tests)
+
+* Simply supported beam with a parabolic drape (P = 1000, e = 0.2,
+  L = 10):
+  * the uplift is `w = 8Pe/L^2 = 16`, and the anchors are
+    `(+-P, 0, -4eP/L)` (1e-12);
+  * `M3(x) = -P e(x)`, with midspan `-Pe = -200` (1e-12);
+  * `N = -P` and `V2 = 4eP(L-2x)/L^2`;
+  * secondary forces and reactions are zero (1e-8).
+* Two-span continuous beam with sag e per span:
+  * total `M = -3wLx/8 + wx^2/2` and primary `-P e(x)`;
+  * secondary `Pe x/L`, which is Pe = 200 at the interior support;
+  * secondary reactions `Pe/L, -2Pe/L, Pe/L` (1e-9).
+* Linear transformation (interior eccentricity +0.1): total moments are
+  unchanged to `(delta/L)^2`, and P delta moves from secondary to primary.
+* Friction against hand at the quarter points: a parabola (exact arc
+  length, `alpha = atan(4e/L) - atan(4e(L-2x)/L^2)`) and a harped polyline
+  (kink `2 theta`, kink force `2 P sin(theta)`) (1e-9..1e-12).
+* Anchor set length against the exact exponential hand solution (1e-4),
+  and within 5% of the linear approximation `sqrt(delta E A / p)`.  The
+  lost area equals `delta E A` when the set exceeds the tendon.  Both-end
+  jacking is symmetric with minimum `P0 e^{-kL/2}`.  End jacking and the
+  long-term fraction are covered.
+* Self-equilibrium: a 3D multi-segment tendon (lateral eccentricity,
+  kinks, all losses, both ends) has zero net force and moment (1e-9).  On a
+  determinate 3D support set its reactions are zero, and the secondary
+  N/V/M stations are zero to 1e-6 P L (torsion to the documented lumping
+  tolerance).
+* Coverage also includes: a host spanning two members split at the node,
+  a slab host (reactions sum to zero, midspan camber
+  `5 P e L^2 / 48 EI` to 3%), round trip, results keys, cases_not_run
+  dependency, scale and combo superposition, validation errors and
+  byte-identical defaults.

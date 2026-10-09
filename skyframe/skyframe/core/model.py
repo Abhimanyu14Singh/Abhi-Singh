@@ -1915,6 +1915,13 @@ class BuildingModel:
     # off.  Emitted by to_dict only when set.
     frame_auto_mesh: Optional[dict] = None
 
+    # Post-tensioning tendons modelled as equivalent loads + hyperstatic
+    # cases (skyframe.core.tendons): tendons = [tendon dict, ...];
+    # hyperstatic_cases = {name: {"case": <static case>}}.  Emitted by
+    # to_dict only when non-empty.
+    tendons: List[dict] = field(default_factory=list)
+    hyperstatic_cases: Dict[str, dict] = field(default_factory=dict)
+
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
         self.materials[mat.name] = mat
@@ -3271,7 +3278,9 @@ class BuildingModel:
                           ("steady_state", self.steady_state_cases),
                           ("psd", self.psd_cases),
                           ("nonlinear_static",
-                           getattr(self, "nonlinear_static_cases", {}))):
+                           getattr(self, "nonlinear_static_cases", {})),
+                          ("hyperstatic",
+                           getattr(self, "hyperstatic_cases", {}))):
             for n in src:
                 out.setdefault(n, kind)
         out.setdefault(MODAL_CASE, "modal")
@@ -3601,6 +3610,12 @@ class BuildingModel:
         for g in self.effective_grids():
             self._validate_grid(g)
         self._validate_v113()
+        self._validate_tendons()
+
+    def _validate_tendons(self) -> None:
+        """PT tendons / hyperstatic cases (see core.tendons)."""
+        from skyframe.core.tendons import validate_tendons
+        validate_tendons(self)
 
     def _validate_v113(self) -> None:
         """v1.13: cases_not_run / active_dof / mass_options / display_units."""
@@ -3779,6 +3794,11 @@ class BuildingModel:
                 {k: _sprp.normalize_property(v)
                  for k, v in self.spring_properties.items()}}
                if self.spring_properties else {}),
+
+            **({"tendons": copy.deepcopy(self.tendons)}   # PT (if any)
+               if self.tendons else {}),
+            **({"hyperstatic_cases": copy.deepcopy(self.hyperstatic_cases)}
+               if self.hyperstatic_cases else {}),
         }
 
     @classmethod
@@ -4164,6 +4184,14 @@ class BuildingModel:
         _fm_from(mdl, d)                    # frame auto mesh (absent = off)
         for _m, _md in zip(mdl.members, d.get("members") or []):
             _fm_mfd(_m, _md)
+        if d.get("tendons"):                # PT tendons (absent = [])
+            if not isinstance(d["tendons"], list):
+                raise ValueError("tendons must be a list")
+            mdl.tendons = copy.deepcopy(d["tendons"])
+        if d.get("hyperstatic_cases"):      # hyperstatic cases (absent = {})
+            if not isinstance(d["hyperstatic_cases"], dict):
+                raise ValueError("hyperstatic_cases must be an object")
+            mdl.hyperstatic_cases = copy.deepcopy(d["hyperstatic_cases"])
         mdl.validate()
         return mdl
 
