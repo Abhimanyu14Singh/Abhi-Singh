@@ -544,6 +544,7 @@ export function initCheckModel(sky) {
     const m = S.model;
     if (!m || !issue) return null;
     const tol = (st.check && st.check.summary && st.check.summary.tolerance_m) || st.opts.tol;
+    { const b9 = sky.frameMesh && sky.frameMesh.checkFix(issue); if (b9) return b9; }   // B9: FRAME_INTERSECTION / FRAME_JOINT_ON_SPAN → enable auto mesh (js/framemesh.js)
     if (issue.code === "FRAME_DUPLICATE" || issue.code === "SHELL_DUPLICATE") {
       const coll = issue.code === "FRAME_DUPLICATE" ? m.members : m.shells;
       const type = issue.code === "FRAME_DUPLICATE" ? "member" : "shell";

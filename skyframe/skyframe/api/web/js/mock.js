@@ -14,6 +14,8 @@ import { mockExtendResults } from "./mock_combo.js";   // extended combos / P-De
 import { augmentMockModel, augmentMockResults as augmentTableResults } from "./mock_tables.js";   // tables / frequency / energy mock blocks
 // G2 polygon shells — mock auto mesh (quads + triangles) for non-quad regions
 import { mockPolyMesh as g2MockPolyMesh, isLegacyQuad as g2IsLegacyQuad } from "./mock_poly.js";
+// B9 — output stations / auto-mesh station lists in mock results (js/mock_b9.js)
+import { mockAugmentB9 as b9MockAugment } from "./mock_b9.js";
 const G = 9.80665;
 
 function mulberry32(seed) {
@@ -3292,6 +3294,7 @@ export function mockResults(model) {
   }
   r.active_dof = [...dofs];
   augmentTableResults(model, r);                  // fills only missing blocks (tables / energy / pushover views)
+  b9MockAugment(model, r);                        // B9: variable output stations (js/mock_b9.js)
   return r;
 }
 

@@ -42,6 +42,9 @@ import { comboOptionLabel as g1ComboOptionLabel } from "./combo_refs.js";
 import { initPolyDraw as g2InitPolyDraw } from "./polydraw.js";
 import { initInsertion as g2InitInsertion } from "./insertdlg.js";
 import { mockValidatePoly as g2MockValidatePoly } from "./mock_poly.js";
+// B9/B11 — frame auto mesh + output stations, named spring properties, link hysteresis types (aliased imports)
+import { initB9 as b9Init } from "./b9init.js";
+import { mockValidateB9 as b9MockValidate } from "./mock_b9.js";
 
 /* ------------------------------------------------ state */
 const store = {
@@ -223,7 +226,7 @@ async function analyze() {
 async function postModel(payload) {
   if (store.mock) {
     await new Promise(r => setTimeout(r, 300));
-    const bad = mockValidateAssign(payload) || g2MockValidatePoly(payload);   // mirror backend ValueErrors (assign / G2 polygon + insertion fields)
+    const bad = mockValidateAssign(payload) || g2MockValidatePoly(payload) || b9MockValidate(payload);   // mirror backend ValueErrors (assign / G2 polygon + insertion fields / B9-B11 js/mock_b9.js)
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -1877,6 +1880,7 @@ function renderProps() {
   $("propDelete").addEventListener("click", deleteSelection);
   AS.decorateProps(box);                         // joint / concentrated / shell loads of the selection
   if (window.__sky && window.__sky.g2DecorateProps) window.__sky.g2DecorateProps(box);   // G2: polygon geometry + insertion point
+  if (window.__sky && window.__sky.b9DecorateProps) window.__sky.b9DecorateProps(box, { members, links, springs });   // B9/B11: auto mesh · stations · springs · link hysteresis
 
   const on = (id, ev, fn) => { const n = $(id); if (n) n.addEventListener(ev, fn); };
 
@@ -8444,6 +8448,7 @@ async function boot() {
   // G2 — polygon draw/edit + insertion-point / end-offset dialogs (additive __sky)
   try { g2InitPolyDraw(window.__sky); } catch (err) { console.error("polygon draw init failed", err); }
   try { g2InitInsertion(window.__sky); } catch (err) { console.error("insertion init failed", err); }
+  try { b9Init(window.__sky); } catch (err) { console.error("B9 init failed", err); }   // auto mesh / stations / springs / link hysteresis
 }
 
 boot();

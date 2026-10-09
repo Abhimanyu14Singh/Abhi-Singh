@@ -14,6 +14,9 @@
 
    Never mutates the model. */
 
+// B9 — FRAME_INTERSECTION / FRAME_JOINT_ON_SPAN (suppressed by the frame auto mesh)
+import { frameMeshIssues as b9FrameMeshIssues } from "./framemesh_geom.js";
+
 const KEY_DEC = 6;                                   // engine dedup: 1e-6 rounding
 const pkey = p => `${(+p[0]).toFixed(KEY_DEC)},${(+p[1]).toFixed(KEY_DEC)},${(+p[2]).toFixed(KEY_DEC)}`;
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
@@ -192,6 +195,7 @@ export function mockCheckModel(model, body = {}) {
     if (!hasLoads) add("warning", "PATTERN_EMPTY", `Load pattern ${name} has no loads and no self-weight`, [name], null);
   }
 
+  for (const i of b9FrameMeshIssues(model || {}, tol)) add(i.severity, i.code, i.message, i.objects, i.location);   // B9 crossing / on-span frames
   issues.sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity]);
   const by_code = {};
   for (const i of issues) by_code[i.code] = (by_code[i.code] || 0) + 1;
