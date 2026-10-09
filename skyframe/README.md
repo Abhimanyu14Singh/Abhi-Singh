@@ -53,13 +53,13 @@ skyframe/
 ## Install the desktop app (built by GitHub Actions)
 
 The **Build installers** workflow (`.github/workflows/build-installers.yml`)
-produces ready-to-run Windows, macOS and Linux apps — the OpenSees solver is
+produces ready-to-run Windows and Linux apps — the OpenSees solver is
 bundled, so **no Python install is needed to run them**. Two ways to get one:
 
 **A. On demand (quick, needs a GitHub login to download)**
 1. GitHub → **Actions** → *Build installers* → **Run workflow**.
 2. When the run finishes, scroll to its **Artifacts** and download
-   `SkyFrame-windows`, `SkyFrame-macos`, or `SkyFrame-linux`.
+   `SkyFrame-windows` or `SkyFrame-linux`.
 3. Unzip, then run `SkyFrame` (`SkyFrame.exe` on Windows).
 
 **B. A shareable release (no login to download)**

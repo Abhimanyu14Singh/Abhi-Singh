@@ -1,6 +1,6 @@
 name: Build installers
 
-# Produces ready-to-run SkyFrame desktop apps for Windows, macOS and Linux.
+# Produces ready-to-run SkyFrame desktop apps for Windows and Linux.
 #
 # HOW TO GET AN INSTALLER
 #   * Quick (one build):  Actions tab -> "Build installers" -> Run workflow.
@@ -36,9 +36,6 @@ jobs:
             python: "3.12"    # openseespywin's binary module targets 3.12
           - os: ubuntu-latest
             os_name: linux
-            python: "3.11"
-          - os: macos-15-intel # Intel runner (macos-13 retired): openseespymac wheels are x86_64
-            os_name: macos
             python: "3.11"
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
