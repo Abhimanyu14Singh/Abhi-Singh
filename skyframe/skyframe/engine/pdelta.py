@@ -293,6 +293,7 @@ def _mass_plan(eng, asm) -> dict:
     springs: List[dict] = []
     story_P: Dict[str, float] = {}
     skipped: List[str] = []
+    dia_P: Dict[str, Dict[str, float]] = {}
     stories = list(model.stories)
     for i, s in enumerate(stories):
         z_top = float(s.elevation)
@@ -306,6 +307,16 @@ def _mass_plan(eng, asm) -> dict:
         if P == 0.0:
             continue
         top = asm.masters.get(s.name)
+        if top is None and (asm.dia.get("groups") if hasattr(asm, "dia")
+                            else None):
+            from skyframe.engine import diaphragms as _dgm
+            sp, p_by = _dgm.pdelta_story_springs(
+                asm, i, stories, z_bot, h, node_mass, zs, fixed_xy,
+                _story_spring, _column_strings, eng)
+            if sp is not None:                 # several diaphragms
+                springs.extend(sp)
+                dia_P[s.name] = p_by
+                continue
         low: Optional[int] = None
         if top is not None:
             if i > 0:
@@ -329,12 +340,15 @@ def _mass_plan(eng, asm) -> dict:
     out = {"springs": springs, "story_P": story_P}
     if skipped:
         out["skipped_stories"] = skipped
+    if dia_P:
+        out["diaphragm_P"] = dia_P
     return out
 
 
 def _column_strings(eng, asm, z_bot: float, z_top: float,
-                    P: float) -> List[dict]:
-    """``P`` shared over the story's vertical frame columns by ``EA/L``."""
+                    P: float, box=None) -> List[dict]:
+    """``P`` shared over the story's vertical frame columns by ``EA/L``
+    (``box`` = optional plan box (x0, x1, y0, y1) the columns must lie in)."""
     model = eng.model
     cols = []
     for m in model.members:
@@ -346,6 +360,9 @@ def _column_strings(eng, asm, z_bot: float, z_top: float,
             continue
         lo, hi = min(m.pi[2], m.pj[2]), max(m.pi[2], m.pj[2])
         if lo < z_bot - _TOL or hi > z_top + _TOL:
+            continue
+        if box is not None and not (box[0] <= m.pi[0] <= box[1]
+                                    and box[2] <= m.pi[1] <= box[3]):
             continue
         sec = model.sections[m.section]
         E = model.materials[sec.material].E

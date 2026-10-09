@@ -1145,7 +1145,8 @@ def _physical(vec: np.ndarray, asm, direct, constrained,
     out = np.zeros(nphys)
     for eq, tag, d in direct:
         out[index[(tag, d)]] = vec[eq]
-    masters = set(asm.masters.values())
+    masters = set(asm.masters.values()) | set(
+        (getattr(asm, "dia", {}).get("masters") or {}).values())
     for c, (r, cd) in constrained.items():
         cc = asm.node_coords.get(c)
         rc = asm.node_coords.get(r)

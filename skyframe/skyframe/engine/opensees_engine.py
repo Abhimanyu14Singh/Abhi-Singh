@@ -168,6 +168,7 @@ from skyframe.core.modifiers import shell_mods_default
 from skyframe.core.polymesh import newell_normal
 from skyframe.engine.shell_modifiers import elastic_shell_section
 from skyframe.engine import pdelta as _pdelta      # model-wide P-Delta
+from skyframe.engine import diaphragms as _dgm     # named diaphragms/add. mass
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
                                  FP_DEFAULT_KINIT, G_ACCEL,
                                  ISOLATOR_DEFAULT_KV, TFP_DEFAULT_MINFV,
@@ -1181,6 +1182,9 @@ class _Assembly:
     #   any pattern carries ground displacements (Transformation handler;
     #   spring reactions use the spring deformation u - u_ground)
 
+    dia: dict = field(default_factory=dict)
+    #   named diaphragms + additional mass bookkeeping (engine/diaphragms.py):
+    #   "slave_master", "groups" {(story, name): {...}}, "masters", "named"
     timo: Dict[str, Tuple[float, float]] = field(default_factory=dict)
     #   frame shear deformation: member uid -> (Avy, Avz) effective shear
     #   areas of members built as ElasticTimoshenkoBeam (absent = Euler)
@@ -1478,6 +1482,9 @@ class AnalysisResults:
     #   nonlinear static cases (engine/nonlinear_static.py; emitted only
     #   when non-empty)
 
+    diaphragms: Dict[str, object] = field(default_factory=dict)
+    #   named diaphragms (engine/diaphragms.py; only when assigned)
+
     def to_dict(self) -> dict:
         d = {
             "model_name": self.model_name,
@@ -1530,6 +1537,9 @@ class AnalysisResults:
         if self.nonlinear_static:        # nonlinear static (only when used)
             d["nonlinear_static"] = {n: r.to_dict() for n, r in
                                      self.nonlinear_static.items()}
+
+        if self.diaphragms:              # named diaphragms (only when used)
+            d["diaphragms"] = self.diaphragms
         return d
 
 
@@ -1815,6 +1825,10 @@ class OpenSeesEngine:
             if combos[cname].minima is None:    # single-valued combos
                 diag_src[cname] = combos[cname]
         story_stiffness, irregularity = self._seismic_diagnostics(asm, diag_src)
+        diaphragms = _dgm.results(self, asm, {"cases": cases,
+                                              "combos": combos,
+                                              "rs_cases": rs_cases},
+                                  irregularity)
         # v0.11 gravity load takedown: per static case + additive combo
         takedown: Dict[str, dict] = {}
         for cname, cr in cases.items():
@@ -1915,6 +1929,8 @@ class OpenSeesEngine:
             psd=psd,
             pdelta=_pdelta.info(self),
             nonlinear_static=nls_res,
+
+            diaphragms=diaphragms,
         )
 
     def _run_plan(self) -> dict:
@@ -3307,6 +3323,7 @@ class OpenSeesEngine:
                      if abs(c[2] - s.elevation) < _TOL]
             if len(plane) >= 2:
                 prospective_slaves.update(plane)
+        prospective_slaves = _dgm.prospective(self, asm, prospective_slaves)
 
         # --- auto-restrain DOFs of link-only nodes (v0.5) -------------------
         # A node connected ONLY to links has zero stiffness on every DOF
@@ -3413,8 +3430,10 @@ class OpenSeesEngine:
         # --- rigid diaphragms (v0.5: per-story "rigid" | "none") ------------
         cx, cy = model.plan_center()
         dia_slave_master: Dict[int, int] = {}    # v0.19: slave -> master
+        _named = set(_dgm.named_stories(model))
         for s in model.stories:
-            if model.effective_diaphragm(s.name) != "rigid":
+            if model.effective_diaphragm(s.name) != "rigid" \
+                    or s.name in _named:
                 continue
             slaves = asm.story_nodes[s.name]
             if len(slaves) < 2:
@@ -3431,6 +3450,7 @@ class OpenSeesEngine:
                 dia_slave_master[sl] = tag
             asm.node_coords[tag] = (cx, cy, elev)
             asm.node_restraints[tag] = (0, 0, 1, 1, 1, 0)
+        tag = _dgm.build(self, asm, tag, dia_slave_master)   # named stories
 
         # --- v0.19: resolve the deferred duplicate-node ties ----------------
         # A hinge duplicate whose ORIGINAL is a rigid-diaphragm slave must
@@ -3457,7 +3477,8 @@ class OpenSeesEngine:
             else:
                 ops.equalDOF(orig_t, dup_t, *dofs)
         asm.use_transformation = (bool(asm.masters) or bool(hinge_dups)
-                                  or bool(pz_map))
+                                  or bool(pz_map)
+                                  or bool(asm.dia.get("masters")))
         if _lx.model_has_ground_displacements(model):
             # imposed sp on fixed dofs needs the Transformation handler
             asm.gd_present = True
@@ -3585,7 +3606,9 @@ class OpenSeesEngine:
                     continue
                 explicit = s.name in model.story_masses
                 if lateral and (opts["lump_at_stories"] or explicit):
-                    if s.name in asm.masters:
+                    if _dgm.lump_story(self, asm, add, s, m, explicit):
+                        pass                          # named diaphragms
+                    elif s.name in asm.masters:
                         master = asm.masters[s.name]
                         add(master, 1, m)
                         add(master, 2, m)
@@ -3616,6 +3639,7 @@ class OpenSeesEngine:
             add(t, 1, nm.mx)
             add(t, 2, nm.my)
             add(t, 3, nm.mz)
+        _dgm.add_extra_mass(self, asm, add, opts)  # rot. inertia + add. mass
 
         mask = model.active_dof_mask()
         for t, mv in node_mass.items():
@@ -4265,6 +4289,8 @@ class OpenSeesEngine:
         lx, ly = model.plan_extents()
         for sf in pat.story_forces:
             fx, fy = sf.fx * scale, sf.fy * scale
+            if _dgm.apply_story_force(self, asm, sf, fx, fy, acc_tors, ecc):
+                continue                              # named diaphragms
             if sf.story in asm.masters:
                 # v0.8 accidental torsion (§12.8.4.2): fx -> Mz = fx*ecc*Ly,
                 # fy -> Mz = fy*ecc*Lx, applied at the master's rz dof.
