@@ -152,6 +152,10 @@ export function initEtabs(sky) {
       { label: "Brace", act: "draw-brace", key: "X", fn: () => drawTool("brace") },
       { label: "Wall", act: "draw-wall", key: "W", fn: () => drawTool("wall") },
       { label: "Slab", act: "draw-slab", key: "S", fn: () => drawTool("slab") },
+      // G2 — polygon floors / walls / openings (js/polydraw.js)
+      { label: "Draw Floor (Polygon)", act: "draw-polyfloor", hint: "plan", fn: () => { sky.polyDraw && sky.polyDraw.start("slab"); syncStatus(); } },
+      { label: "Draw Wall (Polygon)", act: "draw-polywall", hint: "elevation", fn: () => { sky.polyDraw && sky.polyDraw.start("wall"); syncStatus(); } },
+      { label: "Draw Opening (Polygon)", act: "draw-polyopen", hint: "in selected shell", fn: () => { sky.polyDraw && sky.polyDraw.start("opening"); syncStatus(); } },
       { label: "Opening / Erase", act: "draw-erase", key: "E", fn: () => drawTool("erase") },
       { sep: true },
       { label: "Point Spring", act: "draw-spring", key: "G", fn: () => drawTool("spring") },
@@ -169,6 +173,9 @@ export function initEtabs(sky) {
       { label: "Frame · Releases", act: "asn-frel", fn: () => assignHint("end releases") },
       { label: "Frame · Local Axis / Orientation", act: "asn-forient", fn: () => assignHint("orientation") },
       { label: "Frame · Rigid End Offsets", act: "asn-foff", fn: () => assignHint("rigid end offsets") },
+      // G2 — ETABS Insertion Point / End Length Offsets dialogs (js/insertdlg.js)
+      { label: "Frame · Insertion Point…", act: "asn-finsert", hint: "cardinal point", fn: () => sky.openInsertionPoint && sky.openInsertionPoint() },
+      { label: "Frame · End Length Offsets…", act: "asn-fendoff", hint: "auto / define", fn: () => sky.openEndOffsets && sky.openEndOffsets() },
       { label: "Frame · Axial Limit", act: "asn-faxial", fn: () => assignHint("axial limit") },
       { label: "Frame · Hinges", act: "asn-fhinge", fn: () => assignHint("plastic hinges") },
       { label: "Frame · Panel Zones", act: "asn-fpz", fn: () => assignHint("panel zones") },

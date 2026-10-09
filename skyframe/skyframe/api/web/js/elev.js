@@ -7,6 +7,7 @@
 
 import { springKey, lineSpringKey, linkTypeOf, LINK_TYPES } from "./modeledit.js";
 import U from "./units.js";   // v1.13 — readout / level labels in display units
+import { openingPolygon3 as g2OpeningPolygon3 } from "./polygeom.js";   // G2 polygon openings
 
 const NS = "http://www.w3.org/2000/svg";
 const el = (tag, attrs = {}) => {
@@ -329,11 +330,8 @@ export class ElevEditor {
 
   /** Opening rectangle of a wall in (s, z) space (bilinear on corners). */
   _openingQuad(sh, o) {
-    const [c0, c1, c2, c3] = sh.corners;
-    const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-    const at = (u, v) => lerp(lerp(c0, c1, u), lerp(c3, c2, u), v);
-    return [[o.u0, o.v0], [o.u1, o.v0], [o.u1, o.v1], [o.u0, o.v1]]
-      .map(([u, v]) => { const p = at(u, v); return [this.sOf(p), p[2]]; });
+    // G2: polygon openings / N-corner walls via polygeom (4-corner = bilinear)
+    return g2OpeningPolygon3(sh, o).map(p => [this.sOf(p), p[2]]);
   }
 
   _renderLabels() {
@@ -484,8 +482,8 @@ export class ElevEditor {
     for (const sh of (m.shells || [])) {
       if (sh.kind !== "wall" || !sh.corners.every(c => this.inPlane(c))) continue;
       const cs = this.sOf(sh.corners[0]);
-      const cx = sh.corners.reduce((a, c) => a + this.sOf(c), 0) / 4;
-      const cz = sh.corners.reduce((a, c) => a + c[2], 0) / 4;
+      const cx = sh.corners.reduce((a, c) => a + this.sOf(c), 0) / sh.corners.length;   // G2: N corners
+      const cz = sh.corners.reduce((a, c) => a + c[2], 0) / sh.corners.length;
       if (sh.corners.some(c => inBox(this.sOf(c), c[2])) || inBox(cx, cz) || inBox(cs, cz))
         refs.push({ type: "shell", uid: sh.uid });
     }
@@ -739,6 +737,8 @@ export class ElevEditor {
         fill: C.box, stroke: C.boxEdge, "stroke-width": 1, "stroke-dasharray": "4 3",
       }));
     }
+    // G2 hook — polygon draw / vertex-edit overlay (js/polydraw.js)
+    if (this.g2Overlay) { try { this.g2Overlay(g, this); } catch (e) { console.error(e); } }
   }
 }
 
