@@ -12,9 +12,10 @@ into an OpenSees domain.
 
 from __future__ import annotations
 
+import copy
 import math
 from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 from skyframe.core.stress_strain import normalize_stress_strain
 
@@ -1425,13 +1426,14 @@ class StagedCase:
 
     name: str
     pattern: str = "DEAD"
-    stages: str = "per_story"
+    stages: Union[str, List[dict]] = "per_story"   # or user stage list
     include_live: Dict[str, float] = field(default_factory=dict)
     time_dependent: Optional[dict] = None      # v0.25 AAEM creep/shrinkage
 
     def to_dict(self) -> dict:
         return {"name": self.name, "pattern": self.pattern,
-                "stages": self.stages,
+                "stages": (self.stages if isinstance(self.stages, str)
+                           else copy.deepcopy(self.stages)),
                 "include_live": dict(self.include_live),
                 "time_dependent": (dict(self.time_dependent)
                                    if self.time_dependent else None)}
@@ -1663,14 +1665,20 @@ class SectionCut:
     x_range: Optional[List[float]] = None        # [lo, hi] or None
     y_range: Optional[List[float]] = None
     z_range: Optional[List[float]] = None
+    # Groups: when set, only the named group's objects are integrated
+    # ("section cut defined by group"); None = every crossing object.
+    group: Optional[str] = None
 
     def to_dict(self) -> dict:
         def rng(r):
             return None if r is None else [float(r[0]), float(r[1])]
-        return {"name": self.name, "axis": self.axis,
-                "coord": float(self.coord),
-                "x_range": rng(self.x_range), "y_range": rng(self.y_range),
-                "z_range": rng(self.z_range)}
+        d = {"name": self.name, "axis": self.axis,
+             "coord": float(self.coord),
+             "x_range": rng(self.x_range), "y_range": rng(self.y_range),
+             "z_range": rng(self.z_range)}
+        if self.group is not None:
+            d["group"] = self.group
+        return d
 
 
 @dataclass
@@ -1828,6 +1836,9 @@ class BuildingModel:
     # to_dict only when not the defaults.
     pdelta_options: Dict[str, object] = field(
         default_factory=pdelta_defaults)
+    # ETABS Groups (skyframe.core.groups): name -> {"members", "shells",
+    # "links", "points", "color"}.  Emitted by to_dict only when non-empty.
+    groups: Dict[str, dict] = field(default_factory=dict)
 
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
@@ -2376,7 +2387,10 @@ class BuildingModel:
     def add_section_cut(self, name: str, axis: str, coord: float,
                         x_range: Optional[List[float]] = None,
                         y_range: Optional[List[float]] = None,
-                        z_range: Optional[List[float]] = None) -> SectionCut:
+                        z_range: Optional[List[float]] = None,
+                        group: Optional[str] = None) -> SectionCut:
+        if group is not None and group not in self.groups:
+            raise ValueError(f"Section cut {name}: unknown group {group!r}")
         cut = SectionCut(
             str(name), str(axis), float(coord),
             x_range=(None if x_range is None
@@ -2384,7 +2398,8 @@ class BuildingModel:
             y_range=(None if y_range is None
                      else [float(y_range[0]), float(y_range[1])]),
             z_range=(None if z_range is None
-                     else [float(z_range[0]), float(z_range[1])]))
+                     else [float(z_range[0]), float(z_range[1])]),
+            group=(None if group is None else str(group)))
         self._validate_section_cut(cut)
         self.section_cuts.append(cut)
         return cut
@@ -2407,12 +2422,39 @@ class BuildingModel:
                 raise ValueError(f"Section cut {cut.name}: {key} must be "
                                  "[lo, hi] with lo <= hi")
 
+    # ------------------------------------------------------ Groups
+    def add_group(self, name: str, members=(), shells=(), links=(),
+                  points=(), color: str = "") -> dict:
+        """Create/replace a group (see :mod:`skyframe.core.groups`)."""
+        from skyframe.core.groups import add_group
+        return add_group(self, name, members, shells, links, points, color)
+
+    def delete_group(self, name: str, force: bool = False) -> None:
+        from skyframe.core.groups import delete_group
+        delete_group(self, name, force=force)
+
+    def rename_group(self, old: str, new: str) -> None:
+        from skyframe.core.groups import rename_group
+        rename_group(self, old, new)
+
+    def prune_groups(self) -> Dict[str, Dict[str, List[str]]]:
+        """Drop group references to deleted members/shells/links."""
+        from skyframe.core.groups import prune_groups
+        return prune_groups(self)
+
+    def rename_object_in_groups(self, kind: str, old: str, new: str
+                                ) -> List[str]:
+        from skyframe.core.groups import rename_object_in_groups
+        return rename_object_in_groups(self, kind, old, new)
+
     def add_staged_case(self, name: str, pattern: str = "DEAD",
-                        stages: str = "per_story",
+                        stages: Union[str, List[dict]] = "per_story",
                         include_live: Optional[Dict[str, float]] = None,
                         time_dependent: Optional[dict] = None
                         ) -> StagedCase:
-        sc = StagedCase(name, pattern=pattern, stages=stages,
+        sc = StagedCase(name, pattern=pattern,
+                        stages=(stages if isinstance(stages, str)
+                                else copy.deepcopy(list(stages))),
                         include_live={k: float(v) for k, v in
                                       (include_live or {}).items()},
                         time_dependent=(dict(time_dependent)
@@ -2426,10 +2468,14 @@ class BuildingModel:
                 "t_eval", "materials")
 
     def _validate_staged_case(self, sc: StagedCase) -> None:
-        if sc.stages not in STAGED_MODES:
+        user = isinstance(sc.stages, list)       # user-defined stage list
+        if user:
+            from skyframe.core.groups import validate_user_stages
+            validate_user_stages(self, sc)
+        elif sc.stages not in STAGED_MODES:
             raise ValueError(f"Staged case {sc.name}: stages must be one of "
                              f"{STAGED_MODES}, got {sc.stages!r}")
-        if sc.pattern not in self.patterns:
+        if not user and sc.pattern not in self.patterns:
             raise ValueError(f"Staged case {sc.name}: unknown pattern "
                              f"{sc.pattern}")
         for p, f in sc.include_live.items():
@@ -2465,7 +2511,7 @@ class BuildingModel:
                 raise ValueError(f"Staged case {sc.name}: "
                                  f"time_dependent[{key!r}] must be a finite "
                                  f"value {'>= 0' if allow_zero else '> 0'}")
-        _pos("days_per_story", required=True)
+        _pos("days_per_story", required=not user)
         _pos("creep_coeff", allow_zero=True)
         _pos("shrinkage", allow_zero=True)
         _pos("t_eval")
@@ -3400,6 +3446,13 @@ class BuildingModel:
             self._validate_th_function(fn)
         for cut in self.section_cuts:
             self._validate_section_cut(cut)
+            if (getattr(cut, "group", None) is not None
+                    and cut.group not in self.groups):
+                raise ValueError(f"Section cut {cut.name}: unknown group "
+                                 f"{cut.group!r}")
+        if self.groups:
+            from skyframe.core.groups import validate_groups
+            validate_groups(self)
         link_uids = set()
         for lk in self.links:
             if lk.uid in link_uids:
@@ -3585,6 +3638,8 @@ class BuildingModel:
 
             **frequency_to_dict(self),      # frequency-domain (if non-empty)
             **pdelta_to_dict(self),         # P-Delta options (if not default)
+            **({"groups": copy.deepcopy(self.groups)}   # Groups (if any)
+               if self.groups else {}),
         }
 
     @classmethod
@@ -3882,10 +3937,12 @@ class BuildingModel:
                 **_coerce_pushover_dist(pd))      # distribution/control
         for name, sd in (d.get("staged_cases") or {}).items():
             td = sd.get("time_dependent")                        # v0.25
+            _stg = sd.get("stages", "per_story")
             mdl.staged_cases[name] = StagedCase(
                 name=sd.get("name", name),
                 pattern=sd.get("pattern", "DEAD"),
-                stages=sd.get("stages", "per_story"),
+                stages=(_stg if isinstance(_stg, str)
+                        else copy.deepcopy(list(_stg))),
                 include_live={p: float(f) for p, f in
                               (sd.get("include_live") or {}).items()},
                 time_dependent=(dict(td) if td else None))
@@ -3909,7 +3966,9 @@ class BuildingModel:
                 name=cd["name"], axis=cd["axis"], coord=float(cd["coord"]),
                 x_range=_rng(cd.get("x_range")),
                 y_range=_rng(cd.get("y_range")),
-                z_range=_rng(cd.get("z_range"))))
+                z_range=_rng(cd.get("z_range")),
+                group=(None if cd.get("group") is None
+                       else str(cd["group"]))))
         mdl.auto_pier_walls = bool(d.get("auto_pier_walls", False))
         # v0.16: serviceability deflection limit (absent = pre-v0.16 default)
         mdl.deflection_limit = float(d.get("deflection_limit", 360.0))
@@ -3938,6 +3997,12 @@ class BuildingModel:
 
         frequency_from_dict(mdl, d)         # frequency-domain (absent = {})
         pdelta_from_dict(mdl, d)            # P-Delta options (absent = none)
+        grp = d.get("groups")               # Groups (absent = {})
+        if grp:
+            if not isinstance(grp, dict):
+                raise ValueError("groups must be an object")
+            from skyframe.core.groups import normalize_group
+            mdl.groups = {str(k): normalize_group(v) for k, v in grp.items()}
         mdl.validate()
         return mdl
 

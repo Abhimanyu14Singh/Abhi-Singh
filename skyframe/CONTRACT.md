@@ -5418,3 +5418,133 @@ Every consumer below works with polygon regions:
   and deflection within 3% (both shell and membrane).
 * Load equilibrium and area / self-weight sums (L, T and U shapes, a
   triangle, polygon openings) are exact to 1e-9.
+
+## Groups and user-defined staged construction
+
+ETABS Define > Groups and user-defined Staged Construction.  Every default
+reproduces the previous results byte-identically: `groups` is emitted by
+`to_dict` only when non-empty, `SectionCut.group` only when set, and a
+`StagedCase` with `stages: "per_story"` runs the unchanged v0.6/v0.25 path.
+
+### Model JSON
+
+```
+"groups": {"<name>": {"members": [uid], "shells": [uid], "links": [uid],
+                      "points": [[x, y, z]], "color": "<str>"}}
+"section_cuts": [{..., "group": "<name>"}]        # optional
+"staged_cases": {"<name>": {"name", "pattern", "include_live",
+    "time_dependent",
+    "stages": "per_story" | [
+      {"name": str, "duration_days": float >= 0 (default 0),
+       "operations": [
+         {"op": "add",    "group": str, "age_days": float >= 0 (default 28)},
+         {"op": "remove", "group": str},
+         {"op": "load",   "group": str, "pattern": str, "scale": float (1)}]}]}}
+```
+
+Validation: group references must exist (no duplicates; points are finite
+`[x, y, z]`; unknown keys rejected); stage names unique; an `add` may only
+name inactive objects and a `remove` only active ones (the sequence is
+simulated); `load` patterns must exist.  For a stage list `pattern` is not
+used and `time_dependent.days_per_story` is not required (still required
+for `per_story`).
+
+### Model helpers (`skyframe.core.groups`, wrapped on `BuildingModel`)
+
+`add_group`, `delete_group(name, force=False)` (refused while a section
+cut / staged case references it; `force` clears those references),
+`rename_group(old, new)` (updates cuts and stage operations),
+`prune_groups()` (drops references to deleted members/shells/links;
+returns `{group: {kind: [removed uids]}}`), `rename_object_in_groups(kind,
+old, new)`; module-level also `remove_object_from_groups`,
+`move_point_in_groups`, `groups_of`, and `resolve_group(model, name)` ->
+`{"members": [FrameMember], "shells", "links", "points"}`.  API: `POST
+/api/groups` with `{action: "upsert"|"delete"|"rename"|"prune", name,
+group?, new_name?, force?}` returns the model dict (400 on error); `POST
+/api/section-cut` accepts `group`.
+
+### Section cuts by group, group resultants
+
+A cut with `group` integrates only the group's members crossing the plane
+(only its shells are counted); same result shape and sign convention.
+`group_end_resultant(model, case, group, axis="z", about=None)` sums the
+group's member internal forces at their LOW ends along `axis`, oriented
+like a cut (gravity -> positive FZ), moments about `about` (default: the
+centroid of the low ends): `{FX..MZ, n_members, about}`.  For a base-level
+column group with `about=(0,0,0)` it equals the base reaction totals.
+
+### User-defined stages (`skyframe.engine.staged_user`)
+
+Rebuild-and-accumulate, linear, geometry updating ignored (as per_story):
+
+* the active structure starts EMPTY.  `add` activates a group's
+  members/shells/links/points; objects enter UNSTRESSED (each stage solves
+  a fresh model of the active objects under only that stage's increments;
+  node displacements accumulate by coordinate).  An explicit support or
+  point spring at a point listed in any add/remove group is active only
+  while that point is; other supports are active while an object end /
+  corner exists at their point.  Without explicit supports the auto base
+  fixity applies and every stage's active structure must reach the full
+  model's base level.
+* `remove` applies the ACCUMULATED global end forces the removed objects
+  exerted (members: the 12 member end forces at pi/pj rotated to global;
+  links/shells: OpenSees element resisting forces at their nodes) as joint
+  loads on the remaining structure at every joint still present; their
+  accumulated forces are discarded and lost supports drop their reaction.
+* `load` applies pattern x scale to the group's ACTIVE objects: member,
+  area and thermal loads of the group's objects, self-weight expanded into
+  explicit member/area loads of those objects, and joint loads only at the
+  group's explicit `points` (skipped with a warning while no active object
+  is there).  Story forces and ground displacements are skipped (warning).
+* all operations of a stage are solved together in one increment.
+  `include_live` is applied at the end on the final active structure.
+
+Results (`StagedResults`): `case` = final state as a normal CaseResults
+on the FULL model's node tags (objects inactive at the end report zeros;
+base totals recomputed from the live reactions), so load combinations
+accept it like any staged case; `comparison.oneshot_case` = the full model
+under the same total (group-filtered) loads at once; `shortening` is
+absent; NEW `stages` (cumulative state at the end of each stage):
+
+```
+"stages": [{"name", "duration_days", "t_start", "t_end",
+            "active": {"members": [...], "shells": [...], "links": [...]},
+            "node_disp": {tag: [6]}, "reactions": {tag: [6]},
+            "base": {FX..MZ}, "member_forces": {uid: [12]}}]
+```
+
+Time-dependent (`time_dependent`, AAEM, chi = 0.8, ACI 209 curves): stage
+s starts at `T_s` = sum of earlier `duration_days`; an object added in
+stage a with `age_days` was cast at `T_a - age_days`.  Stage-s increments
+(loads and release forces) use `E_adj = E(t0) / (1 + chi*phi(t_eval -
+T_s))` on concrete objects (`E(t0)` = ACI 209 aging growth at the object's
+age at `T_s` when `aging`).  `t_eval` defaults to the END of the last
+stage (sum of durations; infinity when 0).  A final shrinkage increment
+on the final active structure gives each concrete member `-eps_sh(t_eval
+- t_cast)` via the thermal equivalence with `E/(1 + chi*phi(t_eval -
+t_cast))`.  No separate elastic pass / shortening report.
+
+Limitations: member removal transfers forces at the member's two END
+joints only (interior mesh-node connections and rigid-end offsets are
+ignored in the transfer); loads already applied to a removed SHELL stay on
+its boundary joints; support / joint-load activity is decided from object
+end points and shell corners (not interior mesh nodes).
+
+### Validation (`tests/test_groups_staged.py`, 35 tests)
+
+* 3-story column built story by story, P = 100/200/300 kN, EA = 4.8e6 kN:
+  top-of-story uz = -sum_{k>=j} P_k * j*h/EA exactly (roof -0.5625 mm vs
+  all-at-once -0.875 mm); identical to the per_story mode.
+* Two-span beam (2 x 5 m, w = 10 kN/m) on a temporary 0.2x0.2 m prop:
+  stage-1 prop force = compatibility hand value (61.80 kN) to 1e-9; after
+  `remove` the beam is exactly simply supported: M_mid = 125 kNm, R = 50
+  kN each, delta = 5w(2L)^4/384EI = 13.889 mm; prop base reaction -> 0.
+* `load` op == static case on the erected structure (forces/disps 1e-9),
+  scale splitting, group filtering, self-weight.
+* Group section cut == member end forces; LEFT + RIGHT == full cut; group
+  end resultant == group cut at the base == base reactions.
+* Creep ratio 1 + 0.8*phi(t) with t from the stage durations (and an
+  explicit t_eval); shrinkage `eps_sh(88 d)*L` for a member added 28 days
+  old; aging changes results.
+* per_story byte-identical; groups / stage lists round-trip; validation and
+  consistency helpers; combos with a user staged case; API endpoint.

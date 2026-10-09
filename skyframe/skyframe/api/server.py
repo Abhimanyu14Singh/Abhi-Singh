@@ -888,10 +888,42 @@ def create_app() -> Flask:
             _state["model"].add_section_cut(
                 name.strip(), axis, coord,
                 x_range=_rng("x_range"), y_range=_rng("y_range"),
-                z_range=_rng("z_range"))
+                z_range=_rng("z_range"), group=body.get("group"))
         except (ValueError, TypeError) as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify(_state["model"].to_dict())
+
+    # ------------------------------------------------- Groups convenience
+    @app.post("/api/groups")
+    def edit_groups():
+        """Groups: ``{action: "upsert"|"delete"|"rename"|"prune", name?,
+        group?: {members, shells, links, points, color}, new_name?,
+        force?}`` -> updated model dict (400 on bad input)."""
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        model = _state["model"]
+        action = body.get("action", "upsert")
+        name = body.get("name")
+        try:
+            if action == "upsert":
+                g = body.get("group") or {}
+                if not isinstance(g, dict):
+                    raise ValueError("'group' must be an object")
+                model.add_group(name, g.get("members") or (),
+                                g.get("shells") or (), g.get("links") or (),
+                                g.get("points") or (), g.get("color", ""))
+            elif action == "delete":
+                model.delete_group(name, force=bool(body.get("force")))
+            elif action == "rename":
+                model.rename_group(name, body.get("new_name"))
+            elif action == "prune":
+                model.prune_groups()
+            else:
+                raise ValueError("'action' must be upsert|delete|rename|prune")
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(model.to_dict())
 
     # ------------------------------------------ v0.14: grid system convenience
     @app.post("/api/grid")
