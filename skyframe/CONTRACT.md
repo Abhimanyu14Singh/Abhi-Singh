@@ -5006,3 +5006,115 @@ The top-level warning gets "combo 'X' skipped: member(s) [...] not run".
   read the MAX block, the same rule as envelope combos.
 
 Tests: `tests/test_combos_ext.py`.
+
+## P-Delta options (model-wide)
+
+ETABS Define > P-Delta Options (analysis-only).  Model side:
+`skyframe.core.pdelta_options`; engine side: `skyframe.engine.pdelta`.
+
+### Model field `BuildingModel.pdelta_options`
+
+```json
+{"method": "none",            // "none" | "non_iterative_mass" | "iterative_loads"
+ "load_factors": {},          // {pattern: factor}, the iterative_loads gravity combo
+ "max_iterations": 2,         // int 1..100 (iterative_loads)
+ "tolerance": 0.001,          // finite > 0, relative (iterative_loads)
+ "include_in": "all_linear"}  // only value
+```
+
+* `to_dict` emits `pdelta_options` ONLY when it differs from these
+  defaults, so default models (and their results) are byte-identical.
+* `from_dict`: absent means defaults; missing keys are filled with the
+  defaults.
+* `validate` (also `POST /api/model`, 400) raises `ValueError` for: a
+  non-object, unknown keys, a bad `method` or `include_in`, a
+  `load_factors` entry naming an unknown pattern or a non-finite factor,
+  `max_iterations` that is not an integer in 1..100 (bools rejected),
+  `tolerance <= 0` or non-finite, and `iterative_loads` with an empty or
+  all-zero `load_factors`.
+
+### Methods
+
+* `"none"`: the pre-existing behaviour (per-case `LoadCase.pdelta` /
+  `geometric` only).
+* `"non_iterative_mass"` (ETABS "based on mass"): for each story,
+  `P_i = g * sum(m)` over the built model's translational nodal masses
+  (`max(UX, UY)` lump) located above the story bottom (`elevation -
+  height`).  `P_i` is applied as a story spring `-P_i/h_i` on global X
+  and Y.
+  * Where the story has a rigid-diaphragm master and so does the level
+    below, the spring runs between the two masters.
+  * For the first story, the lower end is an existing support node fixed
+    in UX and UY at the story bottom (the one nearest the master).
+  * Otherwise `P_i` is shared over the story's vertical frame columns in
+    proportion to `E*A*mod_A/L`, as string springs on each column element.
+  * A story with neither gets no spring; it is listed in
+    `pdelta.skipped_stories`.
+  * The method has no iteration and no torsional P-Delta term.
+* `"iterative_loads"`:
+  1. Iteration 1 solves the `load_factors` combination linearly on `K`.
+  2. Each frame/truss element's tension-positive axial force `N` is read
+     (the mean of the FEF-corrected end axials).
+  3. The string stiffness `N/L` is added on the element's two transverse
+     relative translations, and the combination is re-solved on
+     `K + Kg(N)`.
+  4. The loop stops when `max|N_k - N_(k-1)| / max|N_k| <= tolerance` or
+     after `max_iterations` solves.
+  5. The last `N` defines the frozen `Kg`.
+
+  Shells carry no `Kg` under this method.
+
+### How `Kg` enters every linear analysis
+
+`Kg` is built as explicit linear `zeroLength` elements between
+(non-coincident) nodes.  Their `uniaxialMaterial Elastic` stiffness is
+negative in compression, and they are built with `-doRayleigh 1`.
+* A zeroLength is a pure relative-translation spring.  It is exactly the
+  lean-column `-P/L` term that OpenSees' `PDelta` geomTransf adds, so an
+  iterative_loads column equals the per-case two-stage `pdelta` result to
+  round-off.
+* The springs are appended at the end of every `_build` that uses the
+  `Linear` transformation and has no hinges.  Static cases, combos, modal
+  (eigen of `K + Kg` vs `M`), response spectrum (its modes and its
+  modal-static solves), linear time history (Rayleigh fit and transient),
+  steady-state/PSD, load participation, the seismic diagnostics/story
+  stiffness, the pushover load-distribution modes and the stability check
+  therefore all use the IDENTICAL stiffness.
+* We chose this over holding a PDelta-transform state with `loadConst`.
+  That approach would make static cases report increments past a stressed
+  state, and the linear/frequency pipelines could not reuse it.
+
+**Precedence:** a static case with its own `pdelta=True` or `geometric` of
+`"pdelta"` or `"corotational"` keeps its unchanged nonlinear two-stage flow
+on the PDelta/Corotational transformation.  The model-wide `Kg` is NOT
+added to it, so nothing is counted twice.  Such cases are listed in
+`pdelta.cases_own_geometric`.
+
+**Not affected:**
+* hinged builds (pushover, hinged nonlinear time history);
+* staged construction (its stage sub-models carry no options);
+* linear buckling, which stays its own `K + lambda*Kg` numpy
+  eigenproblem (with `base_case`, the base static case is solved with the
+  option active);
+* load-dependent Ritz vectors (numpy assembly).
+
+No instability check is made beyond solver failure.  When `P` exceeds the
+story capacity, `K + Kg` is indefinite: modal raises, but the linear
+static solve still returns.
+
+### Results
+
+`AnalysisResults.to_dict()["pdelta"]` is emitted only when the method is
+not "none":
+
+```json
+{"method": "iterative_loads", "n_springs": 18,
+ "iterations": 2, "converged": true, "relative_change": [1.7e-15],
+ "load_factors": {"DEAD": 1.0, "LIVE": 0.25},
+ "cases_own_geometric": ["EXPD"]}
+```
+
+`non_iterative_mass` gives `{"method", "n_springs", "story_P": {story: kN},
+"skipped_stories"?: [...], "cases_own_geometric"?: [...]}`.
+
+Tests: `tests/test_pdelta_options.py`.

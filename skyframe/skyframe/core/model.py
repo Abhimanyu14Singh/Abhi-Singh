@@ -27,6 +27,9 @@ from .loads_ext import (GroundDisplacement, area_load_to_dict,  # noqa: F401
 from skyframe.core.frequency_cases import (  # noqa: F401  (re-exported)
     FrequencyFunction, FrequencyLoad, PSDCase, SteadyStateCase,
     frequency_from_dict, frequency_to_dict, validate_frequency)
+from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
+    PDELTA_INCLUDE_IN, PDELTA_METHODS, pdelta_defaults, pdelta_from_dict,
+    pdelta_to_dict, validate_pdelta_options)
 
 G_ACCEL = 9.80665  # m/s^2
 _PLANAR_TOL = 1e-6  # m
@@ -1792,6 +1795,12 @@ class BuildingModel:
     steady_state_cases: Dict[str, "SteadyStateCase"] = field(
         default_factory=dict)
     psd_cases: Dict[str, "PSDCase"] = field(default_factory=dict)
+    # Model-wide P-Delta options (ETABS Define > P-Delta Options); see
+    # skyframe.core.pdelta_options / skyframe.engine.pdelta.  The default
+    # method "none" is the exact pre-existing behaviour.  Emitted by
+    # to_dict only when not the defaults.
+    pdelta_options: Dict[str, object] = field(
+        default_factory=pdelta_defaults)
 
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
@@ -3421,6 +3430,11 @@ class BuildingModel:
                              f"got {self.display_units!r}")
 
         validate_frequency(self)            # frequency-domain cases
+        self._validate_pdelta_options()
+
+    def _validate_pdelta_options(self) -> None:
+        """Model-wide P-Delta options (see core.pdelta_options)."""
+        validate_pdelta_options(self)
 
     @staticmethod
     def _validate_grid(g: GridSystem) -> None:
@@ -3519,6 +3533,7 @@ class BuildingModel:
             "display_units": self.display_units,
 
             **frequency_to_dict(self),      # frequency-domain (if non-empty)
+            **pdelta_to_dict(self),         # P-Delta options (if not default)
         }
 
     @classmethod
@@ -3865,6 +3880,7 @@ class BuildingModel:
         mdl.display_units = str(d.get("display_units", "kN-m"))
 
         frequency_from_dict(mdl, d)         # frequency-domain (absent = {})
+        pdelta_from_dict(mdl, d)            # P-Delta options (absent = none)
         mdl.validate()
         return mdl
 

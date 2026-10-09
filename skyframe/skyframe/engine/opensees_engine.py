@@ -166,6 +166,7 @@ from skyframe.core.mesh import (MeshedModel, Segment, edge_tie_chains,
                                 mesh_model)
 from skyframe.core.modifiers import shell_mods_default
 from skyframe.engine.shell_modifiers import elastic_shell_section
+from skyframe.engine import pdelta as _pdelta      # model-wide P-Delta
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
                                  FP_DEFAULT_KINIT, G_ACCEL,
                                  ISOLATOR_DEFAULT_KV, TFP_DEFAULT_MINFV,
@@ -1469,6 +1470,9 @@ class AnalysisResults:
     #   frequency-domain steady-state cases (skyframe.engine.frequency)
     psd: Dict[str, dict] = field(default_factory=dict)
     #   frequency-domain PSD cases (skyframe.engine.frequency)
+    pdelta: Dict[str, object] = field(default_factory=dict)
+    #   model-wide P-Delta options summary (engine/pdelta.py; only when the
+    #   method is not "none")
 
     def to_dict(self) -> dict:
         d = {
@@ -1517,6 +1521,8 @@ class AnalysisResults:
             d["steady_state"] = dict(self.steady_state)
         if self.psd:
             d["psd"] = dict(self.psd)
+        if self.pdelta:                  # model-wide P-Delta (only when on)
+            d["pdelta"] = dict(self.pdelta)
         return d
 
 
@@ -1892,6 +1898,7 @@ class OpenSeesEngine:
 
             steady_state=steady_state,
             psd=psd,
+            pdelta=_pdelta.info(self),
         )
 
     def _run_plan(self) -> dict:
@@ -2338,6 +2345,8 @@ class OpenSeesEngine:
         _REUSE["loaded"] = False
         transf_name = (transf if transf is not None
                        else ("PDelta" if pdelta else "Linear"))
+        # model-wide P-Delta options (engine/pdelta.py): False for "none"
+        _pdx = _pdelta.prepare(self, transf_name, hinge_case)
         coro_release_fallback: List[str] = []
         timo_fallback: Dict[str, List[str]] = {}   # reason -> member uids
         if self._mesh is None:
@@ -3444,6 +3453,8 @@ class OpenSeesEngine:
                 "shear deformation (As2/As3) not applied — Euler-Bernoulli "
                 f"elasticBeamColumn fallback ({reason}) for member(s): "
                 f"{sorted(set(uids))}", UserWarning)
+        if _pdx:                    # model-wide P-Delta geometric stiffness
+            _pdelta.inject(self, asm)
         if hinge_case is None:
             self._asm = asm
         return asm
