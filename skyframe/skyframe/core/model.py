@@ -552,6 +552,16 @@ class Story:
         return asdict(self)
 
 
+def _insertion_fields_to_dict(m) -> dict:
+    from skyframe.core.insertion import member_fields_to_dict
+    return member_fields_to_dict(m)
+
+
+def _insertion_fields_from_dict(md: dict) -> dict:
+    from skyframe.core.insertion import member_fields_from_dict
+    return member_fields_from_dict(md)
+
+
 AXIAL_LIMITS = ("both", "tension", "compression")
 
 # v0.19 automatic plastic-hinge assignment (see FrameMember.hinges);
@@ -611,6 +621,19 @@ class FrameMember:
     # (lp = 0.5*h; full axial-biaxial interaction from the fibers);
     # acceptance criteria stay the v0.19 table rotations (CONTRACT v0.21).
     hinges: str = "none"
+    # Insertion point + automatic end offsets (ETABS Assign > Frame >
+    # Insertion Point / End Length Offsets; skyframe.core.insertion):
+    # ``cardinal_point`` 1..11 (10 = centroid = default, no eccentricity);
+    # ``joint_offsets`` {"i": [dx,dy,dz], "j": [...], "system":
+    # "global"|"local"} extra rigid offsets joint -> element end;
+    # ``no_transform_stiffness`` = ETABS "do not transform frame stiffness
+    # for offsets from centroid"; ``end_offsets`` "manual" (rigid_i/j) or
+    # "auto" (from connectivity, scaled by ``auto_rigid_factor``).
+    cardinal_point: int = 10
+    joint_offsets: Optional[dict] = None
+    no_transform_stiffness: bool = False
+    end_offsets: str = "manual"
+    auto_rigid_factor: float = 0.0
 
     @property
     def length(self) -> float:
@@ -647,6 +670,7 @@ class FrameMember:
                 "foundation_width": self.foundation_width,
                 "axial_limit": self.axial_limit,
                 "hinges": self.hinges,
+                **_insertion_fields_to_dict(self),
                 "length": self.length}
 
 
@@ -1871,7 +1895,12 @@ class BuildingModel:
                    foundation_ks: float = 0.0,
                    foundation_width: float = 0.0,
                    axial_limit: str = "both",
-                   hinges: str = "none") -> FrameMember:
+                   hinges: str = "none",
+                   cardinal_point: int = 10,
+                   joint_offsets: Optional[dict] = None,
+                   no_transform_stiffness: bool = False,
+                   end_offsets: str = "manual",
+                   auto_rigid_factor: float = 0.0) -> FrameMember:
         if section not in self.sections:
             raise ValueError(f"Unknown section {section}")
         uid = uid or f"{kind[0].upper()}{len(self.members) + 1}"
@@ -1885,6 +1914,12 @@ class BuildingModel:
                         foundation_width=float(foundation_width),
                         axial_limit=str(axial_limit),
                         hinges=str(hinges))
+        from skyframe.core.insertion import normalize_joint_offsets
+        m.cardinal_point = cardinal_point
+        m.joint_offsets = normalize_joint_offsets(joint_offsets)
+        m.no_transform_stiffness = no_transform_stiffness
+        m.end_offsets = end_offsets
+        m.auto_rigid_factor = auto_rigid_factor
         if m.length < 1e-9:
             raise ValueError(f"Member {uid} has zero length")
         if not m.release_tokens() <= {"Mi", "Mj"}:
@@ -1894,8 +1929,14 @@ class BuildingModel:
         self._validate_foundation(m)
         self._validate_axial_limit(m)
         self._validate_member_hinges(m)
+        self._validate_insertion(m)
         self.members.append(m)
         return m
+
+    @staticmethod
+    def _validate_insertion(m: FrameMember) -> None:
+        from skyframe.core.insertion import validate_member
+        validate_member(m)
 
     @staticmethod
     def _validate_axial_limit(m: FrameMember) -> None:
@@ -3226,6 +3267,7 @@ class BuildingModel:
             self._validate_foundation(m)
             self._validate_axial_limit(m)
             self._validate_member_hinges(m)
+            self._validate_insertion(m)
         region_uids = set()
         for r in self.shells:
             if r.uid in region_uids:
@@ -3569,7 +3611,8 @@ class BuildingModel:
                 foundation_ks=float(md.get("foundation_ks", 0.0)),
                 foundation_width=float(md.get("foundation_width", 0.0)),
                 axial_limit=str(md.get("axial_limit", "both")),
-                hinges=str(md.get("hinges", "none"))))
+                hinges=str(md.get("hinges", "none")),
+                **_insertion_fields_from_dict(md)))
         for rd in d.get("shells") or []:
             asp = rd.get("area_spring")        # v0.22 (absent/None = none)
             if asp is not None:

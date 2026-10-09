@@ -659,6 +659,7 @@ def _run_validators(ctx: _Ctx) -> None:
             m._validate_foundation(x)
             m._validate_axial_limit(x)
             m._validate_member_hinges(x)
+            m._validate_insertion(x)
         checks.append((mem.uid, _mv))
     for r in m.shells:
         checks.append((r.uid, lambda x=r: m._validate_shell(x)))
