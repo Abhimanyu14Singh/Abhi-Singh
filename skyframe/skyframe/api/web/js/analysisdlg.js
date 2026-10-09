@@ -111,6 +111,7 @@ export function caseRunStatus(results, name, kind) {
     staged: () => !!(results.staged && results.staged[name]),
     steady_state: () => !!(results.steady_state && results.steady_state[name]),
     psd: () => !!(results.psd && results.psd[name]),
+    nonlinear_static: () => !!(results.nonlinear_static && results.nonlinear_static[name]),   // G3
   }[kind];
   return has && has() ? "finished" : "not_run";
 }

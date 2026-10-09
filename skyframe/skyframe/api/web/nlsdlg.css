@@ -1,0 +1,36 @@
+/* SkyFrame — Nonlinear Static cases / results (js/nlsdlg.js) and named
+   diaphragms / additional mass (js/diaphdlg.js). Loaded on first use. */
+.nls-loads .cd-pt, .nls-my .cd-pt { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 24px; }
+.nls-card { margin-bottom: 12px; }
+.nls-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+.nls-card-head h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; font-size: 13px; }
+.nls-card-acts { display: flex; align-items: center; gap: 8px; }
+.nls-h-ico { width: 16px; height: 16px; color: var(--accent); flex: none; }
+.nls-card-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 12px; align-items: start; margin-top: 6px; }
+.nls-plot { background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 8px; padding: 4px 8px; }
+.nls-kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 12px; margin: 0; font-size: 12px; }
+.nls-kv dt { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .4px; }
+.nls-kv dd { margin: 0; color: var(--text-1); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.nls-warn { border: 1px solid var(--amber); color: var(--amber); border-radius: 6px; padding: 5px 8px; font-size: 12px; margin-bottom: 6px; background: rgba(230,170,60,.08); }
+.nls-warnlist { margin: 6px 0 0 18px; padding: 0; font-size: 11.5px; color: var(--amber); }
+.nls-card-hinges { margin-top: 8px; }
+.nls-hinge-wrap, .nls-hist-wrap { max-height: 260px; overflow-y: auto; }
+.nls-hinges td, .nls-hist td { font-variant-numeric: tabular-nums; }
+.nls-hinges tr.nls-yield td:first-child { color: var(--amber); font-weight: 600; }
+.nls-state { font-size: 10.5px; font-weight: 700; padding: 0 6px; border-radius: 99px; border: 1px solid var(--border); }
+.nls-st-yielded, .nls-st-io { color: var(--amber); border-color: var(--amber); }
+.nls-st-ls, .nls-st-cp, .nls-st-collapse { color: var(--red); border-color: var(--red); }
+.nls-res-ctl { margin-bottom: 6px; }
+.nls-res-ctl .cd-row { grid-template-columns: auto minmax(120px, auto) 0; }
+.nls-res .nls-sum { margin: 8px 0; }
+.dp-table input[type="text"] { width: 100%; min-width: 80px; }
+.dp-table td { vertical-align: middle; }
+.dp-jlist, .dp-slist { max-height: 34vh; overflow-y: auto; }
+.dp-jadd { margin-top: 6px; }
+.dp-jadd input { width: 90px; }
+.dp-card { margin-top: 12px; }
+.dp-card h3 { display: flex; align-items: center; gap: 6px; }
+.dp-res td, .dp-res th { font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (max-width: 760px) {
+  .nls-card-grid { grid-template-columns: minmax(0, 1fr); }
+}

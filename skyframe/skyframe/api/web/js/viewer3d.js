@@ -1074,6 +1074,7 @@ export class Viewer3D {
     if (!r || !name) return null;
     if (name.startsWith("rs:"))                    // v0.3 response-spectrum case
       return (r.rs_cases && r.rs_cases[name.slice(3)]) || null;
+    if (name.startsWith("nl:")) return (r.nonlinear_static && r.nonlinear_static[name.slice(3)]) || null;   // G3 nonlinear static
     return (r.cases && r.cases[name]) || (r.combos && r.combos[name]) || null;
   }
 
