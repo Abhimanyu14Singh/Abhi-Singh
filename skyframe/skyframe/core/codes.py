@@ -559,8 +559,13 @@ def reduce_live_demands(results_dict, model: BuildingModel, *,
             return 1.0 if name == live_case else 0.0
         cb = model.combos.get(name)
         if cb is not None and cb.combo_type == "add":
-            return float(cb.cases.get(live_case, 0.0))
-        return 0.0                       # envelope combo: left unchanged
+            from skyframe.core.combos_ext import (is_single_valued,
+                                                  leaf_factors)
+            if all(c in model.cases for c in cb.cases):
+                return float(cb.cases.get(live_case, 0.0))
+            if is_single_valued(model, name):     # nested / staged members
+                return float(leaf_factors(model, name).get(live_case, 0.0))
+        return 0.0          # envelope / max-min combo: left unchanged
 
     live_mf = live_block.get("member_forces") or {}
     live_st = live_block.get("member_stations") or {}

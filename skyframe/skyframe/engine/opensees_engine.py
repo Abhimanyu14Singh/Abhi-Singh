@@ -1659,7 +1659,10 @@ class OpenSeesEngine:
                     cases[name] = res
         combos: Dict[str, CaseResults] = {}
         combo_status: Dict[str, str] = {}
+        from . import combos_ext as _cx            # extended combos
         for name, combo in model.combos.items():
+            if not _cx.is_legacy(model, combo):
+                continue            # RS/TH/staged/nested/ABS/SRSS/Range
             missing = [c for c in combo.cases if c not in cases]
             if missing:
                 combo_status[name] = "skipped"
@@ -1668,7 +1671,6 @@ class OpenSeesEngine:
                 continue
             combos[name] = self._combine(name, combo)
             combo_status[name] = "finished"
-        run_combos = {n: cb for n, cb in model.combos.items() if n in combos}
         if runs(MODAL_CASE):
             modal = attempt(MODAL_CASE, self.run_modal)
             if modal is None:
@@ -1745,6 +1747,19 @@ class OpenSeesEngine:
                 res = attempt(name, lambda n=name: self.run_staged(n))
                 if res is not None:
                     staged[name] = res
+        # extended load combinations (CONTRACT "Load combinations: RS/TH/
+        # nested members and ABS/SRSS/Range types"): evaluated once every
+        # member analysis has run; dicts are then restored to model order
+        # (no-op for legacy-only models -> byte-identical).
+        if any(not _cx.is_legacy(model, cb) for cb in model.combos.values()):
+            _cx.run_extended(self, model, cases, rs_cases, th_cases, staged,
+                             combos, combo_status, notes)
+            combos = {n: combos[n] for n in model.combos if n in combos}
+            combo_status = {**{n: combo_status[n] for n in model.combos
+                               if n in combo_status},
+                            **{n: v for n, v in combo_status.items()
+                               if n not in model.combos}}
+        run_combos = {n: cb for n, cb in model.combos.items() if n in combos}
         # v0.10 linear buckling: self-contained numpy solve per case (cheap);
         # cap the number of systems run in run() for safety.
         buckling: Dict[str, dict] = {}
@@ -1776,7 +1791,7 @@ class OpenSeesEngine:
         # v0.9 seismic diagnostics over static cases + additive combos
         diag_src = dict(cases)
         for cname, cb in run_combos.items():
-            if cb.combo_type == "add" and cname in combos:
+            if combos[cname].minima is None:    # single-valued combos
                 diag_src[cname] = combos[cname]
         story_stiffness, irregularity = self._seismic_diagnostics(asm, diag_src)
         # v0.11 gravity load takedown: per static case + additive combo
@@ -1785,12 +1800,17 @@ class OpenSeesEngine:
             takedown[cname] = self._takedown(asm, cr,
                                              model.cases[cname].patterns)
         for cname, cb in run_combos.items():
-            if cb.combo_type != "add" or cname not in combos:
+            if combos[cname].minima is not None:
                 continue
-            eff: Dict[str, float] = {}
-            for base_case, f in cb.cases.items():
-                for p, pf in model.cases[base_case].patterns.items():
-                    eff[p] = eff.get(p, 0.0) + f * pf
+            if _cx.is_legacy(model, cb):
+                eff: Dict[str, float] = {}
+                for base_case, f in cb.cases.items():
+                    for p, pf in model.cases[base_case].patterns.items():
+                        eff[p] = eff.get(p, 0.0) + f * pf
+            else:       # nested static-only add combo; staged -> skipped
+                eff = _cx.static_pattern_factors(model, cname)
+                if eff is None:
+                    continue
             takedown[cname] = self._takedown(asm, combos[cname], eff)
         # v0.13 section cuts: pure post-processing of member_stations over
         # static cases + additive combos (cheap summation, no extra solve).
@@ -1798,7 +1818,7 @@ class OpenSeesEngine:
         if model.section_cuts:
             cut_src = dict(cases)
             for cname, cb in run_combos.items():
-                if cb.combo_type == "add" and cname in combos:
+                if combos[cname].minima is None:
                     cut_src[cname] = combos[cname]
             for cs_name, cr in cut_src.items():
                 section_cuts[cs_name] = {
@@ -1811,7 +1831,7 @@ class OpenSeesEngine:
         if self._piers_enabled():
             pier_src = dict(cases)
             for cname, cb in run_combos.items():
-                if cb.combo_type == "add" and cname in combos:
+                if combos[cname].minima is None:
                     pier_src[cname] = combos[cname]
             piers = self._compute_piers(asm, pier_src)
         # v0.16 beam serviceability: relative-to-chord deflection checks per
@@ -1819,7 +1839,7 @@ class OpenSeesEngine:
         # member_deflections stations).
         defl_src = dict(cases)
         for cname, cb in run_combos.items():
-            if cb.combo_type == "add" and cname in combos:
+            if combos[cname].minima is None:
                 defl_src[cname] = combos[cname]
         deflection_checks = {cname: self._deflection_checks(cr)
                              for cname, cr in defl_src.items()

@@ -262,10 +262,12 @@ def test_staged_validation_and_roundtrip():
                              include_live={"LIVE": 0.25})
     assert (sc.name, sc.pattern, sc.stages) == ("STG", "DEAD", "per_story")
 
-    # staged cases cannot enter load combos
+    # staged cases enter load combos with their final state (extended
+    # combos); a combo is added and removed again so the rest of this test
+    # sees the original model
     mdl.add_case("D", {"DEAD": 1.0})
-    with pytest.raises(ValueError, match="staged case"):
-        mdl.add_combo("BAD", {"STG": 1.0})
+    mdl.add_combo("STGC", {"STG": 1.0})
+    del mdl.combos["STGC"]
 
     # serialisation round-trip preserves every field
     d1 = mdl.to_dict()

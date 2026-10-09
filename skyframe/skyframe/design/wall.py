@@ -494,8 +494,10 @@ def check_wall_piers(model, results, combos: Optional[List[str]] = None, *,
             "results carry no wall pier forces — label walls with "
             "ShellRegion.pier or set model.auto_pier_walls = True")
     if combos is None:
+        from skyframe.core.combos_ext import is_single_valued
         combos = [name for name, cb in model.combos.items()
-                  if getattr(cb, "combo_type", "add") == "add"]
+                  if getattr(cb, "combo_type", "add") == "add"
+                  and is_single_valued(model, name)]
         if not combos:
             raise ValueError("no additive combos to check — supply "
                              "'combos' (combo or static case names) or add "
