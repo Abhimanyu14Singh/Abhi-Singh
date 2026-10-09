@@ -3799,3 +3799,133 @@ area_load, line_load, unit_weight, area, volume, inertia,
 section_modulus, mass (kN s^2/m), mass_density, rotational_mass,
 acceleration, velocity, translational_stiffness, rotational_stiffness,
 line_spring, area_spring, rotation, strain, time.
+
+# Analysis results tables (ETABS "Display > Show Tables > Analysis Results")
+
+Module `skyframe.core.tables` (NEW) — pure POST-PROCESSING ("store and
+compute"): every table is computed from an already-solved
+`results.to_dict()` payload + the `BuildingModel`; the solver is never re-run.
+`POST /api/analyze` payloads are byte-identical (the endpoint only
+additionally remembers its payload server-side).
+
+```python
+from skyframe.core import tables
+tables.list_tables()                       # catalogue (below)
+tables.compute_table(key, results, model, context=None, cases=None)
+    # -> {key, title, group, columns: [{key,label,quantity}], rows: [{col: v}],
+    #     warnings: [str]};  KeyError on an unknown key
+tables.engine_context(engine)              # after engine.run(): JSON-safe
+    # {masters: {story: tag}, mass: [[tag, dof, m]], story_nodes: {story:
+    #  [tags]}, region_trib: {shell uid: meshed tributary area}}
+tables.context_from_results(model, results)  # fallback when no engine context
+```
+
+The context makes the modal/diaphragm tables exact; without it masters are
+re-identified (the unreferenced node at `(plan_center, elevation)` of each
+rigid story) and the mass map is rebuilt from the default `"weight"` mass
+source (identical to the engine's — tested).  `element_self_mass` models
+need the engine context (warning + empty modal mass tables otherwise).
+
+**Result sources.** Case-based tables iterate the static cases
+(`case_type` "LinStatic", or "NonStatic" for P-Delta/corotational) and the
+ADDITIVE combos ("Combination"); envelope combos and RS/TH results are not
+linear states, so derived quantities (drift, equilibrium, story forces) are
+not defined for them and they are skipped.  `cases: [names]` restricts the
+rows.  Rows are ordered ETABS-style (top story first).
+
+**Quantities** (base unit; the frontend converts): `text`, `id`, `length`
+(m), `force` (kN), `moment` (kN*m), `stiffness` (kN/m), `ratio`, `percent`,
+`angle` (rad), `time` (s), `frequency` (Hz), `circular_frequency` (rad/s),
+`eigenvalue` (rad^2/s^2), `mass` (tonne), `factor` (participation factor).
+
+## Catalogue (group prefix "Analysis Results > ")
+
+| key | title | group | columns (`key`:quantity) |
+|-----|-------|-------|--------------------------|
+| `joint_displacements` | Joint Displacements | Joint Output > Displacements | `story`:text, `label`:text, `joint`:id, `case`:text, `case_type`:text, `ux`:length, `uy`:length, `uz`:length, `rx`:angle, `ry`:angle, `rz`:angle |
+| `joint_drifts` | Joint Drifts | Joint Output > Displacements | `story`:text, `label`:text, `joint`:id, `joint_below`:id, `case`:text, `case_type`:text, `x`:length, `y`:length, `z`:length, `height`:length, `disp_x`:length, `disp_y`:length, `drift_x`:ratio, `drift_y`:ratio |
+| `joint_reactions` | Joint Reactions | Joint Output > Reactions | `story`:text, `label`:text, `joint`:id, `case`:text, `case_type`:text, `x`:length, `y`:length, `z`:length, `FX`:force, `FY`:force, `FZ`:force, `MX`:moment, `MY`:moment, `MZ`:moment |
+| `story_drifts` | Story Drifts | Structure Output > Story Output | `story`:text, `case`:text, `case_type`:text, `ux`:length, `uy`:length, `drift_x`:ratio, `drift_y`:ratio |
+| `story_forces` | Story Forces | Structure Output > Story Output | `story`:text, `case`:text, `case_type`:text, `location`:text, `P`:force, `VX`:force, `VY`:force, `T`:moment, `MX`:moment, `MY`:moment, `n_members`:id, `n_shells`:id |
+| `story_stiffness` | Story Stiffness | Structure Output > Story Output | `story`:text, `case`:text, `case_type`:text, `shear_x`:force, `drift_x`:length, `stiff_x`:stiffness, `shear_y`:force, `drift_y`:length, `stiff_y`:stiffness |
+| `diaphragm_cm_displacements` | Diaphragm Center Of Mass Displacements | Structure Output > Diaphragm Output | `story`:text, `diaphragm`:text, `case`:text, `case_type`:text, `ux`:length, `uy`:length, `rz`:angle, `x`:length, `y`:length, `z`:length |
+| `diaphragm_max_avg_drifts` | Diaphragm Max Over Avg Drifts | Structure Output > Diaphragm Output | `story`:text, `case`:text, `case_type`:text, `direction`:text, `max_disp`:length, `avg_disp`:length, `disp_ratio`:ratio, `max_drift`:ratio, `avg_drift`:ratio, `drift_ratio`:ratio, `label_max`:id |
+| `centers_mass_rigidity` | Centers Of Mass And Rigidity | Structure Output > Other Output Items | `story`:text, `diaphragm`:text, `mass`:mass, `cm_x`:length, `cm_y`:length, `cr_x`:length, `cr_y`:length |
+| `base_reactions` | Base Reactions | Structure Output > Base Reactions | `case`:text, `case_type`:text, `FX`:force, `FY`:force, `FZ`:force, `MX`:moment, `MY`:moment, `MZ`:moment, `X`:length, `Y`:length, `Z`:length |
+| `load_pattern_summary` | Load Pattern Totals And Equilibrium | Structure Output > Base Reactions | `pattern`:text, `type`:text, `self_weight`:ratio, `FX`:force, `FY`:force, `FZ`:force, `case`:text, `react_FX`:force, `react_FY`:force, `react_FZ`:force, `error_pct`:percent |
+| `load_case_equilibrium` | Load Case Equilibrium Check | Structure Output > Base Reactions | `case`:text, `case_type`:text, `applied_FX`:force, `applied_FY`:force, `applied_FZ`:force, `react_FX`:force, `react_FY`:force, `react_FZ`:force, `error_pct`:percent |
+| `modal_periods` | Modal Periods And Frequencies | Modal Results | `case`:text, `mode`:id, `period`:time, `frequency`:frequency, `circ_freq`:circular_frequency, `eigenvalue`:eigenvalue |
+| `modal_mass_ratios` | Modal Participating Mass Ratios | Modal Results | `case`:text, `mode`:id, `period`:time, `UX`:ratio, `UY`:ratio, `UZ`:ratio, `SumUX`:ratio, `SumUY`:ratio, `SumUZ`:ratio, `RX`:ratio, `RY`:ratio, `RZ`:ratio, `SumRX`:ratio, `SumRY`:ratio, `SumRZ`:ratio |
+| `modal_participation_factors` | Modal Participation Factors | Modal Results | `case`:text, `mode`:id, `period`:time, `UX`:factor, `UY`:factor, `UZ`:factor, `RX`:factor, `RY`:factor, `RZ`:factor, `modal_mass`:mass, `modal_stiffness`:stiffness |
+| `modal_direction_factors` | Modal Direction Factors | Modal Results | `case`:text, `mode`:id, `period`:time, `UX`:ratio, `UY`:ratio, `UZ`:ratio, `RZ`:ratio, `dominant`:text |
+
+## Definitions
+
+* **Joints** = member ends, shell-mesh nodes and supports (coincident hinge /
+  panel-zone duplicates collapsed onto the lowest tag; diaphragm masters
+  excluded).  `label` = the grid intersection within 1 mm, else "".
+  `story` = "Base" at the base elevation, "" off the story levels.
+* **joint_drifts**: per story-level joint with a joint DIRECTLY BELOW at the
+  same plan position (next lower level, incl. the base):
+  `drift = (u - u_below) / (z - z_below)` (signed).  Joints without a joint
+  below are omitted.  Cantilever: `drift_x = (P L^3/3EI)/L` exactly.
+* **story_stiffness**: ETABS Story Stiffness for cases with a non-zero story
+  shear: `shear` = the engine's applied cumulative story shear, `drift` =
+  interstory displacement (m), `stiff = |shear/drift|` — the same values as
+  the engine's `story_stiffness` block (tested equal).
+* **story_forces**: resultant of everything ABOVE a horizontal cut just below
+  the floor (`Top`) and just above the floor below (`Bottom`) of each story:
+  `P, VX, VY` global (gravity: `P < 0`; a +X load: `VX > 0`), `T, MX, MY`
+  about `(plan center, cut z)` (a +X load above gives `MY > 0`).  Integrated
+  from the member stations of the FRAME members crossing the cut (local ->
+  global with the engine's `_local_axes`).  Shells crossing a cut are
+  counted in `n_shells` and EXCLUDED (warning) — documented limitation.
+  The Bottom of story 1 equals minus the base reaction (tested).
+* **diaphragm_cm_displacements**: per rigid story (diaphragm "D1"):
+  rigid-body displacement of the master at the CM from `story_props`
+  (`ux = u_m - rz*(y_cm - y_m)`, `uy = v_m + rz*(x_cm - x_m)`).
+* **diaphragm_max_avg_drifts**: per rigid story and direction, the two plan
+  extreme diaphragm points transverse to the direction (min/max y for X,
+  min/max x for Y) — displacement from the rigid-body field and drift
+  relative to the level below at the same plan point (rigid-body of the lower
+  diaphragm, else the joint below, else the lower story average; the base
+  joint or 0 for the first story) over the story height.
+  `ratio = max(|d1|,|d2|) / ((|d1|+|d2|)/2)` (ASCE 7 §12.3.2.1); `disp_ratio`
+  equals the engine's `irregularity.tors_ratio_*` when the diaphragm points
+  span the plan extents.  Rows where both averages are 0 are omitted.
+* **centers_mass_rigidity**: `story_props` + the master's lumped mass.
+* **base_reactions**: `results.cases[*].base` (moments about the origin) plus
+  the resultant location: the central axis `r0 = F x M / |F|^2`, intersected
+  with the base plane when `FZ != 0` (=> the reaction centroid X, Y), else
+  `r0` (Z = height of a horizontal resultant).  `null` for a pure couple.
+* **load_pattern_summary**: per pattern the applied `FX, FY, FZ` summed from
+  the load definitions with the engine's rules (gravity member loads skip
+  vertical members; `local_y` loads along the member's local y; self-weight
+  on every member + shell; meshed shells use the meshed tributary area);
+  when a static case applies that pattern ALONE, its base reaction divided by
+  the case factor and `error_pct = 100 |applied + reaction| / |applied|`.
+* **load_case_equilibrium**: the same check per static case / additive combo
+  (combo pattern factors folded linearly).
+* **modal_***: from `results.modal` + the mass map. `modal_mass = phi^T M phi`,
+  `modal_stiffness = omega^2 * modal_mass`, `Gamma_k = L_k / modal_mass`,
+  mass ratio `= (L_k^2/modal_mass) / (r_k^T M r_k)`.  Influence vectors
+  `r_k`: unit translation for UX/UY/UZ; RZ = the rotational dof only (the
+  engine's definition — UX/UY/RZ ratios and UX/UY factors equal
+  `modal.participation[*].ux/uy/rz/gamma_x/gamma_y`, tested); RX/RY = unit
+  rotation about the global X/Y axis through (plan center, base elevation),
+  translational masses entering with their lever arms (rocking).
+  **modal_direction_factors**: share of the mode's kinetic energy
+  `sum m phi^2` in UX/UY/UZ/RZ (rows sum to 1); `dominant` = the largest
+  ("RZ" = torsional mode).
+
+## API
+
+| Method | Path | Body / Response |
+|--------|------|-----------------|
+| GET/POST | `/api/tables/list` | `{tables: [catalogue entries]}` |
+| POST | `/api/tables/<key>` | `{results?: <analyze dict>, cases?: [names]}` -> `{key, title, group, columns, rows, warnings}`; 404 unknown key, 400 bad `cases` / failure |
+
+Without `results` the server reuses the payload + engine context stored by
+the last `POST /api/analyze` when the current model is unchanged (compared
+by its serialized dict); otherwise it analyses the model ONCE and stores the
+result.  Tests: `tests/test_tables.py` (27 cases).

@@ -293,6 +293,13 @@ v1.13 additions (analysis control, see CONTRACT.md "v1.13 additions"):
   temperature: "C"|"F", labels, factors}}, quantities: {q: {force,
   length, si}}, temperature, thermal_coefficient, constants, default}``.
 
+Analysis-results tables (ETABS Display > Show Tables > Analysis Results):
+* ``GET|POST /api/tables/list`` — catalogue ``{tables: [{key, title, group,
+  columns: [{key, label, quantity}]}]}``;
+* ``POST /api/tables/<key>`` — body ``{results?, cases?}`` -> ``{key, title,
+  group, columns, rows, warnings}`` computed from stored results (see
+  :mod:`skyframe.core.tables`; 404 unknown key).
+
 Saved models live as ``<name>.skyframe.json`` files in ``~/.skyframe/models``
 (override with the ``SKYFRAME_MODELS_DIR`` environment variable; the
 directory is created on demand).  Names must match ``[A-Za-z0-9 _-]{1,60}``.
@@ -322,6 +329,7 @@ from skyframe.core.model import (BuildingModel, GridSystem,
 from skyframe.core.stress_strain import curve_payload
 from skyframe.core.units import units_table
 from skyframe.core.sections_library import library_to_dict
+from skyframe.core import tables as _tables
 
 try:
     from skyframe.engine.opensees_engine import OpenSeesEngine
@@ -334,6 +342,32 @@ WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
 # module-level singleton: the one current model
 _state: Dict[str, BuildingModel] = {"model": quick_building()}
+
+# analysis-results tables: the last /api/analyze payload + engine context,
+# keyed by a signature of the model it was computed from (store-and-compute)
+_tables_store: Dict[str, Any] = {}
+
+
+def _model_sig(model: BuildingModel) -> str:
+    return json.dumps(model.to_dict(), sort_keys=True, default=str)
+
+
+def _tables_remember(results: Dict[str, Any], engine) -> Dict[str, Any]:
+    try:
+        ctx = _tables.engine_context(engine)
+    except Exception:                                  # pragma: no cover
+        ctx = {}
+    _tables_store.clear()
+    _tables_store.update(sig=_model_sig(_state["model"]), results=results,
+                         context=ctx)
+    return ctx
+
+
+def _tables_lookup(model: BuildingModel):
+    if _tables_store.get("sig") == _model_sig(model):
+        return _tables_store["results"], _tables_store["context"]
+    return None, None
+
 
 # quick_building kwargs whitelist: name -> (kind, min, max)
 _QUICK_PARAMS: Dict[str, tuple] = {
@@ -952,10 +986,52 @@ def create_app() -> Flask:
         if not _OPENSEES_OK:
             return jsonify({"error": "OpenSeesPy is not available"}), 400
         try:
-            results = OpenSeesEngine(_state["model"]).run()
+            engine = OpenSeesEngine(_state["model"])
+            results = engine.run()
         except Exception as exc:
             return jsonify({"error": str(exc)}), 400
-        return jsonify(results.to_dict())
+        d = results.to_dict()
+        _tables_remember(d, engine)
+        return jsonify(d)
+
+    # ------------------------- analysis-results tables (ETABS Show Tables)
+    @app.route("/api/tables/list", methods=["GET", "POST"])
+    def tables_list():
+        return jsonify({"tables": _tables.list_tables()})
+
+    @app.post("/api/tables/<key>")
+    def tables_get(key: str):
+        """One analysis-results table, computed from STORED results.
+
+        Body ``{results?: <analyze dict>, cases?: [names]}``.  Without
+        ``results`` the last ``/api/analyze`` payload is reused when the
+        model is unchanged (else the model is analysed once and stored).
+        404 on an unknown table key, 400 on failure.
+        """
+        if key not in _tables.TABLES:
+            return jsonify({"error": f"unknown table {key!r}"}), 404
+        body = request.get_json(silent=True) or {}
+        cases = body.get("cases")
+        if cases is not None and (not isinstance(cases, list) or not all(
+                isinstance(c, str) for c in cases)):
+            return jsonify({"error": "cases must be a list of names"}), 400
+        model = _state["model"]
+        try:
+            if isinstance(body.get("results"), dict):
+                res, ctx = body["results"], None
+            else:
+                res, ctx = _tables_lookup(model)
+                if res is None:
+                    if not _OPENSEES_OK:
+                        return jsonify(
+                            {"error": "OpenSeesPy is not available"}), 400
+                    engine = OpenSeesEngine(model)
+                    res = engine.run().to_dict()
+                    ctx = _tables_remember(res, engine)
+            return jsonify(_tables.compute_table(key, res, model, ctx,
+                                                 cases=cases))
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 400
 
     # ------------------------------------------- v0.24: analysis parity I
     @app.post("/api/analyze/ritz")
