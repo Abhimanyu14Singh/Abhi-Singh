@@ -1474,6 +1474,9 @@ class AnalysisResults:
     pdelta: Dict[str, object] = field(default_factory=dict)
     #   model-wide P-Delta options summary (engine/pdelta.py; only when the
     #   method is not "none")
+    nonlinear_static: Dict[str, object] = field(default_factory=dict)
+    #   nonlinear static cases (engine/nonlinear_static.py; emitted only
+    #   when non-empty)
 
     def to_dict(self) -> dict:
         d = {
@@ -1524,6 +1527,9 @@ class AnalysisResults:
             d["psd"] = dict(self.psd)
         if self.pdelta:                  # model-wide P-Delta (only when on)
             d["pdelta"] = dict(self.pdelta)
+        if self.nonlinear_static:        # nonlinear static (only when used)
+            d["nonlinear_static"] = {n: r.to_dict() for n, r in
+                                     self.nonlinear_static.items()}
         return d
 
 
@@ -1732,6 +1738,14 @@ class OpenSeesEngine:
                                   lambda n=name: self.run_time_history(n))
                     if res is not None:
                         th_cases[name] = res
+        # nonlinear static cases (engine/nonlinear_static.py)
+        nls_res: Dict[str, object] = {}
+        for name in getattr(model, "nonlinear_static_cases", {}) or {}:
+            if runs(name):
+                res = attempt(name,
+                              lambda n=name: self.run_nonlinear_static(n))
+                if res is not None:
+                    nls_res[name] = res
         pushover: Dict[str, PushoverResults] = {}
         po_run = [n for n in model.pushover_cases if runs(n)]
         if po_run:
@@ -1900,6 +1914,7 @@ class OpenSeesEngine:
             steady_state=steady_state,
             psd=psd,
             pdelta=_pdelta.info(self),
+            nonlinear_static=nls_res,
         )
 
     def _run_plan(self) -> dict:
@@ -1932,7 +1947,33 @@ class OpenSeesEngine:
             base = getattr(bc, "base_case", None)
             if status.get(n) == "finished" and base:
                 need(base, n)
+        self._nls_plan(status, need)
         return {"status": status, "notes": notes}
+
+    def _nls_plan(self, status: Dict[str, str], need) -> None:
+        """Nonlinear static chains: start_from / pushover start_from /
+        modal_from_case dependencies, resolved transitively."""
+        model = self.model
+        if not (getattr(model, "nonlinear_static_cases", None)
+                or getattr(model, "modal_from_case", None)):
+            return
+        from skyframe.core.nonlinear_static import dependencies
+        kinds = model.case_kinds()
+        changed = True
+        while changed:
+            changed = False
+            for n, st in list(status.items()):
+                if st not in ("finished", "run_as_dependency"):
+                    continue
+                for dep in dependencies(model, n, kinds.get(n, "")):
+                    if status.get(dep) == "not_run":
+                        need(dep, n)
+                        changed = True
+
+    def run_nonlinear_static(self, name: str):
+        """Run one nonlinear static case (engine/nonlinear_static.py)."""
+        from skyframe.engine import nonlinear_static as _nls
+        return _nls.run_case(self, name)
 
     def _deflection_checks(self, cr: CaseResults) -> List[dict]:
         """Beam serviceability entries for one case/combo (v0.16).
@@ -2199,6 +2240,10 @@ class OpenSeesEngine:
         Cached per effective mode count so RS cases reuse the eigen solve.
         """
         model = self.model
+        if getattr(model, "modal_from_case", None):
+            # stiffness at the end of a nonlinear static case
+            from skyframe.engine import nonlinear_static as _nls
+            return _nls.run_modal_from_case(self, num_modes)
         asm = self._build()
         # only masses on unrestrained dofs yield generalized eigenpairs;
         # a model whose masses all sit on fixed nodes has no dynamics
@@ -6079,7 +6124,15 @@ class OpenSeesEngine:
         mon, mdof, Hc = _pod.resolve_control(self, asm, case, ctrl, dof, H)
         gravity = _pod.resolve_gravity(model, case)
         d0 = 0.0
-        if gravity:
+        from skyframe.core.nonlinear_static import pushover_nls_start
+        nls_start = pushover_nls_start(model, case)
+        if nls_start:
+            # continue from the END STATE of a nonlinear static case chain
+            # (same domain; engine/nonlinear_static.py)
+            from skyframe.engine import nonlinear_static as _nls
+            _nls.run_start_state(self, asm, nls_start)
+            d0 = ops.nodeDisp(mon, mdof)
+        elif gravity:
             ops.timeSeries("Linear", 1)
             ops.pattern("Plain", 1, 1)
             for pat_name, scale in gravity.items():
