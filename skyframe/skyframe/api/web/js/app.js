@@ -53,6 +53,10 @@ import { initGroups as grpInitGroups } from "./groups.js";
 import { initStageData as grpInitStageData } from "./stagedata.js";
 import { mockValidateGroups as grpMockValidateGroups } from "./mock_groups.js";
 
+// B9/B11 — frame auto mesh + output stations, named spring properties, link hysteresis types (aliased imports)
+import { initB9 as b9Init } from "./b9init.js";
+import { mockValidateB9 as b9MockValidate } from "./mock_b9.js";
+
 /* ------------------------------------------------ state */
 const store = {
   model: null,
@@ -234,7 +238,8 @@ async function postModel(payload) {
   if (store.mock) {
     await new Promise(r => setTimeout(r, 300));
     const bad = mockValidateAssign(payload) || g2MockValidatePoly(payload) || g3MockNlsValidate(payload)   // assign / G2 polygon + insertion / G3 NLS + diaphragms
-      || grpMockValidateGroups(payload);                                       // Groups / stage lists / cut groups
+      || grpMockValidateGroups(payload)                                        // Groups / stage lists / cut groups
+      || b9MockValidate(payload);                                              // B9-B11 auto mesh / stations / springs / links
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -1892,6 +1897,7 @@ function renderProps() {
   $("propDelete").addEventListener("click", deleteSelection);
   AS.decorateProps(box);                         // joint / concentrated / shell loads of the selection
   if (window.__sky && window.__sky.g2DecorateProps) window.__sky.g2DecorateProps(box);   // G2: polygon geometry + insertion point
+  if (window.__sky && window.__sky.b9DecorateProps) window.__sky.b9DecorateProps(box, { members, links, springs });   // B9/B11: auto mesh · stations · springs · link hysteresis
 
   const on = (id, ev, fn) => { const n = $(id); if (n) n.addEventListener(ev, fn); };
 
@@ -8469,6 +8475,8 @@ async function boot() {
   // Groups — Define/Assign/Select/Show Group, Stage Data, per-stage results (additive __sky)
   try { grpInitGroups(window.__sky); } catch (err) { console.error("groups init failed", err); }
   try { grpInitStageData(window.__sky); } catch (err) { console.error("stage data init failed", err); }
+
+  try { b9Init(window.__sky); } catch (err) { console.error("B9 init failed", err); }   // auto mesh / stations / springs / link hysteresis
 }
 
 boot();

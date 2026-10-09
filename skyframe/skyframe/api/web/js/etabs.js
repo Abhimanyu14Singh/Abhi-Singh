@@ -146,6 +146,9 @@ export function initEtabs(sky) {
       { label: "Mass Source…", act: "def-mass", fn: () => sky.openMassSource() },
       { label: "P-Delta Options…", act: "def-pdelta", hint: "model-wide", fn: () => sky.openPDeltaOptions && sky.openPDeltaOptions() },
       { label: "Diaphragms…", act: "def-diaphragms", hint: "named · rigid / semi-rigid", fn: () => sky.openDiaphragms && sky.openDiaphragms() },   // G3
+
+      // B9 — named point-spring properties (js/springdlg.js)
+      { label: "Spring Properties · Point Springs…", act: "def-b9-springprops", hint: "linear · multilinear · gap", fn: () => sky.openSpringProperties && sky.openSpringProperties() },
       { sep: true },
       { label: "Code Tools (ASCE 7 · NBCC · EC)…", act: "def-codetools", fn: () => gotoLoads("ls-codetools") },
     ]],
@@ -184,6 +187,9 @@ export function initEtabs(sky) {
       { label: "Frame · Axial Limit", act: "asn-faxial", fn: () => assignHint("axial limit") },
       { label: "Frame · Hinges", act: "asn-fhinge", fn: () => assignHint("plastic hinges") },
       { label: "Frame · Panel Zones", act: "asn-fpz", fn: () => assignHint("panel zones") },
+      // B9 — frame auto mesh + output stations (js/framemesh.js)
+      { label: "Frame · Frame Auto Mesh Options…", act: "asn-b9-automesh", hint: "joints · intersections", fn: () => sky.openFrameAutoMesh && sky.openFrameAutoMesh() },
+      { label: "Frame · Output Stations…", act: "asn-b9-stations", fn: () => sky.openOutputStations && sky.openOutputStations() },
       { sep: true },
       { label: "Shell · Section", act: "asn-ssec", fn: () => assignHint("shell section") },
       { label: "Shell · Area Spring", act: "asn-sspring", fn: () => assignHint("area spring") },
@@ -191,6 +197,9 @@ export function initEtabs(sky) {
       { label: "Shell · Layered", act: "asn-slayer", fn: () => assignHint("layered shell") },
       { sep: true },
       { label: "Supports / Springs", act: "asn-support", fn: () => assignHint("supports & springs") },
+      // B9/B11 — joint springs with named properties (js/springdlg.js) · link hysteresis (js/linkhyst.js)
+      { label: "Joint · Springs…", act: "asn-b9-jsprings", hint: "named property · angle", fn: () => sky.openJointSprings && sky.openJointSprings() },
+      { label: "Link · Link Properties…", act: "asn-b9-linkprops", hint: "hysteresis types", fn: () => sky.openLinkProperties && sky.openLinkProperties() },
       { label: "Frame Loads", act: "asn-fload", fn: () => assignHint("member loads") },
       { label: "Area Loads", act: "asn-aload", fn: () => assignHint("area loads") },
       { sep: true },
@@ -276,6 +285,7 @@ export function initEtabs(sky) {
       { label: "Snap to Grid", act: "opt-snap", check: () => snapOn, fn: () => toggleSnap() },
       { label: "Check Model Before Run", act: "opt-check-before-run", check: () => !!(sky.checkModel && sky.checkModel.beforeRunEnabled()), fn: () => sky.checkModel && sky.checkModel.toggleBeforeRun() },
       { label: "Auto Edge Constraints", act: "opt-edge", check: () => !!(S.model && S.model.edge_constraints), fn: () => toggleEdge() },
+      { label: "Frame Auto Mesh Defaults…", act: "opt-b9-automesh", hint: "model-wide", fn: () => sky.openFrameAutoMesh && sky.openFrameAutoMesh("default") },   // B9 (js/framemesh.js)
       { sep: true },
       { label: "Diaphragm · Rigid", act: "opt-diaph-rigid", check: () => !(S.model && S.model.diaphragm === "none"), fn: () => setDiaphragm("rigid") },
       { label: "Diaphragm · None (semi-rigid)", act: "opt-diaph-none", check: () => !!(S.model && S.model.diaphragm === "none"), fn: () => setDiaphragm("none") },

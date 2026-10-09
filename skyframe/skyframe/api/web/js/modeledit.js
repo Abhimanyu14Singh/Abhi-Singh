@@ -942,6 +942,7 @@ export function normalizeLinkDevice(l) {
   const t = linkTypeOf(l);
   l.link_type = t;
   const src = (l.params && typeof l.params === "object") ? l.params : {};
+  if (LINK_TYPES[t].normalize) { l.params = LINK_TYPES[t].normalize(src); return l; }   // B11 hysteresis types (js/linkhyst.js): optional keys kept only when set
   const params = {};
   for (const [k, , dv] of LINK_TYPES[t].params)
     params[k] = isFinite(src[k]) ? +src[k] : dv;
@@ -958,7 +959,9 @@ export function normalizeLinkDevice(l) {
 
 /** Switch a link's device type, keeping same-named param values. */
 export function setLinkType(l, type) {
-  l.link_type = LINK_TYPES[type] ? type : "elastic";
+  const nt = LINK_TYPES[type] ? type : "elastic";
+  if (LINK_TYPES[nt].carry && l.link_type !== nt && l.params) l.params = Object.fromEntries(Object.entries(l.params).filter(([k]) => LINK_TYPES[nt].carry.includes(k)));   // B11 (js/linkhyst.js): carry only same-meaning keys
+  l.link_type = nt;
   return normalizeLinkDevice(l);
 }
 

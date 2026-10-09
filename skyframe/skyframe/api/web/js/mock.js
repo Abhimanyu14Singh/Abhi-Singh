@@ -17,6 +17,9 @@ import { augmentMockModel, augmentMockResults as augmentTableResults } from "./m
 import { mockPolyMesh as g2MockPolyMesh, isLegacyQuad as g2IsLegacyQuad } from "./mock_poly.js";
 // Groups — user-defined stage results + section cuts defined by group
 import { mockUserStages as grpMockUserStages, mockCutAllows as grpMockCutAllows } from "./mock_groups.js";
+
+// B9 — output stations / auto-mesh station lists in mock results (js/mock_b9.js)
+import { mockAugmentB9 as b9MockAugment } from "./mock_b9.js";
 const G = 9.80665;
 
 function mulberry32(seed) {
@@ -3300,6 +3303,7 @@ export function mockResults(model) {
   }
   r.active_dof = [...dofs];
   augmentTableResults(model, r);                  // fills only missing blocks (tables / energy / pushover views)
+  b9MockAugment(model, r);                        // B9: variable output stations (js/mock_b9.js)
   return r;
 }
 

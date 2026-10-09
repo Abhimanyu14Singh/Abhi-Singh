@@ -277,6 +277,9 @@ export function stationDiagram(xs, vs, opts = {}) {
     "stroke-linejoin": "round", "stroke-linecap": "round",
   }));
 
+  // B9 — non-default output stations (js/framemesh.js): dot every station
+  if (xs.length !== 11) xs.forEach((x, i) => svg.appendChild(el("circle", { cx: xOf(x), cy: yOf(vs[i]), r: 1.5, fill: color, class: "sta-dot" })));
+
   // min / max annotations (value @ x)
   let iMax = 0, iMin = 0;
   vs.forEach((v, i) => { if (v > vs[iMax]) iMax = i; if (v < vs[iMin]) iMin = i; });
