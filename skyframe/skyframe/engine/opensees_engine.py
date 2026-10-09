@@ -170,6 +170,9 @@ from skyframe.core import framemesh as _fm
 from skyframe.engine.shell_modifiers import elastic_shell_section
 from skyframe.engine import pdelta as _pdelta      # model-wide P-Delta
 from skyframe.engine import diaphragms as _dgm     # named diaphragms/add. mass
+
+from skyframe.core import springprops as _sprp     # B9/B11 named springs
+from skyframe.engine import hysteresis as _hyst    # B9/B11 builders
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
                                  FP_DEFAULT_KINIT, G_ACCEL,
                                  ISOLATOR_DEFAULT_KV, TFP_DEFAULT_MINFV,
@@ -372,7 +375,8 @@ GAP_YIELD_HUGE = 1.0e12
 # v0.21: the friction-pendulum bearings and the multilinear backbone are
 # displacement-state devices too — same Newton routing.
 NONLINEAR_STATIC_LINK_TYPES = ("gap", "hook", "isolator",
-                               "fp_isolator", "triple_fp", "multilinear")
+                               "fp_isolator", "triple_fp", "multilinear",
+                               *_sprp.HYSTERESIS_LINK_TYPES)   # B11
 
 # v0.21 device links: elastic rotational stiffness handed to the bearing
 # elements' -T/-My/-Mz (singleFPBearing) and rotZ/rotX/rotY
@@ -1156,6 +1160,9 @@ class _Assembly:
     #   v0.8: real node tag -> 6 grounded-spring stiffnesses (0 where none);
     #   the spring reaction (-k*disp) is added to that node's case reactions
     ent_springs: Dict[int, float] = field(default_factory=dict)
+    named_springs: List[Tuple[int, object]] = field(default_factory=list)
+    #   B9 named / rotated point springs: (real node tag, SpringSpec);
+    #   exact reaction -R^T F_local(R u) from skyframe.core.springprops
     #   v0.22 compression-only vertical springs (line/area springs):
     #   real node tag -> summed kz.  Material is Elastic(kz*AXIAL_ONLY_
     #   RATIO, 0, kz) on the Z dof, so the exact spring reaction added to
@@ -2054,6 +2061,8 @@ class OpenSeesEngine:
         if any(ls.compression_only and ls.kz > 0.0
                for ls in getattr(self.model, "line_springs", [])):
             return True
+        if _sprp.any_nonlinear(self.model):     # B9 nonlinear named springs
+            return True
         return any((getattr(r, "area_spring", None) or {})
                    .get("compression_only", False)
                    for r in self.model.shells)
@@ -2461,6 +2470,7 @@ class OpenSeesEngine:
         spring_specs: List[Tuple[int, List[float]]] = []  # (real tag, stiff)
         spring_cover: Dict[int, set] = {}                  # real tag -> dofs
         created_springs: set = set()
+        named_specs: List[Tuple[int, object]] = []         # B9
         for sp in model.spring_supports:
             try:
                 rt = self._find_node(asm, sp.point)
@@ -2472,6 +2482,13 @@ class OpenSeesEngine:
                 asm.struct_coords[tag] = p
                 rt = tag
                 created_springs.add(rt)
+            if _sprp.is_named(sp):                         # B9
+                spec = _sprp.resolve(
+                    sp, getattr(model, "spring_properties", {}) or {})
+                named_specs.append((rt, spec))
+                spring_cover.setdefault(rt, set()).update(
+                    spec.global_dofs())
+                continue
             spring_specs.append((rt, [float(k) for k in sp.stiffness]))
             cover = spring_cover.setdefault(rt, set())
             cover |= {d for d in range(6) if sp.stiffness[d] != 0.0}
@@ -3261,6 +3278,17 @@ class OpenSeesEngine:
                 asm.link_ele[lk.uid] = etag
                 device_nodes.update((ni, nj))
                 continue
+            elif ltype in _sprp.MATERIAL_LINK_TYPES:          # B11
+                mats, dirs, mtag = _hyst.material_link(ltype, prm, mtag,
+                                                       L_lk < _TOL)
+            elif ltype in _sprp.ELEMENT_LINK_TYPES:           # B11
+                if p_i[2] > p_j[2]:
+                    ni, nj = nj, ni          # node i = LOWER node
+                mtag, etag, frn_tag = _hyst.bearing_link(
+                    ltype, prm, ni, nj, mtag, etag, frn_tag, L_lk < _TOL)
+                asm.link_ele[lk.uid] = etag
+                device_nodes.update((ni, nj))
+                continue
             else:  # multilinear (v0.21)
                 # MultiLinear backbone on BOTH horizontal shear
                 # directions (dirs 2/3 of the vertical twoNodeLink /
@@ -3319,6 +3347,21 @@ class OpenSeesEngine:
             acc = asm.spring_nodes.setdefault(rt, [0.0] * 6)
             for d in range(6):
                 acc[d] += float(kvec[d])
+            if rt not in asm.support_tags:
+                asm.support_tags.append(rt)
+
+        # --- B9 named / rotated point springs ------------------------------
+        # Same grounded layout; one material per active LOCAL dof and
+        # ``-orient`` for non-global axes (skyframe.engine.hysteresis).
+        for rt, spec in named_specs:
+            tag += 1
+            gnd = tag
+            ops.node(gnd, *asm.node_coords[rt])
+            ops.fix(gnd, 1, 1, 1, 1, 1, 1)
+            mtag, etag = _hyst.build_named_spring(spec, gnd, rt, mtag, etag)
+            asm.spring_ground.setdefault(rt, []).append(
+                (gnd, tuple(spec.global_dofs())))
+            asm.named_springs.append((rt, spec))
             if rt not in asm.support_tags:
                 asm.support_tags.append(rt)
 
@@ -5354,6 +5397,12 @@ class OpenSeesEngine:
             k_eff = kz if uz < 0.0 else kz * AXIAL_ONLY_RATIO
             r = reactions.setdefault(t, [0.0] * 6)
             r[2] += -k_eff * uz
+        # B9 named / rotated springs: exact force law in the local axes
+        for t, spec in getattr(asm, "named_springs", []):
+            rr = spec.reaction(node_disp.get(t, [0.0] * 6))
+            r = reactions.setdefault(t, [0.0] * 6)
+            for d in range(6):
+                r[d] += rr[d]
 
     @staticmethod
     def _base_totals(asm: _Assembly,
@@ -6435,6 +6484,8 @@ class OpenSeesEngine:
                         if s.point[2] <= elev_k + _TOL]
         sub.spring_supports = [s for s in model.spring_supports
                                if s.point[2] <= elev_k + _TOL]
+        sub.spring_properties = dict(getattr(model, "spring_properties",
+                                             {}) or {})          # B9
         sub.thermal_alpha = model.thermal_alpha
         sub.rigid_diaphragms = model.rigid_diaphragms
         sub.diaphragm = model.diaphragm
@@ -6879,7 +6930,8 @@ class OpenSeesEngine:
         # v0.15: any advanced device link (damper/gap/hook/isolator) makes
         # the transient solve implicit-nonlinear (Newton), even without
         # hinges — device element forces are state/velocity dependent.
-        devices = self._device_links_present()
+        devices = (self._device_links_present()
+                   or _sprp.any_nonlinear(model))   # B9 named springs
         use_newton = nonlinear or devices
 
         modal = self.run_modal()      # INITIAL elastic modes (no hinges)

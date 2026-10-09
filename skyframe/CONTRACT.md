@@ -6048,3 +6048,149 @@ zones set to `"rigid"`.
 * **Defaults and round trip.** Defaults are byte-identical: the model JSON
   is unchanged and the results JSON is identical.  The model also survives
   a round trip.  Validation errors are covered for both fields.
+
+## Named spring properties and link hysteresis types
+
+ETABS Define > Spring Properties > Point Springs (B9) and extra link
+hysteresis types (B11).  Logic: `skyframe/core/springprops.py` (validation,
+local axes, exact spring force laws) and `skyframe/engine/hysteresis.py`
+(OpenSees builders).  Every default reproduces the previous results
+byte-identically: `spring_properties` is emitted only when non-empty, a
+`SpringSupport` emits `property` / `angle_deg` only when set, and supports
+without them take the unchanged v0.8 path.
+
+### Model JSON
+
+```json
+"spring_properties": {
+  "FDN": {"kind": "compression_only", "k": [0, 0, 50000, 0, 0, 0],
+          "nonlinear_dof": "U3"},
+  "SOIL": {"kind": "multilinear",
+           "curves": {"U1": [[0.01, 100], [0.03, 150]]}},
+  "GAP": {"kind": "gap", "k": [0, 0, 5000, 0, 0, 0], "gap": 0.01},
+  "ROT": {"kind": "linear", "k": [1500, 4000, 0, 0, 0, 0],
+          "local_axes": {"angle_deg": 35}}
+},
+"spring_supports": [
+  {"point": [0, 0, 0], "stiffness": [0, 0, 0, 0, 0, 0],
+   "property": "FDN", "angle_deg": 30.0},
+  {"point": [5, 0, 0], "stiffness": [800, 0, 0, 0, 0, 0]}
+]
+```
+
+* `kind`: `linear | multilinear | compression_only | tension_only | gap`.
+* `k`: 6 LOCAL stiffnesses `[k1, k2, k3, kr1, kr2, kr3]` (kN/m, kN*m/rad).
+  Required except for `multilinear`, where it is optional and applies to
+  DOFs without a curve.
+* `curves` (multilinear only): `{"U1".."R3": [[d, F], ...]}`, with d strictly
+  increasing.  All-positive curves are mirrored through the origin;
+  otherwise the curve must contain `[0, 0]`.  The spring is nonlinear
+  ELASTIC (`ElasticMultiLinear`): it loads and unloads on the curve, and the
+  end segments extrapolate past the last points.
+* `nonlinear_dof` (c-only / t-only / gap, default `"U3"`): the DOF that
+  carries the nonlinear law; the other DOFs with `k > 0` are linear.
+  Compression is negative local deformation (settlement on U3).
+* `compression_only`: full k for u < 0 and a residual 1e-6 k for u >= 0
+  (`Elastic` with `Eneg`, the v0.22 pattern).  `tension_only` is the
+  mirror.
+* `gap` (m, >= 0): force `k (u + gap)` once u < -gap, else 0
+  (`ElasticPPGap` in `Parallel` with a residual 1e-6 k).
+* `local_axes`: `{"angle_deg": a}` (plan rotation about +Z) or a 3x3
+  matrix whose rows are the local 1/2/3 unit vectors (orthonormal,
+  right-handed).  `SpringSupport.angle_deg` rotates the property axes
+  further about global Z.  Inline `stiffness` with `angle_deg != 0` and no
+  property is a rotated linear spring.
+* With `property` set, inline `stiffness` must be all zero (it may be
+  omitted on load).  An unknown property name fails `validate()`.
+* Python API: `model.add_spring_property(name, prop)` and
+  `model.add_spring_support(point, stiffness=None, property=None,
+  angle_deg=0.0)`.
+
+### Engine
+
+A named spring is a co-located fixed ground node plus a `zeroLength` from
+the ground node to the real node.  The element has one material per active
+local DOF, plus `-orient e1 e2` when the axes are not global.  The coupled
+GLOBAL DOFs are left free at the real node (as for v0.8 springs) and are
+registered for ground displacements, and the node counts as a support.  The
+reported reaction is exact: `-R^T F_local(R u)` with the force law above.
+
+Analysis participation (ETABS behaviour):
+
+* Nonlinear springs act nonlinearly in these analyses:
+  * static load cases, which run with Newton like compression-only
+    line/area springs;
+  * pushover and P-Delta/staged cases;
+  * direct-integration time history, which runs with Newton like device
+    links.
+* Eigen-based analyses (modal, response spectrum, buckling, Ritz, the FNA
+  basis) use the initial tangent:
+  * k for linear DOFs and for the compression side of c-only;
+  * the 1e-6 residual for an open gap;
+  * the first curve slope at the origin for multilinear.
+* In a two-stage P-Delta or corotational case, the reported spring reaction
+  is the law evaluated on the case-increment displacement.  This is the
+  same convention as the v0.22 compression-only springs, and it is exact
+  only for linear springs.
+
+### Link hysteresis types (`LinkMember.link_type`)
+
+`LINK_TYPES` is now the 8 previous types followed by these 5.  All 5 use the
+isolator layout: the link axis is vertical or zero length, the hysteresis
+acts on BOTH horizontal shear directions, and the vertical direction is
+elastic `kv` (default 1e7).  They count as nonlinear-static (Newton) and
+device (TH Newton) links.  FNA rejects them, so use direct integration.
+
+| type | params (required; optional=default) | OpenSees |
+|---|---|---|
+| `multilinear_kinematic` | `points`; `kv` | `MultiLinear` (symmetric; kinematic rule: unload at k0 over 2*F1, then the translated backbone).  A 2-point backbone is exactly bilinear kinematic hardening. |
+| `multilinear_takeda` | `points`; `points_neg`, `kv` | `Hysteretic` with pinchX=pinchY=1, no damage, beta=0.  Unloading is parallel to k0; the branch then aims at the opposite peak, or at the opposite first point if that side never yielded. |
+| `multilinear_pivot` | `points`; `points_neg`, `pinch_x=0.5`, `pinch_y=0.25`, `unload_beta=0`, `kv` | APPROXIMATION of the Dowell pivot model with the pinching `Hysteretic` material.  It unloads at `k0*mu^-unload_beta` to zero force (d0), reloads through the pinch point `(d0 + pinch_x (d* - d0), pinch_y Fmax)` with `d* = dmax - (1 - pinch_y) Fmax / k0`, then goes on to the peak.  The ETABS alpha/beta pivots are not reproduced literally. |
+| `friction_spring` | `mu`; `k_init=1e5`, `kv` | `flatSliderBearing` with Coulomb friction: slip force `mu*N` (N = instantaneous compressive axial load), stick stiffness `k_init`, no restoring stiffness.  A Coulomb approximation of the ETABS friction spring (no preload or parallel spring). |
+| `rubber_isolator_bouc_wen` | `k_init`, `qd`; `alpha1=0`, `alpha2=0`, `mu=2`, `eta=1`, `beta=0.5`, `gamma=0.5`, `kv` | `elastomericBearingBoucWen` with characteristic strength `qd`.  The large-displacement force tends to `qd + alpha1 k_init u`. |
+
+* `points` and `points_neg` are `[[d, F], ...]` lists:
+  * On the positive side d and F are > 0, and d moves strictly away from 0.
+  * When `points_neg` is omitted it mirrors `points`; when given it must
+    have the same count.
+  * Takeda and pivot take 2..3 points per side (a `Hysteretic` limit).
+    Kinematic takes any count >= 1.
+* Validation rejects unknown or missing keys and requires the axis to be
+  vertical or zero length.  Value ranges:
+  * pivot: `0 < pinch_x, pinch_y <= 1` and `unload_beta >= 0`;
+  * friction: `mu > 0` and `k_init > 0`;
+  * Bouc-Wen: `k_init > 0`, `qd > 0`, `0 <= alpha1 < 1`, `alpha2 >= 0`,
+    `mu, eta > 0` and `beta + gamma > 0`;
+  * all types: `kv > 0`.
+
+### Validation (`tests/test_springs_hysteresis.py`, 51 tests)
+
+* Rotated linear spring (support angle, property angle, property matrix,
+  inline angle): the base displacement equals `R^T K^-1 R H` to 1e-9.
+* Compression-only foundation springs under overturning: the uplifting
+  spring releases (|R| < 1e-4 M/a) and the other carries M/a (1e-5).  A
+  linear spring gives +-M/(2a), and tension-only is the mirror.
+* Gap spring: `u = -(P + k g)/(k (1 + 1e-6))` (1e-9).
+* Multilinear spring:
+  * static Newton points lie on the curve to 1e-9, including
+    extrapolation;
+  * pushover points satisfy `u = curve^-1(V) + V L^3/3EI` (1e-8);
+  * the modal period is `2 pi sqrt(m (1/k0 + L^3/3EI))` (1e-6).
+* Single-zeroLength cyclic drives (+-D):
+  * kinematic: the unloading slope is k0 = 1e4, and the loop energy is
+    `4 (Fy - k2 dy)(D - dy) = 2.0` (1e-6);
+  * Takeda: F(0) = -33.33 toward the opposite yield point, then +30.0
+    toward the opposite peak (1e-9);
+  * pivot: the branch passes through the pinch point (0.001875, 37.5),
+    where the slope kinks (1e-6); energy ranks 0 < pivot < Takeda <
+    kinematic;
+  * Bouc-Wen: F(0) = +-qd (1%), F(D) = qd + alpha1 k D (0.1%), and the
+    energy is `4 qd (D - dy)` (3%);
+  * friction: the slip force is `mu N` (0.1%), and the energy is
+    `4 mu N (D - mu N/k)` (2%).
+* Engine integration:
+  * an isolated block on each material type has period `2 pi sqrt(m/4k0)`
+    and elastic static drift `F/4k0`;
+  * the bearing types run under gravity plus lateral load;
+  * a TH with a nonlinear named spring runs;
+  * round trips match, and validation rejects bad inputs.

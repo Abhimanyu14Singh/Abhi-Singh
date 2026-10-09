@@ -794,7 +794,8 @@ def _support_joints(ctx: _Ctx, fe_keys: Callable[[], set]) -> set:
                     "joint (it springs an isolated node and supports nothing)",
                     [f"spring_support[{k}]"], sp.point)
             continue
-        if any(float(x) != 0.0 for x in sp.stiffness):
+        if (any(float(x) != 0.0 for x in sp.stiffness)
+                or getattr(sp, "property", None) is not None):   # B9
             sup.add(j)
     for ls in m.line_springs:
         if not (ls.kz or ls.kx or ls.ky):
