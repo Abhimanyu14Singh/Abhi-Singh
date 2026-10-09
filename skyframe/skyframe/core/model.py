@@ -16,6 +16,8 @@ import math
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Tuple
 
+from skyframe.core.stress_strain import normalize_stress_strain
+
 G_ACCEL = 9.80665  # m/s^2
 _PLANAR_TOL = 1e-6  # m
 
@@ -56,6 +58,32 @@ MATERIAL_SYMMETRY = ("isotropic", "uniaxial")
 # v1.12 self-mass source modes (BuildingModel.mass_source_mode).
 MASS_SOURCE_MODES = ("weight", "element_self_mass")
 
+# v1.13 Set Active Degrees of Freedom (BuildingModel.active_dof).
+DOF_LABELS = ("UX", "UY", "UZ", "RX", "RY", "RZ")
+ACTIVE_DOF_PRESETS = {
+    "full_3d": ["UX", "UY", "UZ", "RX", "RY", "RZ"],
+    "xz_plane": ["UX", "UZ", "RY"],
+    "yz_plane": ["UY", "UZ", "RX"],
+    "xy_plane": ["UX", "UY", "RZ"],
+}
+
+# v1.13 Mass Source options (BuildingModel.mass_options) — the defaults
+# reproduce the pre-v1.13 mass exactly (story-lumped lateral mass only).
+MASS_OPTION_DEFAULTS = {
+    "self_mass": True,
+    "patterns": True,
+    "include_lateral": True,
+    "include_vertical": False,
+    "lump_at_stories": True,
+}
+
+# v1.13 display units (persistence only — the model stays SI).
+DISPLAY_UNITS = ("kN-m", "kN-mm", "N-mm", "tonf-m", "kip-ft", "kip-in")
+
+# v1.13 reserved case name for the modal (eigen) analysis in
+# BuildingModel.cases_not_run / results case_status.
+MODAL_CASE = "MODAL"
+
 
 def _optf(v) -> Optional[float]:
     """Coerce an optional numeric JSON field.
@@ -91,6 +119,10 @@ class Material:
     lam: float = 1.0                       # lightweight lambda (fr knockdown)
     color: str = ""                        # display hex swatch (cosmetic)
     notes: str = ""                        # free-text notes (cosmetic)
+    # v1.13: optional analysis stress-strain law (None = the engine's legacy
+    # hard-coded fiber / layer laws, bit-identical).  Shape and semantics:
+    # skyframe.core.stress_strain / CONTRACT "v1.13 additions".
+    stress_strain: Optional[dict] = None
 
     @property
     def G(self) -> float:
@@ -128,6 +160,41 @@ class Material:
         d["Fye"] = self.Fye
         d["Fue"] = self.Fue
         return d
+
+
+def material_from_dict(md: dict, name: Optional[str] = None) -> "Material":
+    """Rebuild one :class:`Material` from its ``to_dict()`` form.
+
+    v1.12 ETABS material parity: every new field is read defensively so old
+    files (name/E/nu/unit_weight only) rebuild with material_type=concrete
+    and all optionals None -> every engine fallback fires exactly as before.
+    v1.13: ``stress_strain`` (absent/null -> None).  Derived echoes (G,
+    mass_per_volume, Fye, Fue) are ignored.  No value validation here (see
+    ``BuildingModel._validate_material``).
+    """
+    if not isinstance(md, dict):
+        raise ValueError("material must be a JSON object")
+    name = md.get("name", name)
+    if not name:
+        raise ValueError("material needs a name")
+    return Material(
+        name=str(name), E=float(md["E"]),
+        nu=float(md.get("nu", 0.2)),
+        unit_weight=float(md.get("unit_weight", 24.0)),
+        material_type=str(md.get("material_type", "concrete")),
+        symmetry=str(md.get("symmetry", "isotropic")),
+        mass_density=_optf(md.get("mass_density")),
+        alpha=_optf(md.get("alpha")),
+        fc=_optf(md.get("fc")),
+        fy=_optf(md.get("fy")),
+        fu=_optf(md.get("fu")),
+        Ry=float(md.get("Ry", 1.1)),
+        damping=float(md.get("damping", 0.0)),
+        lightweight=bool(md.get("lightweight", False)),
+        lam=float(md.get("lam", 1.0)),
+        color=str(md.get("color", "")),
+        notes=str(md.get("notes", "")),
+        stress_strain=normalize_stress_strain(md.get("stress_strain")))
 
 
 def default_material_library() -> Dict[str, "Material"]:
@@ -859,6 +926,20 @@ class LoadPattern:
 GEOMETRIC_OPTIONS = ("linear", "pdelta", "corotational")
 
 
+class _SelfWeightOnly:
+    """Read-only view of a LoadPattern exposing ONLY its self-weight factor
+    (all explicit load lists empty) — v1.13 ``mass_options.patterns=False``
+    keeps the self-mass part of a mass-source pattern."""
+
+    member_udls: tuple = ()
+    member_loads: tuple = ()
+    area_loads: tuple = ()
+    nodal_loads: tuple = ()
+
+    def __init__(self, pat: "LoadPattern"):
+        self.self_weight_factor = getattr(pat, "self_weight_factor", 0.0)
+
+
 @dataclass
 class LoadCase:
     """Static case: scaled sum of load patterns.
@@ -1495,6 +1576,19 @@ class BuildingModel:
     # build time (the model data is never mutated).
     panel_zones: str = "none"
     num_modes: int = 6
+    # ---- v1.13 (all defaults reproduce the pre-v1.13 results exactly) ----
+    # Set Load Cases to Run: names of cases (any kind, plus the reserved
+    # MODAL_CASE) that POST /api/analyze / OpenSeesEngine.run() skips.
+    cases_not_run: List[str] = field(default_factory=list)
+    # Set Active Degrees of Freedom: subset of DOF_LABELS; every inactive
+    # DOF is restrained at every node and carries no mass.
+    active_dof: List[str] = field(
+        default_factory=lambda: list(DOF_LABELS))
+    # Mass Source options (keys/defaults: MASS_OPTION_DEFAULTS).
+    mass_options: Dict[str, bool] = field(
+        default_factory=lambda: dict(MASS_OPTION_DEFAULTS))
+    # Display units (persistence only; the engine ignores it).
+    display_units: str = "kN-m"
 
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
@@ -2612,10 +2706,55 @@ class BuildingModel:
         ``mass_from_patterns`` applies (backward compatibility)."""
         return self.mass_source if self.mass_source else self.mass_from_patterns
 
-    def compute_story_masses(self) -> Dict[str, float]:
+    # ---------------- v1.13 helpers ----------------
+    def mass_option(self, key: str) -> bool:
+        """Effective Mass Source option (missing key -> v1.13 default)."""
+        opts = getattr(self, "mass_options", None) or {}
+        return bool(opts.get(key, MASS_OPTION_DEFAULTS[key]))
+
+    def effective_mass_options(self) -> Dict[str, bool]:
+        """All five Mass Source options with defaults filled in."""
+        return {k: self.mass_option(k) for k in MASS_OPTION_DEFAULTS}
+
+    def active_dof_mask(self) -> Tuple[int, ...]:
+        """6-tuple, 1 = active (UX, UY, UZ, RX, RY, RZ order)."""
+        act = set(getattr(self, "active_dof", None) or DOF_LABELS)
+        return tuple(int(lbl in act) for lbl in DOF_LABELS)
+
+    def case_kinds(self) -> Dict[str, str]:
+        """Every defined case name -> kind ("static" | "response_spectrum"
+        | "time_history" | "pushover" | "staged" | "buckling" | "modal").
+        The reserved MODAL_CASE is listed unless a static (or other) case
+        already uses that name."""
+        out: Dict[str, str] = {}
+        for kind, src in (("static", self.cases),
+                          ("response_spectrum", self.rs_cases),
+                          ("time_history", self.th_cases),
+                          ("pushover", self.pushover_cases),
+                          ("staged", self.staged_cases),
+                          ("buckling", self.buckling_cases)):
+            for n in src:
+                out.setdefault(n, kind)
+        out.setdefault(MODAL_CASE, "modal")
+        return out
+
+    def compute_story_masses(self, self_mass: Optional[bool] = None,
+                             patterns: Optional[bool] = None
+                             ) -> Dict[str, float]:
         """Story mass in tonnes: explicit masses win; otherwise derived from
         gravity load patterns via the mass source (v0.4 ``mass_source``,
-        falling back to legacy ``mass_from_patterns``)."""
+        falling back to legacy ``mass_from_patterns``).
+
+        v1.13: the derived mass splits into a SELF part (the self-weight of
+        ``self_weight_factor`` patterns) and a PATTERN part (member UDLs /
+        member loads / area loads / nodal loads); ``mass_options``
+        ``self_mass`` / ``patterns`` (or the explicit arguments) switch each
+        part off independently.  With both on (the defaults) the summation
+        order is unchanged -> bit-identical to pre-v1.13."""
+        inc_self = (self.mass_option("self_mass") if self_mass is None
+                    else bool(self_mass))
+        inc_pat = (self.mass_option("patterns") if patterns is None
+                   else bool(patterns))
         masses: Dict[str, float] = {}
         source = self.effective_mass_source()
         for s in self.stories:
@@ -2627,6 +2766,8 @@ class BuildingModel:
                 pat = self.patterns.get(pname)
                 if pat is None:
                     continue
+                if not inc_pat:
+                    pat = _SelfWeightOnly(pat)
                 for udl in pat.member_udls:
                     m = self._member(udl.member_uid)
                     if m is not None and m.story == s.name and m.kind != "column":
@@ -2656,7 +2797,7 @@ class BuildingModel:
                 # story mass (beams + shells on the story; columns span
                 # stories and are excluded, matching the member-UDL rule).
                 swf = getattr(pat, "self_weight_factor", 0.0)
-                if swf:
+                if swf and inc_self:
                     for m in self.members:
                         if m.story != s.name or m.kind == "column":
                             continue
@@ -2746,6 +2887,9 @@ class BuildingModel:
                 and mat.lam > 0.0):
             raise ValueError(f"Material {mat.name!r}: lam must be finite and "
                              f"> 0 (got {mat.lam!r})")
+        if getattr(mat, "stress_strain", None) is not None:      # v1.13
+            from skyframe.core.stress_strain import validate_stress_strain
+            validate_stress_strain(mat)
 
     def validate(self) -> None:
         """Cross-reference validation; raises ValueError on the first issue."""
@@ -2894,6 +3038,53 @@ class BuildingModel:
         self._validate_diaphragm()
         for g in self.effective_grids():
             self._validate_grid(g)
+        self._validate_v113()
+
+    def _validate_v113(self) -> None:
+        """v1.13: cases_not_run / active_dof / mass_options / display_units."""
+        cnr = self.cases_not_run
+        if not isinstance(cnr, list) or not all(isinstance(c, str)
+                                                for c in cnr):
+            raise ValueError("cases_not_run must be a list of case names")
+        kinds = self.case_kinds()
+        for c in cnr:
+            if c not in kinds:
+                raise ValueError(f"cases_not_run: unknown case {c!r}")
+        if len(set(cnr)) != len(cnr):
+            raise ValueError("cases_not_run: duplicate case names")
+        act = self.active_dof
+        if not isinstance(act, list) or not act:
+            raise ValueError("active_dof must be a non-empty list of DOF "
+                             f"labels from {DOF_LABELS}")
+        for lbl in act:
+            if lbl not in DOF_LABELS:
+                raise ValueError(f"active_dof: unknown DOF label {lbl!r} "
+                                 f"(allowed: {DOF_LABELS})")
+        if len(set(act)) != len(act):
+            raise ValueError("active_dof: duplicate DOF labels")
+        mo = self.mass_options
+        if not isinstance(mo, dict):
+            raise ValueError("mass_options must be an object")
+        bad = set(mo) - set(MASS_OPTION_DEFAULTS)
+        if bad:
+            raise ValueError(f"mass_options: unknown keys {sorted(bad)} "
+                             f"(allowed: {list(MASS_OPTION_DEFAULTS)})")
+        for k, v in mo.items():
+            if not isinstance(v, bool):
+                raise ValueError(f"mass_options.{k} must be a bool (got "
+                                 f"{v!r})")
+        eff = self.effective_mass_options()
+        if not (eff["include_lateral"] or eff["include_vertical"]):
+            raise ValueError("mass_options: at least one of include_lateral "
+                             "/ include_vertical must be true")
+        if not (eff["self_mass"] or eff["patterns"] or self.nodal_masses
+                or self.story_masses):
+            raise ValueError("mass_options: at least one of self_mass / "
+                             "patterns must be true (or explicit "
+                             "nodal_masses / story_masses present)")
+        if self.display_units not in DISPLAY_UNITS:
+            raise ValueError(f"display_units must be one of {DISPLAY_UNITS}, "
+                             f"got {self.display_units!r}")
 
     @staticmethod
     def _validate_grid(g: GridSystem) -> None:
@@ -2984,6 +3175,12 @@ class BuildingModel:
             "deflection_limit": self.deflection_limit,
             "panel_zones": self.panel_zones,
             "num_modes": self.num_modes,
+            # v1.13 (always emitted)
+            "explicit_story_masses": dict(self.story_masses),
+            "cases_not_run": list(self.cases_not_run),
+            "active_dof": list(self.active_dof),
+            "mass_options": self.effective_mass_options(),
+            "display_units": self.display_units,
         }
 
     @classmethod
@@ -3003,23 +3200,7 @@ class BuildingModel:
             # so old files (name/E/nu/unit_weight only) rebuild with
             # material_type=concrete and all optionals None -> every engine
             # fallback fires exactly as before.
-            mdl.materials[name] = Material(
-                name=md.get("name", name), E=float(md["E"]),
-                nu=float(md.get("nu", 0.2)),
-                unit_weight=float(md.get("unit_weight", 24.0)),
-                material_type=str(md.get("material_type", "concrete")),
-                symmetry=str(md.get("symmetry", "isotropic")),
-                mass_density=_optf(md.get("mass_density")),
-                alpha=_optf(md.get("alpha")),
-                fc=_optf(md.get("fc")),
-                fy=_optf(md.get("fy")),
-                fu=_optf(md.get("fu")),
-                Ry=float(md.get("Ry", 1.1)),
-                damping=float(md.get("damping", 0.0)),
-                lightweight=bool(md.get("lightweight", False)),
-                lam=float(md.get("lam", 1.0)),
-                color=str(md.get("color", "")),
-                notes=str(md.get("notes", "")))
+            mdl.materials[name] = material_from_dict(md, name)
         for name, sd in (d.get("sections") or {}).items():
             mdl.sections[name] = FrameSection(
                 name=sd.get("name", name), material=sd["material"],
@@ -3141,8 +3322,14 @@ class BuildingModel:
                 stiffness=[float(k) for k in ld["stiffness"]],
                 link_type=str(ld.get("link_type", "elastic")),
                 params=LinkMember.coerce_params(ld.get("params"))))
-        mdl.story_masses = {k: float(v)
-                            for k, v in (d.get("story_masses") or {}).items()}
+        # v1.13: ``story_masses`` in to_dict output is the EFFECTIVE
+        # (computed) per-story mass; a v1.13 file also carries
+        # ``explicit_story_masses`` (the user overrides only) and that wins.
+        # Pre-v1.13 files keep the legacy rule (story_masses re-read as
+        # explicit masses).
+        _sm = (d["explicit_story_masses"] if "explicit_story_masses" in d
+               else d.get("story_masses"))
+        mdl.story_masses = {k: float(v) for k, v in (_sm or {}).items()}
         mdl.mass_from_patterns = {
             k: float(v) for k, v in (d.get("mass_from_patterns") or {}).items()}
         # v0.4: mass_source; when absent (pre-v0.4 files) it stays empty and
@@ -3293,6 +3480,25 @@ class BuildingModel:
         # v0.17: panel-zone assumption (absent = pre-v0.17 centerline model)
         mdl.panel_zones = str(d.get("panel_zones", "none"))
         mdl.num_modes = int(d.get("num_modes", 6))
+        # v1.13 (absent in older files -> defaults, bit-identical)
+        cnr = d.get("cases_not_run")
+        if cnr is not None:
+            if not isinstance(cnr, list):
+                raise ValueError("cases_not_run must be a list")
+            mdl.cases_not_run = [str(c) for c in cnr]
+        act = d.get("active_dof")
+        if act is not None:
+            if not isinstance(act, list):
+                raise ValueError("active_dof must be a list")
+            mdl.active_dof = [str(a) for a in act]
+        mo = d.get("mass_options")
+        if mo is not None:
+            if not isinstance(mo, dict):
+                raise ValueError("mass_options must be an object")
+            opts = dict(MASS_OPTION_DEFAULTS)
+            opts.update(mo)
+            mdl.mass_options = opts
+        mdl.display_units = str(d.get("display_units", "kN-m"))
         mdl.validate()
         return mdl
 

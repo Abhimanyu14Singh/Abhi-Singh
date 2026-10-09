@@ -3530,3 +3530,272 @@ alpha changing a thermal axial force (None == model default), mass_density
 scaling a modal period (None == weight/g, 2x -> sqrt(2) period, element
 total == rho*V), and fc/fy/Ry/lambda flowing into the cracked-slab Mcr and
 the ASCE-41 hinge backbone with the None fallback preserved.
+
+---
+
+# v1.13 additions — analysis control (cases to run, active DOF, mass source, material curves, display units)
+
+Analysis only.  A model that sets none of the new fields produces
+results byte-identical to v1.12 (every pre-v1.13 result key/value is
+unchanged; verified on a bundle of static / combo / modal / RS / TH /
+pushover / staged / buckling / shell models).  Old JSON files load
+unchanged (every new key absent -> its default).  Tests:
+`tests/test_wave_analysis3.py` (78 cases).
+
+## 1. Set Load Cases to Run
+
+```
+BuildingModel.cases_not_run: List[str] = []
+```
+
+Names of ANY case kind: static `cases`, `rs_cases`, `th_cases`,
+`pushover_cases`, `staged_cases`, `buckling_cases`, plus the reserved
+name `"MODAL"` (the eigen analysis; a user case that is itself named
+"MODAL" shadows it).  Validation: list of strings, no duplicates, every
+name must exist (`BuildingModel.case_kinds()` lists them) -> else
+`ValueError` (400 on `POST /api/model`).
+
+`OpenSeesEngine.run()` / `POST /api/analyze`:
+
+* not-run cases are skipped (absent from `cases` / `rs_cases` /
+  `th_cases` / `pushover` / `staged` / `buckling`; `MODAL` not run ->
+  `modal` is the empty modal block);
+* dependencies run anyway (ETABS behaviour) and are reported
+  `"run_as_dependency"` with a note in `warning`: RS and TH cases need
+  `MODAL`; a buckling case with `base_case` needs that static case (its
+  results then appear in `cases`).  Pushover / staged / TH gravity stages
+  reference PATTERNS, not cases, so they create no case dependency;
+* combos (`combos`) referencing a case without results are NOT computed:
+  `combo_status[name] = "skipped"` + a `warning` note (not an error).
+  RS directional combos (`rs_combos`) likewise when an RS case is missing;
+* a case whose analysis raises (`RuntimeError`/`ValueError`/
+  `ArithmeticError`) is reported `"failed"` (+ warning) and the run
+  continues (previously the whole request failed with 400);
+* TH / pushover cases skipped by the existing step caps are `"not_run"`.
+
+New result keys (always present):
+
+```
+"case_status":  {case_name: "finished" | "not_run" | "run_as_dependency" | "failed"}
+                # every case of every kind + "MODAL"
+"combo_status": {combo_name: "finished" | "skipped"}
+                # every LoadCombo + every RS directional combo
+```
+
+## 2. Set Active Degrees of Freedom
+
+```
+BuildingModel.active_dof: List[str] = ["UX","UY","UZ","RX","RY","RZ"]
+```
+
+Order-independent subset of `DOF_LABELS`.  Presets (`ACTIVE_DOF_PRESETS`):
+`full_3d` = all six; `xz_plane` = `["UX","UZ","RY"]`; `yz_plane` =
+`["UY","UZ","RX"]`; `xy_plane` = `["UX","UY","RZ"]`.  Validation:
+non-empty, only those labels, no duplicates.
+
+Engine (`_restrain_inactive_dofs`, end of every `_build`, before the
+zero-free-DOF guard and mass assignment): every inactive DOF of every
+node is fixed, merged with what exists — DOFs already fixed (supports,
+auto-restraints, grounded spring/anchor nodes) are skipped (no duplicate
+`ops.fix`), and DOFs constrained by an MP constraint (rigid-diaphragm
+slaves' UX/UY/RZ, equalDOF ties of hinge / panel-zone duplicates) are
+skipped — they follow their retained node, which is restrained instead
+(a diaphragm master receives the inactive in-plane DOFs).  Mass on
+inactive DOFs is dropped.  All six active -> no-op (bit-identical).
+Not honoured by the self-contained numpy solvers (`run_buckling`'s
+`buckling_analysis`, Ritz vectors) — they stay 3D.
+
+## 3. Mass Source options
+
+```
+BuildingModel.mass_options = {          # always fully emitted by to_dict
+  "self_mass": true,         # self-mass part
+  "patterns": true,          # load-pattern part (mass_source / mass_from_patterns)
+  "include_lateral": true,   # UX, UY (+ diaphragm RZ) mass
+  "include_vertical": false, # UZ mass
+  "lump_at_stories": true    # lateral mass at story master / story nodes (pre-v1.13)
+}
+```
+
+Missing keys -> defaults; unknown keys / non-bool values -> `ValueError`;
+at least one of `include_lateral` / `include_vertical` must be true; at
+least one of `self_mass` / `patterns` must be true unless explicit
+`nodal_masses` or `story_masses` exist.
+
+* **Split** (`mass_source_mode == "weight"`, `compute_story_masses`): the
+  SELF part is the self-weight of `self_weight_factor` patterns in the
+  mass source (beams + slabs of the story; columns excluded — unchanged
+  rule); the PATTERN part is member UDLs / gravity member loads / area
+  loads / nodal loads of mass-source patterns.  Both on = the original
+  summation order (bit-identical).  ELF / Ritz / performance-point
+  consumers of `compute_story_masses` see the same toggles.
+* **include_vertical**: UZ mass at the nodes where the mass arises
+  (tributary, see below; a diaphragm master is UZ-restrained).  Explicit
+  story masses go equally to the story nodes for UZ.
+* **lump_at_stories = false**: lateral mass also stays at those tributary
+  nodes (diaphragm slaves are condensed to the master by the
+  Transformation handler).  Tributary rule (`_tributary_masses`): member
+  loads and beam self-weight -> FE segment end nodes by the exact static
+  lever rule; area loads / slab self-weight -> meshed-shell nodes by
+  tributary area (membrane regions: their two-way load path), scaled so
+  each region totals exactly `q * net_area`; nodal loads -> that node;
+  anything without a node -> equal split over the story nodes.  Story
+  totals equal the lumped totals (to fp rounding).
+* Explicit `story_masses` (no location) are always included and stay
+  story-lumped (lateral) — they follow the direction flags; explicit
+  `nodal_masses` are always added as given (mx, my, mz).
+* `mass_source_mode == "element_self_mass"` (v1.12): `self_mass` gates the
+  element mass, `include_lateral` its UX/UY part; its UZ part is kept as
+  in v1.12 regardless of `include_vertical`, and pattern (superimposed)
+  mass is not added in that mode (v1.12 rule, kept for byte-identity).
+
+**Serialization change (back-compatible):** `to_dict()["story_masses"]`
+remains the EFFECTIVE per-story mass (unchanged values); the new key
+`explicit_story_masses` carries only the user overrides.  `from_dict`
+uses `explicit_story_masses` when present (so a GET->POST round trip no
+longer freezes derived masses into explicit ones and the mass toggles
+keep working); files without it keep the legacy rule (`story_masses`
+read as explicit).  Clients that edit explicit story masses edit
+`explicit_story_masses`.
+
+## 4. Material stress-strain curves (`skyframe.core.stress_strain`)
+
+```
+Material.stress_strain: dict | null = null
+{ "model": "default" | "simple" | "mander" | "park" | "user",
+  "hysteresis": "kinematic" | "takeda" | "pivot" | "elastic",   # default kinematic
+  "params": {...},          # concrete: eps_c0 (0.002), eps_cu (0.0035), ft (0 kPa), eps_tu (10 ft/E0)
+                            # steel:    eps_sh (0.01), eps_su (0.09), b (0.01)
+  "points": [[strain, stress_kPa], ...]   # "user" only
+}
+```
+
+Compression negative.  Strength: concrete f'c = `Material.fc` else the
+ACI E-inversion `fc_from_E(E)`; steel fy = `Material.fy` else 345 MPa
+(steel/coldformed/aluminum) / 420 MPa (rebar/tendon); each consumer may
+override it with its own resolved value (e.g. the expected Fye of a
+W-shape hinge).  Park fu = `Material.fu` else 1.25 fy.
+
+Applicability (validated): concrete/masonry -> default, simple, mander,
+park, user; steel/rebar/tendon/coldformed/aluminum -> default, simple,
+park, user; other -> default, user.  Also validated: unknown keys /
+params, `points` only for user, user points strictly increasing strain,
+include `[0, 0]`, stress signs match strain signs, <= 200 points;
+`eps_cu > eps_c0`, `0 <= ft < f'c`, `eps_tu > ft/E0`, mander needs
+`E > f'c/eps_c0`, Kent-Park needs `eps_50u > eps_c0`, park steel needs
+`eps_sh > fy/E`, `eps_su > eps_sh`, `fu > fy`, `0 <= b < 1`.
+
+Backbones (exact, `UniaxialLaw.exact`):
+
+* concrete **simple** — Hognestad parabola `f'c[2x - x^2]`, `x = eps/eps_c0`,
+  then linear to 0.85 f'c at eps_cu, held beyond (Concrete01 rule).
+  Initial tangent E0 = 2 f'c / eps_c0 (Hognestad, not `Material.E`).
+* concrete **park** — Kent-Park unconfined: same parabola; post-peak slope
+  `-Z f'c`, `Z = 0.5/(eps_50u - eps_c0)`, `eps_50u = (3 + 0.29 f'c)/(145 f'c - 1000)`
+  (f'c MPa); residual 0.2 f'c from eps_20 = eps_c0 + 0.8/Z (eps_cu unused).
+* concrete **mander** — Mander unconfined (Popovics):
+  `f'c x r/(r - 1 + x^r)`, `r = E/(E - f'c/eps_c0)`, zero beyond eps_cu.
+* concrete tension (ft > 0): linear E0 to ft, then linear (simple/park,
+  Concrete02) or `ft*0.1^((e-et)/(eps_tu-et))` (mander, Concrete04) to
+  eps_tu, zero beyond.  ft = 0 -> no tension.
+* steel **simple** — elastic-plastic with hardening `fy + bE(eps - fy/E)`
+  (Steel01).
+* steel **park** — elastic, plateau to eps_sh, Park (1975) curve
+  `fy[(m u + 2)/(60 u + 2) + u(60 - m)/(2(30r + 1)^2)]`, `u = eps - eps_sh`,
+  `r = eps_su - eps_sh`, `m = ((fu/fy)(30r+1)^2 - 60r - 1)/(15 r^2)`; fu held
+  beyond eps_su.  Symmetric.
+* **user** — linear interpolation of the points, last stress held beyond.
+* **default** — identical to null (legacy law; hysteresis ignored).
+
+OpenSees mapping (`UniaxialLaw.ops_material`) — honest approximations:
+
+| hysteresis | concrete simple/park | concrete mander | steel simple | steel park | user |
+|---|---|---|---|---|---|
+| kinematic | Concrete01 (Concrete02 if ft>0) — native cyclic rule | Concrete04 | Steel01 | MultiLinear (18 stations of the Park curve + flat cap; exact at stations) | HystereticSM, pinch 1/1, no degradation (peak-oriented reloading — approximates kinematic) |
+| takeda | HystereticSM, <= 7-point envelope/side, unloading k*mu^-0.4 (beta 0.4), no pinching — "Takeda-like" | same | same | same | same |
+| pivot | HystereticSM, pinchX 0.5 / pinchY 0.3 — pivot-LIKE pinching, not the Dowell pivot rule | same | same | same | same |
+| elastic | ElasticMultiLinear (24 stations/side + flat cap): nonlinear elastic, no dissipation | same | same | same | same |
+
+HystereticSM envelopes are exact at their stations, linear between, flat
+beyond (cap point); HystereticSM needs the first two segments of each
+side rising, so a plateau/softening side gets a midpoint split; zero
+stresses are floored at 1e-6 x peak; a side without stress (concrete
+with ft = 0) gets a negligible stub.  `UniaxialLaw.stress(e)` is the
+ENGINE-EFFECTIVE monotonic backbone (exact formula for native materials,
+the interpolated points otherwise) — it equals the OpenSees material
+under monotonic loading to ~1e-15 (pinned for every model x hysteresis).
+
+Consumers that HONOUR `stress_strain` (null/"default" -> legacy law,
+bit-identical):
+
+* fiber PMM hinges (`fiber_pmm` members in asce41 pushovers):
+  designer-section base polygons (concrete and steel bases), designer
+  rebar points (their own material), library W-shape steel (strength =
+  expected Fye), rectangular RC concrete;
+* layered shells (nonlinear builds): steel layers (law wrapped in
+  PlateRebar, hysteresis honoured); concrete layers -> ASDConcrete3D with
+  `-Ce/-Cs` and `-Te/-Ts` point lists sampled from the law, clipped onto
+  / below the elastic line E*mod (pre-crack stiffness unchanged),
+  floored at 1e-3 f'c, zero damage — ASDConcrete3D's own cyclic rule, so
+  `hysteresis` is NOT used for layered concrete; ft = 0 laws keep a
+  negligible 1e-3 f'c tension branch.
+
+Consumers that do NOT use material curves (unchanged): the 8 rectangular
+RC fiber-hinge bars (rho / fy_bar from `hinge_params`, E = 200 GPa — not
+tied to a Material); lumped ASCE 41 `auto_m3` hinges and v0.5/v0.6
+Steel01 pushover / nonlinear-TH hinge springs (moment-rotation
+backbones); axial-only Truss members; links / isolators; every linear
+analysis (elastic sections).
+
+### `POST /api/materials/curve`
+
+Body `{"material": <Material dict>}` (or `{"name": <material in the
+current model>}`; optional `"n"`, default 80, 8..1000).  Response:
+
+```
+{"strain": [...], "stress": [...],     # sorted, ~n+key points, compression + tension, kPa
+ "model": "default"|"simple"|"mander"|"park"|"user",
+ "hysteresis": str, "opensees": "Concrete01"|"Concrete02"|"Concrete04"|"Steel01"|
+               "MultiLinear"|"HystereticSM"|"ElasticMultiLinear",
+ "notes": [str, ...]}
+```
+
+Computed by the same `UniaxialLaw.stress` the engine materials follow;
+null / "default" returns the legacy fiber law (concrete family:
+Concrete01(f'c, 2f'c/E, 0.2f'c, 0.006); steels: Steel01(fy, E, 0.01)).
+400 on an invalid material / stress_strain / unknown name.
+
+## 5. Display units
+
+```
+BuildingModel.display_units: str = "kN-m"   # kN-m | kN-mm | N-mm | tonf-m | kip-ft | kip-in
+```
+
+Persistence only (validated, round-tripped); the engine ignores it — the
+model stays SI (kN, m, kPa, tonne, degC).
+
+### `GET /api/units` (`skyframe.core.units.units_table`)
+
+```
+{"base": {"force": "kN", "length": "m", "stress": "kPa", "mass": "tonne",
+          "temperature": "C", "time": "s"},
+ "sets": {set: {"force": [label, factor_from_kN],
+                "length": [label, factor_from_m],
+                "temperature": "C" | "F",
+                "labels": {quantity: label}, "factors": {quantity: factor}}},
+ "quantities": {quantity: {"force": f, "length": l, "si": si_unit}},
+ "temperature": {"C": {"scale": 1, "offset": 0}, "F": {"scale": 1.8, "offset": 32}},
+ "thermal_coefficient": {"C": 1, "F": 1/1.8},
+ "constants": {"kip_kN": 4.4482216152605, "tonf_kN": 9.80665, "ft_m": 0.3048, "in_m": 0.0254},
+ "default": "kN-m"}
+```
+
+Display value = SI value x `force_factor^f x length_factor^l`.  Sets:
+kN-m (kN 1, m 1, C); kN-mm (kN 1, mm 1000, C); N-mm (N 1000, mm 1000, C);
+tonf-m (tonf 1/9.80665, m 1, C); kip-ft (kip 1/4.4482216152605,
+ft 1/0.3048, F); kip-in (kip 1/4.4482216152605, in 1/0.0254, F).
+Quantities: force, length, displacement, moment, stress, modulus,
+area_load, line_load, unit_weight, area, volume, inertia,
+section_modulus, mass (kN s^2/m), mass_density, rotational_mass,
+acceleration, velocity, translational_stiffness, rotational_stiffness,
+line_spring, area_spring, rotation, strain, time.

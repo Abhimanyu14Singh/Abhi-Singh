@@ -170,7 +170,8 @@ from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
                                  BuildingModel, FrameMember, FrameSection,
                                  LoadCase, LoadCombo, LoadPattern,
                                  ResponseSpectrumCase, SectionCut,
-                                 ShellRegion, StoryForce, ThermalLoad)
+                                 ShellRegion, StoryForce, ThermalLoad,
+                                 MODAL_CASE, DOF_LABELS)
 
 # time-history step cap for engine.run(): if the model's TH cases together
 # exceed this many integration steps they are skipped in run() (a warning is
@@ -1320,6 +1321,11 @@ class AnalysisResults:
     #   v0.16: per static case / additive combo -> beam serviceability
     #   entries [{uid, story, L, max_abs_dy, ratio_str, limit, ok}]
     warning: str = ""                    # e.g. TH cases skipped (step cap)
+    case_status: Dict[str, str] = field(default_factory=dict)
+    #   v1.13: every defined case (+ "MODAL") -> "finished" | "not_run" |
+    #   "run_as_dependency" | "failed"
+    combo_status: Dict[str, str] = field(default_factory=dict)
+    #   v1.13: every combo (+ RS directional combo) -> "finished"|"skipped"
 
     def to_dict(self) -> dict:
         d = {
@@ -1361,7 +1367,64 @@ class AnalysisResults:
                 for c, by_story in self.irregularity.items()}
         if self.warning:
             d["warning"] = self.warning
+        d["case_status"] = dict(self.case_status)          # v1.13
+        d["combo_status"] = dict(self.combo_status)        # v1.13
         return d
+
+
+# --------------------------------------------------------------------------- #
+# v1.13 material stress-strain laws
+# --------------------------------------------------------------------------- #
+def _fiber_law(mat, family: str, strength: float,
+               E: Optional[float] = None):
+    """The v1.13 :class:`~skyframe.core.stress_strain.UniaxialLaw` of
+    ``mat`` for a nonlinear-material consumer, or ``None`` (keep the legacy
+    law, bit-identical) when ``stress_strain`` is null / "default".
+
+    ``strength`` is the consumer's resolved f'c / fy (material value or its
+    legacy fallback, e.g. the expected Fye of a W-shape hinge); it
+    overrides the law strength only when the material family matches the
+    consumer ``family`` ("concrete" | "steel")."""
+    if getattr(mat, "stress_strain", None) is None:
+        return None
+    from skyframe.core.stress_strain import kind_of, material_law
+    same = kind_of(mat.material_type) == family
+    return material_law(mat, strength=strength if same else None, E=E)
+
+
+def _asd_concrete_laws(law, E_eff: float, fc: float) -> list:
+    """ASDConcrete3D ``-Te/-Ts/-Td/-Ce/-Cs/-Cd`` point lists sampled from a
+    v1.13 law (layered-shell concrete layers).  Stations come from the
+    engine-effective backbone (:meth:`UniaxialLaw.side_points`); every
+    point is clipped onto/below the elastic line ``E_eff*eps`` (the
+    pre-crack shell stiffness stays EXACTLY E*mod) and floored at
+    1e-3 f'c (ASDConcrete3D needs a positive residual); damage lists are
+    zero (plastic unloading — ASDConcrete3D's own cyclic rule, the law's
+    ``hysteresis`` is not used here).  A law without tension (ft = 0)
+    keeps a negligible 1e-3 f'c tension branch."""
+    floor = 1e-3 * fc
+
+    def pts(sign: int):
+        out = []
+        for a, s_ in law.side_points(sign):
+            if a <= 0.0:
+                continue
+            out.append((a, max(min(s_, E_eff * a), floor)))
+        return out
+
+    comp = pts(-1)
+    tens = pts(1) if law.params.get("ft", 1.0) > 0.0 else []
+    if not tens or law.kind != "concrete":
+        et = floor / E_eff
+        tens = [(et, floor), (LAYERED_ETU_FACTOR * et,
+                              LAYERED_FT_RESIDUAL * floor)]
+    args: list = []
+    for key_e, key_s, key_d, side in (("-Te", "-Ts", "-Td", tens),
+                                      ("-Ce", "-Cs", "-Cd", comp)):
+        args += [key_e, 0.0, *[a for a, _ in side]]
+        args += [key_s, 0.0, *[s_ for _, s_ in side]]
+        args += [key_d, 0.0, *[0.0 for _ in side]]
+    return args
 
 
 # --------------------------------------------------------------------------- #
@@ -1412,63 +1475,152 @@ class OpenSeesEngine:
 
         v0.4: time-history cases are skipped (with a top-level results
         warning) when their total step count exceeds ``TH_STEP_CAP``.
+
+        v1.13 Set Load Cases to Run: cases named in ``model.cases_not_run``
+        are skipped unless a running case depends on them (then they run
+        anyway, status ``"run_as_dependency"``); combos referencing a
+        not-run case are skipped with a warning.  A case whose analysis
+        raises is reported ``"failed"`` (warning) instead of aborting the
+        whole run.  ``case_status`` / ``combo_status`` cover every case /
+        combo.  With ``cases_not_run`` empty every pre-v1.13 result is
+        bit-identical.
         """
         model = self.model
-        cases = {name: self.run_static(name) for name in model.cases}
-        combos = {name: self._combine(name, combo)
-                  for name, combo in model.combos.items()}
-        modal = self.run_modal()
-        rs_cases = {name: self.run_response_spectrum(name)
-                    for name in model.rs_cases}
+        plan = self._run_plan()
+        status: Dict[str, str] = plan["status"]
+        notes: List[str] = list(plan["notes"])
+
+        def runs(name: str) -> bool:
+            return status.get(name) in ("finished", "run_as_dependency")
+
+        def attempt(name: str, fn):
+            try:
+                return fn()
+            except (RuntimeError, ValueError, ArithmeticError) as exc:
+                status[name] = "failed"
+                notes.append(f"case {name!r} failed: {exc}")
+                _REUSE["owner"] = None
+                _REUSE["loaded"] = False
+                return None
+
+        cases: Dict[str, CaseResults] = {}
+        for name in model.cases:
+            if runs(name):
+                res = attempt(name, lambda n=name: self.run_static(n))
+                if res is not None:
+                    cases[name] = res
+        combos: Dict[str, CaseResults] = {}
+        combo_status: Dict[str, str] = {}
+        for name, combo in model.combos.items():
+            missing = [c for c in combo.cases if c not in cases]
+            if missing:
+                combo_status[name] = "skipped"
+                notes.append(f"combo {name!r} skipped: case(s) "
+                             f"{missing} not run")
+                continue
+            combos[name] = self._combine(name, combo)
+            combo_status[name] = "finished"
+        run_combos = {n: cb for n, cb in model.combos.items() if n in combos}
+        if runs(MODAL_CASE):
+            modal = attempt(MODAL_CASE, self.run_modal)
+            if modal is None:
+                modal = ModalResults([], [], [], {})
+        else:
+            modal = ModalResults([], [], [], {})
+        rs_cases: Dict[str, CaseResults] = {}
+        for name in model.rs_cases:
+            if runs(name):
+                res = attempt(name,
+                              lambda n=name: self.run_response_spectrum(n))
+                if res is not None:
+                    rs_cases[name] = res
         # v0.10 response-spectrum directional combinations (ASCE 7 §12.5):
         # combine two existing RS cases into a directional envelope, reported
         # alongside the base RS cases in results["rs_cases"].
         for cname, spec in model.rs_combos.items():
+            missing = [c for c in (spec["name_x"], spec["name_y"])
+                       if c not in rs_cases]
+            if missing:
+                combo_status[cname] = "skipped"
+                notes.append(f"RS combo {cname!r} skipped: case(s) "
+                             f"{missing} not run")
+                continue
             rs_cases[cname] = self.run_rs_directional(
                 spec["name_x"], spec["name_y"],
                 method=spec.get("method", "100_30"), name=cname)
+            combo_status[cname] = "finished"
         th_cases: Dict[str, THResults] = {}
         warning = ""
-        if model.th_cases:
-            total_steps = sum(len(self._resolve_th_record(c)[0])
-                              for c in model.th_cases.values())
+        th_run = [n for n in model.th_cases if runs(n)]
+        if th_run:
+            total_steps = sum(len(self._resolve_th_record(
+                model.th_cases[n])[0]) for n in th_run)
             if total_steps > TH_STEP_CAP:
                 warning = (f"time-history cases skipped: {total_steps} total "
                            f"integration steps exceed the {TH_STEP_CAP}-step "
                            "cap (run them individually with "
                            "run_time_history)")
+                for n in th_run:
+                    status[n] = "not_run"
             else:
-                th_cases = {name: self.run_time_history(name)
-                            for name in model.th_cases}
+                for name in th_run:
+                    res = attempt(name,
+                                  lambda n=name: self.run_time_history(n))
+                    if res is not None:
+                        th_cases[name] = res
         pushover: Dict[str, PushoverResults] = {}
-        if model.pushover_cases:
-            total_po = sum(c.steps for c in model.pushover_cases.values())
+        po_run = [n for n in model.pushover_cases if runs(n)]
+        if po_run:
+            total_po = sum(model.pushover_cases[n].steps for n in po_run)
             if total_po > PUSHOVER_STEP_CAP:
                 po_warn = (f"pushover cases skipped: {total_po} combined "
                            f"steps exceed the {PUSHOVER_STEP_CAP}-step cap "
                            "(run them individually with run_pushover)")
                 warning = f"{warning}; {po_warn}" if warning else po_warn
+                for n in po_run:
+                    status[n] = "not_run"
             else:
-                pushover = {name: self.run_pushover(name)
-                            for name in model.pushover_cases}
-        staged = {name: self.run_staged(name)
-                  for name in model.staged_cases}
+                for name in po_run:
+                    res = attempt(name, lambda n=name: self.run_pushover(n))
+                    if res is not None:
+                        pushover[name] = res
+        staged: Dict[str, StagedResults] = {}
+        for name in model.staged_cases:
+            if runs(name):
+                res = attempt(name, lambda n=name: self.run_staged(n))
+                if res is not None:
+                    staged[name] = res
         # v0.10 linear buckling: self-contained numpy solve per case (cheap);
         # cap the number of systems run in run() for safety.
         buckling: Dict[str, dict] = {}
         if model.buckling_cases:
-            for i, name in enumerate(model.buckling_cases):
+            i = 0
+            for name in model.buckling_cases:
+                if not runs(name):
+                    continue
                 if i >= BUCKLING_CASE_CAP:
                     bwarn = (f"buckling cases beyond {BUCKLING_CASE_CAP} "
                              "skipped in run() (call run_buckling per case)")
                     warning = f"{warning}; {bwarn}" if warning else bwarn
                     break
-                buckling[name] = self.run_buckling(name).to_dict()
+                i += 1
+                res = attempt(name, lambda n=name: self.run_buckling(n))
+                if res is not None:
+                    buckling[name] = res.to_dict()
+        # a dependency static case solved inside another analysis (buckling
+        # base_case) is reported with its results too
+        for name in model.cases:
+            if (status.get(name) == "run_as_dependency"
+                    and name not in cases and name in self._case_cache):
+                cases[name] = self._case_cache[name]
+        if notes:
+            nwarn = "; ".join(notes)
+            warning = f"{warning}; {nwarn}" if warning else nwarn
         story_props = self._compute_story_props()
         asm = self._asm if self._asm is not None else self._build()
         # v0.9 seismic diagnostics over static cases + additive combos
         diag_src = dict(cases)
-        for cname, cb in model.combos.items():
+        for cname, cb in run_combos.items():
             if cb.combo_type == "add" and cname in combos:
                 diag_src[cname] = combos[cname]
         story_stiffness, irregularity = self._seismic_diagnostics(asm, diag_src)
@@ -1477,7 +1629,7 @@ class OpenSeesEngine:
         for cname, cr in cases.items():
             takedown[cname] = self._takedown(asm, cr,
                                              model.cases[cname].patterns)
-        for cname, cb in model.combos.items():
+        for cname, cb in run_combos.items():
             if cb.combo_type != "add" or cname not in combos:
                 continue
             eff: Dict[str, float] = {}
@@ -1490,7 +1642,7 @@ class OpenSeesEngine:
         section_cuts: Dict[str, Dict[str, dict]] = {}
         if model.section_cuts:
             cut_src = dict(cases)
-            for cname, cb in model.combos.items():
+            for cname, cb in run_combos.items():
                 if cb.combo_type == "add" and cname in combos:
                     cut_src[cname] = combos[cname]
             for cs_name, cr in cut_src.items():
@@ -1503,7 +1655,7 @@ class OpenSeesEngine:
         piers: Dict[str, Dict[str, Dict[str, Dict[str, float]]]] = {}
         if self._piers_enabled():
             pier_src = dict(cases)
-            for cname, cb in model.combos.items():
+            for cname, cb in run_combos.items():
                 if cb.combo_type == "add" and cname in combos:
                     pier_src[cname] = combos[cname]
             piers = self._compute_piers(asm, pier_src)
@@ -1511,7 +1663,7 @@ class OpenSeesEngine:
         # static case + additive combo (pure post-processing of the exact
         # member_deflections stations).
         defl_src = dict(cases)
-        for cname, cb in model.combos.items():
+        for cname, cb in run_combos.items():
             if cb.combo_type == "add" and cname in combos:
                 defl_src[cname] = combos[cname]
         deflection_checks = {cname: self._deflection_checks(cr)
@@ -1545,7 +1697,39 @@ class OpenSeesEngine:
             piers=piers,
             deflection_checks=deflection_checks,
             warning=warning,
+            case_status=dict(status),
+            combo_status=combo_status,
         )
+
+    def _run_plan(self) -> dict:
+        """v1.13 Set Load Cases to Run: initial per-case status + the
+        dependency resolution (ETABS behaviour: a not-run case that a
+        running case needs is run anyway and reported).
+
+        Dependencies: response-spectrum and time-history cases need the
+        MODAL eigen solve; a buckling case with ``base_case`` needs that
+        static case.  Returns ``{"status": {case: str}, "notes": [str]}``.
+        """
+        model = self.model
+        skip = set(getattr(model, "cases_not_run", None) or ())
+        status = {n: ("not_run" if n in skip else "finished")
+                  for n in model.case_kinds()}
+        notes: List[str] = []
+
+        def need(dep: str, by: str) -> None:
+            if status.get(dep) == "not_run":
+                status[dep] = "run_as_dependency"
+                notes.append(f"case {dep!r} is set not to run but {by!r} "
+                             "depends on it; run as a dependency")
+
+        for n in list(model.rs_cases) + list(model.th_cases):
+            if status.get(n) == "finished":
+                need(MODAL_CASE, n)
+        for n, bc in model.buckling_cases.items():
+            base = getattr(bc, "base_case", None)
+            if status.get(n) == "finished" and base:
+                need(base, n)
+        return {"status": status, "notes": notes}
 
     def _deflection_checks(self, cr: CaseResults) -> List[dict]:
         """Beam serviceability entries for one case/combo (v0.16).
@@ -2912,6 +3096,9 @@ class OpenSeesEngine:
         asm.use_transformation = (bool(asm.masters) or bool(hinge_dups)
                                   or bool(pz_map))
 
+        # --- v1.13 Set Active Degrees of Freedom ----------------------------
+        self._restrain_inactive_dofs(asm)
+
         # --- zero-free-DOF guard --------------------------------------------
         # A model whose every node is fully restrained (e.g. a single
         # fixed-fixed beam loaded through eleLoads) yields an empty SOE,
@@ -2944,7 +3131,20 @@ class OpenSeesEngine:
         return asm
 
     def _assign_mass(self, asm: _Assembly) -> None:
-        """Lump story + explicit nodal masses; record the diagonal mass map."""
+        """Lump story + explicit nodal masses; record the diagonal mass map.
+
+        v1.13 Mass Source options (``model.mass_options``; defaults = the
+        exact pre-v1.13 path): ``self_mass`` / ``patterns`` gate the two
+        parts of the derived story mass (see
+        :meth:`BuildingModel.compute_story_masses`); ``include_lateral``
+        gates UX/UY (+ diaphragm RZ) mass; ``include_vertical`` adds UZ mass
+        at the nodes where the mass arises (tributary — a diaphragm master
+        is UZ-restrained); ``lump_at_stories=False`` keeps the LATERAL mass
+        at those tributary nodes too instead of the story master / equal
+        split.  Explicit ``story_masses`` (no location) stay story-lumped;
+        explicit ``nodal_masses`` are always added as given.  Finally every
+        DOF outside ``model.active_dof`` loses its mass.
+        """
         model = self.model
         node_mass: Dict[int, List[float]] = {}
 
@@ -2953,34 +3153,53 @@ class OpenSeesEngine:
                 return
             node_mass.setdefault(ntag, [0.0] * 6)[dof - 1] += value
 
+        opts = model.effective_mass_options()
+        lateral = opts["include_lateral"]
+        vertical = opts["include_vertical"]
         # v1.12: two mutually exclusive self-mass sources.  "weight" (default)
         # lumps the gravity-derived story masses exactly as before; the opt-in
         # "element_self_mass" mode lumps per-element ``mass_per_volume*volume``
         # instead (mass decoupled from weight, ETABS parity).
         if getattr(model, "mass_source_mode", "weight") == "element_self_mass":
-            self._add_element_self_mass(asm, add)
+            if opts["self_mass"]:
+                self._add_element_self_mass(asm, add, lateral=lateral)
         else:
             story_masses = model.compute_story_masses()
             lx, ly = model.plan_extents()
+            trib: Dict[int, float] = {}
+            if vertical or not opts["lump_at_stories"]:
+                trib = self._tributary_masses(asm)
             for s in model.stories:
                 m = story_masses.get(s.name, 0.0)
                 if m <= 0.0:
                     continue
-                if s.name in asm.masters:
-                    master = asm.masters[s.name]
-                    add(master, 1, m)
-                    add(master, 2, m)
-                    add(master, 6, m * (lx * lx + ly * ly) / 12.0)
-                else:
+                explicit = s.name in model.story_masses
+                if lateral and (opts["lump_at_stories"] or explicit):
+                    if s.name in asm.masters:
+                        master = asm.masters[s.name]
+                        add(master, 1, m)
+                        add(master, 2, m)
+                        add(master, 6, m * (lx * lx + ly * ly) / 12.0)
+                    else:
+                        nodes = asm.story_nodes[s.name]
+                        if not nodes:
+                            warnings.warn(f"Story {s.name!r}: mass {m} t has "
+                                          "no nodes to lump onto; ignored")
+                            continue
+                        each = m / len(nodes)
+                        for t in nodes:
+                            add(t, 1, each)
+                            add(t, 2, each)
+                if vertical and explicit and asm.story_nodes[s.name]:
                     nodes = asm.story_nodes[s.name]
-                    if not nodes:
-                        warnings.warn(f"Story {s.name!r}: mass {m} t has no "
-                                      "nodes to lump onto; ignored")
-                        continue
-                    each = m / len(nodes)
                     for t in nodes:
-                        add(t, 1, each)
-                        add(t, 2, each)
+                        add(t, 3, m / len(nodes))
+            for t, mt in trib.items():
+                if lateral and not opts["lump_at_stories"]:
+                    add(t, 1, mt)
+                    add(t, 2, mt)
+                if vertical:
+                    add(t, 3, mt)
 
         for nm in model.nodal_masses:
             t = self._find_node(asm, nm.point)
@@ -2988,13 +3207,215 @@ class OpenSeesEngine:
             add(t, 2, nm.my)
             add(t, 3, nm.mz)
 
+        mask = model.active_dof_mask()
         for t, mv in node_mass.items():
+            if not all(mask):                                    # v1.13
+                mv = [v if mask[d] else 0.0 for d, v in enumerate(mv)]
+                if not any(mv):
+                    continue
             ops.mass(t, *mv)
             for dof in range(1, 7):
                 if mv[dof - 1] > 0.0:
                     asm.mass_map[(t, dof)] = mv[dof - 1]
 
-    def _add_element_self_mass(self, asm: _Assembly, add) -> None:
+    # ------------------------------------------------ v1.13 tributary mass
+    def _tributary_masses(self, asm: _Assembly) -> Dict[int, float]:
+        """Derived (non-explicit) story mass kept at the FE nodes where it
+        arises (tonne per node tag) — the same contributions, factors and
+        story attribution as :meth:`BuildingModel.compute_story_masses`
+        (beams/slabs of the story, columns excluded), honouring the
+        ``self_mass`` / ``patterns`` options:
+
+        * member UDL / partial / trapezoid / point gravity loads and beam
+          self-weight -> the member's FE segment end nodes (exact static
+          lever rule over each segment);
+        * area loads and slab self-weight -> shell mesh nodes by tributary
+          area (meshed regions) or the membrane two-way load path
+          (membrane regions), scaled so the region total is exactly
+          ``q * net_area``;
+        * nodal gravity loads at a story elevation -> that node.
+
+        Anything with no FE node to sit on is split equally over the story
+        nodes.  Per story the node masses sum to the story mass (to fp
+        rounding)."""
+        model = self.model
+        mesh = asm.mesh
+        inc_self = model.mass_option("self_mass")
+        inc_pat = model.mass_option("patterns")
+        source = model.effective_mass_source()
+        out: Dict[int, float] = {}
+
+        def put(t: int, w: float) -> None:
+            if w != 0.0:
+                out[t] = out.get(t, 0.0) + w / G_ACCEL
+
+        def spread_story(s, w: float) -> None:
+            nodes = asm.story_nodes.get(s.name) or []
+            if not nodes:
+                return
+            for t in nodes:
+                put(t, w / len(nodes))
+
+        def line(m: FrameMember, w1: float, w2: float, a: float,
+                 b: float) -> None:
+            L = m.length
+            x0, x1 = a * L, b * L
+            if x1 - x0 <= 0.0:
+                return
+            for seg in mesh.segments[m.uid]:
+                s0, s1 = seg.x0, seg.x0 + seg.length
+                lo, hi = max(s0, x0), min(s1, x1)
+                if hi <= lo:
+                    continue
+                wl = w1 + (w2 - w1) * (lo - x0) / (x1 - x0)
+                wh = w1 + (w2 - w1) * (hi - x0) / (x1 - x0)
+                R = 0.5 * (wl + wh) * (hi - lo)
+                if R == 0.0:
+                    continue
+                xc = (lo + (hi - lo) * (wl + 2.0 * wh) / (3.0 * (wl + wh))
+                      if (wl + wh) != 0.0 else 0.5 * (lo + hi))
+                fj = (xc - s0) / seg.length
+                put(seg.ni + 1, R * (1.0 - fj))
+                put(seg.nj + 1, R * fj)
+
+        def point(m: FrameMember, P: float, a: float) -> None:
+            x = a * m.length
+            segs = mesh.segments[m.uid]
+            for seg in segs:
+                if seg.x0 - _TOL <= x <= seg.x0 + seg.length + _TOL:
+                    fj = min(max((x - seg.x0) / seg.length, 0.0), 1.0)
+                    put(seg.ni + 1, P * (1.0 - fj))
+                    put(seg.nj + 1, P * fj)
+                    return
+
+        def region_load(region: ShellRegion, total: float, s) -> None:
+            raw: Dict[int, float] = {}
+            if region.behavior == "shell":
+                for pidx, ta in mesh.region_trib.get(region.uid, {}).items():
+                    raw[pidx + 1] = raw.get(pidx + 1, 0.0) + ta
+            else:
+                saved = dict(out)
+                out.clear()
+                for tl in mesh.membrane_loads.get(region.uid, []):
+                    mm = self._members_by_uid[tl.member_uid]
+                    line(mm, tl.w1, tl.w2, tl.a, tl.b)
+                for pidx, wn in mesh.membrane_nodal.get(region.uid,
+                                                        {}).items():
+                    put(pidx + 1, wn)
+                raw = {t: v * G_ACCEL for t, v in out.items()}
+                out.clear()
+                out.update(saved)
+            tot = sum(raw.values())
+            if tot <= 0.0:
+                spread_story(s, total)
+                return
+            for t, v in raw.items():
+                put(t, total * v / tot)
+
+        for s in model.stories:
+            if s.name in model.story_masses:
+                continue
+            for pname, fac in source.items():
+                pat = model.patterns.get(pname)
+                if pat is None:
+                    continue
+                if inc_pat:
+                    for udl in pat.member_udls:
+                        m = model._member(udl.member_uid)
+                        if (m is not None and m.story == s.name
+                                and m.kind != "column"):
+                            line(m, fac * udl.w, fac * udl.w, 0.0, 1.0)
+                    for ml in pat.member_loads:
+                        if ml.direction != "gravity":
+                            continue
+                        m = model._member(ml.member_uid)
+                        if (m is None or m.story != s.name
+                                or m.kind == "column"):
+                            continue
+                        if ml.kind == "point":
+                            point(m, fac * ml.w, ml.a)
+                        elif ml.kind == "udl":
+                            line(m, fac * ml.w, fac * ml.w, ml.a, ml.b)
+                        else:
+                            line(m, fac * ml.w, fac * ml.w2, ml.a, ml.b)
+                    for al in pat.area_loads:
+                        region = model._shell(al.region_uid)
+                        if (region is None
+                                or not model._region_on_story(region, s)):
+                            continue
+                        region_load(region, fac * al.q * region.net_area, s)
+                    for nl in pat.nodal_loads:
+                        if abs(nl.point[2] - s.elevation) < 1e-6:
+                            try:
+                                put(self._find_node(asm, nl.point),
+                                    fac * (-nl.fz))
+                            except ValueError:
+                                spread_story(s, fac * (-nl.fz))
+                swf = getattr(pat, "self_weight_factor", 0.0)
+                if swf and inc_self:
+                    for m in model.members:
+                        if m.story != s.name or m.kind == "column":
+                            continue
+                        sec = model.sections.get(m.section)
+                        mat = (model.materials.get(sec.material)
+                               if sec else None)
+                        if sec is not None and mat is not None:
+                            w = fac * swf * sec.A * mat.unit_weight
+                            line(m, w, w, 0.0, 1.0)
+                    for region in model.shells:
+                        if not model._region_on_story(region, s):
+                            continue
+                        ssec = model.shell_sections.get(region.section)
+                        mat = (model.materials.get(ssec.material)
+                               if ssec else None)
+                        if ssec is not None and mat is not None:
+                            region_load(region, fac * swf * ssec.thickness
+                                        * mat.unit_weight * region.net_area,
+                                        s)
+        return out
+
+    # ------------------------------------------- v1.13 active DOF restraint
+    def _restrain_inactive_dofs(self, asm: _Assembly) -> None:
+        """Restrain every DOF outside ``model.active_dof`` at every node.
+
+        Merges with what already exists: DOFs already fixed (supports,
+        auto-restraints, fully-fixed ground nodes) are skipped, so no
+        duplicate ``ops.fix``; DOFs that are CONSTRAINED by a multi-point
+        constraint (rigid-diaphragm slaves' UX/UY/RZ, equalDOF ties of
+        hinge / panel-zone duplicates) are skipped too — they follow their
+        retained node, which is restrained instead (a diaphragm master
+        carries the inactive in-plane DOFs).  No-op when all six DOFs are
+        active (bit-identical default)."""
+        mask = self.model.active_dof_mask()
+        if all(mask):
+            return
+        fixed_nodes = set(ops.getFixedNodes())
+        constrained: Dict[int, set] = {}
+        for c in ops.getConstrainedNodes():
+            dofs = ops.getConstrainedDOFs(c)
+            constrained.setdefault(c, set()).update(
+                int(d) - 1 for d in (dofs if isinstance(dofs, (list, tuple))
+                                     else [dofs]))
+        for t in ops.getNodeTags():
+            have = set()
+            if t in fixed_nodes:
+                fd = ops.getFixedDOFs(t)
+                have = {int(d) - 1 for d in (fd if isinstance(fd, (list,
+                                                                   tuple))
+                                             else [fd])}
+            skip = have | constrained.get(t, set())
+            newfix = [1 if (not mask[d] and d not in skip) else 0
+                      for d in range(6)]
+            if any(newfix):
+                ops.fix(t, *newfix)
+            prev = asm.node_restraints.get(t, (0,) * 6)
+            merged = tuple(int(bool(prev[d]) or bool(newfix[d])
+                               or d in have) for d in range(6))
+            if any(merged) or t in asm.node_restraints:
+                asm.node_restraints[t] = merged
+
+    def _add_element_self_mass(self, asm: _Assembly, add,
+                               lateral: bool = True) -> None:
         """Lump per-element self-mass as translational nodal mass (v1.12).
 
         Each frame member contributes ``mat.mass_per_volume * A * L`` split
@@ -3032,8 +3453,9 @@ class OpenSeesEngine:
                 continue
             each = mass / len(tags)
             for t in tags:
-                add(t, 1, each)
-                add(t, 2, each)
+                if lateral:
+                    add(t, 1, each)
+                    add(t, 2, each)
                 add(t, 3, each)
 
         for r in model.shells:
@@ -3053,8 +3475,9 @@ class OpenSeesEngine:
                 continue
             each = mass / len(tags)
             for t in tags:
-                add(t, 1, each)
-                add(t, 2, each)
+                if lateral:
+                    add(t, 1, each)
+                    add(t, 2, each)
                 add(t, 3, each)
 
     @staticmethod
@@ -3099,14 +3522,19 @@ class OpenSeesEngine:
                 et = ft / E_eff
                 ec = fc / E_eff
                 nd_tag += 1
-                ops.nDMaterial(
-                    "ASDConcrete3D", nd_tag, E_eff, mat.nu,
-                    "-Te", 0.0, et, LAYERED_ETU_FACTOR * et,
-                    "-Ts", 0.0, ft, LAYERED_FT_RESIDUAL * ft,
-                    "-Td", 0.0, 0.0, LAYERED_TENSION_DAMAGE,
-                    "-Ce", 0.0, ec, LAYERED_ECU_FACTOR * ec,
-                    "-Cs", 0.0, fc, LAYERED_FC_HARDENING * fc,
-                    "-Cd", 0.0, 0.0, 0.0)
+                law = _fiber_law(mat, "concrete", fc, E=E_eff)   # v1.13
+                if law is not None:
+                    ops.nDMaterial("ASDConcrete3D", nd_tag, E_eff, mat.nu,
+                                   *_asd_concrete_laws(law, E_eff, fc))
+                else:
+                    ops.nDMaterial(
+                        "ASDConcrete3D", nd_tag, E_eff, mat.nu,
+                        "-Te", 0.0, et, LAYERED_ETU_FACTOR * et,
+                        "-Ts", 0.0, ft, LAYERED_FT_RESIDUAL * ft,
+                        "-Td", 0.0, 0.0, LAYERED_TENSION_DAMAGE,
+                        "-Ce", 0.0, ec, LAYERED_ECU_FACTOR * ec,
+                        "-Cs", 0.0, fc, LAYERED_FC_HARDENING * fc,
+                        "-Cd", 0.0, 0.0, 0.0)
                 ps_tag = nd_tag + 1
                 ops.nDMaterial("PlaneStress", ps_tag, nd_tag)
                 plate_tag = nd_tag + 2
@@ -3116,8 +3544,12 @@ class OpenSeesEngine:
             else:                                        # steel
                 fy = getattr(mat, "fy", None) or LAYERED_FY_DEFAULT
                 mtag += 1
-                ops.uniaxialMaterial("Steel01", mtag, fy, E_eff,
-                                     FIBER_STEEL_HARDENING)
+                law = _fiber_law(mat, "steel", fy, E=E_eff)      # v1.13
+                if law is not None:
+                    law.ops_material(ops, mtag)
+                else:
+                    ops.uniaxialMaterial("Steel01", mtag, fy, E_eff,
+                                         FIBER_STEEL_HARDENING)
                 nd_tag += 1
                 plate_tag = nd_tag
                 ops.nDMaterial("PlateRebar", plate_tag, mtag,
@@ -3199,13 +3631,21 @@ class OpenSeesEngine:
                 mtag += 1
                 if ds.base == "steel":
                     fy_p = getattr(pm, "fy", 0.0) or 345_000.0
-                    ops.uniaxialMaterial("Steel01", mtag, fy_p, pm.E,
-                                         FIBER_STEEL_HARDENING)
+                    law = _fiber_law(pm, "steel", fy_p)          # v1.13
+                    if law is not None:
+                        law.ops_material(ops, mtag)
+                    else:
+                        ops.uniaxialMaterial("Steel01", mtag, fy_p, pm.E,
+                                             FIBER_STEEL_HARDENING)
                 else:
                     fc_p = getattr(pm, "fc", 0.0) or fc_from_E(pm.E)
-                    eps0 = 2.0 * fc_p / pm.E
-                    ops.uniaxialMaterial("Concrete01", mtag, -fc_p, -eps0,
-                                         -0.2 * fc_p, -0.006)
+                    law = _fiber_law(pm, "concrete", fc_p)       # v1.13
+                    if law is not None:
+                        law.ops_material(ops, mtag)
+                    else:
+                        eps0 = 2.0 * fc_p / pm.E
+                        ops.uniaxialMaterial("Concrete01", mtag, -fc_p,
+                                             -eps0, -0.2 * fc_p, -0.006)
                 z_lo = min(z for _s, v in polys for (_y, z) in v)
                 z_hi = max(z for _s, v in polys for (_y, z) in v)
                 y_lo = min(y for _s, v in polys for (y, _z) in v)
@@ -3249,8 +3689,12 @@ class OpenSeesEngine:
                 rm = model.materials[r["material"]]
                 fy_r = getattr(rm, "fy", 0.0) or 420_000.0
                 mtag += 1
-                ops.uniaxialMaterial("Steel01", mtag, fy_r, rm.E,
-                                     FIBER_STEEL_HARDENING)
+                law = _fiber_law(rm, "steel", fy_r)              # v1.13
+                if law is not None:
+                    law.ops_material(ops, mtag)
+                else:
+                    ops.uniaxialMaterial("Steel01", mtag, fy_r, rm.E,
+                                         FIBER_STEEL_HARDENING)
                 ops.fiber(r["z"] - Cz, r["y"] - Cy, r["area"], mtag)
         elif props is not None:
             Fy = getattr(mat, "fy", 0.0) or 345_000.0
@@ -3258,8 +3702,12 @@ class OpenSeesEngine:
             d_w, bf = props["d"], props["bf"]
             tf, tw = props["tf"], props["tw"]
             mtag += 1
-            ops.uniaxialMaterial("Steel01", mtag, Fye, E,
-                                 FIBER_STEEL_HARDENING)
+            law = _fiber_law(mat, "steel", Fye)                  # v1.13
+            if law is not None:
+                law.ops_material(ops, mtag)
+            else:
+                ops.uniaxialMaterial("Steel01", mtag, Fye, E,
+                                     FIBER_STEEL_HARDENING)
             hw = d_w - 2.0 * tf
             nl = FIBER_HINGE_LATERAL
             ops.patch("rect", mtag, 2, nl, d_w / 2.0 - tf, -bf / 2.0,
@@ -3274,8 +3722,12 @@ class OpenSeesEngine:
             fc = getattr(mat, "fc", 0.0) or fc_from_E(E)
             eps0 = 2.0 * fc / E
             mtag += 1
-            ops.uniaxialMaterial("Concrete01", mtag, -fc, -eps0,
-                                 -0.2 * fc, -0.006)
+            law = _fiber_law(mat, "concrete", fc)                # v1.13
+            if law is not None:
+                law.ops_material(ops, mtag)
+            else:
+                ops.uniaxialMaterial("Concrete01", mtag, -fc, -eps0,
+                                     -0.2 * fc, -0.006)
             ops.patch("rect", mtag, nf, FIBER_HINGE_LATERAL,
                       -h_r / 2.0, -b_r / 2.0, h_r / 2.0, b_r / 2.0)
             rho = float(hp.get("rho", 0.01))
@@ -5275,6 +5727,8 @@ class OpenSeesEngine:
         sub.links = [lk for lk in model.links
                      if max(lk.pi[2], lk.pj[2]) <= elev_k + _TOL]
         sub.panel_zones = getattr(model, "panel_zones", "none")   # v0.17
+        sub.active_dof = list(getattr(model, "active_dof",         # v1.13
+                                      DOF_LABELS))
         sub.num_modes = 0
         return sub
 

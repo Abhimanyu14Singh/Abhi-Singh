@@ -269,6 +269,30 @@ v1.12 (ETABS material parity):
   ``notes``) and ``model.mass_source_mode`` ("weight" | "element_self_mass");
   pre-v1.12 files load unchanged (type=concrete, all optionals null).
 
+v1.13 additions (analysis control, see CONTRACT.md "v1.13 additions"):
+
+* ``POST /api/model`` round-trips ``cases_not_run`` (Set Load Cases to
+  Run: case names of any kind + the reserved ``"MODAL"``), ``active_dof``
+  (Set Active Degrees of Freedom: subset of UX/UY/UZ/RX/RY/RZ),
+  ``mass_options`` (``{self_mass, patterns, include_lateral,
+  include_vertical, lump_at_stories}`` bools), ``display_units``
+  (kN-m | kN-mm | N-mm | tonf-m | kip-ft | kip-in; persistence only),
+  ``explicit_story_masses`` and ``materials[*].stress_strain``; 400 on
+  bad values.  Pre-v1.13 files load unchanged;
+* ``POST /api/analyze`` skips the not-run cases (dependencies run anyway)
+  and its results gain ``case_status`` (``{case: "finished" | "not_run"
+  | "run_as_dependency" | "failed"}``) and ``combo_status`` (``{combo:
+  "finished" | "skipped"}``);
+* ``POST /api/materials/curve`` — body ``{"material": <material dict>}``
+  (or ``{"name": <material in the current model>}``) -> ``{strain,
+  stress, model, hysteresis, opensees, notes}``: the sampled (~80 point)
+  monotonic backbone the engine uses (compression negative, kPa); 400 on
+  an invalid material / stress_strain;
+* ``GET /api/units`` — the display-unit conversion table ``{base, sets:
+  {set: {force: [label, factor_from_kN], length: [label, factor_from_m],
+  temperature: "C"|"F", labels, factors}}, quantities: {q: {force,
+  length, si}}, temperature, thermal_coefficient, constants, default}``.
+
 Saved models live as ``<name>.skyframe.json`` files in ``~/.skyframe/models``
 (override with the ``SKYFRAME_MODELS_DIR`` environment variable; the
 directory is created on demand).  Names must match ``[A-Za-z0-9 _-]{1,60}``.
@@ -294,7 +318,9 @@ from skyframe.core.codes import (apply_asce7_combinations, asce7_elf,
                                  reduce_live_demands)
 from skyframe.core.model import (BuildingModel, GridSystem,
                                  default_material_library,
-                                 make_notional_pattern)
+                                 make_notional_pattern, material_from_dict)
+from skyframe.core.stress_strain import curve_payload
+from skyframe.core.units import units_table
 from skyframe.core.sections_library import library_to_dict
 
 try:
@@ -513,6 +539,39 @@ def create_app() -> Flask:
         except KeyError as exc:
             return jsonify({"error": str(exc)}), 404
         return jsonify(_state["model"].to_dict())
+
+    # ------------------------------------- v1.13: stress-strain curve + units
+    @app.post("/api/materials/curve")
+    def materials_curve():
+        """Sampled monotonic backbone of one material's stress_strain law
+        (the SAME pure-Python law the engine builds its OpenSees material
+        from; null / "default" -> the legacy fiber law)."""
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        try:
+            if "material" in body:
+                mat = material_from_dict(body["material"])
+            elif isinstance(body.get("name"), str):
+                mat = _state["model"].materials.get(body["name"])
+                if mat is None:
+                    return jsonify({"error": f"unknown material "
+                                             f"{body['name']!r}"}), 400
+            else:
+                return jsonify({"error": "body needs 'material' (object) "
+                                         "or 'name'"}), 400
+            BuildingModel._validate_material(mat)
+            n = int(body.get("n", 80))
+            if not 8 <= n <= 1000:
+                raise ValueError("'n' must be in [8, 1000]")
+            return jsonify(curve_payload(mat, n=n))
+        except (ValueError, KeyError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.get("/api/units")
+    def units():
+        """Authoritative display-unit conversion table (v1.13)."""
+        return jsonify(units_table())
 
     # --------------------------------------------- v0.4: auto wind pattern
     @app.post("/api/pattern/wind")
