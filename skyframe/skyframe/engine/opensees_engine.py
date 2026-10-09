@@ -6758,6 +6758,13 @@ class OpenSeesEngine:
         asm = self._build(hinge_case=th if nonlinear else None)
         self._seg_span_loads = {}
         self._seg_fef = {}
+        # multi-component / load-pattern components (None -> legacy)
+        from skyframe.engine import thmulti as _thm
+        mc = _thm.plan_for(self, th)
+        if mc is not None:
+            accel, dt = mc.zero_accel(), mc.dt
+            mc.unit_loads(self, asm)
+            mc.check_vertical(model, asm.mass_map)
         # direct-integration options (None -> legacy path, bit-identical)
         from skyframe.engine import thoptions as _tho_mod
         tho = _tho_mod.make_run(self, th, asm, accel, dt, use_newton, modal)
@@ -6846,10 +6853,13 @@ class OpenSeesEngine:
             ops.reactions()
             base0 = base_fxfy()
 
-        ops.timeSeries("Path", 1, "-dt", float(dt),
-                       "-values", *[float(a) for a in accel],
-                       "-factor", float(th.scale))
-        ops.pattern("UniformExcitation", 1, dof, "-accel", 1)
+        if mc is None:
+            ops.timeSeries("Path", 1, "-dt", float(dt),
+                           "-values", *[float(a) for a in accel],
+                           "-factor", float(th.scale))
+            ops.pattern("UniformExcitation", 1, dof, "-accel", 1)
+        else:
+            mc.apply(self, asm)
 
         ops.wipeAnalysis()
         ops.constraints("Transformation" if asm.use_transformation
@@ -6867,7 +6877,8 @@ class OpenSeesEngine:
             ops.integrator("Newmark", 0.5, 0.25)
         ops.analysis("Transient")
         if tho is not None:
-            tho.begin(dof, th.scale)
+            tho.begin(dof, th.scale,
+                      ext=(mc.energy_ext() if mc is not None else None))
 
         massed = [(t, d, m) for (t, d), m in asm.mass_map.items()
                   if d in (1, 2)]
@@ -6883,6 +6894,12 @@ class OpenSeesEngine:
         hinge_rot: Dict[str, float] = {uid: 0.0
                                        for (uid, _e) in asm.hinge_ele}
         yielded: set = set()
+        if mc is not None:
+            ext_x = {s.name: mc.ext_above(1, s.elevation, asm.node_coords)
+                     for s in stories}
+            ext_y = {s.name: mc.ext_above(2, s.elevation, asm.node_coords)
+                     for s in stories}
+            mc.begin_base(base_tags)
         for k in range(n):
             if tho is not None:
                 ok = tho.step(k)
@@ -6904,9 +6921,12 @@ class OpenSeesEngine:
                 suy[s.name].append(uy - story0[s.name][1])
             # inertia-equilibrium story shears: total accel = relative
             # (nodeAccel) + ground (Path sample at the current time)
-            ag = th.scale * (accel[k + 1] if k + 1 < n else 0.0)
-            agx = ag if dof == 1 else 0.0
-            agy = ag if dof == 2 else 0.0
+            if mc is None:
+                ag = th.scale * (accel[k + 1] if k + 1 < n else 0.0)
+                agx = ag if dof == 1 else 0.0
+                agy = ag if dof == 2 else 0.0
+            else:
+                agx, agy = mc.ag_end[1][k], mc.ag_end[2][k]
             acc = {t: ops.nodeAccel(t) for t in massed_tags}
             for s in stories:
                 vx = -sum(m * (acc[t][0] + agx) for t, d_, m in massed
@@ -6915,9 +6935,14 @@ class OpenSeesEngine:
                 vy = -sum(m * (acc[t][1] + agy) for t, d_, m in massed
                           if d_ == 2
                           and asm.node_coords[t][2] >= s.elevation - _TOL)
+                if mc is not None:
+                    vx += float(ext_x[s.name][k])
+                    vy += float(ext_y[s.name][k])
                 svx[s.name].append(vx)
                 svy[s.name].append(vy)
             ops.reactions()
+            if mc is not None:
+                mc.record_base(base_tags)
             fx, fy = base_fxfy()
             bfx.append(fx - base0[0])
             bfy.append(fy - base0[1])
@@ -6959,6 +6984,8 @@ class OpenSeesEngine:
                            yielded=sorted(yielded))
         if tho is not None:
             result.extra = tho.results()
+        if mc is not None:
+            result.extra.update(mc.extra())
         self._th_cache[name] = result
         return result
 
@@ -7258,6 +7285,11 @@ class OpenSeesEngine:
             raise NotImplementedError(
                 f"FNA case {name!r}: a gravity stage is not supported — "
                 "use direct integration (run_time_history)")
+        # multi-component / load-pattern components (None -> legacy)
+        from skyframe.engine import thmulti as _thm
+        mc = _thm.plan_for(self, th)
+        if mc is not None:
+            accel, dt = mc.zero_accel(), mc.dt
         from skyframe.core.fna import (BilinearComponent, GapComponent,
                                        HookComponent, MaxwellDamper,
                                        fna_modal_th)
@@ -7346,6 +7378,11 @@ class OpenSeesEngine:
                           for i in range(nm)])
         gammas = L_dir                          # unit modal mass
         M_dir = sum(mv for (t, d), mv in mass_items if d == dof)
+        p_ext = None
+        if mc is not None:
+            p_ext, L_mc, M_mc = mc.fna_modal_loads(eng2, asm2, shp, nm,
+                                                   mass_items)
+            mc.check_vertical(lin, asm2.mass_map)
 
         # ---- per-mode damping ratios --------------------------------------
         if getattr(th, "damping_model", "rayleigh") == "modal":
@@ -7407,7 +7444,7 @@ class OpenSeesEngine:
         ag = [float(th.scale) * float(a) for a in accel]
         q, qd, qdd, _fdev = fna_modal_th(
             w, zetas, gammas, ag, dt, comps=comps, B=B,
-            k_lin=(k_lin if k_lin else None))
+            k_lin=(k_lin if k_lin else None), p_ext=p_ext)
 
         # ---- assemble THResults (same construction as run_time_history) ---
         stories = model.stories
@@ -7455,7 +7492,11 @@ class OpenSeesEngine:
                               if dd == d
                               and asm2.node_coords[t][2]
                               >= s.elevation - _TOL)
-                ag_term = ag_end * (m_above if d == dof else 0.0)
+                if mc is None:
+                    ag_term = ag_end * (m_above if d == dof else 0.0)
+                else:
+                    ag_term = mc.ag_end[d] * m_above - mc.ext_above(
+                        d, s.elevation, asm2.node_coords)
                 out[s.name] = [float(v) for v in
                                -(qdd @ row + ag_term)]
 
@@ -7469,6 +7510,11 @@ class OpenSeesEngine:
             + M_dir * ag_end
         bfx = [float(v) for v in (r_dir if dof == 1 else np.zeros(n))]
         bfy = [float(v) for v in (r_dir if dof == 2 else np.zeros(n))]
+        if mc is not None:
+            cz = 2.0 * zetas * w
+            bfx, bfy, mc.fz = (
+                [float(v) for v in mc.fna_base(d, qdd, qd, cz, L_mc, M_mc)]
+                for d in (1, 2, 3))
 
         def peak(vals: Sequence[float]) -> float:
             return max(abs(v) for v in vals) if len(vals) else 0.0
@@ -7492,6 +7538,8 @@ class OpenSeesEngine:
                  "base": {"FX": peak(bfx), "FY": peak(bfy)}}
         result = THResults(name, t_out, sux, suy, bfx, bfy, peaks,
                            nonlinear=False)
+        if mc is not None:
+            result.extra.update(mc.extra())
         self._fna_cache[name] = result
         return result
 
