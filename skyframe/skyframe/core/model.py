@@ -905,7 +905,11 @@ class LoadCase:
 
 
 RS_DIRECTIONS = ("X", "Y")
-RS_COMBO_METHODS = ("CQC", "SRSS")
+RS_COMBO_METHODS = ("CQC", "SRSS", "ABS", "GMC", "NRC10", "DSC")  # v1.13
+# v1.13 defaults of the ETABS modal-combination parameters
+RS_GMC_F1 = 1.0          # Hz, Gupta rigid-response lower frequency
+RS_GMC_F2 = 33.0         # Hz, Gupta rigid-response upper frequency
+RS_DSC_TD = 20.0         # s, Rosenblueth double-sum strong-motion duration
 
 
 @dataclass
@@ -924,24 +928,45 @@ class ResponseSpectrumCase:
     inline ``spectrum`` (the engine resolves it; a missing name is an
     error).  With ``function == ""`` the inline ``spectrum`` is used exactly
     as before (backward compatible).
+
+    v1.13 (ETABS modal-combination parity, see
+    :mod:`skyframe.engine.modalcombo`): ``combo_method`` also accepts
+    ``ABS`` / ``GMC`` (Gupta, rigid frequencies ``gmc_f1`` < ``gmc_f2`` Hz)
+    / ``NRC10`` / ``DSC`` (duration ``dsc_td`` s); ``rigid_response`` adds
+    the periodic + rigid split to any method; ``include_missing_mass`` adds
+    the residual-mass static correction as a rigid mode.  The new keys are
+    serialised only when they differ from their defaults (byte-identical
+    legacy JSON).
     """
 
     name: str
     direction: str                       # "X" | "Y"
     spectrum: List[List[float]]          # [[T, Sa(g)], ...]
     num_modes: int = 0                   # 0 = all computed modes
-    combo_method: str = "CQC"            # "CQC" | "SRSS"
+    combo_method: str = "CQC"            # RS_COMBO_METHODS
     damping: float = 0.05
     scale: float = 1.0
     function: str = ""                   # v0.13: named spectrum_functions entry
+    gmc_f1: float = RS_GMC_F1            # v1.13
+    gmc_f2: float = RS_GMC_F2            # v1.13
+    dsc_td: float = RS_DSC_TD            # v1.13
+    rigid_response: bool = False         # v1.13
+    include_missing_mass: bool = False   # v1.13
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "direction": self.direction,
-                "spectrum": [[float(t), float(sa)] for t, sa in self.spectrum],
-                "num_modes": self.num_modes,
-                "combo_method": self.combo_method,
-                "damping": self.damping, "scale": self.scale,
-                "function": self.function}
+        d = {"name": self.name, "direction": self.direction,
+             "spectrum": [[float(t), float(sa)] for t, sa in self.spectrum],
+             "num_modes": self.num_modes,
+             "combo_method": self.combo_method,
+             "damping": self.damping, "scale": self.scale,
+             "function": self.function}
+        for key, default in (("gmc_f1", RS_GMC_F1), ("gmc_f2", RS_GMC_F2),
+                             ("dsc_td", RS_DSC_TD),
+                             ("rigid_response", False),
+                             ("include_missing_mass", False)):
+            if getattr(self, key) != default:
+                d[key] = getattr(self, key)
+        return d
 
 
 TH_DIRECTIONS = ("X", "Y")
@@ -1798,14 +1823,20 @@ class BuildingModel:
                     spectrum: Optional[List[List[float]]] = None,
                     num_modes: int = 0,
                     combo_method: str = "CQC", damping: float = 0.05,
-                    scale: float = 1.0, function: str = ""
+                    scale: float = 1.0, function: str = "",
+                    gmc_f1: float = RS_GMC_F1, gmc_f2: float = RS_GMC_F2,
+                    dsc_td: float = RS_DSC_TD, rigid_response: bool = False,
+                    include_missing_mass: bool = False
                     ) -> ResponseSpectrumCase:
         rs = ResponseSpectrumCase(
             name, direction,
             [[float(t), float(sa)] for t, sa in (spectrum or [])],
             num_modes=int(num_modes), combo_method=combo_method,
             damping=float(damping), scale=float(scale),
-            function=str(function))
+            function=str(function), gmc_f1=float(gmc_f1),
+            gmc_f2=float(gmc_f2), dsc_td=float(dsc_td),
+            rigid_response=bool(rigid_response),
+            include_missing_mass=bool(include_missing_mass))
         self._validate_rs_case(rs)
         self.rs_cases[name] = rs
         return rs
@@ -1816,7 +1847,15 @@ class BuildingModel:
                              f"got {rs.direction!r}")
         if rs.combo_method not in RS_COMBO_METHODS:
             raise ValueError(f"RS case {rs.name}: combo_method must be "
-                             f"CQC|SRSS, got {rs.combo_method!r}")
+                             f"{'|'.join(RS_COMBO_METHODS)}, got "
+                             f"{rs.combo_method!r}")
+        # v1.13 modal-combination parameters
+        if not (0.0 < rs.gmc_f1 < rs.gmc_f2):
+            raise ValueError(f"RS case {rs.name}: need 0 < gmc_f1 < gmc_f2, "
+                             f"got {rs.gmc_f1!r}, {rs.gmc_f2!r}")
+        if not rs.dsc_td > 0.0:
+            raise ValueError(f"RS case {rs.name}: dsc_td must be > 0, got "
+                             f"{rs.dsc_td!r}")
         # v0.13: a case may EITHER name a spectrum_function OR carry an inline
         # spectrum; the inline spectrum is optional only when a function is set.
         if rs.function:
@@ -3220,7 +3259,13 @@ class BuildingModel:
                 combo_method=rd.get("combo_method", "CQC"),
                 damping=float(rd.get("damping", 0.05)),
                 scale=float(rd.get("scale", 1.0)),
-                function=str(rd.get("function", "")))
+                function=str(rd.get("function", "")),
+                gmc_f1=float(rd.get("gmc_f1", RS_GMC_F1)),
+                gmc_f2=float(rd.get("gmc_f2", RS_GMC_F2)),
+                dsc_td=float(rd.get("dsc_td", RS_DSC_TD)),
+                rigid_response=bool(rd.get("rigid_response", False)),
+                include_missing_mass=bool(
+                    rd.get("include_missing_mass", False)))
         for name, td in (d.get("th_cases") or {}).items():
             tmy = td.get("default_My")
             mdl.th_cases[name] = TimeHistoryCase(

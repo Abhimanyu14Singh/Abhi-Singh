@@ -3530,3 +3530,83 @@ alpha changing a thermal axial force (None == model default), mass_density
 scaling a modal period (None == weight/g, 2x -> sqrt(2) period, element
 total == rho*V), and fc/fy/Ry/lambda flowing into the cracked-slab Mcr and
 the ASCE-41 hinge backbone with the None fallback preserved.
+
+# Modal combination methods + load participation (v1.13, analysis-only)
+
+Bulk in `skyframe/engine/modalcombo.py`; the engine carries two small hooks
+(`run_response_spectrum` dispatch, `run()` load-participation call).
+
+## `ResponseSpectrumCase` (`skyframe.core.model`)
+
+| field | default | meaning |
+|---|---|---|
+| `combo_method` | `"CQC"` | one of `RS_COMBO_METHODS = CQC, SRSS, ABS, GMC, NRC10, DSC` |
+| `gmc_f1` / `gmc_f2` | `1.0` / `33.0` Hz | Gupta rigid frequencies, `0 < f1 < f2` (GMC and `rigid_response`) |
+| `dsc_td` | `20.0` s | Rosenblueth strong-motion duration, `> 0` (DSC) |
+| `rigid_response` | `false` | periodic + rigid split for any method |
+| `include_missing_mass` | `false` | residual-mass static correction as a rigid mode |
+
+`add_rs_case(...)` accepts the same keyword arguments.  The new keys are
+written by `to_dict` only when they differ from their defaults, so legacy
+model JSON stays byte-identical; `from_dict` reads them with the defaults
+above.
+
+## Combination rules (signed modal values `r_i`, `w_i`, `f_i = w_i/2pi`, damping `z`)
+
+* `CQC`  `sqrt(sum rho_ij r_i r_j)`, Der Kiureghian `rho` (b = w_i/w_j).
+* `SRSS` `sqrt(sum r_i^2)`.
+* `ABS`  `sum |r_i|`.
+* `NRC10` `sqrt(sum r_i^2 + 2 sum_{i<j close} |r_i r_j|)`, close when
+  `|f_j - f_i| <= 0.10 min(f_i, f_j)` (Reg. Guide 1.92).
+* `DSC`  `sqrt(sum eps_ij r_i r_j)`,
+  `eps_ij = 1/(1 + ((w'_i - w'_j)/(z'_i w_i + z'_j w_j))^2)`,
+  `w' = w sqrt(1-z^2)`, `z' = z + 2/(td w)`.
+* `GMC` (Gupta) `alpha_i = ln(f_i/f1)/ln(f2/f1)` clamped to [0, 1];
+  rigid `R_r = sum alpha_i r_i` (algebraic), periodic
+  `sqrt(1-alpha_i^2) r_i` combined by CQC -> `R_p`;
+  `R = sqrt(R_r^2 + R_p^2)`.
+* `rigid_response = true` applies the same split to any method (periodic
+  part combined by that method).
+* `include_missing_mass = true`: residual load
+  `f = Sa(T=0) g (M iota - sum_i Gamma_i M phi_i)` (all massed DOFs, ZPA =
+  spectrum at T = 0) is solved statically and added ALGEBRAICALLY to `R_r`
+  (rigid mode); then `R = sqrt(R_r^2 + R_p^2)`.  With every mode computed
+  the residual vanishes.
+
+**Defaults are byte-identical:** `CQC`/`SRSS` with neither option take the
+unchanged legacy `_combine_rsa` path (`modalcombo.is_legacy`).  All
+results remain positive envelopes in the standard `CaseResults` shape, so
+the v0.10 directional combinations (`rs_combos`, `run_rs_directional`,
+`100_30` / `SRSS`) compose with every method unchanged.
+
+## `results["modal"]["load_participation"]` (new key; existing keys untouched)
+
+```json
+{"acceleration": {"UX": {"static": 100.0, "dynamic": 100.0},
+                  "UY": {"static": 0.0,   "dynamic": 0.0},
+                  "UZ": {"static": 0.0,   "dynamic": 0.0}},
+ "patterns":     {"<pattern name>": {"static": 96.43, "dynamic": 100.0}}}
+```
+
+Percent, ETABS "Modal Load Participation Ratios" (Wilson), for the modes
+of `run()`'s modal analysis:
+
+* static  `= sum_i (phi_i^T r)^2 / (w_i^2 m_i) / (r^T K^-1 r)`
+* dynamic `= sum_i (phi_i^T r_m)^2 / m_i / (r_m^T M^-1 r_m)`
+
+`m_i = phi_i^T M phi_i`.  Accelerations: `r = M iota` (UX/UY/UZ on mass
+dofs 1/2/3); dynamic == cumulative modal mass ratio.  Patterns (unit
+scale): `r` = the equivalent nodal load vector OpenSees assembles (nodal
+loads minus frame fixed-end forces), `r^T K^-1 r = r . u_r`,
+`phi_i^T r = w_i^2 phi_i^T M u_r`; `r_m` = `r` on massed DOFs with
+rigid-diaphragm slave loads condensed onto the master (ux, uy, rz).  A
+direction with no mass (or a zero pattern) reports 0; a pattern whose
+solve fails is omitted.  The key is absent when the model has no modes.
+The solves reuse the standard elastic domain (v0.26 reuse token).
+
+Tests: `tests/test_modalcombo.py` — hand-computed CQC/SRSS/ABS/NRC10/DSC/
+GMC/rigid-split numbers, engine exactness on the 2-mass cantilever,
+missing mass restoring the full-mass static base shear `(m1+m2) Sa g`
+under rigid excitation, directional composition, byte-identical legacy
+CQC, load participation (100% with all modes, closed-form truncated
+ratio, cantilever UDL 27/28 = 96.43% static, diaphragm condensation).
