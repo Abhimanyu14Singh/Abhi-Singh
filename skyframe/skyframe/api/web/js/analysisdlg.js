@@ -17,7 +17,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;",
 /* ------------------------------------------------ generic dialog shell */
 const open = new Map();          // id → {close}
 
-function dialog(id, { title, iconId, wide = false, narrow = false, body, foot, onClose }) {
+export function dialog(id, { title, iconId, wide = false, narrow = false, body, foot, onClose }) {
   closeDialog(id);
   const back = document.createElement("div");
   back.className = "modal-backdrop sky-dlg";
@@ -61,7 +61,7 @@ function dialog(id, { title, iconId, wide = false, narrow = false, body, foot, o
 export function closeDialog(id) { const d = open.get(id); if (d) d.close(); }
 export const isDialogOpen = id => open.has(id);
 
-function btn(label, cls, onClick, title) {
+export function btn(label, cls, onClick, title) {
   const b = document.createElement("button");
   b.className = "btn" + (cls ? " " + cls : "");
   b.textContent = label;
@@ -69,7 +69,7 @@ function btn(label, cls, onClick, title) {
   b.addEventListener("click", onClick);
   return b;
 }
-function footBar(note, buttons) {
+export function footBar(note, buttons) {
   const wrap = document.createElement("div");
   wrap.className = "dlg-foot";
   const n = document.createElement("span");
@@ -81,12 +81,12 @@ function footBar(note, buttons) {
   wrap.append(n, b);
   return { wrap, note: n };
 }
-function errorLine() {
+export function errorLine() {
   const p = document.createElement("p");
   p.className = "field-error hidden dlg-error";
   return p;
 }
-const showError = (p, msg) => { p.textContent = msg || ""; p.classList.toggle("hidden", !msg); };
+export const showError = (p, msg) => { p.textContent = msg || ""; p.classList.toggle("hidden", !msg); };
 
 /* ================================================================
    Set Load Cases to Run

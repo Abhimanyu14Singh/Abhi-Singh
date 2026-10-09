@@ -1,0 +1,150 @@
+/* SkyFrame — Analyze > Check Model / Check Stability (js/checkmodel.js).
+   Loaded by checkmodel.js (link[data-ck-css]); theme tokens from styles.css. */
+
+/* ---- status-bar chip */
+.ck-chip { gap: 5px; }
+.ck-chip.is-ok { color: var(--green); border-color: rgba(52,195,132,.45); background: rgba(52,195,132,.1); }
+.ck-chip.is-warn { color: var(--amber); border-color: rgba(229,165,10,.45); background: var(--amber-ghost); }
+.ck-chip.is-err { color: var(--red); border-color: rgba(230,103,103,.5); background: rgba(230,103,103,.1); }
+.ck-chip.is-stale { opacity: .6; border-style: dashed; }
+.ck-chip.is-busy { animation: pulse 1s ease-in-out infinite; }
+
+/* ---- dockable results panel (docked: the workspace makes room) */
+body.ck-docked .workspace { margin-right: 400px; }
+@media (max-width: 900px) { body.ck-docked .workspace { margin-right: 0; } }
+.ck-panel {
+  position: fixed; z-index: 40; width: 400px; max-width: calc(100vw - 16px);
+  display: flex; flex-direction: column;
+  background: var(--surface-1); border: 1px solid var(--border);
+  box-shadow: 0 10px 30px rgba(0,0,0,.35);
+}
+.ck-panel.is-docked { right: 0; border-right: none; border-top: none; border-bottom: none; box-shadow: -6px 0 18px rgba(0,0,0,.25); }
+.ck-panel.is-floating { border-radius: 8px; overflow: hidden; resize: both; min-height: 200px; min-width: 300px; }
+.ck-panel.is-floating .ck-head { cursor: move; }
+.ck-head {
+  display: flex; align-items: center; gap: 6px; flex: none;
+  padding: 6px 6px 6px 10px; border-bottom: 1px solid var(--border); background: var(--surface-2);
+  user-select: none;
+}
+.ck-head-ico { width: 15px; height: 15px; color: var(--accent); flex: none; }
+.ck-title { font-weight: 650; font-size: 12.5px; white-space: nowrap; }
+.ck-spacer { flex: 1; }
+.ck-tabs { display: inline-flex; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; margin-left: 6px; }
+.ck-tab {
+  font: inherit; font-size: 11px; font-weight: 600; color: var(--text-3); cursor: pointer;
+  background: var(--surface-1); border: none; border-right: 1px solid var(--border); padding: 2px 9px; white-space: nowrap;
+}
+.ck-tab:last-child { border-right: none; }
+.ck-tab:hover { color: var(--text-1); }
+.ck-tab.is-active { color: #041018; background: var(--accent); }
+.ck-hbtn {
+  font: inherit; font-size: 15px; line-height: 1; color: var(--text-2); cursor: pointer;
+  background: none; border: 1px solid transparent; border-radius: 5px;
+  width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; flex: none;
+}
+.ck-hbtn:hover { color: var(--text-1); border-color: var(--border); background: var(--surface-3); }
+.ck-ico { width: 14px; height: 14px; }
+.ck-body { flex: 1; overflow: auto; padding: 10px 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+
+.ck-empty { color: var(--text-2); display: flex; flex-direction: column; gap: 10px; align-items: flex-start; padding: 8px 2px; }
+.ck-summary { display: flex; gap: 6px; flex-wrap: wrap; }
+.ck-pill { font-size: 11.5px; font-weight: 650; border-radius: 99px; padding: 2px 10px; border: 1px solid var(--border); }
+.ck-pill.error { color: var(--red); border-color: rgba(230,103,103,.5); background: rgba(230,103,103,.1); }
+.ck-pill.warning { color: var(--amber); border-color: rgba(229,165,10,.45); background: var(--amber-ghost); }
+.ck-pill.info { color: var(--accent); border-color: rgba(53,181,229,.45); background: var(--accent-ghost); }
+.ck-pill.is-zero { opacity: .45; }
+.ck-stats { font-size: 11px; }
+.ck-note { font-size: 11.5px; color: var(--text-2); }
+.ck-stale { color: var(--amber); }
+.ck-link { font: inherit; font-size: 11.5px; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; text-align: left; }
+.ck-link:hover { text-decoration: underline; }
+.ck-ok { display: flex; align-items: center; gap: 8px; color: var(--green); font-weight: 600; padding: 10px; border: 1px solid rgba(52,195,132,.35); border-radius: 7px; background: rgba(52,195,132,.08); }
+.ck-ok-ico { width: 16px; height: 16px; flex: none; }
+.ck-navpref { display: flex; align-items: center; gap: 6px; font-size: 11px; margin-top: 4px; }
+.ck-navpref select { width: auto; font-size: 11px; padding: 1px 4px; height: 22px; }
+
+.ck-list { display: flex; flex-direction: column; gap: 10px; }
+.ck-sev-head { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--text-2); margin-bottom: 4px; }
+.ck-sev { width: 13px; height: 13px; flex: none; }
+.ck-sev-error { color: var(--red); }
+.ck-sev-warning { color: var(--amber); }
+.ck-sev-info { color: var(--accent); }
+.ck-count {
+  font-size: 10px; font-weight: 700; color: var(--text-2); background: var(--surface-3);
+  border-radius: 99px; padding: 0 7px; margin-left: auto; font-variant-numeric: tabular-nums;
+}
+.ck-code { border: 1px solid var(--border-soft); border-radius: 7px; margin-bottom: 6px; overflow: hidden; }
+.ck-code-head {
+  width: 100%; display: flex; align-items: center; gap: 6px; font: inherit; font-size: 11.5px; cursor: pointer;
+  color: var(--text-1); background: var(--surface-2); border: none; padding: 5px 8px; text-align: left;
+}
+.ck-code-head:hover { background: var(--surface-3); }
+.ck-caret { color: var(--text-3); transition: transform .12s; font-size: 10px; }
+.ck-code.open .ck-caret { transform: rotate(90deg); }
+.ck-code-name { font: 650 11px var(--mono); }
+.ck-code-title { color: var(--text-3); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ck-rows { display: none; }
+.ck-code.open .ck-rows { display: block; }
+.ck-row {
+  display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; cursor: pointer;
+  border-top: 1px solid var(--border-soft); outline: none;
+}
+.ck-row .ck-sev { margin-top: 2px; }
+.ck-row:hover, .ck-row:focus-visible { background: var(--surface-3); }
+.ck-row.is-active { background: var(--accent-ghost); box-shadow: inset 2px 0 0 var(--accent); }
+.ck-row-main { flex: 1; min-width: 0; }
+.ck-msg { font-size: 12px; color: var(--text-1); line-height: 1.35; }
+.ck-meta { font-size: 10.5px; color: var(--text-3); margin-top: 2px; word-break: break-word; font-variant-numeric: tabular-nums; }
+.ck-fix {
+  font: inherit; font-size: 10.5px; font-weight: 650; cursor: pointer; white-space: nowrap; flex: none;
+  color: var(--green); background: rgba(52,195,132,.1); border: 1px solid rgba(52,195,132,.4); border-radius: 5px; padding: 1px 8px;
+}
+.ck-fix:hover { background: rgba(52,195,132,.2); }
+
+/* stability */
+.ck-banner { display: flex; gap: 10px; align-items: flex-start; padding: 9px 10px; border-radius: 7px; border: 1px solid var(--border); }
+.ck-ban-ico { width: 17px; height: 17px; flex: none; margin-top: 1px; }
+.ck-ban-msg { font-size: 11.5px; color: var(--text-2); margin-top: 2px; }
+.ck-banner-stable { color: var(--green); border-color: rgba(52,195,132,.4); background: rgba(52,195,132,.08); }
+.ck-banner-unstable, .ck-banner-failed { color: var(--red); border-color: rgba(230,103,103,.5); background: rgba(230,103,103,.08); }
+.ck-banner-skipped { color: var(--accent); border-color: rgba(53,181,229,.45); background: var(--accent-ghost); }
+.ck-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 10px; }
+.ck-metric { display: flex; justify-content: space-between; gap: 6px; font-size: 11.5px; border-bottom: 1px dashed var(--border-soft); padding: 2px 0; }
+.ck-metric-l { color: var(--text-3); }
+.ck-metric-v { color: var(--text-1); font-variant-numeric: tabular-nums; font-weight: 600; }
+.ck-notes { margin: 0 0 0 16px; font-size: 11.5px; color: var(--text-2); display: flex; flex-direction: column; gap: 3px; }
+.ck-mech-head { display: flex; align-items: center; justify-content: space-between; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--text-2); margin-top: 4px; }
+.ck-legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 10.5px; color: var(--text-2); }
+.ck-leg { display: inline-flex; align-items: center; gap: 4px; }
+.ck-leg i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+.ck-mech { border: 1px solid var(--border-soft); border-radius: 7px; overflow: hidden; }
+.ck-mech.is-active { border-color: var(--accent); }
+.ck-mech-title {
+  width: 100%; display: flex; align-items: center; gap: 6px; font: inherit; font-size: 12px; cursor: pointer;
+  color: var(--text-1); background: var(--surface-2); border: none; padding: 5px 8px; text-align: left;
+}
+.ck-mech-title:hover { background: var(--surface-3); }
+.ck-swatch { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+.ck-dofs { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+.ck-dofs th { text-align: left; font-weight: 600; color: var(--text-3); padding: 3px 6px; border-bottom: 1px solid var(--border-soft); font-size: 10.5px; }
+.ck-dofs td { padding: 3px 6px; border-bottom: 1px solid var(--border-soft); white-space: nowrap; }
+.ck-dofs td:last-child { white-space: normal; }
+.ck-dof-row { cursor: pointer; }
+.ck-dof-row:hover td { background: var(--surface-3); }
+.ck-bar { display: inline-block; width: 38px; height: 5px; background: var(--surface-3); border-radius: 3px; margin-right: 5px; vertical-align: 1px; overflow: hidden; }
+.ck-bar i { display: block; height: 100%; }
+.ck-more { font-size: 10.5px; padding: 3px 8px; }
+.ck-maxdiag { align-self: flex-start; }
+
+/* dialogs */
+.dlg-check .ck-tol-row input { width: 110px; }
+.ck-dlg-hint { font-size: 11px; padding-left: 24px; }
+.ck-grp-hint { font-size: 11px; }
+.ck-allnone { display: flex; gap: 6px; margin-top: 4px; }
+.ck-prerun-lead { margin: 0 0 10px; color: var(--text-1); }
+.ck-prerun-list { list-style: none; display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow: auto; }
+.ck-prerun-list li { display: grid; grid-template-columns: 16px 1fr auto; gap: 2px 6px; align-items: center; font-size: 12px; }
+.ck-prerun-list li b { font: 650 11.5px var(--mono); }
+.ck-prerun-list li .muted { grid-column: 2 / -1; font-size: 11px; }
+.ck-warn-ico { color: var(--amber); }
+@media (max-width: 760px) { .ck-panel { width: calc(100vw - 16px); } }
