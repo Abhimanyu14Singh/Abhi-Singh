@@ -3530,3 +3530,164 @@ alpha changing a thermal axial force (None == model default), mass_density
 scaling a modal period (None == weight/g, 2x -> sqrt(2) period, element
 total == rho*V), and fc/fy/Ry/lambda flowing into the cracked-slab Mcr and
 the ASCE-41 hinge backbone with the None fallback preserved.
+
+---
+
+# Frequency-domain analysis (steady-state, PSD)
+
+ETABS "Steady State" and "Power Spectral Density" load cases (analysis
+only).  Model side: `skyframe/core/frequency_cases.py`; solver:
+`skyframe/engine/frequency.py`.  Units: kN, m, tonne, s; frequencies Hz.
+
+## Model fields (`BuildingModel`, all default `{}`)
+
+Each key is emitted by `to_dict()` ONLY when non-empty, so models without
+frequency-domain data serialise byte-identically; missing keys load as
+`{}`.  Validated by `BuildingModel.validate()` (ValueError).
+
+```json
+"frequency_functions": {
+  "<name>": {"name": "<name>", "kind": "steady_state" | "psd",
+             "points": [[f_hz, value], ...]}
+},
+"steady_state_cases": {"<name>": <FrequencyCase>},
+"psd_cases":          {"<name>": <FrequencyCase>}
+```
+
+* Function: >= 2 points, f >= 0 strictly increasing, finite; PSD values
+  >= 0.  LINEAR interpolation in f, ZERO outside `[f_first, f_last]`.
+  `steady_state`: load amplitude multiplier.  `psd`: ONE-SIDED PSD per Hz
+  of the load multiplier, (load)^2/Hz.
+
+```json
+<FrequencyCase> = {
+  "name": "<name>",
+  "loads": [{"pattern": "<pattern name>" | "accel",
+             "direction": "" | "UX" | "UY" | "UZ",   // accel only
+             "scale": 1.0,
+             "function": "<frequency function>" | "",  // "" = constant 1
+             "phase_deg": 0.0}],
+  "freq_start_hz": 0.0, "freq_end_hz": 10.0,
+  "n_freq": 101,              // linspace points (0 = none, 1 = start only)
+  "frequencies": [],          // extra explicit frequencies (Hz)
+  "modal_refine": true,       // add f_i*(1 + k*zeta), k in 0, +-{0.1..13}
+  "method": "modal" | "direct",
+  "num_modes": 0,             // modal method; 0 = model.num_modes
+  "damping": 0.05,            // (0, 1)
+  "damping_type": "modal" | "hysteretic",
+  "output_points": [[x, y, z], ...]
+}
+```
+
+* Pattern load: the pattern's static spatial distribution x
+  `scale * fn(f)`.  `"accel"`: uniform ground acceleration
+  `scale * fn(f)` in m/s^2 (for g-based functions use
+  `scale = 9.80665`); responses are RELATIVE to the ground.
+* A PSD load MUST name a `psd` function; a steady-state load may name a
+  `steady_state` function or `""` (constant 1).  Function kind must match.
+* Grid = linspace U `frequencies` U modal refinement points inside
+  `[freq_start_hz, freq_end_hz]`, sorted, de-duplicated, <= 20000 points.
+* `damping_type`: `"modal"` = viscous modal ratio,
+  `H_i = 1/(w_i^2 - w^2 + 2 i zeta w_i w)`; `"hysteretic"` = complex
+  stiffness `K(1 + 2 i zeta)`, `H_i = 1/(w_i^2 (1 + 2 i zeta) - w^2)`.
+* `method`: `"modal"` = modal superposition over `num_modes` modes;
+  `"direct"` = ALL eigenmodes + the static residual-flexibility
+  correction (exactly the complex direct solution of the condensed
+  system; massless DOFs respond statically, scaled by `1/(1+2 i zeta)`
+  for hysteretic damping).  Capped at 400 massed DOFs.
+* Python helpers: `add_frequency_function(model, name, kind, points)`,
+  `add_steady_state_case(model, name, loads, **fields)`,
+  `add_psd_case(model, name, loads, **fields)`.
+
+## Method
+
+Eigen modes of the standard elastic build (rigid diaphragms, springs,
+shells, links respected), mass-normalised (MGS against the diagonal mass
+map).  Per mode one static solve under `w_i^2 M phi_i` gives the mode's
+response field (joint displacements, ELASTIC support reactions incl.
+spring reactions, base totals, story ux/uy/drifts).  Modal load factor:
+pattern `p_ij = w_i^2 phi_i^T M u_j` (`u_j` = static pattern
+displacement, = `phi_i^T F_j` exactly); accel `p_ij = -phi_i^T M r_d`.
+Response `Z(f) = sum_j a_j(f) [sum_i p_ij H_i Phi_i + h_res R_j]`.
+Reactions exclude the damping share (same as TH base series).
+
+* Steady state: `a_j = scale_j fn_j(f) e^{i phase_j}`; amplitude `|Z|`,
+  phase `atan2(Im Z, Re Z)` in degrees — a response LAGGING the load has a
+  NEGATIVE phase (SDOF viscous: `-atan2(2 zeta r, 1 - r^2)`).
+* PSD — CORRELATION ASSUMPTION: all loads of one case are FULLY
+  CORRELATED (one underlying process): `a_j = scale_j sqrt(S_j(f))
+  e^{i phase_j}`.  Response PSD `|Z|^2` (contains every modal cross term,
+  the exact CQC-style double sum), RMS `= sqrt(trapz(|Z|^2, f))` over the
+  grid (area outside `[freq_start, freq_end]` is not counted).  For
+  uncorrelated inputs use one PSD case each and SRSS the RMS values.
+  Crandall check: SDOF + white base acceleration W0 ((m/s^2)^2/Hz,
+  one-sided) -> `sigma_u^2 = W0 / (8 zeta w^3)` (= `pi G0/(4 zeta w^3)`
+  with G0 = W0/2pi per rad/s).
+
+## Results
+
+`/api/analyze` adds `"steady_state": {case: SS}` and `"psd": {case: PSD}`
+ONLY when the model has such cases (otherwise the results dict is
+byte-identical).  Node tags are strings; `nf = len(frequencies_hz)`;
+`[6]` = `[ux, uy, uz, rx, ry, rz]` (reactions `[FX..MZ]`).
+
+```json
+SS = {
+  "case": "<name>", "type": "steady_state", "method": "modal" | "direct",
+  "damping": {"type": "modal" | "hysteretic", "ratio": 0.05},
+  "modes_used": n, "modal_frequencies_hz": [n],
+  "frequencies_hz": [nf],
+  "node_disp": {"<tag>": {"amp": [nf][6], "phase_deg": [nf][6]}},
+      // output_points joints; EVERY joint when output_points is empty
+  "base":  {"FX".."MZ": {"amp": [nf], "phase_deg": [nf]}},
+  "story": {"<story>": {"ux"|"uy"|"drift_x"|"drift_y":
+                          {"amp": [nf], "phase_deg": [nf]}}},
+  "peaks": {
+    "node_disp":         {"<tag>": [6]},   // max |Z| over f, every joint
+    "node_disp_freq_hz": {"<tag>": [6]},   // f at that peak
+    "reactions":         {"<support tag>": [6]},
+    "base":              {"FX".."MZ": peak},
+    "base_freq_hz":      {"FX".."MZ": f},
+    "story":             {"<story>": {"ux","uy","drift_x","drift_y"}}
+  },
+  "warnings": []
+}
+
+PSD = {
+  "case", "type": "psd", "method", "damping", "modes_used",
+  "modal_frequencies_hz", "frequencies_hz",      // as SS
+  "correlation": "full",
+  "rms": {
+    "node_disp": {"<tag>": [6]},                 // every joint
+    "reactions": {"<support tag>": [6]},
+    "base":      {"FX".."MZ": rms},
+    "story":     {"<story>": {"ux","uy","drift_x","drift_y"}}
+  },
+  "psd": {                                       // response PSD curves
+    "node_disp": {"<tag>": [nf][6]},             // output_points only
+    "base":      {"FX".."MZ": [nf]},
+    "story":     {"<story>": {"ux"|"uy"|"drift_x"|"drift_y": [nf]}}
+  },
+  "warnings": []
+}
+```
+
+Engine: `OpenSeesEngine.run_steady_state(name) -> SS`,
+`OpenSeesEngine.run_psd(name) -> PSD` (cached per engine).
+
+## API
+
+* `POST /api/analyze/steady_state` — body `{"case": "<name>"}` -> `SS`.
+* `POST /api/analyze/psd` — body `{"case": "<name>"}` -> `PSD`.
+* 400 on a missing/unknown case name, a model without dynamic modes, or
+  OpenSeesPy unavailable.
+
+Tests: `tests/test_frequency.py` — SDOF amplitude/phase sweep (1e-9),
+resonance peak at `r = sqrt(1-2 zeta^2)`, hysteretic, ground
+acceleration, base/story outputs; 2-DOF vs hand modal superposition and
+numpy complex direct solves (viscous + hysteretic), truncation, residual
+on massless DOFs, direct f=0 == static case on a rigid-diaphragm
+building; PSD Crandall (fine grid 4e-7, refined coarse grid < 2%), force
+PSD, response-curve exactness, g^2/Hz units, full-correlation cross
+terms; linearity/phase/cancellation, zero loads, function interpolation,
+grid; round trip, back-compat byte identity, validation, API.

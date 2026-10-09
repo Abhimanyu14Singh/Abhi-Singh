@@ -16,6 +16,10 @@ import math
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Tuple
 
+from skyframe.core.frequency_cases import (  # noqa: F401  (re-exported)
+    FrequencyFunction, FrequencyLoad, PSDCase, SteadyStateCase,
+    frequency_from_dict, frequency_to_dict, validate_frequency)
+
 G_ACCEL = 9.80665  # m/s^2
 _PLANAR_TOL = 1e-6  # m
 
@@ -1495,6 +1499,13 @@ class BuildingModel:
     # build time (the model data is never mutated).
     panel_zones: str = "none"
     num_modes: int = 6
+    # frequency-domain analysis (steady-state / PSD); see
+    # skyframe.core.frequency_cases.  Emitted by to_dict only when non-empty.
+    frequency_functions: Dict[str, "FrequencyFunction"] = field(
+        default_factory=dict)
+    steady_state_cases: Dict[str, "SteadyStateCase"] = field(
+        default_factory=dict)
+    psd_cases: Dict[str, "PSDCase"] = field(default_factory=dict)
 
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
@@ -2894,6 +2905,7 @@ class BuildingModel:
         self._validate_diaphragm()
         for g in self.effective_grids():
             self._validate_grid(g)
+        validate_frequency(self)            # frequency-domain cases
 
     @staticmethod
     def _validate_grid(g: GridSystem) -> None:
@@ -2984,6 +2996,7 @@ class BuildingModel:
             "deflection_limit": self.deflection_limit,
             "panel_zones": self.panel_zones,
             "num_modes": self.num_modes,
+            **frequency_to_dict(self),      # frequency-domain (if non-empty)
         }
 
     @classmethod
@@ -3293,6 +3306,7 @@ class BuildingModel:
         # v0.17: panel-zone assumption (absent = pre-v0.17 centerline model)
         mdl.panel_zones = str(d.get("panel_zones", "none"))
         mdl.num_modes = int(d.get("num_modes", 6))
+        frequency_from_dict(mdl, d)         # frequency-domain (absent = {})
         mdl.validate()
         return mdl
 

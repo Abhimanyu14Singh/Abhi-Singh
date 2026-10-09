@@ -1320,6 +1320,10 @@ class AnalysisResults:
     #   v0.16: per static case / additive combo -> beam serviceability
     #   entries [{uid, story, L, max_abs_dy, ratio_str, limit, ok}]
     warning: str = ""                    # e.g. TH cases skipped (step cap)
+    steady_state: Dict[str, dict] = field(default_factory=dict)
+    #   frequency-domain steady-state cases (skyframe.engine.frequency)
+    psd: Dict[str, dict] = field(default_factory=dict)
+    #   frequency-domain PSD cases (skyframe.engine.frequency)
 
     def to_dict(self) -> dict:
         d = {
@@ -1361,6 +1365,10 @@ class AnalysisResults:
                 for c, by_story in self.irregularity.items()}
         if self.warning:
             d["warning"] = self.warning
+        if self.steady_state:            # frequency-domain (only when used)
+            d["steady_state"] = dict(self.steady_state)
+        if self.psd:
+            d["psd"] = dict(self.psd)
         return d
 
 
@@ -1521,6 +1529,11 @@ class OpenSeesEngine:
                     "ni": asm.ele_nodes[m.uid][0], "nj": asm.ele_nodes[m.uid][1],
                     "story": m.story}
                    for m in model.members]
+        # frequency-domain cases (steady-state / PSD); run last — they
+        # rebuild the domain (tags are stable, so ``asm`` above stays valid)
+        steady_state = {n: self.run_steady_state(n)
+                        for n in getattr(model, "steady_state_cases", {})}
+        psd = {n: self.run_psd(n) for n in getattr(model, "psd_cases", {})}
         return AnalysisResults(
             model_name=model.name,
             nodes=dict(asm.node_coords),
@@ -1545,6 +1558,8 @@ class OpenSeesEngine:
             piers=piers,
             deflection_checks=deflection_checks,
             warning=warning,
+            steady_state=steady_state,
+            psd=psd,
         )
 
     def _deflection_checks(self, cr: CaseResults) -> List[dict]:
@@ -6435,6 +6450,17 @@ class OpenSeesEngine:
                            nonlinear=False)
         self._fna_cache[name] = result
         return result
+
+    # ------------------------------------- frequency domain (steady/PSD)
+    def run_steady_state(self, name: str) -> dict:
+        """Run one steady-state case (see :mod:`skyframe.engine.frequency`)."""
+        from skyframe.engine.frequency import run_steady_state
+        return run_steady_state(self, name)
+
+    def run_psd(self, name: str) -> dict:
+        """Run one PSD case (see :mod:`skyframe.engine.frequency`)."""
+        from skyframe.engine.frequency import run_psd
+        return run_psd(self, name)
 
     def _modal_static(self, loads: Dict[Tuple[int, int], float]) -> CaseResults:
         """Linear static solve under explicit (node, dof) -> value loads."""
