@@ -6490,7 +6490,9 @@ class OpenSeesEngine:
                 if spec is not None:
                     # strong-axis (M3) spring: material 3 of dirs (4, 5, 6)
                     r33 = float(defo[2]) if len(defo) >= 3 else 0.0
-                    frc = ops.eleResponse(etag, "force")
+                    # spring (material) forces of dirs (4, 5, 6); "force" would be the
+                    # 12 GLOBAL nodal forces, whose index 2 is node-i Fz, not M3
+                    frc = ops.eleResponse(etag, "basicForce")
                     m33 = float(frc[2]) if len(frc) >= 3 else 0.0
                     hh = hinge_hist[(uid, end)]
                     hh["rot"].append(r33)

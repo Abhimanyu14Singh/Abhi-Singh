@@ -375,3 +375,28 @@ def test_legacy_rule_reproduces_the_bug(monkeypatch):
     K_fixed = 1.0 / _f_col_hinge(m)
     assert po.base_shear[0] / po.roof_disp[0] == pytest.approx(K_fixed,
                                                                 rel=1e-3)
+
+
+# --------------------------------------------------------------------------- #
+# asce41 hinge moment history = the spring moment (was node-i global Fz)
+# --------------------------------------------------------------------------- #
+def test_asce41_hinge_moment_history_is_spring_moment():
+    """Cantilever pushed at the tip: the base hinge moment equals
+    base shear * L at every step (statics), elastic and yielded (the
+    ASCE 41 backbone strain-hardens past My, so no cap is asserted)."""
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(__file__))
+    from test_wave20 import _cantilever
+    L = 3.0
+    m = _cantilever(drift=0.06, steps=60)
+    d = OpenSeesEngine(m).run_pushover("PUSH").to_dict()
+    base = [h for h in d["hinges"]
+            if h.get("moment") and max(abs(v) for v in h["moment"]) > 0]
+    assert len(base) == 1
+    h = base[0]
+    V = d["base_shear"]
+    assert len(h["moment"]) == len(V)
+    for v, mom in zip(V, h["moment"]):
+        assert abs(mom) == pytest.approx(abs(v) * L, rel=1e-6, abs=1e-6)
+    assert max(abs(x) for x in h["moment"]) > h["My"]      # it did yield

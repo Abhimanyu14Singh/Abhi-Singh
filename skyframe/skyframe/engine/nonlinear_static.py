@@ -221,7 +221,9 @@ class _HingeRecorder:
                 self.peak[uid] = rot
             spec = asm.hinge_backbone.get((uid, end))
             if spec is not None:
-                frc = ops.eleResponse(etag, "force")
+                # spring (material) forces of dirs (4, 5, 6); "force" would be the
+                # 12 GLOBAL nodal forces, whose index 2 is node-i Fz, not M3
+                frc = ops.eleResponse(etag, "basicForce")
                 m33 = float(frc[2]) if len(frc) >= 3 else 0.0
                 st = _hstate(rz, spec["bb"], spec["k33"])
                 hh = self.hist[(uid, end)]
