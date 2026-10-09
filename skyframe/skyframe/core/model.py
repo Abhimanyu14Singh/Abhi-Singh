@@ -27,6 +27,7 @@ from .loads_ext import (GroundDisplacement, area_load_to_dict,  # noqa: F401
 from skyframe.core.frequency_cases import (  # noqa: F401  (re-exported)
     FrequencyFunction, FrequencyLoad, PSDCase, SteadyStateCase,
     frequency_from_dict, frequency_to_dict, validate_frequency)
+from skyframe.core import diaphragms as _dia  # multi-diaphragm / add. mass
 from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
     PDELTA_INCLUDE_IN, PDELTA_METHODS, pdelta_defaults, pdelta_from_dict,
     pdelta_to_dict, validate_pdelta_options)
@@ -637,6 +638,11 @@ class FrameMember:
     no_transform_stiffness: bool = False
     end_offsets: str = "manual"
     auto_rigid_factor: float = 0.0
+    # ETABS Assign > Frame > Additional Mass (skyframe.core.diaphragms):
+    # mass per length (t/m) entering the mass matrix directly; "lumped" =
+    # m*L/2 at each member end, "distributed" = per FE segment (stations).
+    additional_mass: float = 0.0
+    additional_mass_mode: str = "lumped"
 
     @property
     def length(self) -> float:
@@ -674,6 +680,7 @@ class FrameMember:
                 "axial_limit": self.axial_limit,
                 "hinges": self.hinges,
                 **_insertion_fields_to_dict(self),
+                **_dia.member_extra_to_dict(self),
                 "length": self.length}
 
 
@@ -746,6 +753,8 @@ class ShellRegion:
     #   (skyframe.core.builder) with pressure q*Cp — slabs as AreaLoads
     #   (positive Cp = downward), shell walls as per-mesh-node NodalLoads
     #   along the region's corner-ordering normal.  None = not wind-loaded.
+    diaphragm: str = ""                    # named diaphragm ("" = none)
+    additional_mass: float = 0.0           # t/m^2 (ETABS shell add. mass)
 
     @property
     def area(self) -> float:
@@ -798,7 +807,8 @@ class ShellRegion:
                 "pier": self.pier,
                 "area_spring": (dict(self.area_spring)
                                 if self.area_spring else None),
-                "wind_cp": self.wind_cp}
+                "wind_cp": self.wind_cp,
+                **_dia.shell_extra_to_dict(self)}
 
 
 # --------------------------------------------------------------------------- #
@@ -979,14 +989,19 @@ class ThermalLoad:
 
 @dataclass
 class NodalMass:
-    """Explicit lumped mass at a point (tonnes on ux/uy/uz)."""
+    """Explicit lumped mass at a point (tonnes on ux/uy/uz; t*m^2 on
+    the rotations mrx/mry/mrz — ETABS joint additional mass)."""
     point: Tuple[float, float, float]
     mx: float = 0.0
     my: float = 0.0
     mz: float = 0.0
+    mrx: float = 0.0
+    mry: float = 0.0
+    mrz: float = 0.0
 
     def to_dict(self) -> dict:
-        return {"point": list(self.point), "mx": self.mx, "my": self.my, "mz": self.mz}
+        return {"point": list(self.point), "mx": self.mx, "my": self.my, "mz": self.mz,
+                **_dia.nodal_mass_extra_to_dict(self)}
 
 
 @dataclass
@@ -1828,6 +1843,12 @@ class BuildingModel:
     # to_dict only when not the defaults.
     pdelta_options: Dict[str, object] = field(
         default_factory=pdelta_defaults)
+    # Multiple named diaphragms per story (skyframe.core.diaphragms):
+    # {name: {"type": "rigid"|"semi_rigid"}} + joint assignments
+    # [{"point": [x,y,z], "diaphragm": name}] (shells: ShellRegion.diaphragm).
+    # Empty (default) = the legacy one-diaphragm-per-story behaviour.
+    diaphragms: Dict[str, dict] = field(default_factory=dict)
+    joint_diaphragms: List[dict] = field(default_factory=list)
 
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
@@ -3430,6 +3451,7 @@ class BuildingModel:
             raise ValueError(f"panel_zones must be one of "
                              f"{PANEL_ZONE_OPTIONS}, got {self.panel_zones!r}")
         self._validate_diaphragm()
+        _dia.validate_diaphragms(self)
         for g in self.effective_grids():
             self._validate_grid(g)
         self._validate_v113()
@@ -3472,7 +3494,7 @@ class BuildingModel:
             raise ValueError("mass_options: at least one of include_lateral "
                              "/ include_vertical must be true")
         if not (eff["self_mass"] or eff["patterns"] or self.nodal_masses
-                or self.story_masses):
+                or self.story_masses or _dia.has_additional_mass(self)):
             raise ValueError("mass_options: at least one of self_mass / "
                              "patterns must be true (or explicit "
                              "nodal_masses / story_masses present)")
@@ -3585,6 +3607,7 @@ class BuildingModel:
 
             **frequency_to_dict(self),      # frequency-domain (if non-empty)
             **pdelta_to_dict(self),         # P-Delta options (if not default)
+            **_dia.diaphragms_to_dict(self),  # named diaphragms (if any)
         }
 
     @classmethod
@@ -3668,7 +3691,8 @@ class BuildingModel:
                 foundation_width=float(md.get("foundation_width", 0.0)),
                 axial_limit=str(md.get("axial_limit", "both")),
                 hinges=str(md.get("hinges", "none")),
-                **_insertion_fields_from_dict(md)))
+                **_insertion_fields_from_dict(md),
+                **_dia.member_extra_from_dict(md)))
         for rd in d.get("shells") or []:
             asp = rd.get("area_spring")        # v0.22 (absent/None = none)
             if asp is not None:
@@ -3690,7 +3714,8 @@ class BuildingModel:
                 pier=str(rd.get("pier", "")),
                 area_spring=asp,
                 wind_cp=(None if rd.get("wind_cp") is None
-                         else float(rd["wind_cp"]))))
+                         else float(rd["wind_cp"])),
+                **_dia.shell_extra_from_dict(rd)))
         mdl.base_fixity = d.get("base_fixity", "fixed")
         if mdl.base_fixity not in ("fixed", "pinned"):
             raise ValueError(f"base_fixity must be fixed|pinned, got "
@@ -3718,7 +3743,8 @@ class BuildingModel:
             mdl.nodal_masses.append(NodalMass(
                 tuple(float(v) for v in md["point"]),
                 mx=float(md.get("mx", 0.0)), my=float(md.get("my", 0.0)),
-                mz=float(md.get("mz", 0.0))))
+                mz=float(md.get("mz", 0.0)),
+                **_dia.nodal_mass_extra_from_dict(md)))
         mdl.rigid_diaphragms = bool(d.get("rigid_diaphragms", True))
         # v0.5 diaphragm option; pre-v0.5 files keep the legacy boolean only
         mdl.diaphragm = str(d.get("diaphragm", "rigid"))
@@ -3938,6 +3964,7 @@ class BuildingModel:
 
         frequency_from_dict(mdl, d)         # frequency-domain (absent = {})
         pdelta_from_dict(mdl, d)            # P-Delta options (absent = none)
+        _dia.diaphragms_from_dict(mdl, d)   # named diaphragms (absent = {})
         mdl.validate()
         return mdl
 

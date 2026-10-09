@@ -5418,3 +5418,201 @@ Every consumer below works with polygon regions:
   and deflection within 3% (both shell and membrane).
 * Load equilibrium and area / self-weight sums (L, T and U shapes, a
   triangle, polygon openings) are exact to 1e-9.
+
+## Multiple diaphragms per story and additional mass
+
+ETABS Define > Diaphragms, Assign > Joint/Shell > Diaphragms and Assign >
+Joint/Frame/Shell > Additional Mass.  Model side: `skyframe/core/diaphragms.py`;
+engine side: `skyframe/engine/diaphragms.py`.  Every key below is emitted only
+when it differs from its default, and a model that does not use them gives
+byte-identical results.
+
+### Model JSON
+
+```json
+"diaphragms": {"DA": {"type": "rigid"}, "DB": {"type": "semi_rigid"}},
+"joint_diaphragms": [{"point": [0, 0, 3], "diaphragm": "DA"}],
+"shells":   [{"...": "...", "diaphragm": "DA", "additional_mass": 0.3}],
+"members":  [{"...": "...", "additional_mass": 0.4,
+              "additional_mass_mode": "lumped"}],
+"nodal_masses": [{"point": [0, 0, 3], "mx": 0, "my": 0, "mz": 0,
+                  "mrx": 0, "mry": 0, "mrz": 50}]
+```
+
+| Field | Meaning |
+|---|---|
+| `diaphragms` | `{name: {"type": "rigid" \| "semi_rigid"}}` |
+| `joint_diaphragms` | `[{"point": [x, y, z], "diaphragm": name}]`; the point must be at a story elevation |
+| `ShellRegion.diaphragm` | name, or `""` for none; horizontal regions only |
+| `FrameMember.additional_mass` | t/m, >= 0 |
+| `FrameMember.additional_mass_mode` | `"lumped"` gives `mL/2` at each member end; `"distributed"` gives `mL_seg/2` at the ends of every FE segment |
+| `ShellRegion.additional_mass` | t/m^2, >= 0; `q * net_area` is spread over the mesh nodes by tributary area (membrane regions: equal split over the corner nodes) |
+| `NodalMass.mrx/mry/mrz` | t·m^2 rotational inertia, >= 0 |
+
+Validation raises `ValueError` for:
+
+* an unknown diaphragm type;
+* an unknown or unassigned name;
+* a joint that is not at a story elevation;
+* a joint assigned to two diaphragms;
+* a non-horizontal shell assigned to a diaphragm;
+* a negative or non-finite mass;
+* a bad `additional_mass_mode`.
+
+### Engine semantics
+
+**Named stories.** A story is named when at least one of its joints or
+shells carries an assignment. On a named story the assignments replace the
+legacy "the whole plane is one diaphragm" rule, and `diaphragm` /
+`story_diaphragm` are ignored there.
+
+* A shell assignment captures every structural node that lies inside or on
+  the slab polygon at that elevation.
+* A joint assignment wins over a shell assignment.
+* Unassigned nodes are free, as in ETABS.
+
+**Rigid diaphragms.** Each `rigid` diaphragm with at least 2 nodes gets its
+own master and its own `rigidDiaphragm` constraint.
+
+* The master sits at the diaphragm centre of mass. The mass weights are the
+  derived tributary story mass plus the lateral additional mass. With no
+  such mass, the master sits at the plan bounding-box centre.
+* A named story with exactly one diaphragm is also registered in
+  `asm.masters[story]`, so every story-keyed consumer works unchanged.
+* Stories with several diaphragms are not registered in `asm.masters`.
+  Story-level displacements on those stories use the existing node-average
+  fallback.
+
+**Semi-rigid diaphragms.** A `semi_rigid` diaphragm adds no constraint. Its
+slab carries the in-plane stiffness, as in the v0.22 semi-rigid treatment.
+
+**Story mass (rigid, `lump_at_stories`).** Derived story mass:
+
+* `m_d` is the sum of the tributary masses of the diaphragm's nodes.
+* `J_d = m_d (a_d^2 + b_d^2)/12 + m_d |c_d - master|^2`, where `a_d` and
+  `b_d` are the diaphragm's plan extents and `c_d` is its tributary
+  centroid.
+
+Explicit `story_masses` are split by diaphragm bounding-box area. Free nodes
+and semi-rigid nodes keep their tributary mass.
+
+**Additional mass.** Additional mass goes straight into the mass matrix,
+never through load patterns.
+
+* `include_lateral` puts it on UX/UY; `include_vertical` puts it on UZ at
+  the nodes.
+* With `lump_at_stories`, the lateral part of an item moves to the rigid
+  master when all its nodes are slaves of that one master. Its exact moment
+  of inertia about the master moves with it:
+  * a frame segment gives `m (d^2 + L_h^2/12)`;
+  * a slab gives `q × polar second moment of the polygon`, minus openings.
+    A rectangle about its centroid gives `m (a^2 + b^2)/12`.
+* Any other slave lump moves as a point mass, `m r^2`.
+* Without `lump_at_stories`, the lateral mass stays at the nodes.
+
+Explicit `NodalMass` translations are unchanged and are always added as
+given. `mrx` and `mry` go on the node's RX and RY. `mrz` goes on RZ, or on
+the master's RZ when the node is a rigid slave.
+
+**Story forces on a named story.** The force is split over the story's
+diaphragms, plus a free-node group, in proportion to lateral mass (node
+count when the story is massless).
+
+* A rigid diaphragm takes its share at its master. Accidental torsion is
+  `Mz = F_d·ecc·(the diaphragm's OWN transverse extent)`.
+* Semi-rigid diaphragms and free nodes use the v0.22 mass-weighted field
+  with an antisymmetric torsion couple.
+
+**P-Delta (`non_iterative_mass`) on a story with several diaphragms.**
+
+* `P_d = g × the mass above the story bottom inside the diaphragm's plan
+  box`.
+* The spring runs to the master of the same name on the story below. On the
+  first story it runs to the nearest support fixed in X and Y.
+* If neither exists, the fallback is column strings, restricted to the
+  columns inside the box.
+* `results.pdelta.diaphragm_P = {story: {name: P_d}}`.
+
+### Results (only when named diaphragms are assigned)
+
+```json
+"diaphragms": {
+  "definitions": {"DA": {"type": "rigid"}},
+  "stories": {"S1": {"DA": {"type": "rigid", "master": 17, "n_nodes": 4,
+      "mass": 18.35, "mass_rz": 110.13, "cm_x": 3.0, "cm_y": 3.0,
+      "extent_x": 6.0, "extent_y": 6.0, "x": 3.0, "y": 3.0,
+      "cr_x": 3.0, "cr_y": 3.0, "k_theta": 1.609e6}}},
+  "cases":    {"EQX": {"S1": {"DA": {"ux": 0, "uy": 0, "rz": 0,
+                 "drift_x": 0, "drift_y": 0,
+                 "tors_ratio_x": 1.0, "tors_ratio_y": 1.0}}}},
+  "combos":   {"...": "same shape (envelopes omitted)"},
+  "rs_cases": {"...": "same shape"}
+}
+```
+
+**Per-story values.**
+
+* `mass` and `cm` come from the built lateral mass map (master plus member
+  nodes).
+* `mass_rz` is the master's RZ inertia.
+* `cr` and `k_theta = 1/phi` come from the unit-load method at each master.
+* A semi-rigid diaphragm has `master: null`. Its displacements are node
+  averages.
+
+**Per-case values.**
+
+* Drift is measured against the same-name diaphragm on the story below,
+  read off that master's rigid field at this master's location. When there
+  is no same-name diaphragm, the reference is the story-level result below,
+  or the base.
+* `irregularity[case][story]` for stories with several diaphragms takes the
+  maximum torsional ratio over their diaphragms.
+
+**Unchanged.** The story-keyed `story` results are byte-identical. The
+per-diaphragm entries are a sibling key, not a `"diaphragms"` sub-dict
+inside `story`, because a sub-dict would break combo superposition and
+envelopes.
+
+**Tables.** `centers_mass_rigidity` and `diaphragm_cm_displacements` emit one
+row per named diaphragm, labelled with its name. Legacy stories still use
+`"D1"`.
+
+### Not covered (documented)
+
+* The load-dependent Ritz analysis (self-contained frame-only numpy
+  assembly) keeps the legacy one-diaphragm-per-story mass.
+* Time-history, FNA and pushover story series on stories with several
+  diaphragms use the story node-average fallback.
+* Load-participation condensation (`modalcombo`) uses story masters only.
+* The `diaphragm_max_avg_drifts` table lists only single-master stories.
+
+### Validation (`tests/test_diaphragms_mass.py`, 30 tests)
+
+* **Two towers on one level, with separate diaphragms.** Periods equal each
+  tower solved alone to 1e-9:
+  `[0.092812, 0.092812, 0.085069, 0.085069, 0.051977, 0.047207]` s.
+  One shared diaphragm couples the towers: 3 modes,
+  `[0.094784, 0.087812, 0.059839]` s.
+* **Static displacement and accidental torsion.** Each tower's `ux` and `rz`
+  equal the tower solved alone under its mass share of the force. They also
+  equal `F_d·0.05·L_d/k_theta`.
+* **Centre of mass.** With a beam UDL, `CM_y = 2.25` m, matching the hand
+  value.
+* **Two-story drift.** Drift per diaphragm is `(u2 - u1)/h`.
+* **P-Delta.** `P_d = g·m_d`, and `ux` equals the tower alone with P-Delta.
+* **Irregularity.** The story ratio is the maximum over the diaphragms.
+* **Mixed rigid and semi-rigid diaphragms.** The model runs and reaches
+  equilibrium.
+* **Named single diaphragm.** It gives the same periods as legacy.
+* **Joint rotational inertia.** `T = 2π sqrt(J/kθ)`: 0.0350224 s for both
+  the solve and the hand value.
+* **Frame additional mass.** `mL` adds exactly to the total mass, and
+  `T1/T0 = sqrt((M0 + mL)/M0) = 1.216553`. Beam-line `J` is
+  `m(d^2 + L^2/12)`.
+* **Shell additional mass.** `qA` adds exactly. `J = m(a^2 + b^2)/12`:
+  184.8, matching the hand value.
+* **Mass options.** The include_lateral, include_vertical and
+  lump_at_stories options are each checked.
+* **Round trip and legacy output.** Every new field round-trips. Legacy
+  serialization and results are unchanged. All validation errors are
+  checked.

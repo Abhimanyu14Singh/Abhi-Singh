@@ -594,10 +594,32 @@ def _cm_xy(c: _Ctx, story: str) -> Tuple[float, float]:
     return c.model.plan_center()
 
 
+def _named_dia(c: _Ctx) -> Dict[str, Dict[str, dict]]:
+    """results["diaphragms"]["stories"] (named diaphragms) or {}."""
+    return (c.R.get("diaphragms") or {}).get("stories") or {}
+
+
 def _t_diaphragm_cm(c: _Ctx) -> List[dict]:
     rows = []
+    named = _named_dia(c)
     for name, ctype, cd in c.sources():
         for s in reversed(c.stories):
+            if s.name in named:                 # named diaphragms
+                for dn, e in sorted(named[s.name].items()):
+                    mt = e.get("master")
+                    d = (cd.get("node_disp", {}).get(str(mt))
+                         if mt is not None else None)
+                    if d is None:
+                        continue
+                    x, y = e["cm_x"], e["cm_y"]
+                    mx, my = e["x"], e["y"]
+                    rows.append({"story": s.name, "diaphragm": dn,
+                                 "case": name, "case_type": ctype,
+                                 "ux": d[0] - d[5] * (y - my),
+                                 "uy": d[1] + d[5] * (x - mx),
+                                 "rz": d[5], "x": x, "y": y,
+                                 "z": s.elevation})
+                continue
             mt = c.masters.get(s.name)
             if mt is None:
                 continue
@@ -710,7 +732,15 @@ def _t_centers(c: _Ctx) -> List[dict]:
         if d == 1:
             mass_by_tag[t] = mass_by_tag.get(t, 0.0) + m
     rows = []
+    named = _named_dia(c)
     for s in reversed(c.stories):
+        if s.name in named:                     # named diaphragms
+            for dn, e in sorted(named[s.name].items()):
+                rows.append({"story": s.name, "diaphragm": dn,
+                             "mass": e["mass"],
+                             "cm_x": e["cm_x"], "cm_y": e["cm_y"],
+                             "cr_x": e.get("cr_x"), "cr_y": e.get("cr_y")})
+            continue
         e = sp.get(s.name)
         if e is None:
             continue
