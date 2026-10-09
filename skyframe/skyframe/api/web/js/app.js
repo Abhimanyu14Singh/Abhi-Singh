@@ -34,6 +34,8 @@ import { mockValidateAssign } from "./mock_assign.js";
 import { initTables } from "./tables.js";   // Show Tables + frequency/energy/pushover/load-participation views
 
 import { initCheckModel } from "./checkmodel.js";   // Analyze > Check Model / Check Stability
+import { installComboDialogs as g1InstallComboDialogs } from "./combodlg.js";   // load combos / P-Delta options / TH load data
+import { comboOptionLabel as g1ComboOptionLabel } from "./combo_refs.js";
 
 /* ------------------------------------------------ state */
 const store = {
@@ -892,7 +894,7 @@ function rebuildCaseSelect() {
     sel.appendChild(g);
   };
   mkGroup("Cases", Object.keys(r.cases || {}).map(n => [n, n]));
-  mkGroup("Combos", Object.keys(r.combos || {}).map(n => [n, n]));
+  mkGroup("Combos", Object.keys(r.combos || {}).map(n => [n, g1ComboOptionLabel(store.model, n)]));   // labelled with the combo type
   mkGroup("Response spectrum — envelopes",
     Object.keys(r.rs_cases || {}).map(n => [`rs:${n}`, `RS: ${n}`]));
   mkGroup("Staged construction",
@@ -3798,7 +3800,7 @@ function renderMemberPanel() {
     ["Story", rm.story], ["Length", L != null ? U.fmtU("length", L, 2) : "—"],
   ].map(([k, v]) => `<div><dt>${esc(k)}</dt><dd title="${esc(v)}">${esc(v)}</dd></div>`).join("");
 
-  const cd = caseData();
+  const cd = tableCaseData();                      // max/min combos honour the Max/Min toggle
   const st = cd && cd.member_stations && cd.member_stations[uid];
   // v0.16 — local transverse deflections (beams): {x, dy, dz} in m
   const md = cd && cd.member_deflections && cd.member_deflections[uid];
@@ -3809,7 +3811,8 @@ function renderMemberPanel() {
   $("memberEmpty").classList.toggle("hidden", !!(st || hasDefl));
   $("memberMinor").classList.toggle("hidden", !st);
   const envBadge = isRsCase(store.caseName)
-    ? ` <span class="env-badge" title="Response-spectrum values are positive envelopes — signs are indeterminate">envelope ±</span>` : "";
+    ? ` <span class="env-badge" title="Response-spectrum values are positive envelopes — signs are indeterminate">envelope ±</span>`
+    : caseData()?.min ? ` <span class="env-badge" title="Max/min combination — switch with the Max/Min toggle">${esc(store.envSide)}</span>` : "";
   $("memberCaseNote").innerHTML = ((st || hasDefl)
     ? `Station diagrams · case <b>${esc(caseLabel(store.caseName))}</b>`
     : `Case <b>${esc(caseLabel(store.caseName))}</b>`) + envBadge;
@@ -7801,6 +7804,7 @@ function wire() {
       if (store.envSide === b.dataset.env) return;
       store.envSide = b.dataset.env;
       renderResultsTabs();
+      renderMemberPanel();                         // member diagrams follow max/min
     }));
 
   /* ---- v0.4: report + CSV buttons */
@@ -8413,6 +8417,8 @@ async function boot() {
   AS.initAssign(window.__sky);                   // Assign dialogs → __sky.assign / open* (additive)
 
   installCaseDialogs(window.__sky);   // adds openLoadCases / openFreqCase / … to __sky
+  try { g1InstallComboDialogs(window.__sky); }   // adds openCombos / openPDeltaOptions / openThLoadData / openAnalysisLog
+  catch (err) { console.error("combo dialogs init failed", err); }
 
   // ETABS-style chrome — menu bar, tool palette, model explorer, status bar.
   // Delegates to the store/functions exposed above; never re-implements logic.

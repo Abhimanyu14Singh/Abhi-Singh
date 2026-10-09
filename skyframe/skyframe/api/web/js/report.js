@@ -237,7 +237,7 @@ export function buildReportHtml(model, results, opts = {}) {
   const comboTable = table(
     [{ label: "Combination", txt: true }, { label: "Type", txt: true }, { label: "Cases", txt: true }],
     Object.values(model.combos || {}).map(cb =>
-      [T(cb.name), T(cb.combo_type === "envelope" ? "envelope (max/min)" : "add"),
+      [T(cb.name), T(({ envelope: "envelope (max/min)", abs: "absolute add (max/min)", srss: "SRSS (max/min)", range: "range add (max/min)" })[cb.combo_type] || "add"),
        D(factorStr(cb.cases))]));
 
   const rsTable = table(
@@ -274,7 +274,7 @@ export function buildReportHtml(model, results, opts = {}) {
     ...Object.entries(r.cases || {}).map(([n, cd]) => [n, cd, "case"]),
     ...Object.entries(r.combos || {}).map(([n, cd]) => {
       const env = (model.combos && model.combos[n] && model.combos[n].combo_type === "envelope");
-      return [n, cd, env ? "envelope combo" : "combo"];
+      return [n, cd, env ? "envelope combo" : cd && cd.min ? "max/min combo (max shown)" : "combo"];
     }),
     ...Object.entries(r.rs_cases || {}).map(([n, cd]) => [`RS: ${n}`, cd, "response spectrum ±"]),
   ];

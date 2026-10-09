@@ -9,6 +9,7 @@ import { mockFrequencyResults, augmentMockResults as augmentCaseResults } from "
 
 // Check Model + stability diagnostics mocks (POST /api/check, /api/check/stability)
 export { mockCheckModel, mockCheckStability } from "./mock_check.js";
+import { mockExtendResults } from "./mock_combo.js";   // extended combos / P-Delta / TH components
 
 import { augmentMockModel, augmentMockResults as augmentTableResults } from "./mock_tables.js";   // tables / frequency / energy mock blocks
 const G = 9.80665;
@@ -3214,6 +3215,7 @@ export function mockCracked(model, body = {}) {
 export function mockResults(model) {
   const r0 = _mockResultsAll(model);
   const r = augmentCaseResults(model, Object.assign(r0, mockFrequencyResults(model, r0)));
+  mockExtendResults(model, r);   // extended combos, P-Delta options, TH load data (js/mock_combo.js)
   const notRun = new Set(Array.isArray(model.cases_not_run) ? model.cases_not_run : []);
   const runs = n => !notRun.has(n);
   const all = allAnalysisCases(model);

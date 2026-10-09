@@ -1,0 +1,29 @@
+/* SkyFrame — extended load combinations, P-Delta options, TH load data,
+   analysis log (js/combodlg.js). Loaded on first use. */
+.cx-rows { display: flex; flex-direction: column; gap: 4px; }
+.cx-row { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) 110px 28px; gap: 6px; align-items: center; }
+.cx-row3 { grid-template-columns: minmax(0, 1.4fr) 120px 28px; }
+.cx-th { grid-template-columns: 120px minmax(0, 1fr) minmax(0, 1.1fr) 84px 76px 84px 28px; }
+.cx-row.head span { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .5px; }
+.cx-row select, .cx-row input { min-width: 0; }
+.cx-kind { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cx-acts { margin-top: 6px; }
+.cx-radios { display: flex; flex-direction: column; gap: 4px; }
+.cx-disabled { opacity: .55; }
+.cx-combo-table tr { cursor: pointer; }
+.cx-combo-table tr.is-sel td { background: var(--accent-ghost); }
+.cx-formula { font-family: var(--mono); font-size: 11px; }
+.cx-kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 14px; margin: 4px 0 6px; font-size: 12px; }
+.cx-kv dt { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .4px; }
+.cx-kv dd { margin: 0; color: var(--text-1); font-variant-numeric: tabular-nums; }
+.cx-storyp { max-width: 340px; }
+.cx-pdcard { margin-bottom: 10px; }
+.cx-pdhead { font-size: 12.5px; margin-bottom: 4px; }
+.cx-warnlist { margin: 4px 0 0 18px; padding: 0; font-size: 12px; color: var(--amber); }
+.cx-logtbl td, .cx-logtbl th { font-size: 11.5px; }
+.cx-thsum { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 11.5px; padding: 4px 2px; }
+.cx-thsum-txt { flex: 1; min-width: 200px; }
+.cx-thsum-warn { flex-basis: 100%; font-size: 11px; }
+@media (max-width: 760px) {
+  .cx-row, .cx-th, .cx-row3 { grid-template-columns: 1fr 1fr; }
+}
