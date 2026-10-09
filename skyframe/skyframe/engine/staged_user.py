@@ -211,7 +211,10 @@ def _expand_load(model: BuildingModel, pat: LoadPattern, scale: float,
             out.area_loads.append(replace(al, q=al.q * scale))
     for tl in getattr(pat, "thermal_loads", ()):
         if tl.member_uid in mem:
-            out.thermal_loads.append(replace(tl, dT=tl.dT * scale))
+            out.thermal_loads.append(replace(
+                tl, dT=tl.dT * scale,
+                grad2=getattr(tl, "grad2", 0.0) * scale,    # v1.16
+                grad3=getattr(tl, "grad3", 0.0) * scale))
     # joint loads: only at the group's explicit points (a joint shared by
     # two groups' objects would otherwise be loaded twice)
     pts = {_pkey(tuple(p)) for p in g["points"]}

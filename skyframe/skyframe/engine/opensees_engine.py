@@ -174,6 +174,9 @@ from skyframe.engine import pdelta as _pdelta      # model-wide P-Delta
 from skyframe.engine import diaphragms as _dgm     # named diaphragms/add. mass
 from skyframe.engine import tendons as _tdn        # PT tendons / hyperstatic
 
+from skyframe.engine import thermal_ext as _thx    # v1.16 temperature loads
+from skyframe.core.thermal_ext import projected_factor as _proj_f  # v1.16
+
 from skyframe.core import springprops as _sprp     # B9/B11 named springs
 from skyframe.engine import hysteresis as _hyst    # B9/B11 builders
 from skyframe.engine import hinge_ties as _hinge_ties  # sprung hinge bases
@@ -741,6 +744,8 @@ def _consistent_load(records: Sequence[SpanLoad], L: float,
         f[10] -= pz * m4
 
     for rec in records:
+        if rec[0] == "kappa":
+            continue                      # v1.16 thermal curvature: no load
         if rec[0] == "point":
             (px, py, pz), x0 = rec[1], rec[2]
             add_point(px, py, pz, x0)
@@ -828,6 +833,10 @@ def _defl_double_integral(V_i: float, M_i: float,
     """
     val = -M_i * xi * xi / 2.0 + V_i * xi ** 3 / 6.0
     for rec in records:
+        if rec[0] == "kappa":
+            # v1.16 free thermal curvature: EI*kappa*xi^2/2 (EI v'' += EI k)
+            val += rec[1][comp] * xi * xi / 2.0
+            continue
         if rec[0] == "point":
             p, x0 = rec[1][comp], rec[2]
             if xi > x0:
@@ -861,6 +870,8 @@ def _bending_moment(V_i: float, M_i: float, records: Sequence[SpanLoad],
     Timoshenko shear-deflection term ``Mb/(G Av)``."""
     val = -M_i + V_i * xi
     for rec in records:
+        if rec[0] == "kappa":
+            continue                      # v1.16: curvature, not a moment
         if rec[0] == "point":
             p, x0 = rec[1][comp], rec[2]
             if xi > x0:
@@ -900,6 +911,8 @@ def _section_forces(fi: Sequence[float], records: Sequence[SpanLoad],
     my = fi[4] + x * fi[2]
     mz = fi[5] - x * fi[1]
     for rec in records:
+        if rec[0] == "kappa":
+            continue                      # v1.16 thermal curvature: no force
         if rec[0] == "point":
             (px, py, pz), x0 = rec[1], rec[2]
             if x0 <= x + 1e-9:
@@ -2309,7 +2322,8 @@ class OpenSeesEngine:
         member_forces, member_stations, member_deflections = \
             self._member_outputs(asm, node_disp=node_disp)
         story = self._story_results(asm, case, node_disp)
-        shell_forces = self._shell_outputs(asm)
+        shell_forces = _thx.correct_shell_outputs(
+            self, asm, case.patterns, self._shell_outputs(asm))
         shell_nodal = (self._shell_nodal(asm) if self._piers_enabled()
                        else {})
 
@@ -3895,7 +3909,9 @@ class OpenSeesEngine:
                         if ml.kind == "point":
                             point(m, fac * ml.w, ml.a)
                         elif ml.kind == "udl":
-                            line(m, fac * ml.w, fac * ml.w, ml.a, ml.b)
+                            pf = _proj_f(m, ml)       # v1.16 projected
+                            line(m, fac * ml.w * pf, fac * ml.w * pf, ml.a,
+                                 ml.b)
                         else:
                             line(m, fac * ml.w, fac * ml.w2, ml.a, ml.b)
                     for al in pat.area_loads:
@@ -4420,8 +4436,10 @@ class OpenSeesEngine:
             if member is None:
                 raise ValueError(f"Member load references unknown member "
                                  f"{ml.member_uid!r}")
-            self._apply_member_load(asm, member, ml.kind, ml.w * scale,
-                                    ml.w2 * scale, ml.a, ml.b, ml.direction)
+            pf = _proj_f(member, ml)                # v1.16 projected (1.0)
+            self._apply_member_load(asm, member, ml.kind, ml.w * scale * pf,
+                                    ml.w2 * scale * pf, ml.a, ml.b,
+                                    ml.direction)
 
         for al in pat.area_loads:
             self._apply_area_load(asm, al.region_uid, al.q * scale, al)
@@ -4433,6 +4451,8 @@ class OpenSeesEngine:
                 raise ValueError(f"Thermal load references unknown member "
                                  f"{tl.member_uid!r}")
             self._apply_thermal(asm, member, tl.dT * scale)
+        # v1.16 gradients / joint-pattern / shell temperatures (no-op legacy)
+        _thx.apply_pattern_ext(self, asm, pat, scale)
 
         for nl in pat.nodal_loads:
             t = self._find_node(asm, nl.point)
@@ -5605,6 +5625,7 @@ class OpenSeesEngine:
                     w_tot = ml.w * (ml.b - ml.a) * m.length
                 else:  # trapezoid
                     w_tot = 0.5 * (ml.w + ml.w2) * (ml.b - ml.a) * m.length
+                w_tot *= _proj_f(m, ml)               # v1.16 projected
                 total += scale * member_fz(m, ml.direction, w_tot)
             for nl in pat.nodal_loads:
                 total += scale * (-nl.fz)
@@ -5810,7 +5831,7 @@ class OpenSeesEngine:
                     else:
                         w = fac * 0.5 * (ml.w + ml.w2) * (ml.b - ml.a) \
                             * m.length
-                    add(w, *mid(m))
+                    add(w * _proj_f(m, ml), *mid(m))  # v1.16 projected
                 for al in pat.area_loads:
                     region = model._shell(al.region_uid)
                     if region is None or \

@@ -680,12 +680,22 @@ def create_app() -> Flask:
                                      "{member_uid, dT}")
                 uid = ld.get("member_uid")
                 dT = ld.get("dT")
+                # v1.16 gradients (deg C / m along local 2 / 3); dT may be
+                # omitted (= 0) when a gradient is given
+                grads = {k: ld[k] for k in ("grad2", "grad3") if k in ld}
+                if dT is None and grads:
+                    dT = 0.0
                 if not isinstance(uid, str) or not uid:
                     raise ValueError("thermal load needs a 'member_uid'")
                 if isinstance(dT, bool) or not isinstance(dT, (int, float)):
                     raise ValueError("thermal load 'dT' must be a number")
-                _state["model"].add_thermal_load(pattern.strip(), uid,
-                                                 float(dT))
+                for k, v in grads.items():
+                    if isinstance(v, bool) or not isinstance(v, (int, float)):
+                        raise ValueError(f"thermal load '{k}' must be a "
+                                         "number")
+                _state["model"].add_thermal_load(
+                    pattern.strip(), uid, float(dT),
+                    **{k: float(v) for k, v in grads.items()})
         except (ValueError, TypeError) as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify(_state["model"].to_dict())
@@ -2049,6 +2059,71 @@ def create_app() -> Flask:
         except (ValueError, KeyError, TypeError) as exc:
             return jsonify({"error": f"bad model: {exc}"}), 400
         return jsonify(stability_diagnostics(model, max_dofs=cap))
+
+    # --------------- v1.16 auto lateral generators + shell/joint temperature
+    @app.post("/api/pattern/auto-lateral")
+    def pattern_auto_lateral():
+        """ETABS Auto Lateral Load: body ``{code, name?, ecc?, <params>}``
+        (see :mod:`skyframe.core.autolateral`); returns the model."""
+        from skyframe.core import autolateral as _al
+        try:
+            code, name, ecc, params = _al.params_from_body(
+                request.get_json(silent=True))
+            _al.generate(_state["model"], code, name, ecc, **params)
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(_state["model"].to_dict())
+
+    @app.post("/api/pattern/auto-lateral/preview")
+    def pattern_auto_lateral_preview():
+        """Hand-calculation summary of a generator (model unchanged)."""
+        from skyframe.core import autolateral as _al
+        try:
+            code, _name, _ecc, params = _al.params_from_body(
+                request.get_json(silent=True))
+            return jsonify(_al.compute(_state["model"], code, **params))
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.post("/api/pattern/shell-thermal")
+    def pattern_shell_thermal():
+        """Body ``{pattern, loads: [{region_uid, dT?, grad3?}]}``."""
+        from skyframe.core.thermal_ext import ShellThermalLoad
+        return _v116_add_loads(
+            lambda ld: ShellThermalLoad.from_dict(ld), "shell_thermal_loads")
+
+    @app.post("/api/pattern/joint-temperature")
+    def pattern_joint_temperature():
+        """Body ``{pattern, loads: [{point: [x, y, z], dT}]}``."""
+        from skyframe.core.thermal_ext import JointTemperature
+        return _v116_add_loads(
+            lambda ld: JointTemperature.from_dict(ld), "joint_temperatures")
+
+    def _v116_add_loads(make, attr):
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        pattern = body.get("pattern")
+        loads = body.get("loads")
+        model = _state["model"]
+        if not isinstance(pattern, str) or pattern not in model.patterns:
+            return jsonify({"error": "'pattern' must name an existing "
+                                     "load pattern"}), 400
+        if not isinstance(loads, list) or not loads:
+            return jsonify({"error": "'loads' must be a non-empty list"}), 400
+        pat = model.patterns[pattern]
+        before = list(getattr(pat, attr))
+        try:
+            for ld in loads:
+                if not isinstance(ld, dict):
+                    raise ValueError("each load must be an object")
+                getattr(pat, attr).append(make(ld))
+            from skyframe.core.thermal_ext import validate_pattern_ext
+            validate_pattern_ext(model, pat)
+        except (ValueError, TypeError, KeyError) as exc:
+            setattr(pat, attr, before)
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(model.to_dict())
 
     return app
 
