@@ -17,6 +17,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Tuple
 
 from skyframe.core.stress_strain import normalize_stress_strain
+from skyframe.core import springprops as _sprp
 
 from .loads_ext import (GroundDisplacement, area_load_to_dict,  # noqa: F401
                         area_load_is_default, area_load_weight,
@@ -919,10 +920,21 @@ class SpringSupport:
 
     point: Tuple[float, float, float]
     stiffness: List[float]                      # 6 entries, >= 0
+    # B9 named spring property (model.spring_properties; inline stiffness
+    # must then be all zero) and plan local-axes angle (deg about +Z).
+    # Both omitted from to_dict when unused (byte-identical legacy shape);
+    # see skyframe.core.springprops.
+    property: Optional[str] = None
+    angle_deg: float = 0.0
 
     def to_dict(self) -> dict:
-        return {"point": list(self.point),
-                "stiffness": [float(k) for k in self.stiffness]}
+        out = {"point": list(self.point),
+               "stiffness": [float(k) for k in self.stiffness]}
+        if self.property is not None:
+            out["property"] = self.property
+        if self.angle_deg:
+            out["angle_deg"] = float(self.angle_deg)
+        return out
 
 
 @dataclass
@@ -1510,8 +1522,12 @@ RS_DIRECTIONAL_METHODS = ("100_30", "SRSS")
 #            d1 > 0) applied to BOTH horizontal shear directions of a
 #            twoNodeLink (vertical axis; elastic vertical kv).  ``points``
 #            is the ONE non-scalar param value (nested [d, F] list).
+# B11 hysteresis types (see skyframe.core.springprops):
+#   multilinear_takeda / multilinear_pivot / multilinear_kinematic /
+#   friction_spring / rubber_isolator_bouc_wen
 LINK_TYPES = ("elastic", "damper", "gap", "hook", "isolator",
-              "fp_isolator", "triple_fp", "multilinear")
+              "fp_isolator", "triple_fp", "multilinear",
+              *_sprp.HYSTERESIS_LINK_TYPES)
 
 # required / optional param keys per advanced link type
 _LINK_PARAM_KEYS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
@@ -1524,6 +1540,7 @@ _LINK_PARAM_KEYS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
                    "d1", "d2", "d3", "W"),
                   ("uy", "kv", "kvt", "minFv", "tol")),
     "multilinear": (("points",), ("kv",)),
+    **_sprp.LINK_PARAM_KEYS,                     # B11 hysteresis types
 }
 
 DAMPER_DEFAULT_ALPHA = 1.0     # velocity exponent (1 = linear dashpot)
@@ -1579,8 +1596,8 @@ class LinkMember:
         """Float-coerce a params dict, keeping ``points`` as [[d, F], ...]."""
         out: Dict[str, object] = {}
         for k, v in (params or {}).items():
-            if str(k) == "points":
-                out["points"] = [[float(p[0]), float(p[1])] for p in v]
+            if str(k) in ("points", "points_neg"):
+                out[str(k)] = [[float(p[0]), float(p[1])] for p in v]
             else:
                 out[str(k)] = float(v)
         return out
@@ -1742,6 +1759,9 @@ class BuildingModel:
     supports: List[PointSupport] = field(default_factory=list)
     spring_supports: List[SpringSupport] = field(default_factory=list)  # v0.8
     line_springs: List[LineSpring] = field(default_factory=list)  # v0.22
+    # B9 named point-spring properties {name: property dict}
+    # (skyframe.core.springprops; emitted by to_dict only when non-empty)
+    spring_properties: Dict[str, dict] = field(default_factory=dict)
     # v0.22 auto edge constraints (the ETABS "zipper"): when True, the
     # engine ties every HANGING NODE (a node lying strictly inside another
     # shell's element edge — mesh-mismatched shell/shell interfaces and
@@ -2698,12 +2718,25 @@ class BuildingModel:
         return lk
 
     def add_spring_support(self, point: Tuple[float, float, float],
-                           stiffness: List[float]) -> SpringSupport:
+                           stiffness: Optional[List[float]] = None,
+                           property: Optional[str] = None,
+                           angle_deg: float = 0.0) -> SpringSupport:
+        if stiffness is None:
+            stiffness = [0.0] * 6
         sp = SpringSupport(tuple(float(v) for v in point),
-                           [float(k) for k in stiffness])
+                           [float(k) for k in stiffness],
+                           property=property, angle_deg=float(angle_deg))
         self._validate_spring(sp)
+        _sprp.validate_support(sp, self.spring_properties)
         self.spring_supports.append(sp)
         return sp
+
+    def add_spring_property(self, name: str, prop: dict) -> dict:
+        """B9: define a named point-spring property (ETABS Define > Spring
+        Properties > Point Springs); see skyframe.core.springprops."""
+        _sprp.validate_property(name, prop)
+        self.spring_properties[name] = _sprp.normalize_property(prop)
+        return self.spring_properties[name]
 
     def add_line_spring(self, p1: Tuple[float, float, float],
                         p2: Tuple[float, float, float],
@@ -2814,6 +2847,18 @@ class BuildingModel:
                     and k >= 0.0):
                 raise ValueError(f"spring stiffness entries must be finite "
                                  f"and >= 0 (got {k!r})")
+        ang = getattr(sp, "angle_deg", 0.0)
+        if not (isinstance(ang, (int, float)) and not isinstance(ang, bool)
+                and math.isfinite(ang)):
+            raise ValueError(f"spring angle_deg must be finite (got {ang!r})")
+        prop = getattr(sp, "property", None)
+        if prop is not None:                     # B9 named property
+            if not isinstance(prop, str) or not prop:
+                raise ValueError("spring property must be a non-empty name")
+            if any(k != 0.0 for k in sp.stiffness):
+                raise ValueError("spring: inline stiffness must be all zero "
+                                 "when a named property is used")
+            return
         if not any(k > 0.0 for k in sp.stiffness):
             raise ValueError("spring: at least one stiffness entry must be > 0")
 
@@ -2859,12 +2904,19 @@ class BuildingModel:
                 raise ValueError(f"Link {lk.uid} ({ltype}): unknown param "
                                  f"{key!r} (allowed: "
                                  f"{list(required) + list(optional)})")
-            if key == "points":
+            if key in _sprp.LIST_PARAMS:
                 continue                    # nested list, validated below
             if not (isinstance(v, (int, float)) and math.isfinite(v)):
                 raise ValueError(f"Link {lk.uid} ({ltype}): param {key!r} "
                                  f"must be a finite number (got {v!r})")
         length = lk.length
+        if ltype in _sprp.HYSTERESIS_LINK_TYPES:          # B11
+            _sprp.validate_link_params(lk.uid, ltype, prm)
+            dx = abs(lk.pj[0] - lk.pi[0]) + abs(lk.pj[1] - lk.pi[1])
+            if length > 1e-9 and dx > 1e-6:
+                raise ValueError(f"Link {lk.uid} ({ltype}): the link axis "
+                                 "must be vertical (or zero length)")
+            return
         if ltype == "damper":
             if prm["cd"] <= 0.0:
                 raise ValueError(f"Link {lk.uid} (damper): cd must be > 0")
@@ -3406,8 +3458,11 @@ class BuildingModel:
                 raise ValueError(f"Duplicate link uid {lk.uid!r}")
             link_uids.add(lk.uid)
             self._validate_link(lk)
+        for pname, prop in self.spring_properties.items():   # B9
+            _sprp.validate_property(pname, prop)
         for sp in self.spring_supports:
             self._validate_spring(sp)
+            _sprp.validate_support(sp, self.spring_properties)
         for ls in self.line_springs:                     # v0.22
             self._validate_line_spring(ls)
         if not isinstance(self.edge_constraints, bool):  # v0.22
@@ -3585,6 +3640,10 @@ class BuildingModel:
 
             **frequency_to_dict(self),      # frequency-domain (if non-empty)
             **pdelta_to_dict(self),         # P-Delta options (if not default)
+            **({"spring_properties":         # B9 (only when non-empty)
+                {k: _sprp.normalize_property(v)
+                 for k, v in self.spring_properties.items()}}
+               if self.spring_properties else {}),
         }
 
     @classmethod
@@ -3701,10 +3760,19 @@ class BuildingModel:
                 raise ValueError("support restraints must have 6 entries")
             mdl.supports.append(PointSupport(
                 tuple(float(v) for v in sd["point"]), tuple(r)))
+        for pname, prop in (d.get("spring_properties") or {}).items():
+            if not isinstance(prop, dict):          # B9
+                raise ValueError(f"spring property {pname!r} must be a dict")
+            mdl.spring_properties[str(pname)] = _sprp.normalize_property(prop)
         for sd in d.get("spring_supports") or []:
-            mdl.spring_supports.append(SpringSupport(
+            _sp = SpringSupport(
                 tuple(float(v) for v in sd["point"]),
-                [float(k) for k in sd["stiffness"]]))
+                [float(k) for k in sd.get("stiffness", [0.0] * 6)])
+            if sd.get("property") is not None:       # B9
+                _sp.property = str(sd["property"])
+            if sd.get("angle_deg"):
+                _sp.angle_deg = float(sd["angle_deg"])
+            mdl.spring_supports.append(_sp)
         for sd in d.get("line_springs") or []:           # v0.22
             mdl.line_springs.append(LineSpring(
                 tuple(float(v) for v in sd["p1"]),
