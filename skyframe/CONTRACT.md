@@ -3530,3 +3530,129 @@ alpha changing a thermal axial force (None == model default), mass_density
 scaling a modal period (None == weight/g, 2x -> sqrt(2) period, element
 total == rho*V), and fc/fy/Ry/lambda flowing into the cracked-slab Mcr and
 the ASCE-41 hinge backbone with the None fallback preserved.
+
+## Check Model and stability diagnostics
+
+Module `skyframe.core.checks` (ETABS *Analyze > Check Model* parity).
+Analysis-only; never mutates the model.
+
+### `POST /api/check`
+
+Body `{model?: <model dict>, tolerance_m?: float in (0, 1] (default 0.001)}`.
+`model` is loaded LENIENTLY (`load_model_lenient`: `from_dict` without the
+final `validate()`, so every defect is reported instead of only the first)
+and does NOT replace the current model. When `model` is omitted, the current
+model is checked. Returns 400 on a bad tolerance or an unparseable model.
+Python: `check_model(model, tolerance=0.001)`.
+
+Response:
+
+```
+{"issues": [{"severity": "error"|"warning"|"info", "code": str,
+             "message": str, "objects": [uid/name, ...],
+             "location": [x, y, z] | null}, ...],      # errors first
+ "summary": {"errors", "warnings", "info": int, "ok": bool (no errors),
+             "by_code": {code: count}, "n_joints", "n_frames", "n_shells",
+             "n_links", "n_supported_joints": int, "tolerance_m": float,
+             "elapsed_s": float}}
+```
+
+Joints are the distinct frame/link end points and shell corners. They are
+deduplicated exactly as the engine does it (coordinates rounded to 1e-6).
+Proximity and intersection searches use a uniform spatial hash (10-story
+5x5-bay quick_building, 960 frames: ~0.3 s).
+
+| code | severity | meaning |
+|---|---|---|
+| `JOINT_COINCIDENT` | warning | distinct joints within `tolerance_m` (not merged by the analysis) |
+| `FRAME_ZERO_LENGTH` | error | frame length < `tolerance_m` |
+| `FRAME_DUPLICATE` | error | frames joining the same two (tolerance-merged) joints |
+| `FRAME_OVERLAP` | error | collinear frames overlapping by > `tolerance_m` |
+| `FRAME_INTERSECTION` | warning | frames crossing at interior points without a shared joint |
+| `FRAME_JOINT_ON_SPAN` | warning | a frame end lies on another frame's span, and that frame is not divided there (objects: `[ending frame, spanning frame]`) |
+| `FRAME_UNCONNECTED` / `SHELL_UNCONNECTED` / `LINK_UNCONNECTED` | error | a single object connected to nothing and unsupported |
+| `STRUCTURE_UNSUPPORTED_PART` | error | a group of connected objects with no path to any support |
+| `NO_SUPPORTS` | error | no restrained joint and no grounded spring at all |
+| `JOINT_UNCONNECTED` | error / warning | a support (error), nodal load (error), spring support or nodal mass (warning) at a point that is not a joint/FE node |
+| `STORY_NO_SUPPORT_PATH` | error | no object at the story elevation is connected to a support |
+| `STORY_NO_VERTICAL_ELEMENTS` | warning | no column/brace/wall/link reaches down from the story |
+| `STORY_EMPTY` | info | the story elevation has no joints |
+| `SHELL_CORNER_COUNT` | error | the shell does not have exactly 4 corners |
+| `SHELL_SELF_INTERSECTING` | error | bow-tie corner order |
+| `SHELL_ZERO_AREA` | error | area <= `tolerance_m` x longest edge, or an edge < `tolerance_m` |
+| `SHELL_WARPED` | error | corner 4 is off the plane of corners 1-3 by > 1e-6 m (the model's planarity tolerance, which the analysis enforces) |
+| `SHELL_CONCAVE` | error | concave quad (location = reflex corner) |
+| `SHELL_ASPECT_RATIO` | warning > 4, error > 10 | shell behavior: aspect ratio of the meshed elements (the mesher's nx/ny); membrane: longest/shortest region edge |
+| `SHELL_DUPLICATE` | error | shells with the same corner joints |
+| `DUPLICATE_UID` | error | a frame/shell/link uid used twice |
+| `FRAME_SECTION_MISSING` / `SHELL_SECTION_MISSING` | error | the object references a missing section |
+| `SECTION_MATERIAL_MISSING` | error | a frame or shell section references a missing material |
+| `INVALID_DATA` | error | any other `validate()` sub-check failure, reported per object (skipped for objects already flagged with a specific error) |
+| `PATTERN_EMPTY` | warning | a pattern with no loads and no self-weight |
+| `CASE_NO_PATTERNS` | warning | a static case that applies no pattern |
+| `CASE_EMPTY_PATTERN` | warning | a case references an empty pattern |
+| `CASE_PATTERN_MISSING` | error | a case (or its `pdelta_gravity`) references a missing pattern |
+| `LOAD_TARGET_MISSING` | error | a member/area/thermal load or story force on a missing frame/shell/story |
+| `COMBO_EMPTY` | warning | a combination with no cases |
+| `COMBO_CASE_MISSING` | error | a combination references a missing case |
+| `COMBO_CASE_INVALID` | error | a combination references an RS/TH/staged case or a combo |
+
+Supports: explicit `supports` with any restraint; otherwise the engine's
+automatic base (joints at the lowest z). Spring supports, line springs, area
+springs and Winkler foundation members also count as supports.
+
+### `POST /api/check/stability`
+
+Body `{model?, max_dofs?: int in [1, 6000] (default 3000)}`.  Python:
+`stability_diagnostics(model, max_dofs=3000)`.
+
+How it works:
+
+* The domain is built through the engine's normal elastic `_build()`; no case
+  is solved.
+* `K` is assembled with `system FullGeneral` and `numberer Plain` (plus the
+  Transformation constraint handler when the engine uses it) and extracted
+  with `printA`.
+* Mechanisms are the eigenvalues of the Jacobi-scaled `D^-1/2 K D^-1/2` that
+  are below `1e-12 x` the largest one.
+* Mode shapes are expanded to physical joint DOFs. Rigid-diaphragm slave
+  joints are computed from their master (`ux = um - rz*dy`,
+  `uy = vm + rz*dx`), and masters are not listed. Rotations are weighted by
+  the median frame length.
+* The null space is orthonormalized, so `unstable_dofs[].participation` (the
+  projector diagonal) does not depend on which eigenbasis numpy returns.
+* The dense linear algebra runs with one OpenBLAS thread.
+
+```
+{"stable": bool|null, "built": bool, "skipped": bool, "n_equations": int,
+ "n_mechanisms": int,
+ "mechanisms": [{"mode", "scaled_eigenvalue",
+                 "dofs": [{"node", "point", "dof": "UX".."RZ",
+                           "participation", "objects", "diaphragm"?}]}],
+ "unstable_dofs": [<same dof entries>],            # whole null space
+ "condition_number": float|null (raw K, null when singular),
+ "scaled_condition_number": float|null,
+ "scaled_condition_number_nonsingular": float|null,
+ "digits_lost": float|null,
+ "max_diagonal_ratio": float|null,   # max K_ii / D_ii of LDL^T
+ "max_diagonal_ratio_at": {"node", "point", "dof", "objects", "equation"},
+ "n_ill_conditioned_equations": int,   # diagonal ratio > 1e8
+ "lowest_eigenvalues": [scaled, up to 6], "thresholds": {...},
+ "issues": [...same issue shape...], "message": str, "elapsed_s"}
+```
+
+Codes:
+
+* `STABILITY_MECHANISM` (error): one per mechanism, up to 10, located at the
+  dominant joint/DOF.
+* `STABILITY_ILL_CONDITIONED` (warning): diagonal ratio > 1e8 or condition
+  number > 1e12. Reported only when there is no mechanism.
+* `STABILITY_TOO_LARGE` (info): the estimated number of equations exceeds
+  `max_dofs`, so the dense analysis is skipped.
+* `STABILITY_BUILD_FAILED` (error): the model is invalid or the build failed.
+
+The diagonal ratio comes from a Cholesky factorization of
+`K + 1e-14 max(diag) I`. A singular K therefore still factors, and the
+near-zero pivot shows where the problem is.
+
+Tests: `tests/test_checks.py`.
