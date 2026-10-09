@@ -24,6 +24,10 @@ from .loads_ext import (GroundDisplacement, area_load_to_dict,  # noqa: F401
                         validate_area_load, validate_ground_displacement,
                         validate_member_moment)
 
+from skyframe.core.frequency_cases import (  # noqa: F401  (re-exported)
+    FrequencyFunction, FrequencyLoad, PSDCase, SteadyStateCase,
+    frequency_from_dict, frequency_to_dict, validate_frequency)
+
 G_ACCEL = 9.80665  # m/s^2
 _PLANAR_TOL = 1e-6  # m
 
@@ -1634,6 +1638,14 @@ class BuildingModel:
     # Display units (persistence only; the engine ignores it).
     display_units: str = "kN-m"
 
+    # frequency-domain analysis (steady-state / PSD); see
+    # skyframe.core.frequency_cases.  Emitted by to_dict only when non-empty.
+    frequency_functions: Dict[str, "FrequencyFunction"] = field(
+        default_factory=dict)
+    steady_state_cases: Dict[str, "SteadyStateCase"] = field(
+        default_factory=dict)
+    psd_cases: Dict[str, "PSDCase"] = field(default_factory=dict)
+
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
         self.materials[mat.name] = mat
@@ -2777,7 +2789,8 @@ class BuildingModel:
 
     def case_kinds(self) -> Dict[str, str]:
         """Every defined case name -> kind ("static" | "response_spectrum"
-        | "time_history" | "pushover" | "staged" | "buckling" | "modal").
+        | "time_history" | "pushover" | "staged" | "buckling" |
+        "steady_state" | "psd" | "modal").
         The reserved MODAL_CASE is listed unless a static (or other) case
         already uses that name."""
         out: Dict[str, str] = {}
@@ -2786,7 +2799,9 @@ class BuildingModel:
                           ("time_history", self.th_cases),
                           ("pushover", self.pushover_cases),
                           ("staged", self.staged_cases),
-                          ("buckling", self.buckling_cases)):
+                          ("buckling", self.buckling_cases),
+                          ("steady_state", self.steady_state_cases),
+                          ("psd", self.psd_cases)):
             for n in src:
                 out.setdefault(n, kind)
         out.setdefault(MODAL_CASE, "modal")
@@ -3148,6 +3163,8 @@ class BuildingModel:
             raise ValueError(f"display_units must be one of {DISPLAY_UNITS}, "
                              f"got {self.display_units!r}")
 
+        validate_frequency(self)            # frequency-domain cases
+
     @staticmethod
     def _validate_grid(g: GridSystem) -> None:
         """Validate a grid system (v0.14)."""
@@ -3243,6 +3260,8 @@ class BuildingModel:
             "active_dof": list(self.active_dof),
             "mass_options": self.effective_mass_options(),
             "display_units": self.display_units,
+
+            **frequency_to_dict(self),      # frequency-domain (if non-empty)
         }
 
     @classmethod
@@ -3577,6 +3596,8 @@ class BuildingModel:
             opts.update(mo)
             mdl.mass_options = opts
         mdl.display_units = str(d.get("display_units", "kN-m"))
+
+        frequency_from_dict(mdl, d)         # frequency-domain (absent = {})
         mdl.validate()
         return mdl
 

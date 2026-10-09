@@ -1369,6 +1369,11 @@ class AnalysisResults:
     combo_status: Dict[str, str] = field(default_factory=dict)
     #   v1.13: every combo (+ RS directional combo) -> "finished"|"skipped"
 
+    steady_state: Dict[str, dict] = field(default_factory=dict)
+    #   frequency-domain steady-state cases (skyframe.engine.frequency)
+    psd: Dict[str, dict] = field(default_factory=dict)
+    #   frequency-domain PSD cases (skyframe.engine.frequency)
+
     def to_dict(self) -> dict:
         d = {
             "model_name": self.model_name,
@@ -1411,6 +1416,11 @@ class AnalysisResults:
             d["warning"] = self.warning
         d["case_status"] = dict(self.case_status)          # v1.13
         d["combo_status"] = dict(self.combo_status)        # v1.13
+
+        if self.steady_state:            # frequency-domain (only when used)
+            d["steady_state"] = dict(self.steady_state)
+        if self.psd:
+            d["psd"] = dict(self.psd)
         return d
 
 
@@ -1715,6 +1725,21 @@ class OpenSeesEngine:
                     "ni": asm.ele_nodes[m.uid][0], "nj": asm.ele_nodes[m.uid][1],
                     "story": m.story}
                    for m in model.members]
+        # frequency-domain cases (steady-state / PSD); run last — they
+        # rebuild the domain (tags are stable, so ``asm`` above stays valid)
+        # (respect Set Load Cases to Run; a failure marks only that case)
+        steady_state: Dict[str, dict] = {}
+        for name in model.steady_state_cases:
+            if runs(name):
+                res = attempt(name, lambda n=name: self.run_steady_state(n))
+                if res is not None:
+                    steady_state[name] = res
+        psd: Dict[str, dict] = {}
+        for name in model.psd_cases:
+            if runs(name):
+                res = attempt(name, lambda n=name: self.run_psd(n))
+                if res is not None:
+                    psd[name] = res
         return AnalysisResults(
             model_name=model.name,
             nodes=dict(asm.node_coords),
@@ -1741,6 +1766,9 @@ class OpenSeesEngine:
             warning=warning,
             case_status=dict(status),
             combo_status=combo_status,
+
+            steady_state=steady_state,
+            psd=psd,
         )
 
     def _run_plan(self) -> dict:
@@ -1764,7 +1792,9 @@ class OpenSeesEngine:
                 notes.append(f"case {dep!r} is set not to run but {by!r} "
                              "depends on it; run as a dependency")
 
-        for n in list(model.rs_cases) + list(model.th_cases):
+        # frequency-domain cases superpose the eigen modes too
+        for n in (list(model.rs_cases) + list(model.th_cases)
+                  + list(model.steady_state_cases) + list(model.psd_cases)):
             if status.get(n) == "finished":
                 need(MODAL_CASE, n)
         for n, bc in model.buckling_cases.items():
@@ -7068,6 +7098,17 @@ class OpenSeesEngine:
                            nonlinear=False)
         self._fna_cache[name] = result
         return result
+
+    # ------------------------------------- frequency domain (steady/PSD)
+    def run_steady_state(self, name: str) -> dict:
+        """Run one steady-state case (see :mod:`skyframe.engine.frequency`)."""
+        from skyframe.engine.frequency import run_steady_state
+        return run_steady_state(self, name)
+
+    def run_psd(self, name: str) -> dict:
+        """Run one PSD case (see :mod:`skyframe.engine.frequency`)."""
+        from skyframe.engine.frequency import run_psd
+        return run_psd(self, name)
 
     def _modal_static(self, loads: Dict[Tuple[int, int], float]) -> CaseResults:
         """Linear static solve under explicit (node, dof) -> value loads."""

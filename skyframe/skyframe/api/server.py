@@ -1082,6 +1082,36 @@ def create_app() -> Flask:
         payload["method"] = "FNA"
         return jsonify(payload)
 
+    # ------------------------------- frequency domain: steady-state / PSD
+    def _run_frequency_case(kind: str):
+        if not _OPENSEES_OK:
+            return jsonify({"error": "OpenSeesPy is not available"}), 400
+        body = request.get_json(silent=True) or {}
+        case = body.get("case")
+        label = "steady-state" if kind == "steady_state" else "PSD"
+        if not isinstance(case, str) or not case:
+            return jsonify({"error": f"'case' (name of a {label} case) is "
+                                     "required"}), 400
+        try:
+            eng = OpenSeesEngine(_state["model"])
+            res = (eng.run_steady_state(case) if kind == "steady_state"
+                   else eng.run_psd(case))
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(res)
+
+    @app.post("/api/analyze/steady_state")
+    def analyze_steady_state():
+        """Run one steady-state case.  Body: ``{case: "<name>"}``; returns
+        the same dict as an ``/api/analyze`` ``steady_state`` entry."""
+        return _run_frequency_case("steady_state")
+
+    @app.post("/api/analyze/psd")
+    def analyze_psd():
+        """Run one PSD case.  Body: ``{case: "<name>"}``; returns the same
+        dict as an ``/api/analyze`` ``psd`` entry."""
+        return _run_frequency_case("psd")
+
     # -------------------------------------------- v0.25: cracked-slab solve
     @app.post("/api/analyze/cracked")
     def analyze_cracked():
