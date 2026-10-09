@@ -80,6 +80,16 @@
     return value.toFixed(digits);
   }
 
+  // Significant-figure formatting: small deflection contributions stay
+  // meaningful (0.00118 in, not 0.001 in) without long trailing zeros.
+  function fmtSig(value, sig = 3) {
+    if (value === null || value === undefined || Number.isNaN(value)) return '—';
+    if (value === 0) return '0';
+    const abs = Math.abs(value);
+    if (abs < 1e-4 || abs >= 1e6) return value.toExponential(2);
+    return String(Number(value.toPrecision(sig)));
+  }
+
   class Units {
     constructor(systemId = 'SI') { this.set(systemId); }
     set(systemId) { this.sys = SYSTEMS[systemId] || SYSTEMS.SI; return this; }
@@ -106,7 +116,7 @@
     // --- formatted strings (value + unit) ---
     len(vBase, d = 2) { return `${fmt(this.lenFromBase(vBase), d)} ${this.sys.lenUnit}`; }
     force(vBase, d = 2) { return `${fmt(this.forceFromBase(vBase), d)} ${this.sys.forceUnit}`; }
-    defl(vBase, d = 3) { return `${fmt(this.deflFromBase(vBase), d)} ${this.sys.deflUnit}`; }
+    defl(vBase, sig = 3) { return `${fmtSig(this.deflFromBase(vBase), sig)} ${this.sys.deflUnit}`; }
     area(vBase, d = 2) { return `${fmt(this.areaFromBase(vBase), d)} ${this.sys.areaUnit}`; }
     stress(vBase, d = 1) { return `${fmt(this.stressFromBase(vBase), d)} ${this.sys.stressUnit}`; }
 

@@ -34,7 +34,16 @@
     for (let k = 0; k < panels; k++) M(idxT[k], idxT[k + 1]); // top chord
     for (let k = 0; k <= panels; k++) M(idxB[k], idxT[k]); // verticals
     for (let k = 0; k < panels; k++) {
-      if (diagDir === 'up') M(idxB[k], idxT[k + 1]);
+      const leftHalf = k < panels / 2;
+      if (diagDir === 'pratt') {
+        // Pratt: diagonals slope DOWN toward midspan (mirrored about the
+        // centre) so under gravity every diagonal is in tension.
+        if (leftHalf) M(idxT[k], idxB[k + 1]); else M(idxT[k + 1], idxB[k]);
+      } else if (diagDir === 'howe') {
+        // Howe: the mirror image — diagonals slope UP toward midspan and go
+        // into compression, verticals into tension.
+        if (leftHalf) M(idxB[k], idxT[k + 1]); else M(idxB[k + 1], idxT[k]);
+      } else if (diagDir === 'up') M(idxB[k], idxT[k + 1]);
       else M(idxT[k], idxB[k + 1]);
     }
     const supports = [
@@ -69,11 +78,12 @@
 
     pratt: {
       name: 'Pratt truss (parallel chord)',
-      blurb: 'A simply-supported parallel-chord truss. Watch the bottom chord ' +
-        'go into tension and the top chord into compression, with the largest ' +
-        'chord forces near midspan.',
+      blurb: 'A simply-supported Pratt truss: diagonals slope down toward ' +
+        'midspan, so under gravity every diagonal is in tension and the ' +
+        'verticals are in compression. The bottom chord is in tension and the ' +
+        'top chord in compression, largest near midspan.',
       build: (units) => build(units, (ctx) =>
-        parallelChord(ctx, 4, 3 * ctx.u, 12 * ctx.u, 20, 'down')),
+        parallelChord(ctx, 4, 3 * ctx.u, 12 * ctx.u, 20, 'pratt')),
     },
 
     warrenLoaded: {
@@ -116,7 +126,9 @@
         const M = (i, j) => members.push({ i, j, E, A });
         for (let k = 0; k < panels; k++) M(B[k], B[k + 1]);
         for (let k = 0; k < panels; k++) M(T[k], T[k + 1]);
-        for (let k = 0; k <= panels; k++) M(B[k], T[k]);
+        // Verticals start at k = 1: a member between the two wall pins could
+        // never carry force and would only make the truss look indeterminate.
+        for (let k = 1; k <= panels; k++) M(B[k], T[k]);
         for (let k = 0; k < panels; k++) M(T[k], B[k + 1]); // diagonals
         const supports = [
           { node: B[0], dx: true, dy: true }, // pin at wall
@@ -154,8 +166,10 @@
 
     howe: {
       name: 'Howe roof truss',
-      blurb: 'A pitched (gable) roof truss. Sloping top chords in compression, ' +
-        'bottom tie in tension — the classic roof load path.',
+      blurb: 'A pitched (gable) roof truss: sloping top chords in compression, ' +
+        'bottom tie in tension. In a Howe the webs flip the Pratt pattern — ' +
+        'diagonals are in compression and the king post (centre vertical) is ' +
+        'in tension. Compare it with the Pratt preset.',
       build: (units) => build(units, ({ u, E, A, P }) => {
         const span = 12 * u, rise = 3 * u;
         const xs = [0, 3 * u, 6 * u, 9 * u, 12 * u];
@@ -172,10 +186,11 @@
         for (let k = 0; k < B.length - 1; k++) M(B[k], B[k + 1]);
         // top chords: B0 - T0 - T1 - T2 - B4
         M(B[0], T[0]); M(T[0], T[1]); M(T[1], T[2]); M(T[2], B[4]);
-        // verticals/webs from top nodes to bottom nodes
+        // verticals from top-chord nodes to the tie (T[1]-B[2] is the king post)
         M(T[0], B[1]); M(T[1], B[2]); M(T[2], B[3]);
-        // diagonals
-        M(B[1], T[1]); M(B[3], T[1]);
+        // Howe diagonals: from the upper top-chord nodes DOWN toward midspan,
+        // so under roof load they are in compression and the king post in tension.
+        M(T[0], B[2]); M(T[2], B[2]);
         const supports = [
           { node: B[0], dx: true, dy: true },
           { node: B[4], dx: false, dy: true },

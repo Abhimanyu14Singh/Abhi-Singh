@@ -114,6 +114,30 @@
       this.loads.forEach((l) => { l.node = reindex(l.node); });
     }
 
+    // Merge joint `from` into joint `into` (used when a joint is dragged onto
+    // another). Members are re-pointed; any that collapse to zero length or
+    // duplicate an existing member are dropped. Returns the new index of `into`.
+    mergeNode(from, into) {
+      if (from === into) return into;
+      this.members.forEach((m) => {
+        if (m.i === from) m.i = into;
+        if (m.j === from) m.j = into;
+      });
+      const seen = new Set();
+      this.members = this.members.filter((m) => {
+        if (m.i === m.j) return false;
+        const key = m.i < m.j ? `${m.i}-${m.j}` : `${m.j}-${m.i}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      // Keep the target's own support/load; otherwise inherit the dragged one's.
+      if (!this.supportFor(into)) { const s = this.supportFor(from); if (s) s.node = into; }
+      if (!this.loadFor(into)) { const l = this.loadFor(from); if (l) l.node = into; }
+      this.deleteNode(from);
+      return into > from ? into - 1 : into;
+    }
+
     /* ----- member ops ------------------------------------------------------ */
     addMember(i, j, E = DEFAULT_E, A = DEFAULT_A, section = null) {
       if (i === j) return null;
@@ -175,22 +199,29 @@
 
     loadFrom(obj) {
       this.clear();
-      (obj.nodes || []).forEach((n) => this.addNode(n.x, n.y));
+      // Push joints verbatim (no coincident-joint merging) so the member
+      // i/j indices in the file keep pointing at the right joints.
+      (obj.nodes || []).forEach((n) => {
+        this.nodes.push({ id: this._nextNodeId++, x: +n.x, y: +n.y });
+      });
       (obj.members || []).forEach((m) =>
-        this.addMember(m.i, m.j, m.E ?? DEFAULT_E, m.A ?? DEFAULT_A)
+        this.addMember(m.i, m.j, +m.E > 0 ? +m.E : DEFAULT_E, +m.A > 0 ? +m.A : DEFAULT_A,
+          m.section ?? null)
       );
       (obj.supports || []).forEach((s) => {
         const kind = s.dx && s.dy ? 'pin' : !s.dx && s.dy ? 'roller-x'
           : s.dx && !s.dy ? 'roller-y' : 'none';
         this.setSupport(s.node, kind);
       });
-      (obj.loads || []).forEach((l) => this.setLoad(l.node, l.fx, l.fy));
+      (obj.loads || []).forEach((l) => this.setLoad(l.node, +l.fx || 0, +l.fy || 0));
     }
 
     toJSON() {
       return {
         nodes: this.nodes.map((n) => ({ x: n.x, y: n.y })),
-        members: this.members.map((m) => ({ i: m.i, j: m.j, E: m.E, A: m.A })),
+        members: this.members.map((m) => ({
+          i: m.i, j: m.j, E: m.E, A: m.A, ...(m.section ? { section: m.section } : {}),
+        })),
         supports: this.supports.map((s) => ({ node: s.node, dx: s.dx, dy: s.dy })),
         loads: this.loads.map((l) => ({ node: l.node, fx: l.fx, fy: l.fy })),
       };

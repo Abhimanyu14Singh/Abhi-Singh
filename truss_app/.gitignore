@@ -1,3 +1,4 @@
-# Dev-only test dependency (jsdom) — not needed at runtime
+# Dev-only test tools (jsdom, playwright-core) — not needed at runtime
 node_modules/
 package-lock.json
+package.json

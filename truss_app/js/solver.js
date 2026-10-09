@@ -33,6 +33,15 @@
     const M = A.map((row) => row.slice());
     const x = b.slice();
 
+    // Singularity tolerance is *relative* to the matrix scale. An absolute
+    // tolerance misses mechanisms whose zero pivot is polluted by round-off
+    // (e.g. slanted collinear members give a pivot of ~1e-16 * EA/L, not 0).
+    let scale = 0;
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) scale = Math.max(scale, Math.abs(M[r][c]));
+    }
+    const tol = (scale || 1) * 1e-10;
+
     for (let col = 0; col < n; col++) {
       // Partial pivot: find the largest magnitude entry in this column.
       let pivotRow = col;
@@ -44,7 +53,7 @@
           pivotRow = r;
         }
       }
-      if (pivotVal < 1e-12) {
+      if (pivotVal < tol) {
         // Singular (or near-singular) -> mechanism / unstable structure.
         return null;
       }
@@ -228,13 +237,34 @@
    *
    * Returns a rich result object consumed by the UI / explanation layer.
    * ------------------------------------------------------------------------*/
-  function analyze(model) {
+  function analyze(model, opts) {
     const { nodes, members, supports, loads } = model;
     const result = { ok: false, messages: [] };
 
     if (nodes.length < 2 || members.length < 1) {
       result.messages.push('Add at least two joints and one member.');
       return result;
+    }
+
+    // --- Input sanity: bad references and zero-length members --------------
+    for (let k = 0; k < members.length; k++) {
+      const mem = members[k];
+      if (!nodes[mem.i] || !nodes[mem.j]) {
+        result.messages.push(`Member ${k + 1} refers to a joint that does not exist.`);
+        return result;
+      }
+      const L = Math.hypot(nodes[mem.j].x - nodes[mem.i].x, nodes[mem.j].y - nodes[mem.i].y);
+      if (L < 1e-9) {
+        result.messages.push(
+          `Member ${k + 1} has zero length — both of its ends sit on the same ` +
+          `spot. Move one of its joints or delete the member.`
+        );
+        return result;
+      }
+      if (!(mem.E > 0) || !(mem.A > 0)) {
+        result.messages.push(`Member ${k + 1} needs a positive area and modulus.`);
+        return result;
+      }
     }
 
     // --- Build constraint (fixed-DOF) vector + reaction count ---------------
@@ -269,19 +299,59 @@
     const real = solveConstrained(K, F, fixed, ndof);
     if (!real.ok) {
       result.messages.push(
-        'The structure is a mechanism (global stiffness matrix is singular). ' +
-        'Check for missing members, collinear supports, or unconnected joints.'
+        'The structure is a mechanism: some part of it can move without ' +
+        'stretching any member, so it cannot carry load.'
       );
+      // Specific hints a learner can act on.
+      const connected = new Array(nodes.length).fill(0);
+      for (const mem of members) { connected[mem.i]++; connected[mem.j]++; }
+      const loose = [];
+      for (let k = 0; k < nodes.length; k++) {
+        if (connected[k] === 0 && !(fixed[2 * k] && fixed[2 * k + 1])) loose.push(k + 1);
+      }
+      if (loose.length) {
+        result.messages.push(
+          `Joint${loose.length > 1 ? 's' : ''} ${loose.join(', ')} ` +
+          `${loose.length > 1 ? 'are' : 'is'} not connected to any member.`
+        );
+      }
+      if (result.determinacy.verdict === 'unstable') {
+        result.messages.push(
+          `Count check: m + r = ${result.determinacy.total} is less than ` +
+          `2j = ${result.determinacy.dof} — add members or supports.`
+        );
+      } else if (!loose.length) {
+        result.messages.push(
+          'The member count is enough, so the problem is the arrangement: look ' +
+          'for a panel without a diagonal, members in a straight line meeting ' +
+          'at an unsupported joint, or supports that all point the same way.'
+        );
+      }
       return result;
     }
 
     const memberForces = recoverMemberForces(memberInfo, real.u);
     const reactions = computeReactions(K, real.u, F, fixed, ndof);
 
+    // Round-off cleanup: a reaction of 1.6e-15 kip is floating-point noise,
+    // not a result. Anything below 1e-10 of the load (or displacement) scale
+    // is reported as exactly zero — this also gives the tension/compression/
+    // zero classification a sensible *relative* threshold.
+    let fScale = 0;
+    for (const v of F) fScale = Math.max(fScale, Math.abs(v));
+    let uScale = 0;
+    for (const v of real.u) uScale = Math.max(uScale, Math.abs(v));
+    const fTol = fScale * 1e-10, uTol = uScale * 1e-10;
+    const clean = (v, tol) => (Math.abs(v) <= tol ? 0 : v);
+    for (let d = 0; d < ndof; d++) {
+      real.u[d] = clean(real.u[d], uTol);
+      reactions[d] = clean(reactions[d], fTol);
+    }
+
     // Attach per-member results.
     result.members = members.map((mem, k) => {
       const info = memberInfo[k];
-      const N = memberForces[k].N;
+      const N = clean(memberForces[k].N, fTol);
       return {
         index: k,
         i: mem.i,
@@ -291,7 +361,7 @@
         A: mem.A,
         N,
         stress: N / mem.A,
-        state: N > 1e-9 ? 'tension' : N < -1e-9 ? 'compression' : 'zero',
+        state: N > 0 ? 'tension' : N < 0 ? 'compression' : 'zero',
         // Per-member axial stiffness EA/L — governs how much load it attracts
         // in an indeterminate structure, and how much it stretches.
         axialStiffness: info.EA_L,
@@ -319,25 +389,51 @@
     result.memberInfo = memberInfo;
     result.ok = true;
 
-    // --- Pick the most-displaced free joint as the default "deflection of
-    //     interest" target, then run the virtual-work decomposition there. --
-    let target = null;
-    let bestMag = -1;
-    for (const d of result.displacements) {
-      if (d.mag > bestMag) { bestMag = d.mag; target = d; }
-    }
-    if (target && bestMag > 0) {
-      // Direction of the actual displacement at that joint (unit vector).
-      const dirx = target.ux / target.mag;
-      const diry = target.uy / target.mag;
-      result.virtualWork = virtualWorkDecomposition(
-        result, target.node, dirx, diry
-      );
-      result.virtualWork.targetNode = target.node;
-      result.virtualWork.dir = { x: dirx, y: diry };
+    // --- Virtual-work decomposition at the "deflection of interest" -------
+    const tgt = resolveTarget(result, opts && opts.target);
+    if (tgt) {
+      result.virtualWork = virtualWorkDecomposition(result, tgt.node, tgt.dx, tgt.dy);
+      result.virtualWork.targetNode = tgt.node;
+      result.virtualWork.dir = { x: tgt.dx, y: tgt.dy };
+      result.virtualWork.mode = tgt.mode;
+      result.virtualWork.auto = tgt.auto;
+      result.virtualWork.restrained = tgt.restrained;
     }
 
     return result;
+  }
+
+  /* --------------------------------------------------------------------------
+   * Decide where to put the virtual unit load.
+   *   target = { node: -1 | index, mode: 'motion' | 'vertical' | 'horizontal' }
+   * node -1 (or missing) => the most-displaced joint.
+   * 'motion'     => along the joint's actual displacement (gives its total movement)
+   * 'vertical'   => unit load pointing DOWN  (positive delta = moves down)
+   * 'horizontal' => unit load pointing RIGHT (positive delta = moves right)
+   * ------------------------------------------------------------------------*/
+  function resolveTarget(result, target) {
+    const t = target || {};
+    let node = Number.isInteger(t.node) ? t.node : -1;
+    const auto = node < 0 || node >= result.displacements.length;
+    if (auto) {
+      let best = -1;
+      node = -1;
+      for (const d of result.displacements) {
+        if (d.mag > best) { best = d.mag; node = d.node; }
+      }
+      if (best <= 0) return null; // nothing moves (no load yet)
+    }
+    let mode = t.mode || 'motion';
+    let dx, dy;
+    const d = result.displacements[node];
+    if (mode === 'vertical') { dx = 0; dy = -1; }
+    else if (mode === 'horizontal') { dx = 1; dy = 0; }
+    else if (d.mag > 0) { dx = d.ux / d.mag; dy = d.uy / d.mag; }
+    else { mode = 'vertical'; dx = 0; dy = -1; } // joint doesn't move: probe vertically
+    // Is the probe direction blocked by a support at this joint?
+    const fx = result.fixed[2 * node], fy = result.fixed[2 * node + 1];
+    const restrained = (Math.abs(dx) < 1e-12 || fx) && (Math.abs(dy) < 1e-12 || fy);
+    return { node, dx, dy, mode, auto, restrained };
   }
 
   /* --------------------------------------------------------------------------
@@ -368,7 +464,8 @@
     const contributions = members.map((mem, k) => {
       const info = memberInfo[k];
       const N = result.members[k].N; // real axial force
-      const nbar = nForces[k].N; // virtual axial force
+      // virtual axial force (unit load => noise below 1e-10 is zero)
+      const nbar = Math.abs(nForces[k].N) <= 1e-10 ? 0 : nForces[k].N;
       const flex = info.L / (mem.E * mem.A); // L/(EA)
       const contrib = N * nbar * flex; // N * n * L / (EA)
       total += contrib;

@@ -105,7 +105,8 @@ select:focus, input:focus { border-color: var(--accent); }
 /* ---- canvas ---- */
 .canvas-wrap { flex: 1; position: relative; min-width: 0; background:
   radial-gradient(circle at 50% 0%, #141b29, #0e131e); }
-#canvas { width: 100%; height: 100%; display: block; cursor: crosshair; }
+#canvas { width: 100%; height: 100%; display: block; cursor: crosshair;
+  touch-action: none; /* let pointer events drive drawing on touch screens */ }
 .canvas-overlay { position: absolute; top: 12px; left: 12px; right: 12px;
   display: flex; justify-content: space-between; pointer-events: none; flex-wrap: wrap; gap: 8px; }
 .legend, .display-toggles {
@@ -139,6 +140,12 @@ select:focus, input:focus { border-color: var(--accent); }
 .node { fill: #e7ecf3; stroke: #2a3346; stroke-width: 2; cursor: pointer; }
 .node:hover { fill: var(--accent); }
 .node.selected { fill: #ffd34d; stroke: #b9912a; }
+.node.pending { fill: var(--accent); stroke: #fff; stroke-width: 3; }
+.probe line { stroke: #c79bff; stroke-width: 2.2; stroke-dasharray: 6 4; }
+.probe-ring { fill: none; stroke: #c79bff; stroke-width: 1.8; stroke-dasharray: 3 3; }
+.probe-label { fill: #c79bff; font-size: 11px; font-weight: 600; paint-order: stroke;
+  stroke: #0e131e; stroke-width: 3px; }
+.arrowhead-probe { fill: #c79bff; }
 .member-label { fill: #c7d2e4; font-size: 11px; font-weight: 600; paint-order: stroke;
   stroke: #0e131e; stroke-width: 3px; }
 .support path { fill: #6f86c9; stroke: #9fb3e6; stroke-width: 1.5; }
@@ -180,8 +187,16 @@ select:focus, input:focus { border-color: var(--accent); }
 .bar-row:hover .bar-label { color: #fff; }
 .bar-label { width: 78px; color: var(--ink-dim); flex-shrink: 0; }
 .bar-track { flex: 1; background: var(--panel-2); border-radius: 6px; height: 16px; overflow: hidden; border: 1px solid var(--line); }
-.bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent-dim), var(--accent)); }
+/* display:block — the fill is a <span>, and inline boxes ignore width/height */
+.bar-fill { display: block; height: 100%; background: linear-gradient(90deg, var(--accent-dim), var(--accent)); }
 .bar-val { width: 56px; text-align: right; color: var(--ink); flex-shrink: 0; }
+.bar-row.negative .bar-fill { background: repeating-linear-gradient(45deg, #5b6476, #5b6476 4px, #3d4556 4px, #3d4556 8px); }
+.bar-row.negative .bar-val { color: var(--ink-dim); }
+.target-picker { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; }
+.target-picker label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--ink-dim); flex: 1; min-width: 140px; }
+.btn-xs { padding: 3px 9px; font-size: 12px; }
+.help-keys { font-size: 12px; color: var(--ink-dim); line-height: 1.6; }
 
 /* insight cards */
 .insight-cards { display: flex; flex-direction: column; gap: 10px; }
@@ -205,7 +220,7 @@ select:focus, input:focus { border-color: var(--accent); }
 .prop-card h3 { margin: 0 0 12px; font-size: 15px; }
 .prop-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; gap: 10px; }
 .prop-row label { font-size: 12px; color: var(--ink-dim); flex-shrink: 0; }
-.prop-row input, .prop-row select { width: 190px; }
+.prop-row input, .prop-row select { width: 62%; min-width: 0; }
 .prop-readout { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
   padding: 9px 11px; margin-bottom: 12px; font-size: 12px; line-height: 1.7; color: #cdd6e6; }
 .prop-readout b { color: #fff; }

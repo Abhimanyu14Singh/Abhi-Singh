@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Truss Lab — Virtual Work Explorer</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23171d2b'/%3E%3Cpath d='M5 24 L16 7 L27 24 Z M16 7 L16 24' fill='none' stroke='%234f9cff' stroke-width='2.5' stroke-linejoin='round'/%3E%3C/svg%3E" />
 <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
@@ -19,7 +20,7 @@
     <label class="field">
       <span>Example</span>
       <select id="exampleSelect">
-        <option value="">— load a preset —</option>
+        <option value="">— load a preset… —</option>
       </select>
     </label>
     <label class="field">
@@ -76,6 +77,9 @@
         <marker id="arrow-react" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0,0 L10,5 L0,10 z" class="arrowhead-react" />
         </marker>
+        <marker id="arrow-probe" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" class="arrowhead-probe" />
+        </marker>
       </defs>
     </svg>
     <div class="canvas-overlay">
@@ -92,6 +96,7 @@
         <label class="scale-field">Defl ×
           <input type="range" id="deflScale" min="0.2" max="4" step="0.2" value="1" />
         </label>
+        <button id="fitBtn" class="btn btn-xs" title="Zoom to fit the truss (F)">Fit view</button>
       </div>
     </div>
     <div id="statusBar" class="status-bar"></div>
@@ -109,6 +114,18 @@
       <!-- INSIGHTS -->
       <div class="tab-pane active" data-pane="insights">
         <div id="summaryStrip" class="summary-strip"></div>
+        <div class="target-picker">
+          <label>Deflection of
+            <select id="vwNode"><option value="-1">most-displaced joint</option></select>
+          </label>
+          <label>direction
+            <select id="vwDir">
+              <option value="motion">along its movement</option>
+              <option value="vertical">vertical (down = +)</option>
+              <option value="horizontal">horizontal (right = +)</option>
+            </select>
+          </label>
+        </div>
         <div id="rankingBox" class="ranking-box"></div>
         <div id="insightCards" class="insight-cards"></div>
       </div>
@@ -168,8 +185,11 @@
       <li><b>Add supports</b> — pick <i>Support</i> and click a joint to cycle pin → roller → none. You need at least 3 reaction components for stability.</li>
       <li><b>Apply loads</b> — pick <i>Load</i>, click a joint, then type the load components in the Properties tab.</li>
       <li><b>Read the story</b> — the <i>Insights</i> tab explains which member attracts the most force, which one controls the deflection, and how to fix it efficiently (Baker's virtual-work view).</li>
+      <li><b>Pick the joint you care about</b> — in <i>Insights</i>, choose which joint's deflection (and which direction) to break down. The purple “1” arrow on the drawing is the virtual unit load.</li>
       <li><b>Experiment</b> — select a member, give it an AISC shape or change its area, and re-solve. In a <i>determinate</i> truss forces stay put but deflections change; in an <i>indeterminate</i> one the forces redistribute too.</li>
+      <li><b>Move around</b> — scroll to zoom, drag empty space (Select tool) to pan, <i>Fit view</i> to re-centre. Drag a joint onto another to join them.</li>
     </ol>
+    <p class="help-keys"><b>Keys:</b> S select · N joint · M member · R support · L load · D delete · F fit · Esc cancel · Ctrl+Z / Ctrl+Y undo/redo · Del delete selection</p>
     <h3>The method under the hood</h3>
     <p>Member forces and joint displacements come from the <b>direct stiffness
     method</b>. The deflection of the most-displaced joint is then decomposed
@@ -177,6 +197,7 @@
     <span class="formula">&delta; = &Sigma; N&middot;n&middot;L/(EA)</span>,
     so every member's individual contribution is visible. The two methods agree —
     that agreement is the whole point.</p>
+    <p class="help-keys">Truss Lab v1.1 · runs entirely in your browser, works offline.</p>
   </div>
 </div>
 

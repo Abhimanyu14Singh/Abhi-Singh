@@ -85,6 +85,19 @@
     }
     cards.push({ type: 'info', title: 'Is it stable & determinate?', html: detHtml });
 
+    /* ---- No load yet: nothing else to explain --------------------------- */
+    const hasLoad = (model.loads || []).some((l) => Math.hypot(l.fx, l.fy) > 0);
+    if (!hasLoad) {
+      cards.push({
+        type: 'tip',
+        title: 'Add a load to see the story',
+        html: 'The truss is stable but nothing is pushing on it yet, so every ' +
+          'member force and deflection is zero. Pick the <b>Load</b> tool, click ' +
+          'a joint, and type a load in the Properties tab.',
+      });
+      return { cards, ranking: [], contributions: null, sortedByForce: [] };
+    }
+
     /* ---- 2. Maximum-force members --------------------------------------- */
     const sortedByForce = result.members
       .map((m) => ({ ...m, abs: Math.abs(m.N) }))
@@ -126,8 +139,24 @@
     /* ---- 4. Virtual work: which member controls the deflection ---------- */
     let ranking = [];
     let contributions = null;
-    if (result.virtualWork && result.virtualWork.ranked.length) {
-      const vw = result.virtualWork;
+    const vwAll = result.virtualWork;
+    const maxDisp = Math.max(0, ...result.displacements.map((d) => d.mag));
+    const vwTiny = vwAll && Math.abs(vwAll.total) <= 1e-9 * Math.max(maxDisp, 1e-30);
+    if (vwAll && (vwAll.restrained || vwTiny)) {
+      cards.push({
+        type: 'info',
+        title: `Joint ${vwAll.targetNode + 1} doesn't move that way`,
+        html: vwAll.restrained
+          ? `A support holds Joint ${vwAll.targetNode + 1} in the chosen direction, ` +
+            `so the virtual unit load goes straight into the support: every n is ` +
+            `zero and the deflection is zero. Pick a free joint or another direction ` +
+            `in the <b>Deflection of</b> picker.`
+          : `Under this loading Joint ${vwAll.targetNode + 1} has (practically) no ` +
+            `movement in the chosen direction, so there is nothing to break down. ` +
+            `Try another joint or direction.`,
+      });
+    } else if (vwAll && vwAll.ranked.length) {
+      const vw = vwAll;
       const targetNode = vw.targetNode;
       const total = vw.total;
       ranking = vw.ranked;
@@ -135,6 +164,14 @@
 
       const ctrl = vw.ranked[0];
       const share = pct(Math.abs(ctrl.contribution), Math.abs(total));
+      const dirText = vw.mode === 'vertical' ? 'vertically (down = +)'
+        : vw.mode === 'horizontal' ? 'horizontally (right = +)'
+          : 'along the direction it actually moves';
+      const who = vw.auto
+        ? `the most-displaced joint, <b>Joint ${targetNode + 1}</b>,`
+        : `<b>Joint ${targetNode + 1}</b>`;
+      const negatives = vw.contributions.filter(
+        (c) => c.contribution * total < 0 && Math.abs(c.contribution) > 1e-6 * Math.abs(total));
 
       let vwHtml =
         `Deflection is found with the <b>unit-load (virtual work) method</b>. ` +
@@ -145,10 +182,17 @@
         `<div class="formula">&delta;<sub>k</sub> = N<sub>k</sub> &middot; n<sub>k</sub> &middot; L<sub>k</sub> / (E<sub>k</sub> A<sub>k</sub>)</div>` +
         `and the total joint deflection is the sum of these contributions, ` +
         `<b>&delta; = &Sigma; N n L /(EA)</b>.<br><br>` +
-        `Here the most-displaced joint is <b>Joint ${targetNode + 1}</b>, which ` +
-        `moves <b>${U.defl(Math.abs(total))}</b>. The single member contributing ` +
-        `most to that movement is <b>${memberName(ctrl.index)}</b>, responsible ` +
-        `for <b>${share.toFixed(0)}%</b> of it.<br><br>` +
+        `Measuring ${who} ${dirText}, the unit load (purple arrow on the ` +
+        `drawing) gives <b>&delta; = ${U.defl(total)}</b>. The single member ` +
+        `contributing most to that movement is <b>${memberName(ctrl.index)}</b>, ` +
+        `responsible for <b>${share.toFixed(0)}%</b> of it.<br><br>` +
+        (negatives.length
+          ? `Note: ${negatives.map((c) => memberName(c.index)).join(', ')} ` +
+            `${negatives.length > 1 ? 'have' : 'has'} a <b>negative</b> contribution ` +
+            `(N and n have opposite signs) — ${negatives.length > 1 ? 'they push' : 'it pushes'} ` +
+            `the joint the other way and partly cancel the rest, which is why the ` +
+            `percentages can add up to more than 100%.<br><br>`
+          : '') +
         `A member dominates the deflection when it has <b>large real force N</b>, ` +
         `<b>large virtual force n</b> (it lies on the direct path between the load ` +
         `and the joint of interest), is <b>long</b>, and/or is <b>slender</b> ` +
@@ -158,7 +202,11 @@
       /* ---- 5. Baker efficiency / how to fix it most efficiently -------- */
       // Each member's |N*n| is its virtual-strain-energy intensity; ranking by
       // contribution tells you where adding material buys the most stiffness.
-      const second = vw.ranked[1];
+      // Stiffening only helps for members pushing the joint the SAME way as the
+      // total; stiffening a negative contributor would increase deflection.
+      const helpful = vw.ranked.filter((c) => c.contribution * total > 0);
+      const best = helpful[0] || ctrl;
+      const second = helpful[1];
       let bakerHtml =
         `<b>How would you most efficiently stiffen this joint?</b> Not by adding ` +
         `steel everywhere — by adding it where it does the most work. Each ` +
@@ -173,7 +221,7 @@
         `<span class="cite">(W.F. Baker, “Energy-Based Design of Lateral ` +
         `Systems,” Structural Engineering International, 1992; the uniform-energy ` +
         `optimality idea itself traces back to Michell.)</span><br><br>` +
-        `Right now <b>${memberName(ctrl.index)}</b> is the best target` +
+        `Right now <b>${memberName(best.index)}</b> is the best target` +
         (second ? `, followed by <b>${memberName(second.index)}</b>` : '') +
         `. Because deflection &prop; 1/A for a member, doubling that member's ` +
         `area roughly halves <i>its</i> contribution — so increasing the area of ` +

@@ -27,6 +27,10 @@
       this.scale = 60; // pixels per metre
       this.ox = 80;
       this.oy = 0; // set in fit()/resize
+      // Display units + grid spacing (base metres) are supplied by the app so
+      // labels and grid always match the active unit system and snapping.
+      this.units = typeof global.Units === 'function' ? new global.Units('SI') : null;
+      this.gridStep = 1;
 
       // Display toggles (driven by the UI).
       this.opts = {
@@ -38,6 +42,8 @@
         showLabels: true,
         highlightMember: null, // member index to spotlight
         highlightKind: null, // 'maxForce' | 'controls' | null
+        pendingNode: null, // first joint picked while drawing a member
+        probe: null, // { node, dir:{x,y} } virtual unit-load marker
       };
 
       // Layer groups (draw order matters).
@@ -64,6 +70,23 @@
       return { w: r.width, h: r.height };
     }
 
+    // Zoom about a screen point (keeps the world point under the cursor fixed).
+    zoomAt(px, py, factor) {
+      const [wx, wy] = this.toWorld(px, py);
+      this.scale = Math.min(800, Math.max(4, this.scale * factor));
+      this.ox = px - this.scale * wx;
+      this.oy = py + this.scale * wy;
+    }
+
+    panBy(dpx, dpy) { this.ox += dpx; this.oy += dpy; }
+
+    // Force value in display units, compact (e.g. "+12.5").
+    _forceNum(N, digits) {
+      const v = this.units ? this.units.forceFromBase(N) : N;
+      return +v.toFixed(digits);
+    }
+    _forceUnit() { return this.units ? this.units.forceUnit : 'kN'; }
+
     // Frame the model nicely in the viewport (with margin). Falls back to a
     // default view when the model is empty.
     fit(model) {
@@ -79,16 +102,28 @@
       }
       const spanX = Math.max(maxX - minX, 1);
       const spanY = Math.max(maxY - minY, 1);
-      const margin = 90;
-      const sx = (w - 2 * margin) / spanX;
-      const sy = (h - 2 * margin) / spanY;
+      // Leave room for the overlays (legend/toggles on top, status bar at the
+      // bottom) plus arrows, labels and the probe around the truss.
+      const mx = 90, mTop = 120, mBot = 110;
+      const sx = (w - 2 * mx) / spanX;
+      const sy = (h - mTop - mBot) / spanY;
       this.scale = Math.max(20, Math.min(sx, sy, 120));
-      this.ox = margin - minX * this.scale;
-      this.oy = h - margin + minY * this.scale;
+      // Centre the truss in the usable area.
+      const cx = w / 2, cy = mTop + (h - mTop - mBot) / 2;
+      this.ox = cx - this.scale * (minX + maxX) / 2;
+      this.oy = cy + this.scale * (minY + maxY) / 2;
     }
 
     /* ----- main render ----------------------------------------------------- */
     render(model, result) {
+      // Results from before an edit (clear/undo/delete) can be rendered for a
+      // moment before the re-solve. Never draw results that don't belong to
+      // this model — mismatched indices would crash the drawing.
+      if (result && result.ok &&
+          (result.members.length !== model.members.length ||
+           result.displacements.length !== model.nodes.length)) {
+        result = null;
+      }
       this._clear();
       if (this.opts.showGrid) this._drawGrid();
       this._drawMembers(model, result);
@@ -99,6 +134,35 @@
       this._drawSupports(model);
       this._drawLoads(model);
       if (result && result.ok) this._drawReactions(model, result);
+      if (result && result.ok) this._drawProbe(model);
+    }
+
+    // The virtual unit load: a dashed purple "1" arrow + ring at the joint
+    // whose deflection is being decomposed. Makes the second (virtual)
+    // system of the unit-load method visible on the drawing.
+    _drawProbe(model) {
+      const p = this.opts.probe;
+      if (!p || !model.nodes[p.node]) return;
+      const n = model.nodes[p.node];
+      const [x, y] = this.toScreen(n.x, n.y);
+      // Drawn *leaving* the joint (pulling it in the probe direction), so it
+      // sits on the opposite side from a real load pushing the same way.
+      const len = 46, r0 = 14;
+      const sx = x + p.dir.x * r0, sy = y - p.dir.y * r0;
+      const hx = x + p.dir.x * (r0 + len), hy = y - p.dir.y * (r0 + len);
+      const g = el('g', { class: 'probe' });
+      g.appendChild(el('circle', { cx: x, cy: y, r: 13, class: 'probe-ring' }));
+      g.appendChild(el('line', {
+        x1: sx, y1: sy, x2: hx, y2: hy, 'marker-end': 'url(#arrow-probe)',
+      }));
+      const lx = x + p.dir.x * (r0 + len + 14), ly = y - p.dir.y * (r0 + len + 14) + 4;
+      const lab = el('text', { x: lx, y: ly, class: 'probe-label', 'text-anchor': 'middle' });
+      lab.textContent = '1 (virtual)';
+      g.appendChild(lab);
+      const t = el('title');
+      t.textContent = 'Virtual unit load — the "probe" used to measure deflection here';
+      g.appendChild(t);
+      this.gOverlay.appendChild(g);
     }
 
     _clear() {
@@ -109,27 +173,25 @@
 
     _drawGrid() {
       const { w, h } = this.size();
-      const step = this.scale; // 1 m grid
+      // One line per snap step (1 m or 1 ft); thin out when zoomed far out.
+      let g = this.gridStep || 1;
+      while (g * this.scale < 10) g *= 5;
       const [wx0, wy0] = this.toWorld(0, h);
       const [wx1, wy1] = this.toWorld(w, 0);
-      const x0 = Math.floor(wx0), x1 = Math.ceil(wx1);
-      const y0 = Math.floor(wy0), y1 = Math.ceil(wy1);
-      for (let gx = x0; gx <= x1; gx++) {
-        const [sx] = this.toScreen(gx, 0);
+      for (let k = Math.floor(wx0 / g); k <= Math.ceil(wx1 / g); k++) {
+        const [sx] = this.toScreen(k * g, 0);
         this.gGrid.appendChild(el('line', {
           x1: sx, y1: 0, x2: sx, y2: h,
-          class: gx === 0 ? 'grid-axis' : 'grid-line',
+          class: k === 0 ? 'grid-axis' : 'grid-line',
         }));
       }
-      for (let gy = y0; gy <= y1; gy++) {
-        const [, sy] = this.toScreen(0, gy);
+      for (let k = Math.floor(wy0 / g); k <= Math.ceil(wy1 / g); k++) {
+        const [, sy] = this.toScreen(0, k * g);
         this.gGrid.appendChild(el('line', {
           x1: 0, y1: sy, x2: w, y2: sy,
-          class: gy === 0 ? 'grid-axis' : 'grid-line',
+          class: k === 0 ? 'grid-axis' : 'grid-line',
         }));
       }
-      // void step usage lint
-      void step;
     }
 
     _drawMembers(model, result) {
@@ -150,7 +212,7 @@
           const r = result.members[k];
           cls += ' ' + r.state; // tension | compression | zero
           if (maxAbsN > 0) width = 2 + 7 * (Math.abs(r.N) / maxAbsN);
-          title += `  N = ${r.N.toFixed(2)} kN  (${r.state})`;
+          title += `  N = ${this._forceNum(r.N, 2)} ${this._forceUnit()}  (${r.state})`;
         }
         if (this.opts.highlightMember === k) cls += ' spotlight';
 
@@ -166,7 +228,9 @@
           const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
           let label = `${k + 1}`;
           if (result && result.ok && this.opts.showForces) {
-            label = `${result.members[k].N >= 0 ? '+' : ''}${result.members[k].N.toFixed(1)}`;
+            const r = result.members[k];
+            label = r.state === 'zero' ? '0'
+              : `${r.N > 0 ? '+' : ''}${this._forceNum(r.N, 1)}`;
           }
           const txt = el('text', {
             x: mx, y: my - 6, class: 'member-label', 'text-anchor': 'middle',
@@ -210,9 +274,13 @@
     _drawNodes(model, result) {
       model.nodes.forEach((n, k) => {
         const [x, y] = this.toScreen(n.x, n.y);
-        const c = el('circle', { cx: x, cy: y, r: 6, class: 'node', 'data-node': k });
+        const cls = 'node' + (this.opts.pendingNode === k ? ' pending' : '');
+        const c = el('circle', { cx: x, cy: y, r: 6, class: cls, 'data-node': k });
         const t = el('title');
-        t.textContent = `Joint ${k + 1}  (${n.x.toFixed(2)}, ${n.y.toFixed(2)}) m`;
+        const U = this.units;
+        t.textContent = U
+          ? `Joint ${k + 1}  (${+U.lenFromBase(n.x).toFixed(2)}, ${+U.lenFromBase(n.y).toFixed(2)}) ${U.lenUnit}`
+          : `Joint ${k + 1}  (${n.x.toFixed(2)}, ${n.y.toFixed(2)}) m`;
         c.appendChild(t);
         this.gNodes.appendChild(c);
       });
@@ -269,7 +337,7 @@
         const g = el('g', { class: 'load' });
         g.appendChild(el('line', { x1: tailX, y1: tailY, x2: x, y2: y, 'marker-end': 'url(#arrow)' }));
         const lab = el('text', { x: tailX, y: tailY - 4, class: 'load-label', 'text-anchor': 'middle' });
-        lab.textContent = `${mag.toFixed(0)} kN`;
+        lab.textContent = `${this._forceNum(mag, 2)} ${this._forceUnit()}`;
         g.appendChild(lab);
         this.gLoads.appendChild(g);
       });
