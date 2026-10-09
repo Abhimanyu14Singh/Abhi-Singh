@@ -1000,7 +1000,12 @@ def compute_section_cut(model: BuildingModel, cut: SectionCut,
     ai = _SECTION_AXIS_INDEX[cut.axis]
     c = float(cut.coord)
     contribs: List[Tuple[Vec3, Vec3, Vec3]] = []
-    for m in model.members:
+    cut_members, cut_shells = model.members, model.shells
+    if getattr(cut, "group", None) is not None:   # cut defined by group
+        from skyframe.core.groups import resolve_group
+        _grp = resolve_group(model, cut.group)
+        cut_members, cut_shells = _grp["members"], _grp["shells"]
+    for m in cut_members:
         ci, cj = m.pi[ai], m.pj[ai]
         span = abs(cj - ci)
         if span <= _CUT_TOL:                     # member lies in the plane
@@ -1032,7 +1037,7 @@ def compute_section_cut(model: BuildingModel, cut: SectionCut,
         contribs.append((r_cross,
                          tuple(sign * v for v in F),      # type: ignore
                          tuple(sign * v for v in Mv)))    # type: ignore
-    n_shells = sum(1 for r in model.shells if _shell_crosses(r, cut))
+    n_shells = sum(1 for r in cut_shells if _shell_crosses(r, cut))
     if contribs:
         centroid = tuple(sum(rc[k] for rc, _, _ in contribs) / len(contribs)
                          for k in range(3))
@@ -1411,6 +1416,9 @@ class StagedResults:
     # vertical displacement at the story's column tops — negative = down;
     # "delta" = time_dependent - elastic = the creep + shrinkage share).
     shortening: Optional[Dict[str, Dict[str, float]]] = None
+    # user-defined stages only (skyframe.engine.staged_user): one entry
+    # per stage with the cumulative state at the END of that stage
+    stages: Optional[List[dict]] = None
 
     def to_dict(self) -> dict:
         d = self.case.to_dict()
@@ -1422,6 +1430,8 @@ class StagedResults:
         if self.shortening is not None:
             d["shortening"] = {s: {k: float(v) for k, v in e.items()}
                                for s, e in self.shortening.items()}
+        if self.stages is not None:
+            d["stages"] = [dict(st) for st in self.stages]
         return d
 
 
@@ -6631,6 +6641,11 @@ class OpenSeesEngine:
         if name not in model.staged_cases:
             raise ValueError(f"Unknown staged case {name!r}")
         sc = model.staged_cases[name]
+        if isinstance(sc.stages, list):          # user-defined stages
+            from skyframe.engine.staged_user import run_user_staged
+            result = run_user_staged(self, name)
+            self._staged_cache[name] = result
+            return result
         if not model.stories:
             raise ValueError(f"Staged case {name!r}: the model has no "
                              "stories to stage")
