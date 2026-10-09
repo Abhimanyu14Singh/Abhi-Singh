@@ -42,6 +42,10 @@ import { comboOptionLabel as g1ComboOptionLabel } from "./combo_refs.js";
 import { initPolyDraw as g2InitPolyDraw } from "./polydraw.js";
 import { initInsertion as g2InitInsertion } from "./insertdlg.js";
 import { mockValidatePoly as g2MockValidatePoly } from "./mock_poly.js";
+// G3 — Nonlinear Static cases + results, named diaphragms + additional mass (aliased imports)
+import { installNls as g3InstallNls, nlsCaseOptions as g3NlsCaseOptions, nlsCaseData as g3NlsCaseData, renderNlsCard as g3RenderNlsCard } from "./nlsdlg.js";
+import { installDiaphragms as g3InstallDiaphragms, renderDiaphragmCard as g3RenderDiaphragmCard } from "./diaphdlg.js";
+import { mockNlsValidate as g3MockNlsValidate } from "./mock_nls.js";
 
 /* ------------------------------------------------ state */
 const store = {
@@ -223,7 +227,7 @@ async function analyze() {
 async function postModel(payload) {
   if (store.mock) {
     await new Promise(r => setTimeout(r, 300));
-    const bad = mockValidateAssign(payload) || g2MockValidatePoly(payload);   // mirror backend ValueErrors (assign / G2 polygon + insertion fields)
+    const bad = mockValidateAssign(payload) || g2MockValidatePoly(payload) || g3MockNlsValidate(payload);   // + G3 NLS / diaphragms   // mirror backend ValueErrors (assign / G2 polygon + insertion fields)
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -832,7 +836,8 @@ function memberTooltip(seg) {
 const isRsCase = name => typeof name === "string" && name.startsWith("rs:");
 const isStagedCase = name => typeof name === "string" && name.startsWith("staged:");
 const caseLabel = name => isRsCase(name) ? `RS: ${name.slice(3)}`
-  : isStagedCase(name) ? `Staged: ${name.slice(7)}` : (name || "");
+  : isStagedCase(name) ? `Staged: ${name.slice(7)}`
+  : (typeof name === "string" && name.startsWith("nl:")) ? `NL: ${name.slice(3)}` : (name || "");   // G3 nonlinear static
 
 function caseNames() {
   if (!store.results) return [];
@@ -841,6 +846,7 @@ function caseNames() {
     ...Object.keys(store.results.combos || {}),
     ...Object.keys(store.results.rs_cases || {}).map(n => `rs:${n}`),
     ...Object.keys(store.results.staged || {}).map(n => `staged:${n}`),
+    ...g3NlsCaseOptions(store.results).map(e => e[0]),   // G3 — "nl:<name>" nonlinear static final states
   ];
 }
 
@@ -851,6 +857,7 @@ function caseData() {
     return (r.rs_cases && r.rs_cases[store.caseName.slice(3)]) || null;
   if (isStagedCase(store.caseName))
     return (r.staged && r.staged[store.caseName.slice(7)]) || null;
+  if (store.caseName.startsWith("nl:")) return g3NlsCaseData(r, store.caseName);   // G3 nonlinear static (static-case shape)
   return (r.cases && r.cases[store.caseName]) || (r.combos && r.combos[store.caseName]) || null;
 }
 
@@ -905,6 +912,7 @@ function rebuildCaseSelect() {
     Object.keys(r.rs_cases || {}).map(n => [`rs:${n}`, `RS: ${n}`]));
   mkGroup("Staged construction",
     Object.keys(r.staged || {}).map(n => [`staged:${n}`, `Staged: ${n}`]));
+  mkGroup("Nonlinear static — final state", g3NlsCaseOptions(r));   // G3 — "NL: <name>"
   // v1.13 — cases set to "Do not Run" / combos skipped: listed, not selectable
   const idle = notRunEntries();
   if (idle.length) {
@@ -3954,6 +3962,7 @@ function renderResultsTabs() {
   renderCutsTab();
   renderPiersTab();
   renderSvcTab();
+  if (window.__sky) { try { g3RenderNlsCard(window.__sky); g3RenderDiaphragmCard(window.__sky); } catch (e) { console.warn("G3 cards", e); } }   // G3 NLS + diaphragm cards
 }
 
 /* ---- story tab */
@@ -8444,6 +8453,8 @@ async function boot() {
   // G2 — polygon draw/edit + insertion-point / end-offset dialogs (additive __sky)
   try { g2InitPolyDraw(window.__sky); } catch (err) { console.error("polygon draw init failed", err); }
   try { g2InitInsertion(window.__sky); } catch (err) { console.error("insertion init failed", err); }
+  // G3 — Nonlinear Static cases / Modal stiffness / NLS results; diaphragms + additional mass (additive __sky)
+  try { g3InstallNls(window.__sky); g3InstallDiaphragms(window.__sky); } catch (err) { console.error("G3 nls / diaphragm init failed", err); }
 }
 
 boot();

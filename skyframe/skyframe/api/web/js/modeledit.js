@@ -344,6 +344,7 @@ export function allAnalysisCases(m) {
   push(m.rs_cases, "Response Spectrum", "rs");
   push(m.th_cases, "Time History", "th");
   push(m.pushover_cases, "Nonlinear Static (Pushover)", "pushover");
+  push(m.nonlinear_static_cases, "Nonlinear Static", "nonlinear_static");   // G3 (js/nlsdlg.js)
   push(m.buckling_cases, "Buckling", "buckling");
   push(m.staged_cases, "Staged Construction", "staged");
   push(m.steady_state_cases, "Steady State", "steady_state");       // frequency domain
@@ -1342,7 +1343,8 @@ export function patternRefs(model, name) {
     .filter(c => (c.loads || []).some(l => l.pattern === name)).map(c => c.name)),
   ...Object.values(model.pushover_cases || {})
     .filter(pc => pc.load_distribution === "pattern" && pc.pattern === name).map(pc => pc.name),
-  ...CXR.patternRefsExtra(model, name)];   // P-Delta options + TH pattern components
+  ...CXR.patternRefsExtra(model, name),   // P-Delta options + TH pattern components
+  ...Object.entries(model.nonlinear_static_cases || {}).filter(([, c]) => (c.loads || []).some(l => l.pattern === name)).map(([n]) => n)];   // G3
 }
 
 export function addPattern(model, base = "PAT") {
@@ -1369,6 +1371,7 @@ export function renamePattern(model, oldName, newName) {
   for (const pc of Object.values(model.pushover_cases || {}))
     if (pc.pattern === oldName) pc.pattern = newName;
   CXR.patternRefRename(model, oldName, newName);   // P-Delta options + TH components
+  for (const c of Object.values(model.nonlinear_static_cases || {})) for (const l of c.loads || []) if (l.pattern === oldName) l.pattern = newName;   // G3
   return true;
 }
 

@@ -131,6 +131,8 @@ export function initEtabs(sky) {
       { label: "Response-Spectrum Cases…", act: "def-rs", fn: () => gotoLoads("ls-rs") },
       { label: "Time-History Cases…", act: "def-th", fn: () => gotoLoads("ls-th") },
       { label: "Pushover Cases…", act: "def-pushover", fn: () => gotoLoads("ls-pushover") },
+      { label: "Nonlinear Static Case…", act: "def-nls", hint: "new · chaining", fn: () => sky.openNlsCase && sky.openNlsCase(null) },   // G3
+      { label: "Modal Case…", act: "def-modal", hint: "stiffness", fn: () => sky.openModalCase && sky.openModalCase() },   // G3
       { label: "Buckling Cases…", act: "def-buckling", fn: () => gotoLoads("ls-buckling") },
       { label: "Staged Cases…", act: "def-staged", fn: () => gotoLoads("ls-staged") },
       { label: "Steady-State Cases…", act: "def-ss", fn: () => sky.openFreqCase("steady_state") },
@@ -141,6 +143,7 @@ export function initEtabs(sky) {
       { label: "Section Cuts…", act: "def-cuts", fn: () => gotoLoads("ls-cuts") },
       { label: "Mass Source…", act: "def-mass", fn: () => sky.openMassSource() },
       { label: "P-Delta Options…", act: "def-pdelta", hint: "model-wide", fn: () => sky.openPDeltaOptions && sky.openPDeltaOptions() },
+      { label: "Diaphragms…", act: "def-diaphragms", hint: "named · rigid / semi-rigid", fn: () => sky.openDiaphragms && sky.openDiaphragms() },   // G3
       { sep: true },
       { label: "Code Tools (ASCE 7 · NBCC · EC)…", act: "def-codetools", fn: () => gotoLoads("ls-codetools") },
     ]],
@@ -193,6 +196,13 @@ export function initEtabs(sky) {
       { label: "Joint Loads · Ground Displacement…", act: "asn-jground", fn: () => sky.openJointLoads && sky.openJointLoads("ground") },
       { label: "Frame Loads · Concentrated…", act: "asn-fconc", hint: "force / moment", fn: () => sky.openFrameConcentrated && sky.openFrameConcentrated("moment") },
       { label: "Shell Loads · Uniform…", act: "asn-suniform", hint: "direction · joint pattern", fn: () => sky.openShellUniform && sky.openShellUniform() },
+      // G3 — named diaphragms + additional mass (js/diaphdlg.js)
+      { sep: true },
+      { label: "Joint · Diaphragm…", act: "asn-jdiaph", fn: () => sky.openAssignJointDiaphragm && sky.openAssignJointDiaphragm() },
+      { label: "Shell · Diaphragm…", act: "asn-sdiaph", fn: () => sky.openAssignShellDiaphragm && sky.openAssignShellDiaphragm() },
+      { label: "Joint · Additional Mass…", act: "asn-jmass", fn: () => sky.openJointAddMass && sky.openJointAddMass() },
+      { label: "Frame · Additional Mass…", act: "asn-fmass", fn: () => sky.openFrameAddMass && sky.openFrameAddMass() },
+      { label: "Shell · Additional Mass…", act: "asn-smass", fn: () => sky.openShellAddMass && sky.openShellAddMass() },
     ]],
     ["Analyze", [
       { label: "Set Load Cases to Run…", act: "an-cases-run", fn: () => sky.openCasesToRun() },
@@ -227,6 +237,7 @@ export function initEtabs(sky) {
       { sep: true },
       { label: "Time History", act: "dis-th", fn: () => showResult("th") },
       { label: "Pushover + Performance", act: "dis-pushover", fn: () => showResult("pushover") },
+      { label: "Nonlinear Static Results…", act: "dis-nls", hint: "history · hinges", fn: () => sky.openNlsResults && sky.openNlsResults() },   // G3
       { label: "Frequency Domain (Steady State · PSD)", act: "dis-freq", fn: () => { showResult("freq"); sky.freq && sky.freq.renderFreq(); } },
       { label: "Buckling", act: "dis-buckling", fn: () => showResult("buckling") },
       { label: "Load Takedown", act: "dis-takedown", fn: () => showResult("takedown") },
@@ -438,6 +449,7 @@ export function initEtabs(sky) {
       ]);
       leaf.addEventListener("click", () => {
         if ((c.kind === "steady_state" || c.kind === "psd") && sky.openFreqCase) return void sky.openFreqCase(c.kind, c.name);
+        if (c.kind === "nonlinear_static" && sky.openNlsCase) return void sky.openNlsCase(c.name);   // G3
         const a = KIND_ANCHOR[c.kind];
         if (a) gotoLoads(a); else showResult("modal");
       });

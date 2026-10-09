@@ -10,6 +10,7 @@ import { mockFrequencyResults, augmentMockResults as augmentCaseResults } from "
 // Check Model + stability diagnostics mocks (POST /api/check, /api/check/stability)
 export { mockCheckModel, mockCheckStability } from "./mock_check.js";
 import { mockExtendResults } from "./mock_combo.js";   // extended combos / P-Delta / TH components
+import { mockNlsExtendResults as g3MockNlsExtend } from "./mock_nls.js";   // G3 nonlinear static + named diaphragms
 
 import { augmentMockModel, augmentMockResults as augmentTableResults } from "./mock_tables.js";   // tables / frequency / energy mock blocks
 // G2 polygon shells — mock auto mesh (quads + triangles) for non-quad regions
@@ -3270,6 +3271,7 @@ export function mockResults(model) {
     if (r[key] && !Object.keys(r[key]).length) delete r[key];
   r.case_status = case_status;
   r.combo_status = combo_status;
+  g3MockNlsExtend(model, r);                      // G3 — results.nonlinear_static / diaphragms + chained case_status
 
   // active DOF — zero the inactive translations in the mock displacements
   const dofs = new Set(normalizeActiveDof(model.active_dof));

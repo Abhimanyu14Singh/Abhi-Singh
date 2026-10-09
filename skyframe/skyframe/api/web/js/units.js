@@ -37,7 +37,7 @@
    Quantity kinds (QUANTITY_KINDS): length, dim, small, disp, area, inertia,
    secmod, force, moment, line_force, line_moment, pressure, stress, modulus,
    unit_weight, subgrade, line_spring, stiffness, rot_stiffness, damping_coeff,
-   mass, mass_density, mass_moi, accel, velocity, temp, temp_delta,
+   mass, mass_density, mass_moi, mass_per_length, mass_per_area, accel, velocity, temp, temp_delta,
    thermal_coeff, rotation, frequency, period, strain, none. Unitless kinds
    (rotation, frequency, period, strain, none) are never scaled. */
 
@@ -90,7 +90,9 @@ const KINDS = {
   mass:          s => [s.F / s.L, s.mass],
   mass_density:  s => [s.F / s.L ** 4, s.massDen],
   mass_moi:      s => [s.F * s.L, s.massMoi],
-  accel:         s => [s.L, `${s.lu}/s²`],
+  mass_per_length: s => [s.F / s.L ** 2, `${s.mass}/${s.lu}`],    // additional frame mass (kN-m: t/m)
+  mass_per_area:   s => [s.F / s.L ** 3, `${s.mass}/${s.lu}²`],   // additional shell mass (kN-m: t/m²)
+  accel:        s => [s.L, `${s.lu}/s²`],
   velocity:      s => [s.L, `${s.lu}/s`],
   temp:          s => [s.temp === "F" ? 1 / 1.8 : 1, s.temp === "F" ? "°F" : "°C"],
   temp_delta:    s => [s.temp === "F" ? 1 / 1.8 : 1, s.temp === "F" ? "°F" : "°C"],
