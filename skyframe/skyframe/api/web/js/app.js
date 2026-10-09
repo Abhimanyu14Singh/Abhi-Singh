@@ -27,6 +27,7 @@ import { initEtabs } from "./etabs.js";   // ETABS-style chrome (menu bar, palet
 import U from "./units.js";
 import * as DLG from "./analysisdlg.js";
 import { buildStressStrainSection } from "./sscurve.js";
+import { initTables } from "./tables.js";   // Show Tables + frequency/energy/pushover/load-participation views
 
 /* ------------------------------------------------ state */
 const store = {
@@ -8393,6 +8394,8 @@ async function boot() {
   // Delegates to the store/functions exposed above; never re-implements logic.
   try { initEtabs(window.__sky); }
   catch (err) { console.error("etabs chrome init failed", err); }
+  try { initTables(window.__sky); }                 // Display > Show Tables… + result displays
+  catch (err) { console.error("tables init failed", err); }
 }
 
 boot();

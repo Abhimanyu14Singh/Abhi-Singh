@@ -6,6 +6,7 @@ import { designerProps, blankMaterial,                  // v0.21 — shoelace pr
   ssFamily, ssStrengths, ssDefaultParams, normalizeSsPoints } from "./modeledit.js";
 import { allUnitsTables } from "./units.js";              // v1.13 — GET /api/units mirror
 
+import { augmentMockModel, augmentMockResults } from "./mock_tables.js";   // tables / frequency / energy mock blocks
 const G = 9.80665;
 
 function mulberry32(seed) {
@@ -271,7 +272,7 @@ export function mockModel(p = {}) {
   };
   const dprops = designerProps(dcol);
 
-  return {
+  return augmentMockModel({                 // + steady-state / PSD / energy / pushover-distribution demo data
     name: o.name,
     materials: { CONC: Object.assign(blankMaterial("CONC"), { E: o.E }) },
     sections: {
@@ -401,7 +402,7 @@ export function mockModel(p = {}) {
     },
     num_modes: Math.min(3 * o.stories, 12),
     _mock_params: o,
-  };
+  });
 }
 
 /** Mock results.to_dict() for a mock (or real-shaped) model dict — every
@@ -3274,6 +3275,7 @@ export function mockResults(model) {
       for (const cd of Object.values(grp || {})) scrub(cd);
   }
   r.active_dof = [...dofs];
+  augmentMockResults(model, r);                   // steady_state / psd / TH energy / pushover control
   return r;
 }
 
