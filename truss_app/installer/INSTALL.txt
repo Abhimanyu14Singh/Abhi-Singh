@@ -1,0 +1,73 @@
+TRUSS LAB - HOW TO INSTALL
+==========================
+
+Truss Lab is one single file: TrussLab.html
+It runs in your web browser (Chrome, Edge, Safari, Firefox).
+It needs NO internet, NO Python, and NO admin password.
+
+
+STEP 0 - Unzip first  (important!)
+----------------------------------
+  * Windows: right-click the zip file -> "Extract All..." -> "Extract".
+  * Mac: double-click the zip file. A folder appears next to it.
+  Do the next steps INSIDE that unzipped folder.
+
+
+EASIEST WAY - no installing at all
+----------------------------------
+  Double-click  TrussLab.html
+  It opens in your browser. That's it! You can copy this one file
+  anywhere (Desktop, USB stick, email it to a friend) and it still works.
+
+
+OR - install it with a shortcut
+-------------------------------
+WINDOWS
+  1. Double-click  "Install on Windows.bat"
+  2. If a blue box says "Windows protected your PC":
+       click "More info", then "Run anyway".
+       (This appears for any script downloaded from the internet.)
+  3. A black window shows what it did, then Truss Lab opens.
+     You now have a "Truss Lab" shortcut on your Desktop and in the Start menu.
+
+MAC
+  1. RIGHT-click (or Control-click)  "Install on Mac.command"  -> choose "Open".
+  2. If it warns "unidentified developer", click "Open" again.
+     (A normal double-click may refuse to run it the first time - that is
+      why we right-click.)
+     On newer Macs (macOS 15 or later) there may be no "Open" button. Then:
+     open System Settings -> Privacy & Security, scroll down, and click
+     "Open Anyway" next to the Truss Lab message. Or simply skip the
+     installer and use the EASIEST WAY above - it needs none of this.
+  3. Truss Lab opens. You now have "Truss Lab.html" on your Desktop.
+     The app itself lives in your home folder: Applications > Truss Lab.
+
+LINUX
+  1. Open a terminal in this folder and type:   sh install-linux.sh
+  2. "Truss Lab" appears in your applications menu (and on the Desktop).
+
+
+FIRST TIME USING IT
+-------------------
+  * It opens with a sample bridge (a Pratt truss) already solved.
+  * Click the  ?  button (top right) for a quick how-to. Press Esc or the X
+    to close it.
+  * Tools on the left: Joint -> Member -> Support -> Load.
+  * The "Insights" tab explains which member carries the most force and which
+    member controls the deflection - and why.
+
+
+TO UNINSTALL
+------------
+  Windows: delete the folder  %LOCALAPPDATA%\TrussLab
+           (paste that into the File Explorer address bar), then delete the
+           "Truss Lab" shortcuts from the Desktop and Start menu.
+  Mac:     delete  Applications > Truss Lab  in your home folder, and the
+           "Truss Lab.html" shortcut on the Desktop.
+  Linux:   rm -r ~/.local/share/trusslab ~/.local/share/applications/trusslab.desktop
+
+
+YOUR WORK
+---------
+  Use the Save button to download your truss as a .json file, and Load to open
+  it again later. (The app does not keep drawings when you close the tab.)
