@@ -5885,3 +5885,166 @@ end points and shell corners (not interior mesh nodes).
   old; aging changes results.
 * per_story byte-identical; groups / stage lists round-trip; validation and
   consistency helpers; combos with a user staged case; API endpoint.
+
+## Frame auto-mesh and output stations
+
+ETABS *Assign > Frame > Frame Auto Mesh Options* and *Assign > Frame >
+Output Stations* (`skyframe/core/framemesh.py`).  Every default reproduces
+the earlier results byte for byte.  When a field is unset it is left out
+of the JSON.
+
+### Model JSON
+
+```json
+"frame_auto_mesh": {"at_intermediate_joints": false, "at_intersections": false,
+                    "max_length": null, "min_segments": null},
+"members": [{"uid": "B1", "...": "...",
+             "auto_mesh": {"at_intermediate_joints": true,
+                           "at_intersections": true,
+                           "max_length": 1.0, "min_segments": 2},
+             "output_stations": {"max_spacing": 0.5}}]
+```
+
+* `frame_auto_mesh` is the model-wide default.  Absent or `null` turns
+  everything off.  A member's `auto_mesh` replaces it completely, and any
+  keys the member leaves out are off.  Unknown keys are rejected.
+  `max_length` must be finite and > 0.  `min_segments` must be an
+  integer >= 1.
+* `output_stations` is either `{"max_spacing": s}` (s > 0) or
+  `{"min_number": n}` (an integer n >= 2).  Exactly one key is allowed.
+  Absent or `null` gives the fixed 11 equally spaced stations.
+
+### Auto mesh: what gets divided
+
+The analysis member is divided, not the drawn object.
+
+* **Intermediate joints.** These are joints within 1e-3 m
+  (`AUTO_MESH_TOL`, the same as Check Model's default tolerance) of the
+  axis and strictly inside the span.  A joint is any of the following:
+  * a member end or link end
+  * a point support or spring support
+  * a shell corner
+
+  The joint point itself becomes a segment node, so the other object is
+  connected there.  A frame end landing on a span (a T-junction) is handled
+  here.
+* **Intersections.** Two non-parallel members cross when their axes come
+  within 1e-3 m and the closest points lie strictly inside both spans.
+  Both members are divided at the midpoint of the two closest points as
+  soon as **either** one has `at_intersections`, so the crossing is always
+  connected.
+* **`min_segments`** adds the equal-division points of the whole member.
+* **`max_length`** then divides each piece between consecutive cuts into
+  `ceil(len / max_length)` equal parts.
+* Each segment station is measured from the 1e-6-rounded node of the point
+  pool, so segment lengths match the FE geometry exactly.  Splitting
+  therefore leaves static results unchanged to round-off, because the
+  elements are exact.
+* **Axial-only members** (tension or compression) are never divided,
+  either as the meshed member or as an intersection partner.  A
+  `UserWarning` is raised, and the crossing stays unconnected.
+* **Conformity with shells.** Auto-mesh points join the point pool
+  **before** the shell meshers run:
+  * Polygon shells insert them into their element edges during the
+    conformity pass.
+  * On 4-corner structured shells, a point that is not already a mesh node
+    is a hanging node.  It is tied only when `edge_constraints` is on.
+
+  Shell-node cuts and Winkler cuts are merged as before.  The mesh exposes
+  `MeshedModel.auto_split`, the set of member uids divided by the auto
+  mesh.
+
+### Rigid end offsets and insertion points on split members
+
+On a member divided by the auto mesh, rigid end offsets are kept in all
+three cases: manual `rigid_i`/`rigid_j`, `end_offsets: "auto"`, and panel
+zones set to `"rigid"`.
+
+* The offsets are kept when the i offset fits inside the **first**
+  segment and the j offset fits inside the **last** segment.  The rigid
+  arms then sit on those two end segments only.
+* If an offset does not fit, the earlier behaviour applies:
+  * Auto and panel-zone offsets are dropped with a warning.
+  * Manual offsets raise `ValueError`.
+* Insertion points and joint offsets use the per-segment `offset_at`
+  interpolation, as before.
+* End forces match the unsplit member.  Interior stations are exact
+  statics of the offset model, in which span loads act on the clear span
+  only (the v0.9 convention).
+* Shell-split members without auto mesh keep their earlier behaviour.
+
+### Output stations
+
+* `station_xs(model, member, segs)` builds the station list from three
+  sources:
+  * the equal stations of the option (`ceil(L/s)` intervals, or `n - 1`
+    intervals for `min_number`)
+  * every analysis segment end
+  * every concentrated load point (`MemberLoad` of kind `"point"` or
+    `"moment"`, from **any** pattern)
+
+  The list is sorted, and duplicates within 1e-9·L are merged.  It is the
+  same for every case, so combinations and RS/TH/staged envelopes still
+  superpose station by station.
+* `member_stations[uid]["x"]`, the six force columns and
+  `member_deflections[uid]` all have the variable length.  Force recovery
+  and deflection recovery are exact at any station, as before.
+* Results remain one entry per drawn object, stitched along the original
+  member.  Consumers already iterate generically over the station list:
+  * section cuts (linear interpolation, exact at a station)
+  * deflection checks
+  * design-free envelopes
+  * result tables
+* **Virtual work.** With variable stations the integral uses non-uniform
+  composite Simpson (`integrate_stations`).  This is exact for quadratics
+  over each pair of intervals, and a trailing odd interval uses the
+  quadratic through the last three stations.  The default 11 stations keep
+  the uniform Simpson rule.
+* **Vibration screen.** The midspan value is read at the station at L/2,
+  or linearly interpolated when there is none.
+* **`element_self_mass`.** Mass of an auto-split member is lumped per
+  segment.  The weight-derived tributary mass already worked per segment.
+
+### Check Model
+
+* `FRAME_INTERSECTION` no longer fires for a crossing connected by the auto
+  mesh: either member has `at_intersections`, both members can be meshed,
+  and the gap is at most 1e-3 m.
+* `FRAME_JOINT_ON_SPAN` no longer fires when the spanned member has
+  `at_intermediate_joints`.
+
+### Validation (`tests/test_frame_automesh.py`, 35 tests)
+
+* **Two crossing beams with no shared joint.** Beam A is 8 m with stiffness
+  I, beam B is 6 m with stiffness 3I, and P = 100 kN acts at the crossing.
+  * Without auto mesh the beams are independent: A carries 50/50 and B
+    carries nothing.
+  * With `at_intersections` they act as a grillage.  Each beam's share is
+    `P_A = P·k_A/(k_A+k_B)` with `k = 48EI/L³`.  The reactions, both
+    midspan moments and the common deflection `P_A/k_A` match to 1e-8.
+* **Secondary beam framing into a girder's span.** With
+  `at_intermediate_joints` the girder carries R = wL/2 at midspan (end
+  reactions R/2, M = RL/4, exact).  A point support on a span gives the
+  two-span continuous beam: the middle reaction is 5wL/4.
+* **`max_length` / `min_segments`.** End forces, stations and deflections
+  match the unsplit member to 1e-10.  The first mode of a simply supported
+  beam with distributed mass approaches `(π/2L²)·√(EI/m)` monotonically.
+  The relative error by number of segments is:
+
+  | Segments | Relative error |
+  |---|---|
+  | 2 | 7.3e-3 |
+  | 4 | 3.1e-4 |
+  | 8 | 1.7e-5 |
+  | 16 | 1.0e-6 |
+
+  At 2 segments the result equals the hand single-mass value
+  `√(48EI/L³/M)/2π`.
+* **Output stations.** `max_spacing` 1.0 on a 5 m beam gives 7 stations:
+  6 equal stations plus the point load at 1.7 m.  At the load,
+  `M = P·a·b/L` is exact.  `min_number` together with segment ends gives
+  the expected merged list.  Combinations, section cuts and virtual work
+  (total = roof displacement to 1e-9) all accept variable station counts.
+* **Defaults and round trip.** Defaults are byte-identical: the model JSON
+  is unchanged and the results JSON is identical.  The model also survives
+  a round trip.  Validation errors are covered for both fields.

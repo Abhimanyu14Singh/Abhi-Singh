@@ -337,3 +337,37 @@ def test_pdelta_iterative_with_xz_active_dof():
     def planar(mdl):
         mdl.active_dof = ["UX", "UZ", "RY"]
     _pd_identity(planar)
+
+
+# --------------------------------------------------------------------------- #
+# v1.15: frame additional mass x frame auto-mesh
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("mode", ["lumped", "distributed"])
+def test_additional_mass_total_survives_auto_mesh_split(mode):
+    """A beam carrying additional mass m per length, split into segments by
+    frame auto-mesh, must still contribute exactly m * L of translational
+    mass, the same as the unsplit beam."""
+    def total_mass(split):
+        mdl = BuildingModel(name="t")
+        mdl.rigid_diaphragms = False
+        mdl.add_material(Material("C", E=_E, nu=_NU, unit_weight=0.0))
+        mdl.set_stories([3.0])
+        mdl.add_section(FrameSection.rectangular("B", "C", 0.3, 0.5))
+        mdl.add_member("beam", "B", (0, 0, 3), (6, 0, 3), uid="B1")
+        mdl.supports.append(PointSupport((0, 0, 3), (1, 1, 1, 1, 1, 1)))
+        mdl.supports.append(PointSupport((6, 0, 3), (1, 1, 1, 1, 1, 1)))
+        m = mdl.members[0]
+        m.additional_mass = 0.8
+        m.additional_mass_mode = mode
+        if split:
+            m.auto_mesh = {"at_intermediate_joints": False,
+                           "at_intersections": False,
+                           "max_length": 1.0, "min_segments": None}
+        mdl.validate()
+        eng = OpenSeesEngine(mdl)
+        eng._build()
+        return sum(v for (t, dof), v in eng._asm.mass_map.items() if dof == 1)
+
+    whole, split = total_mass(False), total_mass(True)
+    assert whole == pytest.approx(0.8 * 6.0, rel=1e-12)
+    assert split == pytest.approx(whole, rel=1e-12)

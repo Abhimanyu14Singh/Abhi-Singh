@@ -30,6 +30,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from skyframe.core import framemesh as _fm
 from skyframe.core.model import BuildingModel
 
 Vec3 = Tuple[float, float, float]
@@ -461,7 +462,12 @@ def _check_frames(ctx: _Ctx, juf: _UF) -> None:
         loc = _scale(_add(c1, c2), 0.5)
         if end_a and end_b:
             continue                     # shared / coincident joint
+        # frame auto mesh (core.framemesh): connected crossings / joints
+        # on span are divided by the analysis mesh -> no warning
+        auto_ok = math.dist(c1, c2) <= _fm.AUTO_MESH_TOL
         if not end_a and not end_b:
+            if auto_ok and _fm.connects_intersection(m, A, B):
+                continue
             ctx.add("warning", "FRAME_INTERSECTION",
                     f"Frames {A.uid} and {B.uid} cross at {_fmt(loc)} "
                     f"without a shared joint (they are NOT connected there; "
@@ -469,6 +475,8 @@ def _check_frames(ctx: _Ctx, juf: _UF) -> None:
                     [A.uid, B.uid], loc)
         else:
             span, end = (A, B) if not end_a else (B, A)
+            if auto_ok and _fm.connects_joints_on_span(m, span):
+                continue
             ctx.add("warning", "FRAME_JOINT_ON_SPAN",
                     f"An end of frame {end.uid} lies on the span of frame "
                     f"{span.uid} at {_fmt(loc)} but {span.uid} is not divided "

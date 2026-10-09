@@ -566,6 +566,16 @@ def _insertion_fields_to_dict(m) -> dict:
     return member_fields_to_dict(m)
 
 
+def _framemesh_model_to_dict(model) -> dict:
+    from skyframe.core.framemesh import model_to_dict
+    return model_to_dict(model)
+
+
+def _framemesh_member_to_dict(m) -> dict:
+    from skyframe.core.framemesh import member_to_dict
+    return member_to_dict(m)
+
+
 def _insertion_fields_from_dict(md: dict) -> dict:
     from skyframe.core.insertion import member_fields_from_dict
     return member_fields_from_dict(md)
@@ -649,6 +659,11 @@ class FrameMember:
     additional_mass: float = 0.0
     additional_mass_mode: str = "lumped"
 
+    # Frame auto mesh + output stations (skyframe.core.framemesh; None =
+    # model default / the fixed 11 stations = the pre-existing behaviour).
+    auto_mesh: Optional[dict] = None
+    output_stations: Optional[dict] = None
+
     @property
     def length(self) -> float:
         return math.dist(self.pi, self.pj)
@@ -686,6 +701,8 @@ class FrameMember:
                 "hinges": self.hinges,
                 **_insertion_fields_to_dict(self),
                 **_dia.member_extra_to_dict(self),
+
+                **_framemesh_member_to_dict(self),
                 "length": self.length}
 
 
@@ -1873,6 +1890,10 @@ class BuildingModel:
     # ETABS Groups (skyframe.core.groups): name -> {"members", "shells",
     # "links", "points", "color"}.  Emitted by to_dict only when non-empty.
     groups: Dict[str, dict] = field(default_factory=dict)
+
+    # Model-wide frame auto mesh default (skyframe.core.framemesh); None =
+    # off.  Emitted by to_dict only when set.
+    frame_auto_mesh: Optional[dict] = None
 
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
@@ -3575,6 +3596,8 @@ class BuildingModel:
         validate_frequency(self)            # frequency-domain cases
         self._validate_pdelta_options()
         self._validate_nonlinear_static()
+        from skyframe.core.framemesh import validate_model as _fm_validate
+        _fm_validate(self)                  # frame auto mesh / stations
 
     def _validate_nonlinear_static(self) -> None:
         """Nonlinear static cases / chains (see core.nonlinear_static)."""
@@ -3694,6 +3717,8 @@ class BuildingModel:
 
             **({"groups": copy.deepcopy(self.groups)}   # Groups (if any)
                if self.groups else {}),
+
+            **_framemesh_model_to_dict(self),   # frame auto mesh (if set)
         }
 
     @classmethod
@@ -4064,6 +4089,12 @@ class BuildingModel:
                 raise ValueError("groups must be an object")
             from skyframe.core.groups import normalize_group
             mdl.groups = {str(k): normalize_group(v) for k, v in grp.items()}
+
+        from skyframe.core.framemesh import (member_from_dict as _fm_mfd,
+                                             model_from_dict as _fm_from)
+        _fm_from(mdl, d)                    # frame auto mesh (absent = off)
+        for _m, _md in zip(mdl.members, d.get("members") or []):
+            _fm_mfd(_m, _md)
         mdl.validate()
         return mdl
 
