@@ -366,6 +366,10 @@ def _column_strings(eng, asm, z_bot: float, z_top: float,
             continue
         sec = model.sections[m.section]
         E = model.materials[sec.material].E
+        from skyframe.core import nonprismatic as _npx
+        if _npx.is_varying(model, sec):        # nonprismatic: 1/int(dx/EA)
+            cols.append((m, E / _npx.axial_flexibility(model, m)))
+            continue
         cols.append((m, E * sec.A * sec.mod_A / L))
     wsum = sum(w for _, w in cols)
     springs: List[dict] = []

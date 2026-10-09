@@ -237,6 +237,15 @@ def _expand_load(model: BuildingModel, pat: LoadPattern, scale: float,
             mat = model.materials.get(sec.material) if sec else None
             if sec is None or mat is None:
                 continue
+            from skyframe.core import nonprismatic as _npx
+            if _npx.is_varying(model, sec):    # nonprismatic: per segment
+                k_sw = swf * mat.unit_weight * sec.mod_weight
+                for a_, b_, A0, A1 in _npx.area_pieces(model, m):
+                    out.member_loads.append(MemberLoad(
+                        m.uid, kind="trapezoid", w=-k_sw * A0 * scale,
+                        w2=-k_sw * A1 * scale, a=a_, b=b_,
+                        direction="global_z"))
+                continue
             w_sw = swf * sec.A * mat.unit_weight * sec.mod_weight
             if w_sw:
                 out.member_loads.append(MemberLoad(

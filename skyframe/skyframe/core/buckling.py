@@ -338,7 +338,20 @@ def buckling_analysis(model: BuildingModel, gravity: Dict[str, float],
     warning is returned instead of factors.  Members named in ``base_N``
     that the frame assembly skipped are ignored; ``base_label`` is echoed
     as ``BucklingResult.base_case``.
+
+    Nonprismatic members (:mod:`skyframe.core.nonprismatic`) are analysed
+    as their prismatic sub-elements (internal nodes join the mode shapes;
+    a drawn member's ``base_N`` applies to each of its sub-elements).
     """
+    from .nonprismatic import expanded_model
+    model = expanded_model(model)
+    kids = getattr(model, "_np_children", None)
+    if base_N and kids:
+        base_N = dict(base_N)
+        for parent, subs in kids.items():
+            if parent in base_N:
+                for sub in subs:
+                    base_N[sub] = base_N[parent]
     warn: List[str] = []
     if model.shells:
         warn.append(f"{len(model.shells)} shell region(s) skipped "
@@ -458,6 +471,8 @@ def _gravity_nodal_vector(model: BuildingModel, gravity: Dict[str, float],
         F[b + 2] += fz
 
     members = {m.uid: m for m in model.members}
+    for _uid, _m in (getattr(model, "_np_parents", None) or {}).items():
+        members.setdefault(_uid, _m)    # nonprismatic: loads on drawn member
     flags = {"area": False, "story": False, "thermal": False}
     for pname, fac in gravity.items():
         pat = model.patterns.get(pname)

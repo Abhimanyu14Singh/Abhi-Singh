@@ -34,6 +34,7 @@ from skyframe.core.nonlinear_static import (  # noqa: F401  (re-exported)
     validate_nonlinear_static)
 
 from skyframe.core import diaphragms as _dia  # multi-diaphragm / add. mass
+from skyframe.core.nonprismatic import member_area as _np_area
 from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
     PDELTA_INCLUDE_IN, PDELTA_METHODS, pdelta_defaults, pdelta_from_dict,
     pdelta_to_dict, validate_pdelta_options)
@@ -307,6 +308,12 @@ class FrameSection:
     mod_As3: float = 1.0
     mod_mass: float = 1.0              # element self-mass multiplier
     mod_weight: float = 1.0            # self-weight load multiplier
+    # Nonprismatic sections (skyframe.core.nonprismatic): kind
+    # "nonprismatic" + segments list + sub-elements per varying segment.
+    # Emitted by to_dict only for nonprismatic sections.
+    kind: str = "prismatic"
+    segments: Optional[List[dict]] = None
+    subdivisions: int = 16
 
     @staticmethod
     def rectangular(name: str, material: str, b: float, h: float) -> "FrameSection":
@@ -330,7 +337,8 @@ class FrameSection:
         return library_section(name, material)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        from skyframe.core.nonprismatic import section_to_dict
+        return section_to_dict(self, asdict(self))
 
 
 SHELL_LAYER_KINDS = ("concrete", "steel")
@@ -1915,6 +1923,12 @@ class BuildingModel:
     # off.  Emitted by to_dict only when set.
     frame_auto_mesh: Optional[dict] = None
 
+    # Per-joint panel-zone overrides (skyframe.core.panelzones):
+    # [{"point", "property", "k"?, "doubler_t"?, "connectivity"}].  Empty
+    # (default) = every joint follows ``panel_zones``.  Emitted by to_dict
+    # only when non-empty.
+    joint_panel_zones: List[dict] = field(default_factory=list)
+
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
         self.materials[mat.name] = mat
@@ -3346,7 +3360,8 @@ class BuildingModel:
                         mat = (self.materials.get(sec.material)
                                if sec else None)
                         if sec is not None and mat is not None:
-                            total_w += (fac * swf * sec.A
+                            total_w += (fac * swf
+                                        * _np_area(self, m, sec)
                                         * mat.unit_weight * m.length
                                         * sec.mod_weight)
                     for region in self.shells:
@@ -3438,6 +3453,8 @@ class BuildingModel:
         """Cross-reference validation; raises ValueError on the first issue."""
         for mat in self.materials.values():
             self._validate_material(mat)
+        from skyframe.core.nonprismatic import resolve_sections
+        resolve_sections(self)              # nonprismatic sections
         for sec in self.sections.values():
             if sec.material not in self.materials:
                 raise ValueError(f"Section {sec.name}: unknown material "
@@ -3596,11 +3613,20 @@ class BuildingModel:
         if self.panel_zones not in PANEL_ZONE_OPTIONS:
             raise ValueError(f"panel_zones must be one of "
                              f"{PANEL_ZONE_OPTIONS}, got {self.panel_zones!r}")
+        self._validate_nonprismatic_panelzones()
         self._validate_diaphragm()
         _dia.validate_diaphragms(self)
         for g in self.effective_grids():
             self._validate_grid(g)
         self._validate_v113()
+
+    def _validate_nonprismatic_panelzones(self) -> None:
+        """Nonprismatic members (core.nonprismatic) + per-joint panel
+        zones (core.panelzones)."""
+        from skyframe.core.nonprismatic import validate_model as _np_val
+        from skyframe.core.panelzones import validate_model as _pz_val
+        _np_val(self)
+        _pz_val(self)
 
     def _validate_v113(self) -> None:
         """v1.13: cases_not_run / active_dof / mass_options / display_units."""
@@ -3775,6 +3801,10 @@ class BuildingModel:
 
             **_framemesh_model_to_dict(self),   # frame auto mesh (if set)
 
+            **({"joint_panel_zones":         # per-joint panel zones
+                copy.deepcopy(self.joint_panel_zones)}
+               if self.joint_panel_zones else {}),
+
             **({"spring_properties":         # B9 (only when non-empty)
                 {k: _sprp.normalize_property(v)
                  for k, v in self.spring_properties.items()}}
@@ -3800,6 +3830,10 @@ class BuildingModel:
             # fallback fires exactly as before.
             mdl.materials[name] = material_from_dict(md, name)
         for name, sd in (d.get("sections") or {}).items():
+            if sd.get("kind", "prismatic") != "prismatic":  # nonprismatic
+                from skyframe.core.nonprismatic import section_from_dict
+                mdl.sections[name] = section_from_dict(name, sd)
+                continue
             mdl.sections[name] = FrameSection(
                 name=sd.get("name", name), material=sd["material"],
                 A=float(sd["A"]), I33=float(sd["I33"]), I22=float(sd["I22"]),
@@ -4164,6 +4198,12 @@ class BuildingModel:
         _fm_from(mdl, d)                    # frame auto mesh (absent = off)
         for _m, _md in zip(mdl.members, d.get("members") or []):
             _fm_mfd(_m, _md)
+        jpz = d.get("joint_panel_zones")    # per-joint panel zones
+        if jpz is not None:
+            if not isinstance(jpz, list):
+                raise ValueError("joint_panel_zones must be a list")
+            mdl.joint_panel_zones = [dict(e) if isinstance(e, dict) else e
+                                     for e in jpz]
         mdl.validate()
         return mdl
 
@@ -4222,7 +4262,8 @@ def story_gravity_loads(model: "BuildingModel",
                 sec = model.sections.get(m.section)
                 mat = model.materials.get(sec.material) if sec else None
                 if sec is not None and mat is not None:
-                    total += (swf * sec.A * mat.unit_weight * m.length
+                    total += (swf * _np_area(model, m, sec)
+                              * mat.unit_weight * m.length
                               * sec.mod_weight)
             for region in model.shells:
                 if not model._region_on_story(region, s):

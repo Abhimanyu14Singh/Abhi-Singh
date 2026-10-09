@@ -877,7 +877,9 @@ def applied_pattern_totals(model, pattern: str,
             sec = model.sections.get(m.section)
             mat = model.materials.get(sec.material) if sec else None
             if sec is not None and mat is not None:
-                F[2] -= (swf * sec.A * mat.unit_weight * m.length
+                from .nonprismatic import member_area as _np_area
+                F[2] -= (swf * _np_area(model, m, sec)
+                         * mat.unit_weight * m.length
                          * frame_weight_mod(sec))
         for region in model.shells:
             ssec = model.shell_sections.get(region.section)

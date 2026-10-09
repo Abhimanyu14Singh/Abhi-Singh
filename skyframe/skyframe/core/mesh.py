@@ -794,6 +794,8 @@ def mesh_model(model: BuildingModel) -> MeshedModel:
     # meshers so polygon shells conform to them.  Empty by default.
     from .framemesh import auto_mesh_points
     auto_pts = auto_mesh_points(model)
+    from .nonprismatic import merge_cut_points
+    auto_pts = merge_cut_points(model, auto_pts)   # nonprismatic sub-elements
     auto_idx: Dict[str, List[Tuple[float, int]]] = {}
     for m in model.members:
         lst = auto_pts.get(m.uid)
