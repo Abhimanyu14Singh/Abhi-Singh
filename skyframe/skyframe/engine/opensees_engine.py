@@ -2007,8 +2007,63 @@ class OpenSeesEngine:
 
     def _member_offsets(self, m: FrameMember) -> Tuple[float, float]:
         """(offset_i, offset_j) the engine actually applies to a member."""
+        if getattr(m, "end_offsets", "manual") == "auto":
+            off = self._auto_offsets().get(m.uid)
+            if off is not None:
+                return off
         return self._panel_offsets().get(
             m.uid, (m.rigid_offset_i, m.rigid_offset_j))
+
+    def _auto_offsets(self) -> Dict[str, Tuple[float, float]]:
+        """Automatic end offsets (``end_offsets == "auto"``; cached).
+
+        See :func:`skyframe.core.insertion.compute_auto_end_offsets`;
+        members split by the mesher revert to their manual offsets with a
+        warning (the rigid-offset machinery is single-segment only).
+        """
+        cache = getattr(self, "_ao_offsets", None)
+        if cache is None:
+            cache = {}
+            if any(getattr(m, "end_offsets", "manual") == "auto"
+                   for m in self.model.members):
+                from skyframe.core.insertion import compute_auto_end_offsets
+                cache = compute_auto_end_offsets(self.model)
+                if self._mesh is None:
+                    self._mesh = mesh_model(self.model)
+                for uid, off in list(cache.items()):
+                    m = self._members_by_uid[uid]
+                    user = (m.rigid_offset_i, m.rigid_offset_j)
+                    if (off != user
+                            and len(self._mesh.segments[uid]) != 1):
+                        warnings.warn(
+                            f"auto end offsets: member {uid!r} is split into "
+                            "multiple segments; automatic offsets skipped "
+                            "(centerline kept)", UserWarning)
+                        cache[uid] = user
+            self._ao_offsets = cache
+        return cache
+
+    def _member_ecc(self, m: FrameMember):
+        """GLOBAL joint->element-end offsets ``(e_i, e_j)`` of a member's
+        insertion point / joint offsets, or None (the default)."""
+        cache = getattr(self, "_ecc_cache", None)
+        if cache is None:
+            cache = self._ecc_cache = {}
+        if m.uid not in cache:
+            from skyframe.core.insertion import member_joint_offsets
+            cache[m.uid] = member_joint_offsets(self.model, m)
+        return cache[m.uid]
+
+    def _ecc_node_moment(self, member: FrameMember, seg: "Segment",
+                         node: int, fg) -> Tuple[float, float, float]:
+        """``e x fg`` for a force acting at the eccentric element end of
+        ``seg`` that sits over mesh ``node`` (zeros when not eccentric)."""
+        e = self._member_ecc(member)
+        if e is None:
+            return (0.0, 0.0, 0.0)
+        from skyframe.core.insertion import eccentric_moment, offset_at
+        s = seg.x0 if node == seg.ni else seg.x0 + seg.length
+        return eccentric_moment(offset_at(e, s, member.length), fg)
 
     def panel_zone_joints(self) -> List[dict]:
         """Scissors panel-zone joints of the built model (v0.17).
@@ -2506,6 +2561,9 @@ class OpenSeesEngine:
             # automatic joint end zones (user-set offsets win per end).
             off_i, off_j = self._member_offsets(m)
             has_offset = (off_i + off_j) > _TOL
+            # insertion point / joint offsets: rigid -jntOffset eccentricity
+            # (None = reference line = the exact pre-existing path)
+            ecc = self._member_ecc(m)
             if has_offset and len(segs) != 1:
                 raise ValueError(
                     f"Member {m.uid}: rigid end offsets are not supported on "
@@ -2521,6 +2579,10 @@ class OpenSeesEngine:
                     raise ValueError(
                         f"Member {m.uid}: axial-only members do not support "
                         "rigid end offsets")
+                if ecc is not None:
+                    raise ValueError(
+                        f"Member {m.uid}: axial-only members do not support "
+                        "insertion points / joint offsets")
                 if my_i is not None or my_j is not None:
                     raise ValueError(
                         f"Member {m.uid}: a plastic hinge cannot be placed on "
@@ -2549,7 +2611,7 @@ class OpenSeesEngine:
             # --- v0.21 fiber PMM hinge member (asce41 pushover only) ------
             bb_fiber = fiber_plan.get(m.uid)
             if bb_fiber is not None:
-                if len(segs) != 1 or has_offset or toks:
+                if len(segs) != 1 or has_offset or toks or ecc is not None:
                     warnings.warn(
                         f"fiber_pmm hinges: member {m.uid!r} is split by "
                         "shell-edge compatibility, rigid-offset, or "
@@ -2593,7 +2655,23 @@ class OpenSeesEngine:
                 if code and transf_name == "Corotational":
                     seg_transf = "PDelta"
                     coro_release_fallback.append(m.uid)
-                ops.geomTransf(seg_transf, beam_etag, *vecxz)
+                if ecc is not None:
+                    from skyframe.core.insertion import (jnt_offset_args,
+                                                         offset_at)
+                    e_si = offset_at(ecc, seg.x0 + (off_i if has_offset
+                                                    else 0.0), m.length)
+                    e_sj = offset_at(ecc, seg.x0 + seg.length
+                                     - (off_j if has_offset else 0.0),
+                                     m.length)
+                    if seg_transf == "Corotational":
+                        # CorotCrdTransf3d ignores rigid joint zones
+                        seg_transf = "PDelta"
+                        coro_release_fallback.append(
+                            f"{m.uid} (joint offsets)")
+                    ops.geomTransf(seg_transf, beam_etag, *vecxz,
+                                   *jnt_offset_args(e_si, e_sj))
+                else:
+                    ops.geomTransf(seg_transf, beam_etag, *vecxz)
                 extra = ["-releasez", code, "-releasey", code] if code else []
                 ni_tag, nj_tag = seg.ni + 1, seg.nj + 1
                 # v0.17 scissors panel zones: a BEAM end at a panel-zone
@@ -2634,7 +2712,13 @@ class OpenSeesEngine:
                     tag += 1
                     ops.node(tag, *p_off)
                     etag += 1
-                    ops.geomTransf(transf_name, etag, *vecxz)
+                    if ecc is not None:
+                        ops.geomTransf(seg_transf, etag, *vecxz,
+                                       *jnt_offset_args(
+                                           offset_at(ecc, 0.0, m.length),
+                                           e_si))
+                    else:
+                        ops.geomTransf(transf_name, etag, *vecxz)
                     ops.element("elasticBeamColumn", etag, ni_tag, tag, A_eff,
                                 mat.E * RIGID_LINK_FACTOR,
                                 mat.G * RIGID_LINK_FACTOR, J_eff, I22_eff,
@@ -2647,7 +2731,13 @@ class OpenSeesEngine:
                     tag += 1
                     ops.node(tag, *p_off)
                     etag += 1
-                    ops.geomTransf(transf_name, etag, *vecxz)
+                    if ecc is not None:
+                        ops.geomTransf(seg_transf, etag, *vecxz,
+                                       *jnt_offset_args(
+                                           e_sj, offset_at(ecc, m.length,
+                                                           m.length)))
+                    else:
+                        ops.geomTransf(transf_name, etag, *vecxz)
                     ops.element("elasticBeamColumn", etag, tag, nj_tag, A_eff,
                                 mat.E * RIGID_LINK_FACTOR,
                                 mat.G * RIGID_LINK_FACTOR, J_eff, I22_eff,
@@ -4293,9 +4383,11 @@ class OpenSeesEngine:
         if xi < _TOL or xi > seg.length - _TOL:
             # load lands on a node: apply it there directly (global coords)
             node = seg.ni if xi < _TOL else seg.nj
+            em = self._ecc_node_moment(member, seg, node,
+                                       (dvec[0] * p, dvec[1] * p,
+                                        dvec[2] * p))
             ops.load(asm.pz_load_tag.get((member.uid, node), node + 1),
-                     dvec[0] * p, dvec[1] * p, dvec[2] * p,
-                     0.0, 0.0, 0.0)
+                     dvec[0] * p, dvec[1] * p, dvec[2] * p, *em)
             return
         rec: SpanLoad = ("point", (comps[0] * p, comps[1] * p, comps[2] * p),
                          xi)
@@ -4339,6 +4431,9 @@ class OpenSeesEngine:
         for node, ofs in ((seg.ni, 0), (seg.nj, 6)):
             fg = to_global(-f0[ofs], -f0[ofs + 1], -f0[ofs + 2])
             mg = to_global(-f0[ofs + 3], -f0[ofs + 4], -f0[ofs + 5])
+            if self._member_ecc(member) is not None:
+                em = self._ecc_node_moment(member, seg, node, fg)
+                mg = (mg[0] + em[0], mg[1] + em[1], mg[2] + em[2])
             # v0.17 scissors: a redirected beam end loads its panel-zone
             # duplicate (the element's actual node) so the fixed-end moment
             # share does not bypass the panel spring
@@ -4392,8 +4487,9 @@ class OpenSeesEngine:
             f0[6] = -N
             for node, ofs in ((seg.ni, 0), (seg.nj, 6)):
                 fg = to_global(-f0[ofs], -f0[ofs + 1], -f0[ofs + 2])
+                em = self._ecc_node_moment(member, seg, node, fg)
                 ops.load(asm.pz_load_tag.get((member.uid, node), node + 1),
-                         *fg, 0.0, 0.0, 0.0)
+                         *fg, *em)
             key = (member.uid, seg.index)
             self._seg_fef[key] = self._seg_fef.get(key, np.zeros(12)) + f0
 
@@ -4603,7 +4699,8 @@ class OpenSeesEngine:
             # computed — are skipped: their elastic element spans untracked
             # offset nodes)
             if (node_disp is not None
-                    and sum(self._member_offsets(m)) <= _TOL):
+                    and sum(self._member_offsets(m)) <= _TOL
+                    and self._member_ecc(m) is None):
                 md = self._member_deflection(m, segs, corrected, xs,
                                              node_disp, asm.timo.get(m.uid))
                 if md is not None:

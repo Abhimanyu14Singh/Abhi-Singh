@@ -4742,3 +4742,155 @@ the field when a value is bad:
 * `shear_deformation` must be a bool.
 
 Tests: `tests/test_modifiers_shear.py` (40 cases).
+
+## Insertion point, joint offsets and automatic end offsets
+
+ETABS *Assign > Frame > Insertion Point* and *End Length Offsets >
+Automatic from Connectivity* (gaps B4 + B5).  Logic lives in
+`skyframe.core.insertion`; the engine only adds `-jntOffset` to the
+member `geomTransf` calls and feeds automatic lengths to the v0.9 rigid
+end-offset machinery.  All defaults reproduce the previous results
+byte-identically (no `-jntOffset` is emitted, no offsets are computed).
+
+### `FrameMember` (new fields, JSON keys of the same name)
+
+```json
+{"cardinal_point": 10,
+ "joint_offsets": null,
+ "no_transform_stiffness": false,
+ "end_offsets": "manual",
+ "auto_rigid_factor": 0.0}
+```
+
+* `cardinal_point` — int 1..11, the section point that lies on the
+  reference line `pi -> pj`.  ETABS numbering: 1/2/3 = bottom
+  left/center/right, 4/5/6 = middle, 7/8/9 = top, 10 = centroid (default),
+  11 = shear center.  Bottom/top are the -2/+2 sides (local y), left/right
+  are the -3/+3 sides (local z).  Offsets come from the section bounding
+  box: `h` along local 2, `b` along local 3.  This covers rectangles, the
+  AISC library and Section Designer sections, which all carry b/h.  The
+  centroid is taken at the box centre, and 11 = 10 (the built-in shapes
+  are doubly symmetric).  A section with b = h = 0 falls back to the
+  centroid with a `UserWarning`.
+* `joint_offsets` — `null` or
+  `{"i": [d1,d2,d3], "j": [d1,d2,d3], "system": "global"|"local"}`.
+  These are extra rigid offsets from each joint to the element end, in
+  global X/Y/Z or member local 1/2/3.  A missing end is `[0,0,0]`, and
+  the stored form is always normalised to all three keys.
+* `no_transform_stiffness` — the ETABS "Do not transform frame stiffness
+  for offsets from centroid" option.  When true, the cardinal-point
+  eccentricity is NOT applied to the stiffness.  Joint offsets still apply.
+* `end_offsets` — `"manual"` (default) uses `rigid_i`/`rigid_j`/
+  `rigid_factor` as before.  `"auto"` computes them from connectivity.
+* `auto_rigid_factor` — the rigid-zone factor in [0, 1] for `"auto"`.
+  The default 0 matches ETABS: fully flexible.
+
+Validation (`add_member`, `validate`, `checks`) raises `ValueError` in these
+cases:
+
+* `cardinal_point` is not an int in 1..11 (bools are rejected);
+* `joint_offsets` is not a dict, has unknown keys, has an end that is not
+  three finite numbers, or has a bad `system`;
+* `end_offsets` is not `manual`/`auto`;
+* `auto_rigid_factor` is outside [0, 1];
+* an axial-only (`axial_limit != "both"`) member has an insertion point or
+  joint offsets.
+
+### Stiffness model
+
+Element-end eccentricity, in global coordinates:
+`e_end = joint_offset_end - (cy*y + cz*z)`, where `(cy, cz)` is the
+cardinal point relative to the centroid.  It is applied as a RIGID offset
+through `geomTransf <Linear|PDelta> ... -jntOffset e_i e_j`.
+
+* Split members (shell-edge compatibility) get `e` linearly interpolated
+  at each segment end.
+* Members with rigid end zones get the eccentricity on both the rigid arms
+  and the clear-span element.
+* OpenSees `Corotational` ignores joint offsets, so eccentric segments fall
+  back to `PDelta` and are named in the existing Corotational fallback
+  warning.
+* Fiber-PMM hinge members that are eccentric stay elastic, with the
+  existing warning.
+* Span loads act on the eccentric axis.  `eleLoad` loads are transformed by
+  OpenSees.  Reversed fixed-end forces (partial/trapezoid/point/thermal)
+  and point loads at a member end are applied at the joint with the extra
+  couple `e x F`.
+* Unequal i/j joint offsets skew the element axis.  Loads and local axes
+  still follow the reference-line triad, so keep such offsets small
+  relative to L.  Equal offsets, which include every cardinal point, are
+  exact.
+
+### Automatic end offsets (`end_offsets == "auto"`)
+
+For each end, take the other frame members with an END at the same joint
+and skip any that are collinear.  The offset length is
+
+    L_end = max_n 0.5 * (h_n * |x_m . y_n| + b_n * |x_m . z_n|)
+
+This is the half-extent of the connecting section measured along this
+member.  A beam framing into a column gets half the column dimension in the
+beam direction, which follows the column `angle`.  A column end under a
+beam gets half the beam depth.  A secondary beam framing into a girder gets
+half the girder width.
+
+* A user-set `rigid_i`/`rigid_j > 0` wins per end, with its own
+  `rigid_factor`.
+* The effective rigid zone is `auto_rigid_factor * L_end`.  It is fed to
+  the v0.9 machinery, which models the elastic element over the clear span
+  with stiff arms.
+* If the zones would consume the member, the centerline is kept with a
+  `UserWarning`.
+* Members split by the mesher keep their manual offsets, with a
+  `UserWarning`.
+* `"auto"` takes precedence over `panel_zones == "rigid"` for that member.
+
+`skyframe.core.insertion.end_offset_report(model)` returns the ETABS
+"Frame End Length Offsets" table:
+
+```json
+{"<uid>": {"mode": "auto", "length_i": 0.2, "length_j": 0.2,
+           "rigid_factor": 0.0, "rigid_i": 0.0, "rigid_j": 0.0,
+           "clear_span": 5.6}}
+```
+
+`clear_span = L - length_i - length_j`, the face-to-face span, is
+reported even when the factor is 0.
+
+### Force reporting
+
+* `member_forces` and `member_stations` are the forces of the frame's OWN
+  axis, which is the eccentric centroidal element axis, as in ETABS.  Each
+  frame reports its own axial force and moment, so for a cp 8 beam on a
+  slab the composite couple appears as an axial force in the beam plus an
+  opposite one in the slab/partner member.
+* With end offsets, the end forces are those at the clear-span element
+  ends (the faces), unchanged from v0.9.  Stations keep the v0.9 layout.
+* `member_deflections` is not produced for eccentric members, just as for
+  members with rigid offsets, because the element-end translations differ
+  from the joint translations.
+
+### Validation (`tests/test_insertion.py`, 39 cases)
+
+* Simply supported cp 8 beam under a UDL:
+  * pin-roller: `5wL^4/384EI` with no axial force, identical to cp 10;
+  * pin-pin: thrust `N = 2EAe theta/L` with
+    `theta = theta0/(1 + Ae^2/I)`, and midspan deflection
+    `5wL^4/384EI - N e L^2/8EI` (1e-6);
+  * cp 2 flips the sign of N.
+* Cp 2 slab and cp 8 girder linked at the joints, in pure bending:
+  `ry = ML/(E Iz_eff)`, `Iz_eff = I1+I2+A1 d1^2+A2 d2^2` (1e-6).  The same
+  pair over 12 bays under a UDL lands within 1.3 % of
+  `5wL^4/384E Iz_eff`.
+* Offset cantilever: `uz = PL^3/3EI + P a^2 L/GJ`, `rx = PaL/GJ`,
+  `T = Pa` (1e-6).
+* Axial member loads on a cp 8 cantilever give a base moment `W e` on all
+  three load paths.
+* A cp 8 beam on a meshed shell slab is more than 30 % stiffer.
+* Portal frame:
+  * auto offsets equal manual offsets of the same lengths, with
+    identical member forces;
+  * auto factor 0 matches the centerline exactly;
+  * factors 0 and 1 bracket a model with explicit 10x-stiff joint zones.
+* Byte-identical defaults on a `quick_building`, plus round-trip and
+  validation tests.
