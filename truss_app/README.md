@@ -44,8 +44,10 @@ folder and make shortcuts.
 - **Visualize**: tension blue / compression red (colourblind-safe Okabe–Ito),
   thickness ∝ force, reactions, the purple **virtual unit-load "probe"**, and an
   exaggerated **deflected shape**.
-- **What-if loop**: give a member an **AISC shape** (W, HSS, pipe, angle) or
-  edit its area/E and everything re-solves instantly — even while dragging.
+- **What-if loop**: give a member any of **1,589 AISC shapes** — W, HSS
+  (square, rectangular, round), pipe, single and double angles, WT/MT/ST tees,
+  C/MC channels, HP, M and S — picked by family and searchable (type `W12`,
+  `6x6`, `3/8`), or edit its area/E, and everything re-solves instantly.
 - **Units**: Metric (kN, m) or Imperial (kip, ft, in); AISC shapes set A in in²
   and E = 29,000 ksi.
 - **Presets**: Pratt, Howe roof, Warren, cantilever, an X-braced
@@ -100,7 +102,8 @@ truss_app/
   js/
     solver.js         stiffness method + virtual-work decomposition (no deps)
     units.js          SI <-> US unit systems
-    sections.js       AISC shape library (areas, E)
+    aisc-data.js      1,589 AISC shapes (generated: tools/gen-aisc-data.js)
+    sections.js       AISC lookup + search
     model.js          truss data model + undo/redo
     examples.js       preset trusses
     view.js           SVG rendering, hit-testing, zoom/pan
@@ -108,6 +111,7 @@ truss_app/
     app.js            controller: tools, interaction, panels, what-if loop
   installer/          Windows / Mac / Linux installers + INSTALL.txt
   tools/build.js      builds dist/ (single file + installer zip)
+  tools/gen-aisc-data.js  regenerates js/aisc-data.js from the AISC database
   tools/test-all.js   runs every test suite
   dist/               ready-to-install build output
   test/               test suites

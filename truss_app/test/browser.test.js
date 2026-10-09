@@ -139,8 +139,23 @@ function ok(name, cond, extra) {
   await page.check('#tgDefl');
   ok('deflected shape visible', await page.locator('.member-deflected').first().isVisible());
   await page.locator('.member[data-member="0"]').click({ force: true });
-  await page.selectOption('#mpSection', 'W8x31');
-  ok('AISC W8x31 applied to member 1', await app(() => window.TrussApp.model.members[0].section === 'W8x31'));
+  await page.selectOption('#mpFamily', 'W');
+  await page.selectOption('#mpSection', 'W8X31');
+  ok('AISC W8X31 applied to member 1', await app(() => window.TrussApp.model.members[0].section === 'W8X31'));
+  // Real typing into the search box narrows the list.
+  await page.selectOption('#mpFamily', 'HSSR');
+  await page.fill('#mpSearch', '');
+  await page.type('#mpSearch', '6x6x', { delay: 20 });
+  const hssOpts = await page.locator('#mpSection option').evaluateAll((os) => os.map((o) => o.value).filter(Boolean));
+  ok('typing "6x6x" lists only HSS6X6 shapes', hssOpts.length > 3 && hssOpts.every((v) => v.startsWith('HSS6X6X')),
+    `${hssOpts.length}: ${hssOpts.slice(0, 4)}`);
+  await page.selectOption('#mpSection', 'HSS6X6X3/8');
+  ok('picked HSS6X6X3/8 from the search results', await app(() =>
+    window.TrussApp.model.members[0].section === 'HSS6X6X3/8' && window.TrussApp.result.ok));
+  ok('AISC picker fits the side panel (no overflow)', await app(() => {
+    const p = document.querySelector('.sidepanel').getBoundingClientRect();
+    return ['mpFamily', 'mpSearch', 'mpSection'].every((id) => document.getElementById(id).getBoundingClientRect().right <= p.right + 1);
+  }));
   await shot('4-aisc-properties.png');
   await page.selectOption('#unitSelect', 'US');
   ok('US units render kip labels', /kip/.test(await page.locator('.load-label').first().textContent()));

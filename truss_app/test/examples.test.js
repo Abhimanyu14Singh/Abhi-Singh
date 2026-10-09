@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 function load(f) { eval(fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8')); }
-['solver.js', 'units.js', 'sections.js', 'model.js', 'examples.js'].forEach(load);
+['solver.js', 'units.js', 'aisc-data.js', 'sections.js', 'model.js', 'examples.js'].forEach(load);
 
 const S = globalThis.TrussSolver;
 const Units = globalThis.Units;
@@ -52,6 +52,34 @@ for (const sys of ['SI', 'US']) {
   const r = S.analyze({ nodes: model.nodes, members: model.members, supports: model.supports, loads: model.loads });
   ok('X-braced example is indeterminate', r.ok && r.determinacy.verdict === 'indeterminate',
     JSON.stringify(r.determinacy));
+})();
+
+/* ---- AISC shape library ------------------------------------------------ */
+(function () {
+  const A = globalThis.AISC, S = globalThis.AISC_SECTIONS;
+  ok('AISC library: 1,589 shapes in 10 families', A.count === 1589 && S.length === 10, `${A.count} / ${S.length}`);
+  const counts = Object.fromEntries(S.map((g) => [g.id, g.items.length]));
+  ok('AISC library: family sizes', counts.W === 283 && counts.HSSR === 388 && counts.HSSC === 128 &&
+    counts.PIPE === 51 && counts.L === 137 && counts['2L'] === 137 && counts.T === 325 &&
+    counts.C === 72 && counts.HP === 22 && counts.MS === 46, JSON.stringify(counts));
+  // Spot values against the AISC Manual (in^2, lb/ft).
+  const spot = { W12X26: [7.65, 26], W44X335: [98.5, 335], 'HSS6X6X3/8': [7.58, 27.48],
+    'L4X4X3/8': [2.86, 9.8], '2L4X4X3/8': [5.72, 19.6], Pipe4STD: [2.96, 10.8], C15X50: [14.7, 50] };
+  for (const [name, [a, w]] of Object.entries(spot)) {
+    const it = A.find(name);
+    ok(`AISC ${name}: A = ${a} in², ${w} lb/ft`, it && Math.abs(it.areaIn2 - a) < 1e-9 && Math.abs(it.weight - w) < 0.01,
+      it ? `${it.areaIn2}, ${it.weight}` : 'missing');
+  }
+  ok('AISC lookup ignores case/spaces (old saved names)', A.find('W12x26') && A.find('Pipe 4 Std') &&
+    A.find('hss6x6x3/8') && A.find('2L4x4x3/8') && A.find('Pipe 4 Std').name === 'Pipe4STD');
+  ok('AISC lookup: unknown name -> null', A.find('W99X1') === null);
+  const w12 = A.search('W', 'W12').flatMap((g) => g.items);
+  ok('AISC search "W12" in W returns only W12 shapes', w12.length > 10 && w12.every((it) => it.name.startsWith('W12X')));
+  const thick = A.search('ALL', '3/8').flatMap((g) => g.items);
+  ok('AISC search "3/8" finds HSS, angles and double angles', ['HSSR', 'L', '2L'].every((f) => thick.some((it) => it.family === f)));
+  ok('AISC: every area & weight positive and W/A physically plausible (3.1–3.8 lb/ft per in²)',
+    S.every((g) => g.items.every((it) => it.areaIn2 > 0 && it.weight / it.areaIn2 > 3.1 && it.weight / it.areaIn2 < 3.8)));
+  ok('AISC: no duplicate designations', A.count === S.reduce((n, g) => n + g.items.length, 0));
 })();
 
 /* ---- Each preset's TEACHING CLAIM holds (what its blurb tells students) -- */

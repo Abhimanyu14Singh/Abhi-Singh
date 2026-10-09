@@ -55,21 +55,52 @@
       });
     },
 
+    // AISC picker: Family -> Search -> Shape (1,589 shapes from the AISC
+    // Shapes Database). Defaults to W shapes so the list starts manageable.
     populateSections() {
+      const fam = $('mpFamily');
+      fam.replaceChildren();
+      const add = (value, text) => {
+        const o = document.createElement('option');
+        o.value = value; o.textContent = text; fam.appendChild(o);
+      };
+      for (const g of AISC_SECTIONS) add(g.id, `${g.group} (${g.items.length})`);
+      add('ALL', `All families (${AISC.count})`);
+      fam.value = 'W';
+      this.renderShapeOptions('');
+    },
+
+    // Rebuild the Shape list for the current family + search text, then
+    // select `keep` if it is listed. Options are rebuilt rather than hidden
+    // because Safari ignores hidden <option>s.
+    renderShapeOptions(keep) {
       const sel = $('mpSection');
-      // wipe all but the first "custom" option
-      sel.querySelectorAll('optgroup').forEach((g) => g.remove());
-      for (const grp of AISC_SECTIONS) {
-        const og = document.createElement('optgroup');
-        og.label = grp.group;
-        for (const it of grp.items) {
-          const o = document.createElement('option');
-          o.value = it.name;
-          o.textContent = `${it.name}  (A=${it.areaIn2} in², ${it.weight} lb/ft)`;
-          og.appendChild(o);
+      const family = $('mpFamily').value, query = $('mpSearch').value;
+      const key = `${family}|${AISC.norm(query)}`;
+      if (this._shapeListKey !== key) {
+        this._shapeListKey = key;
+        const frag = document.createDocumentFragment();
+        const custom = document.createElement('option');
+        custom.value = ''; custom.textContent = '— custom (type the area below) —';
+        frag.appendChild(custom);
+        let n = 0;
+        for (const g of AISC.search(family, query)) {
+          const og = document.createElement('optgroup');
+          og.label = g.group;
+          for (const it of g.items) {
+            const o = document.createElement('option');
+            o.value = it.name;
+            o.textContent = `${it.name} — A ${it.areaIn2} in², ${it.weight} lb/ft`;
+            og.appendChild(o);
+            n++;
+          }
+          frag.appendChild(og);
         }
-        sel.appendChild(og);
+        sel.replaceChildren(frag);
+        $('mpAiscCount').textContent = query ? `· ${n} match${n === 1 ? '' : 'es'}` : `· ${n} shapes`;
       }
+      const want = keep || '';
+      sel.value = Array.prototype.some.call(sel.options, (o) => o.value === want) ? want : '';
     },
 
     /* ------------------------------------------------------------------ *
@@ -537,12 +568,21 @@
       const m = this.model.members[i];
       if (!m) { this.clearSelection(); return; }
       $('mpId').textContent = i + 1;
-      $('mpSection').value = m.section || '';
+      const shape = m.section ? AISC.find(m.section) : null;
+      this.renderShapeOptions(shape ? shape.name : '');
+      if (shape && $('mpSection').value !== shape.name) {
+        // Its shape isn't in the current list: open its family so it shows.
+        $('mpFamily').value = shape.family;
+        $('mpSearch').value = '';
+        this.renderShapeOptions(shape.name);
+      }
       $('mpArea').value = +U.areaFromBase(m.A).toFixed(3);
       $('mpE').value = +U.eFromBase(m.E).toFixed(1);
       $('mpAreaUnit').textContent = `(${U.areaUnit})`;
       $('mpEUnit').textContent = `(${U.eUnit})`;
-      let readout = '';
+      let readout = shape
+        ? `Shape: <b>${shape.name}</b> (${shape.weight} lb/ft, A = ${shape.areaIn2} in²)<br>`
+        : '';
       if (this.result && this.result.ok && this.result.members[i]) {
         const mr = this.result.members[i];
         readout += `Force: <b class="${mr.state}">${U.force(mr.N)}</b> (${mr.state})<br>`;
@@ -557,7 +597,7 @@
           }
         }
       } else {
-        readout = 'Solve the truss to see this member’s force and deflection contribution.';
+        readout += 'Solve the truss to see this member’s force and deflection contribution.';
       }
       $('mpReadout').innerHTML = readout;
     },
@@ -585,14 +625,22 @@
       });
 
       // member prop edits
+      $('mpFamily').addEventListener('change', () => {
+        const m = this.sel.type === 'member' ? this.model.members[this.sel.index] : null;
+        this.renderShapeOptions(m && m.section);
+      });
+      $('mpSearch').addEventListener('input', () => {
+        const m = this.sel.type === 'member' ? this.model.members[this.sel.index] : null;
+        this.renderShapeOptions(m && m.section);
+      });
       $('mpSection').addEventListener('change', () => {
         if (this.sel.type !== 'member') return;
-        const name = $('mpSection').value;
+        const shape = AISC.find($('mpSection').value);
         this.model.commit();
         const m = this.model.members[this.sel.index];
-        if (name && AISC_BY_NAME[name]) {
-          m.section = name;
-          m.A = this.units.aiscAreaToBase(AISC_BY_NAME[name].areaIn2);
+        if (shape) {
+          m.section = shape.name;
+          m.A = this.units.aiscAreaToBase(shape.areaIn2);
           // AISC shapes are steel: pin E at 29,000 ksi (in base kN/m^2).
           m.E = 29000 * 6894.757293;
         } else {
@@ -731,6 +779,7 @@
           this.vwTarget = { node: -1, mode: 'motion' };
           this.model.commit();
           this.model.loadFrom(obj);
+          this.canonicaliseSections();
           this.clearSelection();
           this.view.fit(this.model);
           this.recompute();
@@ -738,6 +787,20 @@
       };
       reader.readAsText(file);
       e.target.value = '';
+    },
+
+    // Files from older versions spell shapes differently ("W12x26",
+    // "Pipe 4 Std"). Map them to the current AISC label, but only when the
+    // saved area matches the database — never silently change a member's
+    // area; a mismatched label is dropped and the saved area kept.
+    canonicaliseSections() {
+      for (const m of this.model.members) {
+        if (!m.section) continue;
+        const shape = AISC.find(m.section);
+        const savedIn2 = m.A / this.units.aiscAreaToBase(1);
+        m.section = shape && Math.abs(savedIn2 - shape.areaIn2) <= 0.005 * shape.areaIn2
+          ? shape.name : null;
+      }
     },
 
     // Check a loaded file before replacing the current truss with it.

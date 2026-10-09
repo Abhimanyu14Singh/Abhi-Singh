@@ -165,11 +165,41 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('determinate: bigger area leaves forces unchanged',
     App.result.members.every((m, k) => Math.abs(m.N - forcesBefore[k]) < 1e-9));
   ok('determinate: bigger area reduces deflection', Math.abs(App.result.virtualWork.total) < dBefore);
-  change($('mpSection'), 'HSS6x6x3/8');
+  // Picker: Family -> Search -> Shape.
+  const famOpts = Array.from($('mpFamily').options).map((o) => o.value);
+  ok('AISC family list: 10 families + "All"', famOpts.length === 11 && famOpts[0] === 'W' && famOpts.includes('ALL'),
+    famOpts.join(','));
+  const shapeCount = () => $('mpSection').querySelectorAll('option[value]:not([value=""])').length;
+  ok('W family lists all 283 W shapes', $('mpFamily').value === 'W' && shapeCount() === 283, String(shapeCount()));
+  $('mpSearch').value = 'w12'; $('mpSearch').dispatchEvent(new window.Event('input', { bubbles: true }));
+  const w12 = Array.from($('mpSection').options).filter((o) => o.value).map((o) => o.value);
+  ok('search "w12" narrows to W12 shapes only', w12.length > 10 && w12.length < 40 && w12.every((v) => v.startsWith('W12X')),
+    `${w12.length}: ${w12.slice(0, 3)}`);
+  ok('match count shown', /match/.test($('mpAiscCount').textContent), $('mpAiscCount').textContent);
+  $('mpSearch').value = ''; $('mpSearch').dispatchEvent(new window.Event('input', { bubbles: true }));
+  change($('mpFamily'), 'ALL');
+  ok('"All families" lists all 1,589 shapes', shapeCount() === 1589, String(shapeCount()));
+  change($('mpFamily'), 'HSSR');
+  change($('mpSection'), 'HSS6X6X3/8');
   ok('AISC shape sets area (7.58 in²) and E (29,000 ksi)',
     Math.abs(App.model.members[0].A - 7.58 * 0.00064516) < 1e-12 &&
     Math.abs(App.model.members[0].E - 29000 * 6894.757293) < 1e-3);
-  ok('AISC shape name kept on member', App.model.members[0].section === 'HSS6x6x3/8');
+  ok('AISC shape name kept on member', App.model.members[0].section === 'HSS6X6X3/8');
+  ok('member readout names the shape', /HSS6X6X3\/8/.test($('mpReadout').textContent));
+  // A shape from every family can be applied and solved.
+  const perFamily = { W: 'W14X90', HSSC: 'HSS5.000X0.250', PIPE: 'Pipe6STD', L: 'L6X6X1/2', '2L': '2L4X4X3/8',
+    T: 'WT8X28.5', C: 'C15X50', HP: 'HP14X117', MS: 'S24X121' };
+  for (const [fam, name] of Object.entries(perFamily)) {
+    change($('mpFamily'), fam); change($('mpSection'), name);
+    const it = window.AISC.find(name);
+    ok(`pick ${name} (${fam}) -> area ${it && it.areaIn2} in², solves`, App.model.members[0].section === name &&
+      Math.abs(App.model.members[0].A - it.areaIn2 * 0.00064516) < 1e-12 && App.result.ok);
+  }
+  // Re-selecting the member re-opens the family its shape belongs to.
+  change($('mpFamily'), 'W'); App.select('member', 1); App.select('member', 0);
+  ok('re-selecting a member shows its shape (family follows it)',
+    $('mpFamily').value === 'MS' && $('mpSection').value === 'S24X121');
+  change($('mpFamily'), 'HSSR'); change($('mpSection'), 'HSS6X6X3/8');
   change($('mpE'), 150);
   ok('manual E edit clears the shape label', App.model.members[0].section === null &&
     Math.abs(App.model.members[0].E - 150e6) < 1e-3);
@@ -268,7 +298,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   /* ---------- 9. Save / load ------------------------------------------- */
   console.log('— save / load');
-  App.select('member', 1); change($('mpSection'), 'W12x26');
+  App.select('member', 1); change($('mpFamily'), 'W'); change($('mpSection'), 'W12X26');
   let savedBlob = null;
   window.URL.createObjectURL = (b) => { savedBlob = b; return 'blob:test'; };
   window.URL.revokeObjectURL = () => {};
@@ -278,7 +308,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const fr = new window.FileReader(); fr.onload = () => res(fr.result); fr.readAsText(savedBlob);
   });
   const saved = JSON.parse(savedText);
-  ok('saved file keeps the AISC shape', saved.members.some((m) => m.section === 'W12x26'));
+  ok('saved file keeps the AISC shape', saved.members.some((m) => m.section === 'W12X26'));
 
   const loadFile = async (text) => {
     const file = new window.File([text], 'truss.json', { type: 'application/json' });
@@ -289,7 +319,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   click($('clearBtn'));
   await loadFile(savedText);
   ok('Load restores the truss', App.model.members.length === saved.members.length && App.result.ok);
-  ok('Load restores the AISC shape', App.model.members.some((m) => m.section === 'W12x26'));
+  ok('Load restores the AISC shape', App.model.members.some((m) => m.section === 'W12X26'));
+
+  // Files saved by v1.1 used other spellings ("W12x26", "Pipe 4 Std").
+  const legacy = JSON.parse(savedText);
+  legacy.members[0].section = 'W12x26'; legacy.members[0].A = 7.65 * 0.00064516;
+  legacy.members[1].section = 'L5x5x3/8'; legacy.members[1].A = 3.61 * 0.00064516; // pre-v15 area
+  await loadFile(JSON.stringify(legacy));
+  ok('old file: "W12x26" maps to W12X26', App.model.members[0].section === 'W12X26');
+  ok('old file: label with a different saved area is dropped, area kept',
+    App.model.members[1].section === null && Math.abs(App.model.members[1].A - 3.61 * 0.00064516) < 1e-12);
+  await loadFile(savedText);
 
   const before = JSON.stringify(App.model.toJSON());
   await loadFile('{ "nodes": [ {"x":0,"y":0} ], "members": [ {"i":0,"j":7} ] }');
