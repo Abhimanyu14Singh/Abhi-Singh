@@ -414,6 +414,8 @@ class DirectIntegrationRun:
         if not self.want_energy:
             return
         nl: Dict[int, str] = {e: "hinge" for e in self.asm.hinge_ele.values()}
+        for uh in getattr(self.asm, "user_hinges", []):   # B10
+            nl[uh["ele"]] = "hinge"
         link_types = {lk.uid: getattr(lk, "link_type", "elastic")
                       for lk in self.engine.model.links}
         for uid, e in self.asm.link_ele.items():

@@ -19,6 +19,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 from skyframe.core.stress_strain import normalize_stress_strain
 from skyframe.core import springprops as _sprp
+from skyframe.core import user_hinges as _uh
 
 from .loads_ext import (GroundDisplacement, area_load_to_dict,  # noqa: F401
                         area_load_is_default, area_load_weight,
@@ -674,6 +675,10 @@ class FrameMember:
     # model default / the fixed 11 stations = the pre-existing behaviour).
     auto_mesh: Optional[dict] = None
     output_stations: Optional[dict] = None
+    # B10 user-defined hinges: ``hinges`` may also be a LIST of
+    # {"property", "relative_distance"} (skyframe.core.user_hinges);
+    # hinge_overwrites {"auto_subdivide", "relative_length"} (None = off).
+    hinge_overwrites: Optional[dict] = None
 
     @property
     def length(self) -> float:
@@ -709,11 +714,13 @@ class FrameMember:
                 "foundation_ks": self.foundation_ks,
                 "foundation_width": self.foundation_width,
                 "axial_limit": self.axial_limit,
-                "hinges": self.hinges,
+                "hinges": (self.hinges if isinstance(self.hinges, str)
+                           else [dict(h) for h in self.hinges]),
                 **_insertion_fields_to_dict(self),
                 **_dia.member_extra_to_dict(self),
 
                 **_framemesh_member_to_dict(self),
+                **_uh.member_to_dict(self),        # B10 (only when set)
                 "length": self.length}
 
 
@@ -1952,6 +1959,10 @@ class BuildingModel:
     # only when non-empty.
     joint_panel_zones: List[dict] = field(default_factory=list)
 
+    # B10 user-defined hinge properties {name: property dict}
+    # (skyframe.core.user_hinges; emitted by to_dict only when non-empty)
+    hinge_properties: Dict[str, dict] = field(default_factory=dict)
+
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
         self.materials[mat.name] = mat
@@ -2074,7 +2085,7 @@ class BuildingModel:
                         foundation_ks=float(foundation_ks),
                         foundation_width=float(foundation_width),
                         axial_limit=str(axial_limit),
-                        hinges=str(hinges))
+                        hinges=_uh.coerce_member_hinges(hinges))
         from skyframe.core.insertion import normalize_joint_offsets
         m.cardinal_point = cardinal_point
         m.joint_offsets = normalize_joint_offsets(joint_offsets)
@@ -2107,6 +2118,8 @@ class BuildingModel:
 
     @staticmethod
     def _validate_member_hinges(m: FrameMember) -> None:
+        if isinstance(m.hinges, list):                     # B10
+            return _uh.validate_member_hinges(m)
         if m.hinges not in MEMBER_HINGE_OPTIONS:
             raise ValueError(f"Member {m.uid}: hinges must be one of "
                              f"{MEMBER_HINGE_OPTIONS}, got {m.hinges!r}")
@@ -2877,6 +2890,12 @@ class BuildingModel:
         _sprp.validate_property(name, prop)
         self.spring_properties[name] = _sprp.normalize_property(prop)
         return self.spring_properties[name]
+
+    def add_hinge_property(self, name: str, prop: dict) -> dict:
+        """B10: define a user hinge property (ETABS Define > Frame Hinge
+        Properties); see skyframe.core.user_hinges."""
+        self.hinge_properties[name] = _uh.normalize_property(name, prop)
+        return self.hinge_properties[name]
 
     def add_line_spring(self, p1: Tuple[float, float, float],
                         p2: Tuple[float, float, float],
@@ -3716,6 +3735,7 @@ class BuildingModel:
         self._validate_nonlinear_static()
         from skyframe.core.framemesh import validate_model as _fm_validate
         _fm_validate(self)                  # frame auto mesh / stations
+        _uh.validate_model(self)            # B10 user hinges
 
     def _validate_nonlinear_static(self) -> None:
         """Nonlinear static cases / chains (see core.nonlinear_static)."""
@@ -3851,6 +3871,8 @@ class BuildingModel:
                if self.tendons else {}),
             **({"hyperstatic_cases": copy.deepcopy(self.hyperstatic_cases)}
                if self.hyperstatic_cases else {}),
+
+            **_uh.model_to_dict(self),      # B10 hinge properties (if any)
         }
 
     @classmethod
@@ -3937,7 +3959,7 @@ class BuildingModel:
                 foundation_ks=float(md.get("foundation_ks", 0.0)),
                 foundation_width=float(md.get("foundation_width", 0.0)),
                 axial_limit=str(md.get("axial_limit", "both")),
-                hinges=str(md.get("hinges", "none")),
+                hinges=_uh.coerce_member_hinges(md.get("hinges", "none")),
                 **_insertion_fields_from_dict(md),
                 **_dia.member_extra_from_dict(md)))
         for rd in d.get("shells") or []:
@@ -4259,6 +4281,8 @@ class BuildingModel:
                 raise ValueError("joint_panel_zones must be a list")
             mdl.joint_panel_zones = [dict(e) if isinstance(e, dict) else e
                                      for e in jpz]
+
+        _uh.model_from_dict(mdl, d)         # B10 hinge props / overwrites
         mdl.validate()
         return mdl
 
