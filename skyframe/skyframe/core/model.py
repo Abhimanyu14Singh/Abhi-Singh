@@ -107,6 +107,22 @@ def _optf(v) -> Optional[float]:
     return float(v)
 
 
+def _load_frame_shear_mods(sec, sd: dict) -> None:
+    """Read the frame shear-area / extra-modifier fields (absent = default)."""
+    sec.As2 = _optf(sd.get("As2"))
+    sec.As3 = _optf(sd.get("As3"))
+    sec.shear_deformation = bool(sd.get("shear_deformation", False))
+    for key in ("mod_As2", "mod_As3", "mod_mass", "mod_weight"):
+        setattr(sec, key, float(sd.get(key, 1.0)))
+
+
+def _load_shell_mods(ssec, sd: dict) -> None:
+    """Read the ETABS shell modifier fields (absent = 1.0)."""
+    for key in ("f11", "f22", "f12", "m11", "m22", "m12", "v13", "v23",
+                "mass", "weight"):
+        setattr(ssec, key, float(sd.get(key, 1.0)))
+
+
 @dataclass
 class Material:
     name: str
@@ -272,6 +288,15 @@ class FrameSection:
     mod_I33: float = 1.0
     mod_I22: float = 1.0
     mod_J: float = 1.0
+    # Frame shear deformation + full ETABS modifiers (see
+    # skyframe.core.modifiers; None/False/1.0 defaults = legacy path):
+    As2: Optional[float] = None        # m^2 shear area, local 2 (major V)
+    As3: Optional[float] = None        # m^2 shear area, local 3 (minor V)
+    shear_deformation: bool = False    # auto-fill unset As2/As3 from shape
+    mod_As2: float = 1.0
+    mod_As3: float = 1.0
+    mod_mass: float = 1.0              # element self-mass multiplier
+    mod_weight: float = 1.0            # self-weight load multiplier
 
     @staticmethod
     def rectangular(name: str, material: str, b: float, h: float) -> "FrameSection":
@@ -307,9 +332,10 @@ class ShellSection:
 
     ``mod`` (v0.4) is a single stiffness modifier (> 0) applied by scaling
     the section modulus E.  ElasticMembranePlateSection has ONE modulus, so
-    membrane and flexural stiffness scale together; independent
-    membrane/flexural modifiers are deliberately not offered in v0.4 (an
-    exact split is impossible with this section type).
+    membrane and flexural stiffness scale together.  Independent ETABS
+    membrane / bending / shear factors (``f11 .. v23``, appended below) are
+    honoured exactly by :mod:`skyframe.engine.shell_modifiers` (plate
+    modifier or an equivalent orthotropic LayeredShell).
 
     ``layered`` (v0.22) — nonlinear layered-shell definition (walls)::
 
@@ -331,6 +357,19 @@ class ShellSection:
     thickness: float  # m
     mod: float = 1.0  # v0.4 stiffness modifier (scales E)
     layered: Optional[dict] = None  # v0.22 nonlinear layered shell
+    # ETABS shell modifiers on top of ``mod`` (skyframe.core.modifiers):
+    # membrane f11/f22/f12, bending m11/m22/m12, transverse shear v13/v23
+    # (element local axes), self-mass ``mass`` and self-weight ``weight``.
+    f11: float = 1.0
+    f22: float = 1.0
+    f12: float = 1.0
+    m11: float = 1.0
+    m22: float = 1.0
+    m12: float = 1.0
+    v13: float = 1.0
+    v23: float = 1.0
+    mass: float = 1.0
+    weight: float = 1.0
 
     @property
     def total_thickness(self) -> float:
@@ -1767,6 +1806,9 @@ class BuildingModel:
         if old is not None:                      # keep the modifiers
             sec.mod_A, sec.mod_I33 = old.mod_A, old.mod_I33
             sec.mod_I22, sec.mod_J = old.mod_I22, old.mod_J
+            for key in ("As2", "As3", "shear_deformation", "mod_As2",
+                        "mod_As3", "mod_mass", "mod_weight"):
+                setattr(sec, key, getattr(old, key))
         self.designer_sections[ds.name] = ds
         self.sections[ds.name] = sec
         return ds
@@ -1794,6 +1836,17 @@ class BuildingModel:
                     and v > 0.0):
                 raise ValueError(f"Section {sec.name}: {key} must be a "
                                  f"finite value > 0 (got {v!r})")
+        BuildingModel._validate_frame_shear_mods(sec)
+
+    @staticmethod
+    def _validate_frame_shear_mods(sec: FrameSection) -> None:
+        from skyframe.core.modifiers import validate_frame_mods
+        validate_frame_mods(sec)
+
+    @staticmethod
+    def _validate_shell_mods(sec: ShellSection) -> None:
+        from skyframe.core.modifiers import validate_shell_mods
+        validate_shell_mods(sec)
 
     def set_stories(self, heights: List[float], names: Optional[List[str]] = None) -> None:
         self.stories = []
@@ -1893,6 +1946,7 @@ class BuildingModel:
             raise ValueError(f"Shell section {sec.name}: mod must be a "
                              f"finite value > 0 (got {sec.mod!r})")
         self._validate_layered(sec)
+        self._validate_shell_mods(sec)
         self.shell_sections[sec.name] = sec
         return sec
 
@@ -3045,7 +3099,8 @@ class BuildingModel:
                                if sec else None)
                         if sec is not None and mat is not None:
                             total_w += (fac * swf * sec.A
-                                        * mat.unit_weight * m.length)
+                                        * mat.unit_weight * m.length
+                                        * sec.mod_weight)
                     for region in self.shells:
                         if not self._region_on_story(region, s):
                             continue
@@ -3054,7 +3109,8 @@ class BuildingModel:
                                if ssec else None)
                         if ssec is not None and mat is not None:
                             total_w += (fac * swf * ssec.thickness
-                                        * mat.unit_weight * region.net_area)
+                                        * mat.unit_weight * region.net_area
+                                        * ssec.weight)
             masses[s.name] = total_w / G_ACCEL
         return masses
 
@@ -3153,6 +3209,7 @@ class BuildingModel:
                 raise ValueError(f"Shell section {ssec.name}: mod must be a "
                                  f"finite value > 0 (got {ssec.mod!r})")
             self._validate_layered(ssec)
+            self._validate_shell_mods(ssec)
         uids = set()
         for m in self.members:
             if m.uid in uids:
@@ -3460,6 +3517,7 @@ class BuildingModel:
                 mod_I33=float(sd.get("mod_I33", 1.0)),
                 mod_I22=float(sd.get("mod_I22", 1.0)),
                 mod_J=float(sd.get("mod_J", 1.0)))
+            _load_frame_shear_mods(mdl.sections[name], sd)
         if d.get("designer_sections"):
             from skyframe.core.sections_designer import DesignerSection
             for name, dd in d["designer_sections"].items():
@@ -3480,6 +3538,7 @@ class BuildingModel:
                 name=sd.get("name", name), material=sd["material"],
                 thickness=float(sd["thickness"]),
                 mod=float(sd.get("mod", 1.0)), layered=lay)
+            _load_shell_mods(mdl.shell_sections[name], sd)
         # v0.14 grid systems: prefer the full `grid_systems` list; otherwise
         # wrap a legacy single `grid` as a one-element list.  Both `grid`
         # (primary) and `grid_systems` are populated so all readers work.
@@ -3831,7 +3890,8 @@ def story_gravity_loads(model: "BuildingModel",
                 sec = model.sections.get(m.section)
                 mat = model.materials.get(sec.material) if sec else None
                 if sec is not None and mat is not None:
-                    total += swf * sec.A * mat.unit_weight * m.length
+                    total += (swf * sec.A * mat.unit_weight * m.length
+                              * sec.mod_weight)
             for region in model.shells:
                 if not model._region_on_story(region, s):
                     continue
@@ -3839,7 +3899,7 @@ def story_gravity_loads(model: "BuildingModel",
                 mat = model.materials.get(ssec.material) if ssec else None
                 if ssec is not None and mat is not None:
                     total += swf * ssec.thickness * mat.unit_weight \
-                        * region.net_area
+                        * region.net_area * ssec.weight
         out[s.name] = total
     return out
 

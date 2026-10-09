@@ -164,6 +164,8 @@ from skyframe.core.buckling import BucklingResult, buckling_analysis
 from skyframe.core import loads_ext as _lx
 from skyframe.core.mesh import (MeshedModel, Segment, edge_tie_chains,
                                 mesh_model)
+from skyframe.core.modifiers import shell_mods_default
+from skyframe.engine.shell_modifiers import elastic_shell_section
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
                                  FP_DEFAULT_KINIT, G_ACCEL,
                                  ISOLATOR_DEFAULT_KV, TFP_DEFAULT_MINFV,
@@ -672,53 +674,86 @@ def _local_stiffness(E: float, G: float, A: float, Iy: float, Iz: float,
     return k
 
 
-def _consistent_load(records: Sequence[SpanLoad], L: float) -> np.ndarray:
+def _timo_shape(xi: float, L: float, phi: float
+                ) -> Tuple[float, float, float, float]:
+    """Exact Timoshenko (interdependent) transverse displacement shape
+    functions ``(N1, N2, N3, N4)`` for ``phi = 12EI/(G Av L^2)``; they are
+    the exact homogeneous solutions, so the work-equivalent load is the
+    exact fixed-end force vector (Betti).  ``phi = 0`` -> Hermite cubics.
+    """
+    c = 1.0 / (1.0 + phi)
+    n1 = c * (1.0 - 3.0 * xi ** 2 + 2.0 * xi ** 3 + phi * (1.0 - xi))
+    n2 = c * L * (xi - 2.0 * xi ** 2 + xi ** 3 + 0.5 * phi * (xi - xi ** 2))
+    n3 = c * (3.0 * xi ** 2 - 2.0 * xi ** 3 + phi * xi)
+    n4 = c * L * (-xi ** 2 + xi ** 3 - 0.5 * phi * (xi - xi ** 2))
+    return n1, n2, n3, n4
+
+
+def _consistent_load(records: Sequence[SpanLoad], L: float,
+                     phi_y: float = 0.0, phi_z: float = 0.0) -> np.ndarray:
     """Consistent (work-equivalent) nodal load 12-vector for span loads.
 
     For an Euler element the Hermite-consistent load vector reproduces the
     EXACT fixed-end forces (Hermite cubics are the exact homogeneous
     solutions), so ``fixed-end forces = -_consistent_load(...)``.
+    ``phi_y``/``phi_z`` (> 0 only for Timoshenko members) switch the x-y /
+    x-z planes to the exact Timoshenko shape functions (:func:`_timo_shape`).
     """
     f = np.zeros(12)
+    timo = phi_y != 0.0 or phi_z != 0.0
 
     def add_point(px: float, py: float, pz: float, x: float) -> None:
         xi = x / L
-        n1 = 1.0 - 3.0 * xi ** 2 + 2.0 * xi ** 3
-        n2 = x * (1.0 - xi) ** 2
-        n3 = 3.0 * xi ** 2 - 2.0 * xi ** 3
-        n4 = x * xi * (xi - 1.0)
+        if timo:
+            n1, n2, n3, n4 = _timo_shape(xi, L, phi_y)
+            m1, m2, m3, m4 = _timo_shape(xi, L, phi_z)
+        else:
+            n1 = 1.0 - 3.0 * xi ** 2 + 2.0 * xi ** 3
+            n2 = x * (1.0 - xi) ** 2
+            n3 = 3.0 * xi ** 2 - 2.0 * xi ** 3
+            n4 = x * xi * (xi - 1.0)
+            m1, m2, m3, m4 = n1, n2, n3, n4
         f[0] += px * (1.0 - xi)
         f[6] += px * xi
         f[1] += py * n1
         f[5] += py * n2
         f[7] += py * n3
         f[11] += py * n4
-        f[2] += pz * n1
-        f[4] -= pz * n2
-        f[8] += pz * n3
-        f[10] -= pz * n4
+        f[2] += pz * m1
+        f[4] -= pz * m2
+        f[8] += pz * m3
+        f[10] -= pz * m4
 
     for rec in records:
         if rec[0] == "point":
             (px, py, pz), x0 = rec[1], rec[2]
             add_point(px, py, pz, x0)
         elif rec[0] == "moment":
-            # work-equivalent couple: M * (Hermite shape-fn derivative)
+            # work-equivalent couple: M * (section-rotation shape function).
+            # Euler: the Hermite derivatives.  Timoshenko: the exact
+            # interdependent rotation field of _timo_shape (mu = 1/(1+phi));
+            # phi = 0 reduces to the Hermite terms.
             (mx, my, mz), x0 = rec[1], rec[2]
             xi = x0 / L
-            d1 = 6.0 * (xi * xi - xi) / L
-            d2 = (1.0 - xi) * (1.0 - 3.0 * xi)
-            d4 = xi * (3.0 * xi - 2.0)
+
+            def rot_fns(phi: float) -> Tuple[float, float, float]:
+                mu = 1.0 / (1.0 + phi)
+                return (mu * 6.0 * (xi * xi - xi) / L,
+                        mu * ((1.0 - xi) * (1.0 - 3.0 * xi) + phi * (1.0 - xi)),
+                        mu * (xi * (3.0 * xi - 2.0) + phi * xi))
+
+            d1, d2, d4 = rot_fns(phi_y)          # x-y plane (mz)
+            e1, e2, e4 = rot_fns(phi_z)          # x-z plane (my)
             f[3] += mx * (1.0 - xi)
             f[9] += mx * xi
             f[1] += mz * d1
             f[5] += mz * d2
             f[7] -= mz * d1
             f[11] += mz * d4
-            f[2] -= my * d1
-            f[4] += my * d2
-            f[8] += my * d1
-            f[10] += my * d4
+            f[2] -= my * e1
+            f[4] += my * e2
+            f[8] += my * e1
+            f[10] += my * e4
         else:
             w1, w2, xa, xb = rec[1], rec[2], rec[3], rec[4]
             span = xb - xa
@@ -736,14 +771,16 @@ def _consistent_load(records: Sequence[SpanLoad], L: float) -> np.ndarray:
 
 def _condensed_fef(records: Sequence[SpanLoad], L: float, E: float, G: float,
                    A: float, Iy: float, Iz: float, J: float,
-                   released: Sequence[int]) -> np.ndarray:
+                   released: Sequence[int], phi_y: float = 0.0,
+                   phi_z: float = 0.0) -> np.ndarray:
     """Exact fixed-end force 12-vector of the ACTUAL element (with releases).
 
     Standard release condensation: with released DOFs R free of load
     (moment = 0) and the others clamped,
-    ``f_rel = f_ff - K[:, R] @ K[R, R]^-1 @ f_ff[R]``.
+    ``f_rel = f_ff - K[:, R] @ K[R, R]^-1 @ f_ff[R]``.  ``phi_y``/``phi_z``
+    (Timoshenko members, never released) select exact shear-flexible FEFs.
     """
-    f0 = -_consistent_load(records, L)
+    f0 = -_consistent_load(records, L, phi_y, phi_z)
     rel = sorted(set(released))
     if rel:
         K = _local_stiffness(E, G, A, Iy, Iz, J, L)
@@ -798,6 +835,38 @@ def _defl_double_integral(V_i: float, M_i: float,
             if xi > xb:
                 dxb = xi - xb
                 val -= w2 * dxb ** 4 / 24.0 + s * dxb ** 5 / 120.0
+    return val
+
+
+def _bending_moment(V_i: float, M_i: float, records: Sequence[SpanLoad],
+                    comp: int, xi: float) -> float:
+    """``Mb(xi)`` of :func:`_defl_double_integral` (its second derivative):
+    the statics-exact bending moment of the plane's 2D beam.  Used for the
+    Timoshenko shear-deflection term ``Mb/(G Av)``."""
+    val = -M_i + V_i * xi
+    for rec in records:
+        if rec[0] == "point":
+            p, x0 = rec[1][comp], rec[2]
+            if xi > x0:
+                val += p * (xi - x0)
+        elif rec[0] == "moment":
+            # same jump as _defl_double_integral: -mz (x-y) / +my (x-z)
+            m0 = -rec[1][2] if comp == 1 else rec[1][1]
+            if xi > rec[2]:
+                val += m0
+        else:
+            w1, w2 = rec[1][comp], rec[2][comp]
+            xa, xb = rec[3], rec[4]
+            span = xb - xa
+            if span < 1e-12:
+                continue
+            s = (w2 - w1) / span
+            if xi > xa:
+                dxa = xi - xa
+                val += w1 * dxa ** 2 / 2.0 + s * dxa ** 3 / 6.0
+            if xi > xb:
+                dxb = xi - xb
+                val -= w2 * dxb ** 2 / 2.0 + s * dxb ** 3 / 6.0
     return val
 
 
@@ -1109,6 +1178,10 @@ class _Assembly:
     gd_present: bool = False
     #   any pattern carries ground displacements (Transformation handler;
     #   spring reactions use the spring deformation u - u_ground)
+
+    timo: Dict[str, Tuple[float, float]] = field(default_factory=dict)
+    #   frame shear deformation: member uid -> (Avy, Avz) effective shear
+    #   areas of members built as ElasticTimoshenkoBeam (absent = Euler)
 
     def free_massed_dofs(self) -> int:
         """Number of massed (node, dof) pairs that are NOT restrained.
@@ -2191,6 +2264,7 @@ class OpenSeesEngine:
         transf_name = (transf if transf is not None
                        else ("PDelta" if pdelta else "Linear"))
         coro_release_fallback: List[str] = []
+        timo_fallback: Dict[str, List[str]] = {}   # reason -> member uids
         if self._mesh is None:
             self._mesh = mesh_model(model)
         mesh = self._mesh
@@ -2502,6 +2576,11 @@ class OpenSeesEngine:
                     for node in (seg.ni, seg.nj):
                         rot_add(node, eye3)
                     continue
+            # frame shear deformation: (Avy, Avz) or None (Euler path)
+            timo_av = self._timo_plan(m, sec, toks, transf_name,
+                                      timo_fallback)
+            if timo_av is not None:
+                asm.timo[m.uid] = timo_av
             for seg in segs:
                 etag += 1
                 beam_etag = etag
@@ -2574,10 +2653,16 @@ class OpenSeesEngine:
                                 mat.G * RIGID_LINK_FACTOR, J_eff, I22_eff,
                                 I33_eff, etag)
                     nj_tag = tag
-                ops.element("elasticBeamColumn", beam_etag,
-                            ni_tag, nj_tag,
-                            A_eff, mat.E, mat.G, J_eff, I22_eff, I33_eff,
-                            beam_etag, *extra)
+                if timo_av is not None:            # never released (plan)
+                    ops.element("ElasticTimoshenkoBeam", beam_etag,
+                                ni_tag, nj_tag, mat.E, mat.G, A_eff, J_eff,
+                                I22_eff, I33_eff, timo_av[0], timo_av[1],
+                                beam_etag)
+                else:
+                    ops.element("elasticBeamColumn", beam_etag,
+                                ni_tag, nj_tag,
+                                A_eff, mat.E, mat.G, J_eff, I22_eff, I33_eff,
+                                beam_etag, *extra)
                 asm.seg_ele[(m.uid, seg.index)] = beam_etag
                 for node, released in ((seg.ni, rel_i), (seg.nj, rel_j)):
                     rot_add(node, torsion_only if released else eye3)
@@ -2680,6 +2765,7 @@ class OpenSeesEngine:
         # thickness while layered is None — bit-identical legacy path).
         nonlinear_shells = hinge_case is not None
         nd_tag = _ND_MAT_TAG0
+        shell_mod_ignored: List[str] = []
         if mesh.quads:
             sec_tags: Dict[str, int] = {}
             stag = 0
@@ -2689,12 +2775,16 @@ class OpenSeesEngine:
                 if getattr(ssec, "layered", None) and nonlinear_shells:
                     mtag, nd_tag = self._layered_shell_section(
                         stag, ssec, mtag, nd_tag)
+                    if not shell_mods_default(ssec):
+                        shell_mod_ignored.append(name)
                 else:
                     # rho = 0: shell self-weight/mass ignored in v0.2
-                    # v0.4: ssec.mod scales E (membrane AND flexural)
-                    ops.section("ElasticMembranePlateSection", stag,
-                                mat.E * ssec.mod, mat.nu,
-                                ssec.total_thickness, 0.0)
+                    # v0.4: ssec.mod scales E (membrane AND flexural);
+                    # f/m/v modifiers: exact uniform / layered paths
+                    # (skyframe.engine.shell_modifiers; defaults = the
+                    # legacy ElasticMembranePlateSection call)
+                    nd_tag, _ = elastic_shell_section(stag, ssec, mat, 1.0,
+                                                      nd_tag)
                 sec_tags[name] = stag
             regions = {r.uid: r for r in model.shells}
             # v0.25 cracked-slab iteration: per-quad stiffness scale factors
@@ -2720,9 +2810,8 @@ class OpenSeesEngine:
                         ssec_q = model.shell_sections[region.section]
                         mat_q = model.materials[ssec_q.material]
                         stag += 1
-                        ops.section("ElasticMembranePlateSection", stag,
-                                    mat_q.E * ssec_q.mod * scale, mat_q.nu,
-                                    ssec_q.total_thickness, 0.0)
+                        nd_tag, _ = elastic_shell_section(
+                            stag, ssec_q, mat_q, scale, nd_tag)
                         scaled_tags[key] = stag
                     stag_q = scaled_tags[key]
                 ops.element("ShellMITC4", etag, *node_tags, stag_q)
@@ -3235,9 +3324,49 @@ class OpenSeesEngine:
                 "Corotational build: released elements are not supported "
                 "by the 3D Corotational transformation; PDelta fallback "
                 f"applied to: {sorted(set(coro_release_fallback))}")
+        if shell_mod_ignored:
+            warnings.warn(
+                "shell f/m/v modifiers are not applied to nonlinear LAYERED "
+                "shell sections (only ShellSection.mod scales E there): "
+                f"{sorted(shell_mod_ignored)}", UserWarning)
+        for reason, uids in timo_fallback.items():
+            warnings.warn(
+                "shear deformation (As2/As3) not applied — Euler-Bernoulli "
+                f"elasticBeamColumn fallback ({reason}) for member(s): "
+                f"{sorted(set(uids))}", UserWarning)
         if hinge_case is None:
             self._asm = asm
         return asm
+
+    @staticmethod
+    def _timo_plan(m: FrameMember, sec: FrameSection, toks,
+                   transf_name: str, fallback: Dict[str, List[str]]
+                   ) -> Optional[Tuple[float, float]]:
+        """Effective (Avy, Avz) when member ``m`` is built as an OpenSees
+        ``ElasticTimoshenkoBeam``, else None.
+
+        Incompatibilities (probed on the shipped openseespy) fall back to
+        the Euler ``elasticBeamColumn`` and are reported by reason:
+        ElasticTimoshenkoBeam has no ``-releasez/-releasey`` (moment
+        releases) and ignores the PDelta/Corotational geometric stiffness.
+        """
+        from skyframe.core.modifiers import (effective_shear_areas,
+                                             shear_enabled)
+        if not shear_enabled(sec):
+            return None
+        av = effective_shear_areas(sec)
+        if av is None:
+            fallback.setdefault("no shear area resolvable from the section "
+                                "shape", []).append(m.uid)
+            return None
+        if toks:
+            fallback.setdefault("moment releases", []).append(m.uid)
+            return None
+        if transf_name != "Linear":
+            fallback.setdefault(f"{transf_name} geometric transformation",
+                                []).append(m.uid)
+            return None
+        return av
 
     def _assign_mass(self, asm: _Assembly) -> None:
         """Lump story + explicit nodal masses; record the diagonal mass map.
@@ -3273,6 +3402,7 @@ class OpenSeesEngine:
             if opts["self_mass"]:
                 self._add_element_self_mass(asm, add, lateral=lateral)
         else:
+            self._warn_mass_mods_weight_mode()
             story_masses = model.compute_story_masses()
             lx, ly = model.plan_extents()
             trib: Dict[int, float] = {}
@@ -3551,7 +3681,7 @@ class OpenSeesEngine:
             mat = model.materials.get(sec.material) if sec else None
             if sec is None or mat is None:
                 continue
-            mass = mat.mass_per_volume * sec.A * m.length
+            mass = mat.mass_per_volume * sec.A * m.length * sec.mod_mass
             if mass <= 0.0:
                 continue
             tags = [node_at(m.pi), node_at(m.pj)]
@@ -3572,7 +3702,8 @@ class OpenSeesEngine:
             mat = model.materials.get(ssec.material) if ssec else None
             if ssec is None or mat is None:
                 continue
-            mass = mat.mass_per_volume * ssec.total_thickness * r.net_area
+            mass = (mat.mass_per_volume * ssec.total_thickness * r.net_area
+                    * ssec.mass)
             if mass <= 0.0:
                 continue
             tags = [node_at(c) for c in r.corners]
@@ -3588,6 +3719,23 @@ class OpenSeesEngine:
                     add(t, 1, each)
                     add(t, 2, each)
                 add(t, 3, each)
+
+    def _warn_mass_mods_weight_mode(self) -> None:
+        """mass_source_mode == "weight": story mass is derived from the
+        (mod_weight-scaled) self-weight LOADS, so the self-MASS modifiers
+        (FrameSection.mod_mass / ShellSection.mass) have nothing to scale —
+        say so instead of silently ignoring them (ETABS semantics: the
+        mass modifier acts on element self mass)."""
+        model = self.model
+        odd = sorted([n for n, s in model.sections.items()
+                      if getattr(s, "mod_mass", 1.0) != 1.0]
+                     + [n for n, s in model.shell_sections.items()
+                        if getattr(s, "mass", 1.0) != 1.0])
+        if odd:
+            warnings.warn(
+                "mass modifiers (mod_mass / shell mass) apply only with "
+                "mass_source_mode='element_self_mass'; ignored in 'weight' "
+                f"mode for section(s): {odd}", UserWarning)
 
     @staticmethod
     def _eff_props(sec: FrameSection) -> Tuple[float, float, float, float]:
@@ -4023,7 +4171,8 @@ class OpenSeesEngine:
                 mat = model.materials.get(sec.material) if sec else None
                 if sec is None or mat is None:
                     continue
-                w_sw = swf * sec.A * mat.unit_weight        # kN/m, downward
+                w_sw = (swf * sec.A * mat.unit_weight       # kN/m, downward
+                        * sec.mod_weight)
                 if w_sw == 0.0:
                     continue
                 self._apply_member_load(asm, member, "udl", -w_sw * scale,
@@ -4034,7 +4183,8 @@ class OpenSeesEngine:
                 if ssec is None or mat is None:
                     continue
                 # v0.22: layered sections weigh their summed layer thickness
-                q_sw = swf * ssec.total_thickness * mat.unit_weight  # kN/m^2
+                q_sw = (swf * ssec.total_thickness * mat.unit_weight
+                        * ssec.weight)                         # kN/m^2
                 if q_sw == 0.0:
                     continue
                 self._apply_area_load(asm, region.uid, q_sw * scale)
@@ -4150,8 +4300,9 @@ class OpenSeesEngine:
         rec: SpanLoad = ("point", (comps[0] * p, comps[1] * p, comps[2] * p),
                          xi)
         released = seg_release(seg)
-        if released:
-            # OpenSees does not condense beamPoint for released ends
+        if released or member.uid in asm.timo:
+            # OpenSees does not condense beamPoint for released ends;
+            # ElasticTimoshenkoBeam rejects beamPoint (exact Timoshenko FEF)
             self._apply_fef(asm, member, seg, [rec], released)
         else:
             etag = asm.seg_ele[(member.uid, seg.index)]
@@ -4167,8 +4318,17 @@ class OpenSeesEngine:
         sec = model.sections[member.section]
         mat = model.materials[sec.material]
         A_eff, I22_eff, I33_eff, J_eff = self._eff_props(sec)
-        f0 = _condensed_fef(records, seg.length, mat.E, mat.G, A_eff,
-                            I22_eff, I33_eff, J_eff, released)
+        av = asm.timo.get(member.uid)
+        if av is None:
+            f0 = _condensed_fef(records, seg.length, mat.E, mat.G, A_eff,
+                                I22_eff, I33_eff, J_eff, released)
+        else:
+            from skyframe.core.modifiers import timoshenko_phi
+            f0 = _condensed_fef(
+                records, seg.length, mat.E, mat.G, A_eff, I22_eff, I33_eff,
+                J_eff, released,
+                timoshenko_phi(mat.E, mat.G, I33_eff, av[0], seg.length),
+                timoshenko_phi(mat.E, mat.G, I22_eff, av[1], seg.length))
         xax, yax, zax, _, _ = _local_axes(member)
 
         def to_global(lx: float, ly: float, lz: float) -> Vec3:
@@ -4445,7 +4605,7 @@ class OpenSeesEngine:
             if (node_disp is not None
                     and sum(self._member_offsets(m)) <= _TOL):
                 md = self._member_deflection(m, segs, corrected, xs,
-                                             node_disp)
+                                             node_disp, asm.timo.get(m.uid))
                 if md is not None:
                     member_deflections[m.uid] = md
         return member_forces, member_stations, member_deflections
@@ -4453,7 +4613,8 @@ class OpenSeesEngine:
     def _member_deflection(self, m: FrameMember, segs: List[Segment],
                            corrected: Dict[int, List[float]],
                            xs: List[float],
-                           node_disp: Dict[int, List[float]]
+                           node_disp: Dict[int, List[float]],
+                           timo_av: Optional[Tuple[float, float]] = None
                            ) -> Optional[Dict[str, List[float]]]:
         """{"x", "dy", "dz"} deflection stations of one member (v0.16).
 
@@ -4463,6 +4624,12 @@ class OpenSeesEngine:
         statics-exact moment field pin the interior cubic/quintic exactly.
         ``dy``/``dz`` are ABSOLUTE local-y / local-z displacements (m) —
         chord-relative values are derived by the serviceability checks.
+
+        Timoshenko members (``timo_av = (Avy, Avz)``): with ``EI theta' =
+        Mb`` the section shear is ``Q = -Mb'`` and the elastic line obeys
+        ``v'' = Mb/EI - Mb''/(G Av)``, so the shear part adds exactly
+        ``-(Mb(xi) - Mb(0))/(G Av)`` to the particular solution (the linear
+        part is still pinned by the two end displacements).
         """
         model = self.model
         sec = model.sections[m.section]
@@ -4475,6 +4642,8 @@ class OpenSeesEngine:
         EIy = mat.E * I22_eff                     # x-z plane (dz)
         if EIz <= 0.0 or EIy <= 0.0:              # pragma: no cover
             return None
+        if timo_av is not None:
+            GAy, GAz = mat.G * timo_av[0], mat.G * timo_av[1]
         axes = self._axes_cache.get(m.uid)        # v0.26 memo (same values)
         if axes is None:
             axes = self._axes_cache[m.uid] = _local_axes(m)
@@ -4498,6 +4667,15 @@ class OpenSeesEngine:
             vz_j = tdisp(seg.nj + 1, zax)
             Iy_L = _defl_double_integral(fi[1], fi[5], recs, 1, Ls)
             Iz_L = _defl_double_integral(fi[2], -fi[4], recs, 2, Ls)
+            if timo_av is not None:
+                Iy_L -= (EIz / GAy) * (_bending_moment(fi[1], fi[5], recs,
+                                                       1, Ls)
+                                       - _bending_moment(fi[1], fi[5], recs,
+                                                         1, 0.0))
+                Iz_L -= (EIy / GAz) * (_bending_moment(fi[2], -fi[4], recs,
+                                                       2, Ls)
+                                       - _bending_moment(fi[2], -fi[4], recs,
+                                                         2, 0.0))
             th_y = (vy_j - vy_i - Iy_L / EIz) / Ls
             th_z = (vz_j - vz_i - Iz_L / EIy) / Ls
             params[seg.index] = (vy_i, th_y, vz_i, th_z, recs, fi)
@@ -4518,6 +4696,19 @@ class OpenSeesEngine:
                     seg = segs[-1]
             xi = min(max(x - seg.x0, 0.0), seg.length)
             vy_i, th_y, vz_i, th_z, recs, fi = params[seg.index]
+            if timo_av is not None:
+                dy.append(float(
+                    vy_i + th_y * xi
+                    + _defl_double_integral(fi[1], fi[5], recs, 1, xi) / EIz
+                    - (_bending_moment(fi[1], fi[5], recs, 1, xi)
+                       - _bending_moment(fi[1], fi[5], recs, 1, 0.0)) / GAy))
+                dz.append(float(
+                    vz_i + th_z * xi
+                    + _defl_double_integral(fi[2], -fi[4], recs, 2, xi) / EIy
+                    - (_bending_moment(fi[2], -fi[4], recs, 2, xi)
+                       - _bending_moment(fi[2], -fi[4], recs, 2, 0.0))
+                    / GAz))
+                continue
             dy.append(float(
                 vy_i + th_y * xi
                 + _defl_double_integral(fi[1], fi[5], recs, 1, xi) / EIz))
@@ -4846,6 +5037,11 @@ class OpenSeesEngine:
                  + st_r["M2"][k] * st_v["M2"][k] / EI22
                  + st_r["T"][k] * st_v["T"][k] / GJ
                  for k in range(len(xs))]
+            av = asm.timo.get(m.uid)
+            if av is not None:      # Timoshenko member: + V*v/(G*Av) terms
+                f = [f[k] + st_r["V2"][k] * st_v["V2"][k] / (mat.G * av[0])
+                     + st_r["V3"][k] * st_v["V3"][k] / (mat.G * av[1])
+                     for k in range(len(xs))]
             # composite Simpson on the 11 equally-spaced stations
             # (10 intervals): h/3 * (f0 + 4f1 + 2f2 + ... + 4f9 + f10)
             h = xs[1] - xs[0]
@@ -5002,13 +5198,15 @@ class OpenSeesEngine:
                     mat = model.materials.get(sec.material) if sec else None
                     if sec is None or mat is None:
                         continue
-                    total += scale * swf * sec.A * mat.unit_weight * m.length
+                    total += (scale * swf * sec.A * mat.unit_weight
+                              * m.length * sec.mod_weight)
                 for region in model.shells:
                     ssec = model.shell_sections.get(region.section)
                     mat = model.materials.get(ssec.material) if ssec else None
                     if ssec is None or mat is None:
                         continue
-                    q = swf * ssec.total_thickness * mat.unit_weight
+                    q = (swf * ssec.total_thickness * mat.unit_weight
+                         * ssec.weight)
                     total += scale * self._area_load_fz(asm, region, q)
             for al in pat.area_loads:
                 region = model._shell(al.region_uid)
@@ -5218,7 +5416,7 @@ class OpenSeesEngine:
                                if sec else None)
                         if sec is not None and mat is not None:
                             add(fac * swf * sec.A * mat.unit_weight
-                                * m.length, *mid(m))
+                                * m.length * sec.mod_weight, *mid(m))
                     for region in model.shells:
                         if not model._region_on_story(region, s):
                             continue
@@ -5228,7 +5426,7 @@ class OpenSeesEngine:
                         if ssec is not None and mat is not None:
                             c = region.map_uv(0.5, 0.5)
                             add(fac * swf * ssec.thickness * mat.unit_weight
-                                * region.net_area, c[0], c[1])
+                                * region.net_area * ssec.weight, c[0], c[1])
             if wsum > 1e-12:
                 out[s.name] = (wx / wsum, wy / wsum)
             else:

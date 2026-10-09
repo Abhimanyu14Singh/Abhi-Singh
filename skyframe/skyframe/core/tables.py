@@ -29,6 +29,9 @@ from __future__ import annotations
 import math
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
+from .loads_ext import area_load_is_default, area_load_resultant
+from .modifiers import frame_weight_mod, shell_weight_mod
+
 TOL = 1e-6
 
 # Quantity tags (base SI-consistent units in parentheses): the frontend maps
@@ -812,7 +815,7 @@ def applied_pattern_totals(model, pattern: str,
             member_load(m, "gravity", udl.w * m.length)
     for ml in pat.member_loads:
         m = members.get(ml.member_uid)
-        if m is None:
+        if m is None or ml.kind == "moment":    # a couple has no net force
             continue
         if ml.kind == "point":
             w = ml.w
@@ -830,21 +833,28 @@ def applied_pattern_totals(model, pattern: str,
         F[1] += sf.fy
     for al in pat.area_loads:
         region = model._shell(al.region_uid)
-        if region is not None:
+        if region is None:
+            continue
+        if area_load_is_default(al):
             F[2] -= al.q * area(region)
+        else:                       # direction / projected / joint pattern
+            R = area_load_resultant(region, al)
+            for k in range(3):
+                F[k] += R[k]
     swf = getattr(pat, "self_weight_factor", 0.0)
     if swf:
         for m in model.members:
             sec = model.sections.get(m.section)
             mat = model.materials.get(sec.material) if sec else None
             if sec is not None and mat is not None:
-                F[2] -= swf * sec.A * mat.unit_weight * m.length
+                F[2] -= (swf * sec.A * mat.unit_weight * m.length
+                         * frame_weight_mod(sec))
         for region in model.shells:
             ssec = model.shell_sections.get(region.section)
             mat = model.materials.get(ssec.material) if ssec else None
             if ssec is not None and mat is not None:
                 F[2] -= (swf * ssec.total_thickness * mat.unit_weight
-                         * area(region))
+                         * area(region) * shell_weight_mod(ssec))
     return F
 
 
@@ -902,8 +912,12 @@ def _t_load_patterns(c: _Ctx) -> List[dict]:
                 continue
             b = cases[cname].get("base", {})
             R = [_num(b.get(k)) / f for k in ("FX", "FY", "FZ")]
+            err = _err_pct(F, R)
+            if (getattr(pat, "ground_displacements", None)
+                    and max(abs(v) for v in F) < 1e-9):
+                err = None      # settlement only: self-equilibrated reactions
             row.update(case=cname, react_FX=R[0], react_FY=R[1],
-                       react_FZ=R[2], error_pct=_err_pct(F, R))
+                       react_FZ=R[2], error_pct=err)
             break
         rows.append(row)
     return rows

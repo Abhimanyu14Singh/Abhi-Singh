@@ -319,6 +319,15 @@ def area_load_weight(region, al) -> float:
     ``net_area / area`` for openings."""
     if area_load_is_default(al):
         return al.q * region.net_area
+    return -area_load_resultant(region, al)[2]
+
+
+def area_load_resultant(region, al) -> List[float]:
+    """Global force resultant [FX, FY, FZ] (kN) of an area load WITHOUT a
+    mesh: the patch integral used by :func:`area_load_weight`, all three
+    components (8x8 sub-cells, 3x3 Gauss; scaled by ``net_area / area``
+    for openings).  Exact for a linear joint pattern on a parallelogram
+    region without openings."""
     c = [tuple(map(float, p)) for p in region.corners]
     fn = _intensity_fn(region, al, al.q)
 
@@ -327,14 +336,17 @@ def area_load_weight(region, al) -> float:
                      + u * v * c[2][k] + (1 - u) * v * c[3][k]
                      for k in range(3))
     n = 8
-    total = 0.0
+    total = [0.0, 0.0, 0.0]
     for i in range(n):
         for j in range(n):
             X = [bil(i / n, j / n), bil((i + 1) / n, j / n),
                  bil((i + 1) / n, (j + 1) / n), bil(i / n, (j + 1) / n)]
-            total += sum(-f[2] for f in _quad_integrate(X, fn))
+            for f in _quad_integrate(X, fn):
+                for k in range(3):
+                    total[k] += f[k]
     area = region.area
-    return total * (region.net_area / area if area > 0.0 else 1.0)
+    scale = region.net_area / area if area > 0.0 else 1.0
+    return [t * scale for t in total]
 
 
 def membrane_scale(region, al) -> float:
