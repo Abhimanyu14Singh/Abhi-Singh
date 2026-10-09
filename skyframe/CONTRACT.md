@@ -6194,3 +6194,223 @@ device (TH Newton) links.  FNA rejects them, so use direct integration.
   * the bearing types run under gravity plus lateral load;
   * a TH with a nonlinear named spring runs;
   * round trips match, and validation rejects bad inputs.
+
+## Temperature gradients, projected loads and auto-lateral generators (ASCE 7-22, EC8, IS 1893, user)
+
+v1.16 load GENERATION (gap audit D2 + D4).  Bulk logic lives in
+`skyframe/core/thermal_ext.py` (data, serialization, validation,
+`projected_factor`), `skyframe/engine/thermal_ext.py` (engine loads and
+shell output correction) and `skyframe/core/autolateral.py` (generators).
+Every default reproduces the pre-v1.16 results and model JSON byte for
+byte: zero gradients, `projected=False`, empty shell / joint temperature
+lists and `ecc=0` add no keys and no loads (multiplying by the projected
+factor 1.0 is exact).
+
+### Frame temperature gradients
+
+`ThermalLoad` gains `grad2` and `grad3` (deg C per metre along the member
+local 2 / local 3 axis, ETABS "Temperature Gradient 2-2 / 3-3"; i.e.
+`dT_across_depth / h`).  JSON keys appear only when non-zero.
+
+* Free thermal curvature: a fibre at local `y` strains `alpha grad2 y`.
+  The member curves away from the hot face: `v'' = -alpha grad2` (local 2
+  deflection) and `w'' = -alpha grad3` (local 3).
+* Fully restrained fixed-end moments: `Mz0 = E I33 alpha grad2` and
+  `My0 = E I22 alpha grad3`.  The local fixed-end vector is
+  `f0[5] = -Mz0, f0[11] = +Mz0, f0[4] = +My0, f0[10] = -My0`.
+  * Releases condense exactly as in `_condensed_fef`.
+  * It is applied REVERSED as nodal loads and added to the segment
+    end-force correction (`_seg_fef`), the same path as `_apply_thermal`.
+  * Interior segment nodes cancel.
+* Results:
+  * a free cantilever rotates `alpha g L` at the tip and deflects
+    `alpha g L^2 / 2`, with zero internal force;
+  * a fixed-fixed member has zero displacement and the constant moment
+    `E I alpha g`;
+  * a propped cantilever has prop force `3 E I alpha g / (2 L)`.
+* Deflection stations: a `("kappa", (0, -Mz0, -My0), 0.0)` span record
+  adds the free curvature to the v0.16 closed-form deflection stations,
+  which then follow the exact parabola.  The statics, consistent-load and
+  bending-moment helpers skip this record.
+* Scope: axial-only (Truss) members take no gradient.  Staged-user group
+  scaling scales `grad2`/`grad3` together with `dT`.
+* `alpha` is the material `alpha`, or else `model.thermal_alpha`.
+* `add_thermal_load(pattern, uid, dT, grad2=0, grad3=0)`.
+  `POST /api/pattern/thermal` accepts `grad2` / `grad3` per load; `dT`
+  may then be omitted (= 0).
+
+### Joint-pattern temperatures
+
+`LoadPattern.joint_temperatures = [JointTemperature(point, dT)]`; the JSON
+key `joint_temperatures` is `[{point: [x, y, z], dT}]`.
+
+* A frame member takes the average of its two end-joint values (a joint
+  with no value counts as 0) as a uniform `dT` through `_apply_thermal`.
+* This is exact for the axial statics of a prismatic member under a
+  linear temperature: the free elongation is `alpha T_avg L` and the
+  restrained force is `E A alpha T_avg`.
+* Shells do not read joint temperatures; use `ShellThermalLoad` for them.
+* `POST /api/pattern/joint-temperature {pattern, loads: [{point, dT}]}`.
+
+### Shell temperatures
+
+`LoadPattern.shell_thermal_loads = [ShellThermalLoad(region_uid, dT=0,
+grad3=0)]`.
+
+* `dT` is uniform (membrane expansion).
+* `grad3` is in deg C/m through the thickness along the region local 3,
+  the corner-ordering normal; the +3 face is hotter for `grad3 > 0`.
+* Membrane regions are rejected.
+
+Equivalent loads use the boundary-traction form.  For each mesh element,
+taken CCW about its own normal `n_q`, each edge A->B adds:
+
+* `N_th Le/2 n_out` at A and B, with `N_th = E_m t alpha dT / (1 - nu)`
+  and `n_out = edge_hat x n_q`;
+* the couple `m_th/2 (B - A)` at A and B, with
+  `m_th = s E_b t^3 alpha grad3 / (12 (1 - nu))` (`s = +1` when `n_q`
+  agrees with the region local 3).
+
+Parameters and scope:
+
+* `E_m = E_b = E mod` (times the cracked-slab factor).  With uniform
+  shell modifiers, `f11` scales the membrane and `m11` the bending.  With
+  orthotropic modifiers, the mean 11/22 factors are used (documented
+  approximation).
+* Interior edges cancel, so the result is exact for the constant-stress
+  patch: a free plate strains `alpha dT` and curves `alpha grad3`
+  isotropically.
+* Linear static shell-force output subtracts the isotropic thermal
+  resultants (`Nxx, Nyy -= N_th`; `Mxx, Myy -= m_th`), so:
+  * a free plate reports zero;
+  * a clamped plate reports `-N_th` and `m_th` magnitudes.
+* Geometric-nonlinear and other analysis paths apply the loads but do
+  not apply this output correction.
+* `POST /api/pattern/shell-thermal {pattern, loads: [{region_uid, dT?,
+  grad3?}]}`.
+
+### Projected frame loads
+
+`MemberLoad.projected` (bool, JSON key only when true) applies to
+`udl`/`trapezoid` loads in the `gravity` and `global_x|y|z` directions;
+other kinds and directions are rejected.
+
+* The value is per unit length projected on the plane normal to the load
+  direction, so the engine applies `w sqrt(1 - (x . d)^2)` per true length.
+  For gravity on a rafter at angle theta, the total is `w L cos(theta)`.
+* The same factor enters:
+  * `_applied_gravity_fz`;
+  * mass-from-loads (`compute_story_masses`);
+  * the engine's load-mass distribution and mass-centre weights.
+
+### Accidental eccentricity sign
+
+`LoadPattern.ecc` may now be negative: the ETABS "- eccentricity"
+variant, with story torque `Mz = F ecc B_perp` carrying that sign.
+Validation requires a finite value only.
+
+### Auto lateral generators (`skyframe.core.autolateral`)
+
+`compute(model, code, **params)` returns the hand-calculation summary
+`{"code", "direction", "T", "W", "V", <coefficients>, "stories": [{"story",
+"h", "w", "F"}]}`.  `generate(model, code, name=None, ecc=0, **params)`
+writes a story-force pattern (kind `"quake"`, or `"wind"` for the wind
+generator) the way `codes.asce7_elf` does: it replaces any same-name
+pattern, sets `fx` for direction X and `fy` for Y, and `ecc != 0` sets
+`accidental_torsion=True, ecc=ecc`.
+
+* Weights: `W_i = story mass * g`, or an explicit `weights={story: kN}`.
+* Heights: `h_i = Story.elevation`.
+* The generators are one-shot, as in v0.7: the forces are stored and not
+  regenerated at run time.
+
+Codes:
+
+* `asce7_22`: `SDS, SD1, R, Ie=1, TL=8, S1=0, Ct=0.0466, x=0.9, T=None,
+  mprs=None`.
+  * Period: `Ta = Ct hn^x`.  A supplied T is capped at `Cu Ta`, with Cu
+    from Table 12.8-1, linear between rows.
+  * Two-period spectrum: `Sa = SDS` (T <= Ts), `SD1/T` (T <= TL),
+    `SD1 TL/T^2` beyond.
+  * Multi-period spectrum (`mprs = [[T, Sa], ...]`): the descending
+    envelope `min(SDS, max_{T'>=T} Sa(T'))` is used.  `SDS` defaults to
+    `0.9 max Sa` over 0.2 to 5 s.
+  * `Cs = Sa/(R/Ie)`, at least `max(0.044 SDS Ie, 0.01)`, and at least
+    `0.5 S1/(R/Ie)` when `S1 >= 0.6`.
+  * Vertical distribution uses `w h^k`, with k = 1 / 2 and linear between.
+* `ec8` (EN 1998-1 §4.3.3.2): `ag` (in g, times `gamma_I`), `q`,
+  `ground_type A-E`, `spectrum_type 1|2` (Tables 3.2/3.3; `S/TB/TC/TD`
+  may be overridden), `beta=0.2`.
+  * `T1 = Ct H^0.75` (0.085 / 0.075 / 0.050), unless given.
+  * `Fb = Sd(T1) W lambda`, where `lambda = 0.85` when T1 <= 2 TC and
+    there are more than two storeys.
+  * `distribution`: `"height"` (z m) or `"mode"` (`mode_shape` `{story:
+    s}`).
+* `is1893` (2016): `Z, R, I=1, soil I|II|III, T=None, structure
+  rc_mrf|steel_mrf|other, d=None, damping_factor=1`.
+  * Sa/g follows Fig. 2a (static method).
+  * `Ah = (Z/2)(Sa/g)/(R/I)`, at least `Z/2` when T <= 0.1 s.
+  * `Vb = max(Ah W, rho W)`, with Table 7 rho (0.7/1.1/1.6/2.4 %, linear
+    in Z).
+  * Distribution: `Qi = Vb Wi hi^2 / sum Wj hj^2`.
+  * For `other`, `T = 0.09 h / sqrt(d)`, where d defaults to the plan
+    extent along the load.
+* `user_coefficient`: `V = C W`, distributed by `w h^k`.
+* `user_loads`: `loads = [{story, fx, fy}]`, applied verbatim.
+* `asce7_22_wind` (optional 7-22 directional MWFRS): `V` (m/s),
+  `exposure B|C|D`, `Kzt=1`, `Kd=0.85`, `ze=0`, `cp_total=1.3`.
+  * `qz = 0.613 Kz Kzt Ke V^2`.
+  * `Kz = 2.41 (z/zg)^(2/alpha)`, using the 7-22 Table 26.10-1 alpha/zg,
+    with z floored at 15 ft for every exposure (the same documented floor
+    as the 7-16 helper).
+  * `Ke = exp(-0.000119 ze)`.
+  * `p = qz Kd cp_total` (Kd moves from qz to p).
+  * Each story's tributary facade area is as in `make_wind_pattern`.
+
+API:
+
+* `POST /api/pattern/auto-lateral {code, name?, ecc?, <params>}` returns
+  the model.
+* `POST /api/pattern/auto-lateral/preview` returns the summary and leaves
+  the model unchanged.
+* Unknown codes and parameters return 400.
+
+Validation (`tests/test_loads_v116.py`, 31 tests):
+
+* Frame gradients:
+  * cantilever tip rotation `alpha g L` = 2.4e-3 and deflection
+    `alpha g L^2/2` = 4.8e-3, with parabolic stations, in both local
+    planes;
+  * fixed-fixed: zero displacement and `E I alpha g` = 24 (I33) / 6 (I22)
+    kN m;
+  * propped cantilever: R = 9 kN, M_A = 36 kN m;
+  * an auto-meshed 3-segment member and a scaled case give the same
+    answers.
+* `dT + grad` superpose (480 kN, 24 kN m).  Joint temperatures
+  10 / 30 C give `T_avg = 20`.
+* Plates:
+  * a determinate plate with a gradient: centre `alpha g a^2/4` =
+    6.0e-4 m, corrected moments 0;
+  * a clamped plate: `m = E t^3 alpha g/(12(1-nu))` = 114.2857 kN m/m;
+  * a uniform dT: corner `alpha dT a`, clamped `N = -E t alpha dT/(1-nu)`;
+  * a CW corner order flips the bow.
+* Projected loads on a 30 deg rafter: total `w L cos30` = 10.3923 kN
+  (12 kN unprojected); projected `global_x` gives `w L sin30`.
+* 3-story example (elevations 4/7/10 m; W = 1000/1000/800 kN):
+  * ASCE 7-22: V = 350 kN, F = 73.684 / 128.947 / 147.368 kN.  Also
+    checked: the capped-period k = 1.009112 case (V = 202.615 kN), the TL
+    branch, the 0.5 S1 floor (V = 140 kN) and the MPRS (V = 315 /
+    267.588 kN).
+  * EC8: Fb = 446.25 kN, F = 93.947 / 164.408 / 187.895 kN.  Mode shape:
+    74.375 / 173.542 / 198.333 kN.  The beta floor (140 kN) and the TB
+    branch are also checked.
+  * IS 1893: Vb = 302.4 kN, Q = 33.368 / 102.190 / 166.841 kN.  The
+    rho minimum (19.6 kN) and the `other` period 0.284605 s are also
+    checked.
+  * User coefficient: V = 280 kN, F3 = 154.483 kN.  User loads are applied
+    verbatim.
+  * 7-22 wind: Kz(33 ft, C) = 0.99975, Ke(500 m) = 0.942236.
+  * ±5 % eccentricity: the base torques straddle the no-eccentricity value
+    and differ by `2 V ecc Ly`.
+* API round trips pass, and the default shapes and results are
+  byte-identical.

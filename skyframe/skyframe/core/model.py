@@ -34,6 +34,7 @@ from skyframe.core.nonlinear_static import (  # noqa: F401  (re-exported)
     validate_nonlinear_static)
 
 from skyframe.core import diaphragms as _dia  # multi-diaphragm / add. mass
+from skyframe.core import thermal_ext as _thx  # v1.16 temperature / projected
 from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
     PDELTA_INCLUDE_IN, PDELTA_METHODS, pdelta_defaults, pdelta_from_dict,
     pdelta_to_dict, validate_pdelta_options)
@@ -881,6 +882,9 @@ class MemberLoad:
     # (kN*m) at fraction ``a`` about ``direction`` in
     # loads_ext.MEMBER_MOMENT_DIRECTIONS (local_x/y/z == local_1/2/3, or
     # global_x/y/z); see CONTRACT "Joint moments, ground displacement ...".
+    # v1.16 projected load (per length projected normal to the direction;
+    # udl/trapezoid, global directions) — core.thermal_ext.projected_factor
+    projected: bool = False
 
 
 @dataclass
@@ -1019,6 +1023,10 @@ class ThermalLoad:
 
     member_uid: str
     dT: float = 0.0
+    # v1.16 temperature gradients (deg C / m along local 2 / local 3);
+    # see core.thermal_ext / engine.thermal_ext
+    grad2: float = 0.0
+    grad3: float = 0.0
 
 
 @dataclass
@@ -1068,6 +1076,10 @@ class LoadPattern:
     # ETABS Assign > Joint Loads > Ground Displacement (support settlement)
     ground_displacements: List[GroundDisplacement] = field(
         default_factory=list)
+    # v1.16 shell temperatures + joint-pattern temperatures
+    # (core.thermal_ext.ShellThermalLoad / JointTemperature)
+    shell_thermal_loads: list = field(default_factory=list)
+    joint_temperatures: list = field(default_factory=list)
 
     def all_member_loads(self) -> List[MemberLoad]:
         """member_loads plus legacy member_udls expressed as MemberLoads."""
@@ -1081,15 +1093,18 @@ class LoadPattern:
             "member_udls": [asdict(u) for u in self.member_udls],
             "nodal_loads": [nodal_load_to_dict(n) for n in self.nodal_loads],
             "story_forces": [asdict(s) for s in self.story_forces],
-            "member_loads": [asdict(m) for m in self.member_loads],
+            "member_loads": [_thx.member_load_to_dict(m)
+                             for m in self.member_loads],
             "area_loads": [area_load_to_dict(a) for a in self.area_loads],
-            "thermal_loads": [asdict(t) for t in self.thermal_loads],
+            "thermal_loads": [_thx.thermal_load_to_dict(t)
+                              for t in self.thermal_loads],
             "accidental_torsion": self.accidental_torsion,
             "ecc": self.ecc,
             "self_weight_factor": self.self_weight_factor,
             **({"ground_displacements": [g.to_dict() for g in
                                          self.ground_displacements]}
                if self.ground_displacements else {}),
+            **_thx.pattern_ext_to_dict(self),
         }
 
 
@@ -2966,13 +2981,15 @@ class BuildingModel:
             raise ValueError("spring: at least one stiffness entry must be > 0")
 
     def add_thermal_load(self, pattern: str, member_uid: str,
-                         dT: float) -> ThermalLoad:
+                         dT: float, grad2: float = 0.0,
+                         grad3: float = 0.0) -> ThermalLoad:
         if pattern not in self.patterns:
             raise ValueError(f"Unknown load pattern {pattern!r}")
         if member_uid not in {m.uid for m in self.members}:
             raise ValueError(f"Thermal load references unknown member "
                              f"{member_uid!r}")
-        tl = ThermalLoad(member_uid, float(dT))
+        tl = ThermalLoad(member_uid, float(dT), grad2=float(grad2),
+                         grad3=float(grad3))
         self.patterns[pattern].thermal_loads.append(tl)
         return tl
 
@@ -3320,10 +3337,12 @@ class BuildingModel:
                     if ml.kind == "point":
                         total_w += fac * ml.w
                     elif ml.kind == "udl":
-                        total_w += fac * ml.w * (ml.b - ml.a) * m.length
+                        total_w += fac * ml.w * (ml.b - ml.a) * m.length \
+                            * _thx.projected_factor(m, ml)
                     else:  # trapezoid
                         total_w += fac * 0.5 * (ml.w + ml.w2) \
-                            * (ml.b - ml.a) * m.length
+                            * (ml.b - ml.a) * m.length \
+                            * _thx.projected_factor(m, ml)
                 for al in pat.area_loads:
                     region = self._shell(al.region_uid)
                     if region is None or not self._region_on_story(region, s):
@@ -3521,10 +3540,12 @@ class BuildingModel:
                     raise ValueError(f"Pattern {pat.name}: thermal load "
                                      f"references unknown member "
                                      f"{tl.member_uid!r}")
+            # v1.16: a negative ecc is the ETABS "- eccentricity" variant
             if not (isinstance(pat.ecc, (int, float))
-                    and math.isfinite(pat.ecc) and pat.ecc >= 0.0):
+                    and math.isfinite(pat.ecc)):
                 raise ValueError(f"Pattern {pat.name}: ecc must be a finite "
-                                 f"value >= 0 (got {pat.ecc!r})")
+                                 f"value (got {pat.ecc!r})")
+            _thx.validate_pattern_ext(self, pat)
         for case in self.cases.values():
             for p in case.patterns:
                 if p not in self.patterns:
@@ -3963,7 +3984,9 @@ class BuildingModel:
             pat.ecc = float(pd.get("ecc", 0.05))
             for t in pd.get("thermal_loads") or []:
                 pat.thermal_loads.append(ThermalLoad(
-                    t["member_uid"], float(t.get("dT", 0.0))))
+                    t["member_uid"], float(t.get("dT", 0.0)),
+                    grad2=float(t.get("grad2", 0.0)),
+                    grad3=float(t.get("grad3", 0.0))))
             for u in pd.get("member_udls") or []:
                 pat.member_udls.append(MemberUDL(u["member_uid"],
                                                  float(u["w"])))
@@ -3982,7 +4005,8 @@ class BuildingModel:
                     member_uid=m["member_uid"], kind=m.get("kind", "udl"),
                     w=float(m.get("w", 0.0)), w2=float(m.get("w2", 0.0)),
                     a=float(m.get("a", 0.0)), b=float(m.get("b", 1.0)),
-                    direction=m.get("direction", "gravity")))
+                    direction=m.get("direction", "gravity"),
+                    projected=bool(m.get("projected", False))))
             for a in pd.get("area_loads") or []:
                 jp = a.get("joint_pattern")
                 pat.area_loads.append(AreaLoad(
@@ -3993,6 +4017,7 @@ class BuildingModel:
             for g in pd.get("ground_displacements") or []:
                 pat.ground_displacements.append(
                     GroundDisplacement.from_dict(g))
+            _thx.pattern_ext_from_dict(pat, pd)
             mdl.patterns[name] = pat
         for name, cd in (d.get("cases") or {}).items():
             pg = cd.get("pdelta_gravity")
