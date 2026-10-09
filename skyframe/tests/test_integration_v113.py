@@ -295,3 +295,45 @@ def test_span_moment_on_indeterminate_timoshenko_beam_matches_split_model():
     b = L - a
     euler_V = 6.0 * M * a * b / L ** 3
     assert abs(abs(split[0][2]) - euler_V) > 1e-3 * euler_V
+
+
+# --------------------------------------------------------------------------- #
+# v1.14: model-wide P-Delta x member types from other waves
+# --------------------------------------------------------------------------- #
+def _pd_identity(mutate):
+    """Single-element cantilever: the iterative P-Delta string stiffness is
+    exactly N/L, so 1/u_pd = 1/u_lin - P/L whatever the element formulation,
+    provided the axial force N is read correctly from that element."""
+    from test_pdelta_options import EI, _column, _tip
+    L = 3.0
+    P = 0.4 * 3.0 * EI / L ** 2
+
+    def tip_u(method):
+        mdl = _column(L=L, P=P, method=method)
+        mutate(mdl)
+        eng = OpenSeesEngine(mdl)
+        return eng.run_static("H").node_disp[_tip(eng, L)][0]
+
+    lin, pd = tip_u("none"), tip_u("iterative_loads")
+    assert 1.0 / pd == pytest.approx(1.0 / lin - P / L, rel=1e-6)
+    return lin
+
+
+def test_pdelta_iterative_on_timoshenko_member():
+    def shear(mdl):
+        mdl.sections["COL"].shear_deformation = True
+    lin_t = _pd_identity(shear)
+    lin_e = _pd_identity(lambda mdl: None)
+    assert abs(lin_t) > abs(lin_e)          # shear flexibility is really on
+
+
+def test_pdelta_iterative_on_offset_member():
+    def offset(mdl):
+        mdl.members[0].cardinal_point = 8
+    _pd_identity(offset)
+
+
+def test_pdelta_iterative_with_xz_active_dof():
+    def planar(mdl):
+        mdl.active_dof = ["UX", "UZ", "RY"]
+    _pd_identity(planar)
