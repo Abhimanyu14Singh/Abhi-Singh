@@ -215,8 +215,8 @@ def _quad_data(d_res: dict, blk: dict, region_uid: str) -> List[dict]:
         if f is None:
             continue
         pts = [coords[int(t)] for t in q["nodes"]]
-        out.append({"cx": sum(p[0] for p in pts) / 4.0,
-                    "cy": sum(p[1] for p in pts) / 4.0,
+        out.append({"cx": sum(p[0] for p in pts) / len(pts),
+                    "cy": sum(p[1] for p in pts) / len(pts),
                     "Mxx": float(f[3]), "Myy": float(f[4])})
     return out
 

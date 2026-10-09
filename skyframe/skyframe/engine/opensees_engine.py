@@ -165,6 +165,7 @@ from skyframe.core import loads_ext as _lx
 from skyframe.core.mesh import (MeshedModel, Segment, edge_tie_chains,
                                 mesh_model)
 from skyframe.core.modifiers import shell_mods_default
+from skyframe.core.polymesh import newell_normal
 from skyframe.engine.shell_modifiers import elastic_shell_section
 from skyframe.engine import pdelta as _pdelta      # model-wide P-Delta
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
@@ -2933,7 +2934,11 @@ class OpenSeesEngine:
                             stag, ssec_q, mat_q, scale, nd_tag)
                         scaled_tags[key] = stag
                     stag_q = scaled_tags[key]
-                ops.element("ShellMITC4", etag, *node_tags, stag_q)
+                if len(node_tags) == 3:
+                    # polygon auto-mesh triangle (CONTRACT "Polygon shells")
+                    ops.element("ShellDKGT", etag, *node_tags, stag_q)
+                else:
+                    ops.element("ShellMITC4", etag, *node_tags, stag_q)
                 asm.shell_quads.append({"region": quad.region,
                                         "nodes": node_tags})
                 asm.quad_ele.append(etag)
@@ -4893,8 +4898,9 @@ class OpenSeesEngine:
         out: Dict[int, List[float]] = {}
         for qi, etag in enumerate(asm.quad_ele):
             vals = ops.eleResponse(etag, "forces")
-            if len(vals) != 24:                  # pragma: no cover
-                continue
+            # 6 dof x 4 nodes (quad) / x 3 nodes (polygon triangle)
+            if len(vals) != 6 * len(asm.shell_quads[qi]["nodes"]):
+                continue                         # pragma: no cover
             arr = [float(v) for v in vals]
             if baseline is not None and qi in baseline:
                 arr = [a - b for a, b in zip(arr, baseline[qi])]
@@ -4948,7 +4954,10 @@ class OpenSeesEngine:
                               "meshed elements; skipped")
                 continue
             c = [np.asarray(p, float) for p in region.corners]
-            n_vec = np.cross(c[1] - c[0], c[3] - c[0])
+            if len(c) == 4:
+                n_vec = np.cross(c[1] - c[0], c[3] - c[0])
+            else:   # polygon wall: Newell normal of the corner ordering
+                n_vec = np.asarray(newell_normal(region.corners), float)
             n_len = float(np.linalg.norm(n_vec))
             if n_len < 1e-12 or abs(n_vec[2]) / n_len > 1e-3:
                 warnings.warn(f"Wall {region.uid!r} (pier {label!r}): not a "

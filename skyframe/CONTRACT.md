@@ -5222,3 +5222,199 @@ independent trapezoidal work of P (nodal and member-UDL patterns), balance
 5.5e-14 (Newmark) / 1.1e-3 (HHT alpha = -0.05) on a mixed frame case;
 single unrotated component == legacy run bit-for-bit (DI, energy,
 nonlinear); round-trip, API and validation.
+
+## Polygon shells and auto mesh
+
+`ShellRegion.corners` takes **3..N** corners: a planar, simple (non
+self-intersecting) polygon, convex or concave, listed counter-clockwise
+about the intended normal.  A region with **exactly 4 corners and only
+rectangular openings keeps the legacy structured quad path bit-for-bit**
+(same mesh, numbering, results).  Every other region (3 or 5+ corners, or
+any polygon opening) is a *polygon region* (`skyframe.core.polymesh`).
+
+### Model JSON
+
+```jsonc
+// shells[i]
+{"corners": [[x, y, z], ...],            // >= 3 (4 = legacy quad path)
+ "openings": [
+   {"u0": 0.1, "v0": 0.2, "u1": 0.3, "v1": 0.4},          // rectangular
+   {"u0": 0, "v0": 0, "u1": 1, "v1": 1,                    // polygon hole:
+    "polygon": [[x, y, z], ...]}                           // u/v ignored
+ ], ...}
+```
+
+* `Opening.polygon` (optional, >= 3 in-plane points) is serialized only
+  when set, so legacy openings keep exactly `{u0, v0, u1, v1}`.
+* On a polygon region, rectangular openings use the polygon's local
+  bounding box as the parametric frame (`ShellRegion.map_uv`): `u` runs
+  along `e1` and `v` along `e2` (see the frame below).
+* Validation (`add_shell` / `validate`) raises `ValueError` for:
+  * fewer than 3 corners;
+  * a zero-length edge or zero area;
+  * a vertex more than 1e-6 m off the best-fit (Newell) plane;
+  * self-intersecting or touching edges;
+  * openings that are degenerate, outside the region, crossing its
+    boundary, or overlapping each other.
+* `area`, `opening_area` and `net_area` are exact (vector shoelace).
+
+### Check Model
+
+For polygon regions, the corner-count check becomes polygon validity:
+
+| Code | Severity | When |
+|---|---|---|
+| `SHELL_CORNER_COUNT` | error | fewer than 3 corners |
+| `SHELL_ZERO_AREA` | error | degenerate polygon |
+| `SHELL_WARPED` | error | a vertex is off the best-fit plane by more than 1e-6 m |
+| `SHELL_SELF_INTERSECTING` | error | any two edges cross or touch |
+
+Concave polygons are valid: `SHELL_CONCAVE` stays a 4-corner-only check.
+4-corner regions are checked exactly as before.
+
+### Local frame
+
+The frame is `polymesh.region_frame`:
+
+* `e3` is the unit Newell normal of the corner order.
+* Horizontal regions use `e1 = +X`, `e2 = +-Y`.
+* All other regions use `e1 = Z x e3` (horizontal) and `e2 = e3 x e1`, so
+  vertical walls have `v = z`.
+
+These are the axes of `loads_ext.shell_local_axes`; `local_3` is `e3`.  The
+wind Cp normal (`builder._region_normal`), the pier wall normal and the
+directional area loads all use the Newell normal for polygons.  4-corner
+regions keep `(c1 - c0) x (c3 - c0)`.
+
+### Auto mesh (behavior `"shell"`)
+
+1. **Hard mesh lines** (u = const and v = const) pass through:
+   * every polygon and opening vertex;
+   * every frame end, link end, support / spring point and nodal-load
+     point lying in the plane inside the region;
+   * every point where a frame member **pierces** the plane inside the
+     region (that member is then split there by the existing frame-splitting
+     at shell nodes);
+   * the in-region ends of every **constraint segment**: frame members
+     lying in the plane (beams), coplanar neighbour shells' edges, and the
+     in-plane traces of other shells (a wall meeting a slab, a slab meeting
+     a wall).
+2. **Optional lines** come from grid lines (every grid system's straight
+   lines, as vertical planes) and, for non-horizontal regions, story
+   elevations.  They are used only when their in-plane trace is parallel to
+   `u` or `v`; oblique grid lines are ignored.  An optional line closer
+   than `0.1 * mesh_size` to another line is dropped.
+3. Each interval between consecutive lines is divided into
+   `ceil(length / mesh_size)` equal parts.  `mesh_size` is therefore a
+   maximum element size; the legacy quad path keeps `round`.
+4. Every cell is cut by the polygon, opening and constraint-segment chords
+   crossing it into **convex pieces**.  Pieces whose centroid is inside the
+   region and outside every opening are kept.  Chord intersections with a
+   mesh line use a single per-line formula, so neighbouring cells share
+   nodes exactly.
+5. **Conformity pass**, run after every region has meshed:
+   * any pool point (another shell's node, a frame or link end) lying
+     strictly inside a polygon-piece edge is inserted into that piece;
+   * polygon meshes therefore have no hanging nodes against frames,
+     neighbouring polygons (any mesh sizes) or walls;
+   * a legacy 4-corner neighbour can still carry polygon nodes on its own
+     edges; the v0.22 `edge_constraints` zipper ties them.
+6. **Element generation**:
+   * a triangle piece becomes one `ShellDKGT`;
+   * a convex quadrilateral becomes one `ShellMITC4`;
+   * a convex k-gon becomes a quad fan, plus one triangle when k is odd;
+   * a piece that received inserted nodes becomes a triangle fan from a
+     clean corner, or from an added centroid node.
+   Elements run counter-clockwise about `e3`, and the first edge is the one
+   that best follows `+e1` (element local x approximately `e1`).
+   `polymesh.QUAD_DOMINANT = False` (a module knob) splits every quad into
+   two triangles.  Triangles use the region's section: elastic, modifiers,
+   cracked-slab scaled, or `LayeredShell` in nonlinear builds.
+7. **Tributary areas**:
+   * each node gets 1/3 of each triangle's exact area and 1/4 of each
+     quad's;
+   * the region total is rescaled to the exact `net_area`, a correction of
+     about 1e-8 that removes the 1e-6 m coordinate rounding of points on
+     oblique edges;
+   * uniform area loads, self-weight, area springs and wall wind Cp
+     therefore conserve `q * net_area` exactly.
+   * Directional and joint-pattern area loads integrate consistently:
+     3x3 Gauss on quads and a 6-point degree-4 rule on triangles.
+   * The mesh-free resultant (`area_load_resultant`) integrates over an
+     ear-clipped triangulation (8x8 sub-triangles each).
+
+### Membrane polygon slabs
+
+Polygon membrane slabs use a **nearest-edge tributary rule**:
+
+* every point of the slab, net of openings, loads the boundary edge
+  nearest to it, at the foot of its perpendicular;
+* for convex polygons these zones are the faces of the 45-degree roof
+  (straight skeleton), so on a rectangle the rule reproduces the 4-corner
+  two-way trapezoids;
+* the field is integrated numerically
+  (`polymesh.MEMBRANE_SAMPLES = 80` cells across the short bounding-box
+  side), binned into at least 8 step bins per edge and emitted as UDL
+  pieces on the edge beams;
+* the totals are rescaled so the load conserves `q * net_area` exactly;
+* openings genuinely re-route the load (unlike the 4-corner uniform-ratio
+  approximation).
+
+The missing-beam policy is the 4-corner policy generalised to N edges:
+
+* an edge with no beam passes its share to its adjacent edges' beams;
+* if neither adjacent edge has a beam, the share goes to the edge's corner
+  nodes;
+* with no beams at all, the load is split equally among the N corner
+  nodes;
+* the uncovered remainder of a partly covered edge goes to its corner
+  nodes.
+
+### Results shape (the only change)
+
+`results["shell_quads"]` keeps one entry per shell element, in element
+order: `{"region": uid, "nodes": [tags]}`.
+
+* Quad entries are unchanged (4 tags, same keys).
+* A polygon-mesh triangle is an entry with **3 node tags**; draw it as a
+  triangle.
+* `shell_forces[i]` (8 values `[Nxx, Nyy, Nxy, Mxx, Myy, Mxy, Vxz, Vyz]`,
+  element local axes) stays aligned with the `shell_quads` index.
+* For triangles the values are the average of the 4 `ShellDKGT`
+  integration points, which is the centroid value for linear fields.
+  `Vxz` and `Vyz` are 0 because DKGT is a Kirchhoff (thin) plate.
+* The internal per-element nodal force vectors used by piers have 18
+  values for triangles, against 24 for quads.
+
+### Consumers
+
+Every consumer below works with polygon regions:
+
+* self-weight / mass (net area, corner nodes for element self mass);
+* rigid diaphragm and semi-rigid membership (all mesh nodes at the story
+  elevation);
+* piers (Newell normal; triangle cut elements);
+* section cuts (corner extents);
+* wind Cp walls;
+* cracked slabs (per element, triangles included);
+* layered walls;
+* area springs.
+
+### Validation (`tests/test_polygon_shells.py`)
+
+* **Simply supported square plate** (4 x 4 x 0.05 m, mesh 0.25), against
+  Timoshenko `w = 0.00406 q a^4 / D`:
+
+  | Mesh | Ratio |
+  |---|---|
+  | two triangular regions (quads + triangles) | 1.004 |
+  | triangle-only | 0.998 |
+  | quads | 1.002 |
+
+* **L-plan cantilever core** (12 m tall, two 3 m legs, both 5-corner
+  polygons), against unsymmetric bending plus web shear by hand: tip ratio
+  0.994 with no diaphragm and 0.972 with rigid diaphragms.
+* A 5-corner rectangle matches the 4-corner quad path: same base reaction,
+  and deflection within 3% (both shell and membrane).
+* Load equilibrium and area / self-weight sums (L, T and U shapes, a
+  triangle, polygon openings) are exact to 1e-9.
