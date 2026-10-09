@@ -177,7 +177,11 @@ def shell_local_axes(region) -> Tuple[Vec3, Vec3, Vec3]:
     * ``e2 = e3 x e1`` (points "up" the slope / wall).
     """
     c = [tuple(map(float, p)) for p in region.corners]
-    e3 = _unit(_cross(_sub(c[1], c[0]), _sub(c[3], c[0])))
+    if len(c) == 4:
+        e3 = _unit(_cross(_sub(c[1], c[0]), _sub(c[3], c[0])))
+    else:   # polygon region: Newell normal of the corner ordering
+        from .polymesh import newell_normal
+        e3 = _unit(newell_normal(c))
     if abs(e3[2]) > 1.0 - 1e-9:
         e1 = (1.0, 0.0, 0.0)
     else:
@@ -276,6 +280,42 @@ def _quad_integrate(X: Sequence[Vec3], fn) -> List[Tuple[float, ...]]:
     return [tuple(o) for o in out]
 
 
+# 6-point degree-4 rule on the unit triangle (Strang & Fix / Dunavant),
+# barycentric (l1, l2, l3) with weights summing to 1
+_T6 = ((0.816847572980459, 0.091576213509771, 0.091576213509771,
+        0.109951743655322),
+       (0.091576213509771, 0.816847572980459, 0.091576213509771,
+        0.109951743655322),
+       (0.091576213509771, 0.091576213509771, 0.816847572980459,
+        0.109951743655322),
+       (0.108103018168070, 0.445948490915965, 0.445948490915965,
+        0.223381589678011),
+       (0.445948490915965, 0.108103018168070, 0.445948490915965,
+        0.223381589678011),
+       (0.445948490915965, 0.445948490915965, 0.108103018168070,
+        0.223381589678011))
+
+
+def _tri_integrate(X: Sequence[Vec3], fn) -> List[Tuple[float, ...]]:
+    """Polygon-mesh triangle: per-node ``int N_i * fn dA`` (linear shape
+    functions, 6-point degree-4 rule — exact for a linear pattern)."""
+    a, b, c = X
+    cr = _cross(_sub(b, a), _sub(c, a))
+    A2 = math.sqrt(_dot(cr, cr))
+    out = [[0.0, 0.0, 0.0] for _ in range(3)]
+    if A2 < 1e-16:
+        return [tuple(o) for o in out]
+    nrm = (cr[0] / A2, cr[1] / A2, cr[2] / A2)
+    area = 0.5 * A2
+    for l1, l2, l3, w in _T6:
+        P = tuple(l1 * a[k] + l2 * b[k] + l3 * c[k] for k in range(3))
+        f = fn(P, nrm)
+        for i, N in enumerate((l1, l2, l3)):
+            for k in range(3):
+                out[i][k] += N * f[k] * w * area
+    return [tuple(o) for o in out]
+
+
 def _intensity_fn(region, al, q: float):
     direction = getattr(al, "direction", "gravity")
     dvec = area_load_dir_vector(region, direction)
@@ -303,7 +343,8 @@ def area_load_nodal_forces(region, al, q: float,
         if quad.region != region.uid:
             continue
         X = [points[n] for n in quad.nodes]
-        for n, f in zip(quad.nodes, _quad_integrate(X, fn)):
+        integ = _tri_integrate if len(X) == 3 else _quad_integrate
+        for n, f in zip(quad.nodes, integ(X, fn)):
             acc = out.setdefault(n, [0.0, 0.0, 0.0])
             acc[0] += f[0]
             acc[1] += f[1]
@@ -330,6 +371,29 @@ def area_load_resultant(region, al) -> List[float]:
     region without openings."""
     c = [tuple(map(float, p)) for p in region.corners]
     fn = _intensity_fn(region, al, al.q)
+    if len(c) != 4:
+        # polygon region: ear-clipped triangles, each split into 8x8
+        # sub-triangles (degree-4 rule) — same net/gross scaling
+        from .polymesh import polygon_area_triangles
+        total = [0.0, 0.0, 0.0]
+        n = 8
+        for A, B, C in polygon_area_triangles(region):
+            def at(i, j):
+                return tuple(A[k] + (B[k] - A[k]) * i / n
+                             + (C[k] - A[k]) * j / n for k in range(3))
+            for i in range(n):
+                for j in range(n - i):
+                    subs = [(at(i, j), at(i + 1, j), at(i, j + 1))]
+                    if i + j < n - 1:
+                        subs.append((at(i + 1, j), at(i + 1, j + 1),
+                                     at(i, j + 1)))
+                    for X in subs:
+                        for f in _tri_integrate(X, fn):
+                            for k in range(3):
+                                total[k] += f[k]
+        area = region.area
+        scale = region.net_area / area if area > 0.0 else 1.0
+        return [t * scale for t in total]
 
     def bil(u, v):
         return tuple((1 - u) * (1 - v) * c[0][k] + u * (1 - v) * c[1][k]

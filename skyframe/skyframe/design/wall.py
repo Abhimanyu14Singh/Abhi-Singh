@@ -326,10 +326,13 @@ def pier_geometry(model) -> Dict[str, dict]:
         # plane normal from the CCW corners; vertical wall check as in the
         # engine (|nz| / |n| <= 1e-3)
         ux = (c[1][0] - c[0][0], c[1][1] - c[0][1], c[1][2] - c[0][2])
-        vx = (c[3][0] - c[0][0], c[3][1] - c[0][1], c[3][2] - c[0][2])
+        vx = (c[-1][0] - c[0][0], c[-1][1] - c[0][1], c[-1][2] - c[0][2])
         n = (ux[1] * vx[2] - ux[2] * vx[1],
              ux[2] * vx[0] - ux[0] * vx[2],
              ux[0] * vx[1] - ux[1] * vx[0])
+        if len(c) != 4:      # polygon wall: Newell normal
+            from skyframe.core.polymesh import newell_normal
+            n = newell_normal(c)
         n_len = math.sqrt(n[0] ** 2 + n[1] ** 2 + n[2] ** 2)
         if n_len < 1e-12 or abs(n[2]) / n_len > 1e-3:
             entry["notes"].append(f"wall {r.uid!r}: not vertical; skipped")

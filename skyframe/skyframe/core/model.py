@@ -657,20 +657,32 @@ class Opening:
     Bounds are FRACTIONS (0..1) of the region's parametric edge directions:
     ``u`` runs along the corner 0 -> 1 edge, ``v`` along corner 0 -> 3.
     Must satisfy ``0 <= u0 < u1 <= 1`` and ``0 <= v0 < v1 <= 1``.
+
+    Polygon shells (CONTRACT "Polygon shells and auto mesh"): on a region
+    with != 4 corners the parametric frame is the polygon's local bounding
+    box; ``polygon`` (optional, >= 3 in-plane 3D points) makes the opening
+    an arbitrary polygon hole (u/v bounds then ignored).
     """
 
     u0: float
     v0: float
     u1: float
     v1: float
+    polygon: Optional[List[Tuple[float, float, float]]] = None
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = {"u0": self.u0, "v0": self.v0, "u1": self.u1, "v1": self.v1}
+        if self.polygon:
+            d["polygon"] = [list(p) for p in self.polygon]
+        return d
 
 
 @dataclass
 class ShellRegion:
-    """Planar 4-corner quad region: a wall or a slab.
+    """Planar region (a wall or a slab): 4 corners = the legacy structured
+    quad path; 3 or 5+ corners (convex or concave, simple) = a POLYGON
+    region auto-meshed by :mod:`skyframe.core.polymesh` (CONTRACT "Polygon
+    shells and auto mesh").
 
     ``behavior == "shell"``    — meshed into ShellMITC4 finite elements.
     ``behavior == "membrane"`` — slabs only: never meshed; its area loads are
@@ -713,7 +725,13 @@ class ShellRegion:
         return _polygon_area3d([tuple(c) for c in self.corners])
 
     def map_uv(self, u: float, v: float) -> Tuple[float, float, float]:
-        """Bilinear map from parametric (u, v) in [0,1]^2 to 3D coordinates."""
+        """Bilinear map from parametric (u, v) in [0,1]^2 to 3D coordinates.
+
+        Polygon regions (!= 4 corners): the local bounding-box map
+        (:func:`skyframe.core.polymesh.polygon_map_uv`)."""
+        if len(self.corners) != 4:
+            from .polymesh import polygon_map_uv
+            return polygon_map_uv(self, u, v)
         c = [tuple(map(float, p)) for p in self.corners]
         return tuple(
             (1 - u) * (1 - v) * c[0][k] + u * (1 - v) * c[1][k]
@@ -729,6 +747,9 @@ class ShellRegion:
         mapped corners.  Openings are validated non-overlapping, so the sum
         is exact.
         """
+        if any(getattr(op, "polygon", None) for op in self.openings):
+            from .polymesh import polygon_opening_area
+            return polygon_opening_area(self)
         total = 0.0
         for op in self.openings:
             pts = [self.map_uv(op.u0, op.v0), self.map_uv(op.u1, op.v0),
@@ -1974,29 +1995,37 @@ class BuildingModel:
         if region.behavior == "membrane" and region.kind != "slab":
             raise ValueError(f"Shell {region.uid}: membrane behavior is only "
                              "supported for slabs")
-        if len(region.corners) != 4:
-            raise ValueError(f"Shell {region.uid}: needs exactly 4 corners")
+        if len(region.corners) < 3:
+            raise ValueError(f"Shell {region.uid}: needs at least 3 corners")
         if region.behavior == "shell":
             if region.section not in self.shell_sections:
                 raise ValueError(f"Shell {region.uid}: unknown shell section "
                                  f"{region.section}")
             if region.mesh_size <= 0.0:
                 raise ValueError(f"Shell {region.uid}: mesh_size must be > 0")
-        c = [tuple(map(float, p)) for p in region.corners]
-        if region.area < 1e-9:
-            raise ValueError(f"Shell {region.uid}: degenerate (zero area)")
-        # planarity: distance of corner 3 from the plane of corners 0-1-2
-        n = _vcross(_vsub(c[1], c[0]), _vsub(c[2], c[0]))
-        nn = math.sqrt(n[0] ** 2 + n[1] ** 2 + n[2] ** 2)
-        if nn < 1e-12:
-            raise ValueError(f"Shell {region.uid}: corners 0-1-2 are collinear")
-        d = _vsub(c[3], c[0])
-        dist = abs(d[0] * n[0] + d[1] * n[1] + d[2] * n[2]) / nn
-        if dist > _PLANAR_TOL:
-            raise ValueError(f"Shell {region.uid}: corners are not planar "
-                             f"(off-plane {dist:.2e} m)")
+        polygon_path = (len(region.corners) != 4 or any(
+            getattr(op, "polygon", None) for op in region.openings))
+        if len(region.corners) == 4:
+            c = [tuple(map(float, p)) for p in region.corners]
+            if region.area < 1e-9:
+                raise ValueError(f"Shell {region.uid}: degenerate (zero "
+                                 "area)")
+            # planarity: distance of corner 3 from the plane of corners 0-1-2
+            n = _vcross(_vsub(c[1], c[0]), _vsub(c[2], c[0]))
+            nn = math.sqrt(n[0] ** 2 + n[1] ** 2 + n[2] ** 2)
+            if nn < 1e-12:
+                raise ValueError(f"Shell {region.uid}: corners 0-1-2 are "
+                                 "collinear")
+            d = _vsub(c[3], c[0])
+            dist = abs(d[0] * n[0] + d[1] * n[1] + d[2] * n[2]) / nn
+            if dist > _PLANAR_TOL:
+                raise ValueError(f"Shell {region.uid}: corners are not "
+                                 f"planar (off-plane {dist:.2e} m)")
         # v0.5 openings: valid parametric bounds, pairwise non-overlapping
+        # (polygon openings are validated by polymesh below)
         for k, op in enumerate(region.openings):
+            if getattr(op, "polygon", None):
+                continue
             for key in ("u0", "v0", "u1", "v1"):
                 v = getattr(op, key)
                 if not (isinstance(v, (int, float)) and math.isfinite(v)):
@@ -2011,10 +2040,18 @@ class BuildingModel:
         for a in range(len(region.openings)):
             for b in range(a + 1, len(region.openings)):
                 oa, ob = region.openings[a], region.openings[b]
+                if getattr(oa, "polygon", None) or getattr(ob, "polygon",
+                                                           None):
+                    continue
                 if (oa.u0 < ob.u1 and ob.u0 < oa.u1
                         and oa.v0 < ob.v1 and ob.v0 < oa.v1):
                     raise ValueError(f"Shell {region.uid}: openings {a} and "
                                      f"{b} overlap")
+        if polygon_path:
+            # polygon shape (planar, simple, non-degenerate) + openings
+            # inside / non-overlapping (CONTRACT "Polygon shells")
+            from .polymesh import validate_polygon_region
+            validate_polygon_region(region)
         self._validate_area_spring(region)          # v0.22
         # v0.23 wind pressure coefficient: None or a finite number
         cp = getattr(region, "wind_cp", None)
@@ -3583,7 +3620,10 @@ class BuildingModel:
                 mesh_size=float(rd.get("mesh_size", 1.0)),
                 story=rd.get("story", ""),
                 openings=[Opening(float(o["u0"]), float(o["v0"]),
-                                  float(o["u1"]), float(o["v1"]))
+                                  float(o["u1"]), float(o["v1"]),
+                                  polygon=([tuple(float(v) for v in p)
+                                            for p in o["polygon"]]
+                                           if o.get("polygon") else None))
                           for o in (rd.get("openings") or [])],
                 pier=str(rd.get("pier", "")),
                 area_spring=asp,

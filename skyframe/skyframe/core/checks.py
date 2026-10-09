@@ -475,6 +475,55 @@ def _check_frames(ctx: _Ctx, juf: _UF) -> None:
                     f"there (no connectivity)", [end.uid, span.uid], loc)
 
 
+def _polygon_geometry(r) -> dict:
+    """Plane basis + 2D outline of a polygon (3 or 5+ corner) region."""
+    c = [tuple(map(float, p)) for p in r.corners]
+    nrm = _newell_normal(c)
+    n_c = len(c)
+    edges = [math.dist(c[i], c[(i + 1) % n_c]) for i in range(n_c)]
+    if _norm(nrm) < 1e-14:
+        crs = [_cross(_sub(c[(k + 1) % n_c], c[k]), _sub(c[k - 1], c[k]))
+               for k in range(n_c)]
+        basis_n = max(crs, key=_norm)
+        if _norm(basis_n) < 1e-14:
+            basis_n = (0.0, 0.0, 1.0)
+    else:
+        basis_n = nrm
+    n, u, v = _plane_basis(basis_n)
+    o = c[0]
+    pts2 = [(_dot(_sub(p, o), u), _dot(_sub(p, o), v)) for p in c]
+    return {"c": c, "n": n, "u": u, "v": v, "o": o, "pts2": pts2,
+            "edges": edges, "area": 0.5 * _norm(nrm), "polygon": True}
+
+
+def _check_polygon_shell(ctx: "_Ctx", r, geo: Dict[str, dict],
+                         dup_key) -> None:
+    """Check Model for polygon regions: SHELL_CORNER_COUNT (< 3),
+    SHELL_ZERO_AREA, SHELL_WARPED (vertex off the best-fit plane),
+    SHELL_SELF_INTERSECTING (any two edges cross/touch); concave polygons
+    are VALID (the polygon auto mesh handles them)."""
+    from skyframe.core.polymesh import polygon_problems
+    probs = polygon_problems(r.corners)
+    if probs and probs[0][0] == "SHELL_CORNER_COUNT":
+        ctx.add("error", "SHELL_CORNER_COUNT",
+                f"Shell {r.uid} has {len(r.corners)} corners (at least 3 "
+                "are required)", [r.uid],
+                r.corners[0] if r.corners else None)
+        return
+    g = _polygon_geometry(r)
+    fatal = False
+    for code, msg, loc in probs:
+        ctx.add("error", code, f"Shell {r.uid} {msg}", [r.uid], loc)
+        fatal = fatal or code == "SHELL_ZERO_AREA"
+    if fatal:
+        return
+    geo[r.uid] = g
+    if any(code == "SHELL_SELF_INTERSECTING" for code, _, _ in probs):
+        return
+    dup_key[tuple(sorted({ctx._juf.find(j)
+                          for j in ctx.shell_corners[r.uid]}))].append(r.uid)
+
+
 def _shell_geometry(r) -> Optional[dict]:
     c = [tuple(map(float, p)) for p in r.corners]
     if len(c) != 4:
@@ -500,13 +549,11 @@ def _check_shells(ctx: _Ctx, juf: _UF) -> Dict[str, dict]:
     m, tol = ctx.model, ctx.tol
     geo: Dict[str, dict] = {}
     dup_key: Dict[Tuple, List[str]] = defaultdict(list)
+    ctx._juf = juf
     for r in m.shells:
         g = _shell_geometry(r)
         if g is None:
-            ctx.add("error", "SHELL_CORNER_COUNT",
-                    f"Shell {r.uid} has {len(r.corners)} corners (exactly 4 "
-                    "are required)", [r.uid],
-                    r.corners[0] if r.corners else None)
+            _check_polygon_shell(ctx, r, geo, dup_key)
             continue
         c, edges = g["c"], g["edges"]
         cen = _scale(_add(_add(c[0], c[1]), _add(c[2], c[3])), 0.25)

@@ -238,6 +238,9 @@ def _region_normal(region) -> tuple:
     side the corners run counter-clockwise from.
     """
     c = [tuple(map(float, p)) for p in region.corners]
+    if len(c) != 4:      # polygon region: Newell normal (CONTRACT "Polygon")
+        from .polymesh import region_normal
+        return region_normal(region)
     ux = (c[1][0] - c[0][0], c[1][1] - c[0][1], c[1][2] - c[0][2])
     vy = (c[3][0] - c[0][0], c[3][1] - c[0][1], c[3][2] - c[0][2])
     n = (ux[1] * vy[2] - ux[2] * vy[1],

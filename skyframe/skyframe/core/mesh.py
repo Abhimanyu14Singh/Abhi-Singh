@@ -25,6 +25,11 @@
   equally.  Partially covered edges send the uncovered remainder to the
   edge's corner nodes (with a warning).
 
+Polygon regions (3 or 5+ corners, or polygon openings) are auto-meshed by
+:mod:`skyframe.core.polymesh` into ShellMITC4 quads + ShellDKGT triangles
+(3-node ``ShellQuad`` records); membrane polygons use its nearest-edge
+tributary rule.  4-corner regions keep the structured path bit-for-bit.
+
 Units: kN, m, kPa (area load q).  All tributary records are stored per unit
 q = 1 kPa; the engine scales them by ``q * case_factor``.
 """
@@ -37,6 +42,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from .model import BuildingModel, FrameMember, ShellRegion, _polygon_area3d
+from .polymesh import (finalize_pieces, is_polygon_region,
+                       membrane_edge_profiles, mesh_polygon_pieces)
 
 _TOL = 1e-6
 
@@ -141,10 +148,11 @@ class Segment:
 
 @dataclass
 class ShellQuad:
-    """One meshed ShellMITC4 quad (counter-clockwise node order)."""
+    """One meshed shell element (counter-clockwise node order): 4 nodes =
+    ShellMITC4 quad; 3 nodes = ShellDKGT triangle (polygon regions only)."""
 
     region: str
-    nodes: Tuple[int, int, int, int]   # point indices
+    nodes: Tuple[int, ...]             # point indices (4, or 3)
 
 
 @dataclass
@@ -524,6 +532,170 @@ def _membrane_distribution(model: BuildingModel, region: ShellRegion,
     return loads, nodal
 
 
+def _membrane_distribution_polygon(model: BuildingModel, region: ShellRegion,
+                                   pool: _PointPool
+                                   ) -> Tuple[List[TributaryMemberLoad],
+                                              Dict[int, float]]:
+    """Polygon membrane slab: nearest-edge tributary distribution
+    (:func:`skyframe.core.polymesh.membrane_edge_profiles`) onto the edge
+    beams, per unit q = 1 kPa, total (net of openings) conserved exactly.
+
+    Same missing-beam policy as the 4-corner rule, generalised to N edges:
+    an edge without beams sends its share to the two ADJACENT edges' beams
+    (proportional to their own tributary totals), or to its two corner
+    nodes when neither neighbour has beams; no beams at all -> the load is
+    lumped equally to the N corner nodes; uncovered edge remainders go to
+    the edge's corner nodes.  Openings are EXCLUDED from the tributary
+    field (the load is genuinely re-routed, unlike the 4-corner
+    approximation)."""
+    c, profiles = membrane_edge_profiles(region)
+    nE = len(c)
+    area = region.net_area
+    edges = [(c[k], c[(k + 1) % nE]) for k in range(nE)]
+    lens = [_norm(_sub(b, a)) for a, b in edges]
+    edge_members = [_members_on_edge(model, a, b) for a, b in edges]
+    has_beam = [bool(em) for em in edge_members]
+    base_tot = [_profile_integral(p) for p in profiles]
+    corner_nodal: Dict[Vec3, float] = {}
+
+    def add_corner(point: Vec3, w: float) -> None:
+        corner_nodal[_key(point)] = corner_nodal.get(_key(point), 0.0) + w
+
+    if not any(has_beam):
+        warnings.warn(f"Membrane slab {region.uid!r}: no edge beams at all; "
+                      f"area load lumped to the {nE} corner nodes")
+        for p in c:
+            add_corner(p, area / nE)
+        profiles = [[(0.0, 0.0), (lens[k], 0.0)] for k in range(nE)]
+    else:
+        extra = [0.0] * nE
+        for k in range(nE):
+            if has_beam[k]:
+                continue
+            adj = [j for j in ((k - 1) % nE, (k + 1) % nE) if has_beam[j]]
+            adj = list(dict.fromkeys(adj))
+            share = base_tot[k]
+            if adj:
+                warnings.warn(
+                    f"Membrane slab {region.uid!r}: edge {k} has no beam; "
+                    "its share moves to the adjacent edges' beams")
+                weights = [base_tot[j] for j in adj]
+                wsum = sum(weights)
+                for j, wj in zip(adj, weights):
+                    frac = (wj / wsum) if wsum > 0.0 else 1.0 / len(adj)
+                    extra[j] += share * frac / lens[j]
+            else:
+                warnings.warn(
+                    f"Membrane slab {region.uid!r}: edge {k} and its "
+                    "neighbours have no beams; share moved to its corners")
+                add_corner(edges[k][0], share / 2.0)
+                add_corner(edges[k][1], share / 2.0)
+        for k in range(nE):
+            if has_beam[k]:
+                profiles[k] = [(s, w + extra[k]) for s, w in profiles[k]]
+            else:
+                profiles[k] = [(0.0, 0.0), (lens[k], 0.0)]
+
+    nodal_tot = sum(corner_nodal.values())
+    beam_target = area - nodal_tot
+    beam_tot = sum(_profile_integral(p) for p in profiles)
+    if beam_tot > 1e-12:
+        f = beam_target / beam_tot
+        profiles = [[(s, w * f) for s, w in p] for p in profiles]
+    elif abs(beam_target) > 1e-9 * max(1.0, area):
+        raise ValueError(f"Membrane slab {region.uid!r}: cannot conserve "
+                         "area load (no beams and no corner nodes)")
+
+    loads: List[TributaryMemberLoad] = []
+    applied = 0.0
+    for k in range(nE):
+        if not has_beam[k]:
+            continue
+        prof = profiles[k]
+        bp_s = sorted({s for s, _ in prof})
+        covered: List[Tuple[float, float]] = []
+        for member, s_pi, s_pj in edge_members[k]:
+            lo = max(0.0, min(s_pi, s_pj))
+            hi = min(lens[k], max(s_pi, s_pj))
+            pieces, cur = [], lo
+            for c0, c1 in sorted(covered):
+                if c1 <= cur:
+                    continue
+                if c0 > hi:
+                    break
+                if c0 > cur:
+                    pieces.append((cur, min(c0, hi)))
+                cur = max(cur, c1)
+                if cur >= hi:
+                    break
+            if cur < hi:
+                pieces.append((cur, hi))
+            for piece_lo, piece_hi in pieces:
+                if piece_hi - piece_lo <= _TOL:
+                    continue
+                covered.append((piece_lo, piece_hi))
+                pts = sorted({piece_lo, piece_hi}
+                             | {s for s in bp_s if piece_lo < s < piece_hi})
+                for s0, s1 in zip(pts[:-1], pts[1:]):
+                    # step profile: use the value just inside [s0, s1]
+                    w = _step_value(prof, 0.5 * (s0 + s1))
+                    if abs(w) < 1e-15:
+                        continue
+                    fr0 = (s0 - s_pi) / (s_pj - s_pi)
+                    fr1 = (s1 - s_pi) / (s_pj - s_pi)
+                    if fr0 > fr1:
+                        fr0, fr1 = fr1, fr0
+                    loads.append(TributaryMemberLoad(
+                        member.uid, w, w,
+                        min(max(fr0, 0.0), 1.0), min(max(fr1, 0.0), 1.0)))
+                    applied += w * (s1 - s0)
+        residual = _profile_integral(prof) - sum(
+            _step_integral(prof, c0, c1) for c0, c1 in covered)
+        if abs(residual) > 1e-9 * max(1.0, area):
+            warnings.warn(f"Membrane slab {region.uid!r}: edge {k} beams do "
+                          f"not cover the full edge; {residual:.6g} kN/kPa "
+                          "moved to the edge corner nodes")
+            add_corner(edges[k][0], residual / 2.0)
+            add_corner(edges[k][1], residual / 2.0)
+
+    nodal: Dict[int, float] = {}
+    for ck, w in corner_nodal.items():
+        if abs(w) < 1e-12:
+            continue
+        idx = pool.find(ck)
+        if idx is None:
+            raise ValueError(
+                f"Membrane slab {region.uid!r}: needs a nodal load at corner "
+                f"{ck} but no frame node exists there")
+        nodal[idx] = nodal.get(idx, 0.0) + w
+        applied += w
+    if abs(applied - area) > 1e-8 * max(1.0, area):
+        raise AssertionError(
+            f"Membrane slab {region.uid!r}: tributary distribution lost load "
+            f"(applied {applied!r} kN/kPa vs area {area!r} m^2)")
+    return loads, nodal
+
+
+def _step_value(bps: List[Tuple[float, float]], s: float) -> float:
+    """Value of a (step or linear) breakpoint profile at an interior s."""
+    for (s0, w0), (s1, w1) in zip(bps[:-1], bps[1:]):
+        if s0 <= s <= s1 and s1 > s0:
+            return w0 + (w1 - w0) * (s - s0) / (s1 - s0)
+    return 0.0
+
+
+def _step_integral(bps: List[Tuple[float, float]], lo: float,
+                   hi: float) -> float:
+    total = 0.0
+    for (s0, w0), (s1, w1) in zip(bps[:-1], bps[1:]):
+        a, b = max(s0, lo), min(s1, hi)
+        if b > a and s1 > s0:
+            wa = w0 + (w1 - w0) * (a - s0) / (s1 - s0)
+            wb = w0 + (w1 - w0) * (b - s0) / (s1 - s0)
+            total += 0.5 * (wa + wb) * (b - a)
+    return total
+
+
 def _integral_between(bps: List[Tuple[float, float]], lo: float,
                       hi: float) -> float:
     """Integral of a piecewise-linear profile over [lo, hi]."""
@@ -558,8 +730,9 @@ def edge_tie_chains(mesh: "MeshedModel"
     order: List[Tuple[int, int]] = []
     for quad in mesh.quads:
         n = quad.nodes
-        for k in range(4):
-            a, b = n[k], n[(k + 1) % 4]
+        nn = len(n)                      # 4 (quad) or 3 (polygon triangle)
+        for k in range(nn):
+            a, b = n[k], n[(k + 1) % nn]
             key = (a, b) if a < b else (b, a)
             if key not in edges:
                 edges[key] = (quad.region, a, b)
@@ -614,9 +787,20 @@ def mesh_model(model: BuildingModel) -> MeshedModel:
 
     quads: List[ShellQuad] = []
     region_trib: Dict[str, Dict[int, float]] = {}
+    poly_pieces: Dict[str, List[List[int]]] = {}
     for region in model.shells:
         if region.behavior == "shell":
-            region_trib[region.uid] = _mesh_region(region, pool, quads)
+            if is_polygon_region(region):
+                # polygon auto mesh: pieces now, elements after every
+                # region has added its nodes (conformity pass)
+                poly_pieces[region.uid] = mesh_polygon_pieces(model, region,
+                                                              pool)
+                region_trib[region.uid] = {}
+            else:
+                region_trib[region.uid] = _mesh_region(region, pool, quads)
+    if poly_pieces:
+        finalize_pieces(model, poly_pieces, pool, quads, region_trib,
+                        ShellQuad)
 
     shell_pts = sorted({n for q in quads for n in q.nodes})
     segments = {m.uid: _split_member(m, pool, shell_pts, model)
@@ -626,7 +810,11 @@ def mesh_model(model: BuildingModel) -> MeshedModel:
     membrane_nodal: Dict[str, Dict[int, float]] = {}
     for region in model.shells:
         if region.behavior == "membrane":
-            loads, nodal = _membrane_distribution(model, region, pool)
+            if is_polygon_region(region):
+                loads, nodal = _membrane_distribution_polygon(model, region,
+                                                              pool)
+            else:
+                loads, nodal = _membrane_distribution(model, region, pool)
             membrane_loads[region.uid] = loads
             membrane_nodal[region.uid] = nodal
 
