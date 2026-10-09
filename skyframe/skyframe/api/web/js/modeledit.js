@@ -1183,6 +1183,7 @@ export function eraseElement(model, ref) {
     for (const p of Object.values(model.patterns)) {
       p.member_loads = (p.member_loads || []).filter(l => l.member_uid !== ref.uid);
       p.thermal_loads = (p.thermal_loads || []).filter(t => t.member_uid !== ref.uid);
+      if (p.member_udls) p.member_udls = p.member_udls.filter(u => u.member_uid !== ref.uid);   // backend UDL list
     }
     for (const pc of Object.values(model.pushover_cases || {}))
       if (pc.My) delete pc.My[ref.uid];
@@ -2039,6 +2040,10 @@ export function renameStory(model, oldName, newName) {
     model.story_masses[newName] = model.story_masses[oldName];
     delete model.story_masses[oldName];
   }
+  if (model.explicit_story_masses && model.explicit_story_masses[oldName] !== undefined) {   // v1.13
+    model.explicit_story_masses[newName] = model.explicit_story_masses[oldName];
+    delete model.explicit_story_masses[oldName];
+  }
   if (model.story_diaphragm && model.story_diaphragm[oldName] !== undefined) {
     model.story_diaphragm[newName] = model.story_diaphragm[oldName];
     delete model.story_diaphragm[oldName];
@@ -2096,6 +2101,7 @@ export function deleteStory(model, name) {
     eraseElement(model, { type: "shell", uid: sh.uid });
   model.stories.splice(i, 1);
   if (model.story_masses) delete model.story_masses[name];
+  if (model.explicit_story_masses) delete model.explicit_story_masses[name];   // v1.13
   if (model.story_diaphragm) delete model.story_diaphragm[name];
   for (const p of Object.values(model.patterns || {}))
     p.story_forces = (p.story_forces || []).filter(f => f.story !== name);

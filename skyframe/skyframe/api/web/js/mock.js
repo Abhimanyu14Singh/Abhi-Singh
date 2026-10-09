@@ -7,6 +7,9 @@ import { designerProps, blankMaterial,                  // v0.21 — shoelace pr
 import { allUnitsTables } from "./units.js";              // v1.13 — GET /api/units mirror
 import { mockFrequencyResults, augmentMockResults as augmentCaseResults } from "./mock_cases.js";  // load-case parity (SS / PSD / DI / pushover)
 
+// Check Model + stability diagnostics mocks (POST /api/check, /api/check/stability)
+export { mockCheckModel, mockCheckStability } from "./mock_check.js";
+
 import { augmentMockModel, augmentMockResults as augmentTableResults } from "./mock_tables.js";   // tables / frequency / energy mock blocks
 const G = 9.80665;
 
@@ -294,6 +297,7 @@ export function mockModel(p = {}) {
     base_fixity: o.base_fixity,
     supports: [], nodal_masses: [], rigid_diaphragms: true,
     story_masses,
+    explicit_story_masses: {},          // v1.13 — user overrides only (round-trips)
     mass_source: { DEAD: 1.0 },
     patterns,
     cases: {
@@ -552,7 +556,8 @@ function _mockResultsAll(model) {
   }
 
   // ---- masses / seismic
-  const masses = model.story_masses || {};
+  // v1.13 — explicit_story_masses (user overrides) win over the effective story_masses
+  const masses = { ...(model.story_masses || {}), ...(model.explicit_story_masses || {}) };
   const W = storyOrder.reduce((a, s) => a + (masses[s] || 100) * G, 0);
   const C = (model._mock_params && model._mock_params.quake_coeff) || 0.08;
   const V = C * W;

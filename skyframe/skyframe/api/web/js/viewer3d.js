@@ -1054,6 +1054,9 @@ export class Viewer3D {
     // ---- overlays
     if (overlayActive && this.results) this._renderOverlay(P);
 
+    // ---- extra overlay hook: fn(ctx, P, viewer) (Check Model / stability markers)
+    if (this.extraOverlay) { try { this.extraOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
+
     // ---- axis triad
     this._renderTriad(ctx, w, h);
   }

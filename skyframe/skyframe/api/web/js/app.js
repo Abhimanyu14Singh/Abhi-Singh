@@ -33,6 +33,8 @@ import { mockValidateAssign } from "./mock_assign.js";
 
 import { initTables } from "./tables.js";   // Show Tables + frequency/energy/pushover/load-participation views
 
+import { initCheckModel } from "./checkmodel.js";   // Analyze > Check Model / Check Stability
+
 /* ------------------------------------------------ state */
 const store = {
   model: null,
@@ -1058,7 +1060,8 @@ function markDirty() {
    ================================================================ */
 /** v1.13 fields an echoing backend might not know yet — carried over from the
     working model so a save / code-tool round-trip never silently drops them. */
-const V113_KEYS = ["cases_not_run", "active_dof", "mass_options", "mass_source_mode", "display_units"];
+const V113_KEYS = ["cases_not_run", "active_dof", "mass_options", "mass_source_mode", "display_units",
+  "explicit_story_masses"];
 function keepSetup(echoed) {
   const prev = store.model;
   if (!prev || !echoed || typeof echoed !== "object") return echoed;
@@ -7699,6 +7702,14 @@ async function doGenerate(e) {
 async function doRun() {
   const btn = $("runBtn");
   if (btn.disabled) return;
+  // Check Model before run (js/checkmodel.js) — resolves false = Cancel
+  if (window.__sky && window.__sky.beforeRun) {
+    btn.disabled = true;
+    let go = true;
+    try { go = await window.__sky.beforeRun(); } catch (e) { go = true; }
+    btn.disabled = false;
+    if (!go) return;
+  }
   btn.disabled = true;
   $("runSpinner").classList.remove("hidden");
   $("runBtnLabel").textContent = "Running…";
@@ -8409,6 +8420,9 @@ async function boot() {
   catch (err) { console.error("etabs chrome init failed", err); }
   try { initTables(window.__sky); }                 // Display > Show Tables… + result displays
   catch (err) { console.error("tables init failed", err); }
+
+  try { initCheckModel(window.__sky); }      // Check Model / stability / pre-run check
+  catch (err) { console.error("check model init failed", err); }
 }
 
 boot();
