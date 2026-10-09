@@ -10,6 +10,7 @@ import { spectrumChart, thSparkline } from "./charts.js";
 import { asce7SpectrumPreview, spectrumParameters, elfCs, nbccElfInfo } from "./mock.js";
 import U from "./units.js";                    // v1.13 — display units (store stays SI)
 import { icon } from "./icons.js";
+import { frequencySection, caseOptionsButton } from "./casedlg.js";   // load-case parity dialogs
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fmt = (v, d = 2) => (v == null || !isFinite(v)) ? "—" :
@@ -102,6 +103,7 @@ export class LoadsEditor {
     this.root.appendChild(this._poSection(m));
     this.root.appendChild(this._bucklingSection(m));
     this.root.appendChild(this._stagedSection(m));
+    this.root.appendChild(frequencySection(m));          // steady-state / PSD cases
     this.root.appendChild(this._combosSection(m));
     this.root.appendChild(this._sectionCutsSection(m));  // v0.13
     this.root.appendChild(this._massSection(m));
@@ -1215,7 +1217,7 @@ export class LoadsEditor {
     head.appendChild(mkField("damping", damp));
 
     const meth = document.createElement("select");
-    meth.innerHTML = `<option>CQC</option><option>SRSS</option>`;
+    meth.innerHTML = `<option>CQC</option><option>SRSS</option><option>ABS</option><option>GMC</option><option>NRC10</option><option>DSC</option>`;
     meth.value = rc.combo_method;
     meth.addEventListener("change", () => { rc.combo_method = meth.value; this._mutated(false); });
     head.appendChild(mkField("modal combo", meth));
@@ -1243,6 +1245,7 @@ export class LoadsEditor {
     funcSel.value = rc.function || "";
     head.appendChild(mkField("function", funcSel));
 
+    head.appendChild(caseOptionsButton("rs", name));            // modal combination dialog
     head.appendChild(this._delBtn(null, `RS case ${name}`, () => {
       if (ME.deleteRsCase(m, name)) this._mutated();
     }));
@@ -1442,6 +1445,7 @@ export class LoadsEditor {
     funcSel.value = tc.function || "";
     head.appendChild(mkField("function", funcSel));
 
+    head.appendChild(caseOptionsButton("th", name));            // ETABS "Other Parameters"
     head.appendChild(this._delBtn(null, `TH case ${name}`, () => {
       if (ME.deleteThCase(m, name)) this._mutated();
     }));
@@ -1876,6 +1880,7 @@ export class LoadsEditor {
       v => { if (v >= 1) return false; pc.hardening = v; })));
     // v0.25 — large-displacement pushover (PushoverCase.geometric; no legacy bool)
     head.appendChild(this._geometricSelect(pc, "po-geom", false));
+    head.appendChild(caseOptionsButton("pushover", name));      // load application / control
     head.appendChild(this._delBtn(null, `pushover case ${name}`, () => {
       if (ME.deletePushoverCase(m, name)) this._mutated();
     }));

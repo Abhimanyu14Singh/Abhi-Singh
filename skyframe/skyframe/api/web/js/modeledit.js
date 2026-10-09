@@ -143,7 +143,7 @@ export function normalizeModel(m) {
     rc.name = rc.name || n;
     rc.direction = rc.direction === "Y" ? "Y" : "X";
     rc.spectrum = Array.isArray(rc.spectrum) ? rc.spectrum : [];
-    rc.combo_method = rc.combo_method === "SRSS" ? "SRSS" : "CQC";
+    rc.combo_method = ["SRSS", "ABS", "GMC", "NRC10", "DSC"].includes(rc.combo_method) ? rc.combo_method : "CQC";
     rc.damping = isFinite(rc.damping) ? rc.damping : 0.05;
     rc.scale = isFinite(rc.scale) ? rc.scale : 1.0;
     // v0.13 — optional reference to a library spectrum function (name; "" = inline)
@@ -345,6 +345,8 @@ export function allAnalysisCases(m) {
   push(m.pushover_cases, "Nonlinear Static (Pushover)", "pushover");
   push(m.buckling_cases, "Buckling", "buckling");
   push(m.staged_cases, "Staged Construction", "staged");
+  push(m.steady_state_cases, "Steady State", "steady_state");       // frequency domain
+  push(m.psd_cases, "Power Spectral Density", "psd");
   return out;
 }
 
@@ -1327,9 +1329,14 @@ export function guessPatternKind(name) {
 
 /** Names of static cases that reference a pattern. */
 export function patternRefs(model, name) {
-  return Object.values(model.cases || {})
+  return [...Object.values(model.cases || {})
     .filter(c => (c.patterns || {})[name] !== undefined)
-    .map(c => c.name);
+    .map(c => c.name),
+  // frequency-domain loads + pushover "pattern" distribution reference patterns too
+  ...["steady_state_cases", "psd_cases"].flatMap(k => Object.values(model[k] || {})
+    .filter(c => (c.loads || []).some(l => l.pattern === name)).map(c => c.name)),
+  ...Object.values(model.pushover_cases || {})
+    .filter(pc => pc.load_distribution === "pattern" && pc.pattern === name).map(pc => pc.name)];
 }
 
 export function addPattern(model, base = "PAT") {
@@ -1350,6 +1357,11 @@ export function renamePattern(model, oldName, newName) {
       delete c.patterns[oldName];
     }
   }
+  for (const k of ["steady_state_cases", "psd_cases"])         // frequency-domain loads
+    for (const c of Object.values(model[k] || {}))
+      for (const l of c.loads || []) if (l.pattern === oldName) l.pattern = newName;
+  for (const pc of Object.values(model.pushover_cases || {}))
+    if (pc.pattern === oldName) pc.pattern = newName;
   return true;
 }
 
@@ -1370,6 +1382,10 @@ export function caseRefs(model, name) {
     ...Object.values(model.buckling_cases || {})
       .filter(bc => bc.base_case === name)
       .map(bc => `buckling ${bc.name}`),
+    // pushover cases may start from this static case's state
+    ...Object.values(model.pushover_cases || {})
+      .filter(pc => pc.start_from === name)
+      .map(pc => `pushover ${pc.name}`),
   ];
 }
 
@@ -1392,6 +1408,8 @@ export function renameCase(model, oldName, newName) {
   // v0.25 — buckling stressed-state references follow the rename
   for (const bc of Object.values(model.buckling_cases || {}))
     if (bc.base_case === oldName) bc.base_case = newName;
+  for (const pc of Object.values(model.pushover_cases || {}))
+    if (pc.start_from === oldName) pc.start_from = newName;
   notRunRename(model, oldName, newName);   // v1.13 — cases_not_run follows
   return true;
 }

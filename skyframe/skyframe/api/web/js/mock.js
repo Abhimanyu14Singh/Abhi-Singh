@@ -5,6 +5,7 @@ import { designerProps, blankMaterial,                  // v0.21 — shoelace pr
   allAnalysisCases, MODAL_CASE, normalizeActiveDof,       // v1.13 — cases to run / DOF
   ssFamily, ssStrengths, ssDefaultParams, normalizeSsPoints } from "./modeledit.js";
 import { allUnitsTables } from "./units.js";              // v1.13 — GET /api/units mirror
+import { mockFrequencyResults, augmentMockResults } from "./mock_cases.js";  // load-case parity (SS / PSD / DI / pushover)
 
 const G = 9.80665;
 
@@ -3205,12 +3206,13 @@ export function mockCracked(model, body = {}) {
    zeroed in the mock story/node displacements.
    ================================================================ */
 export function mockResults(model) {
-  const r = _mockResultsAll(model);
+  const r0 = _mockResultsAll(model);
+  const r = augmentMockResults(model, Object.assign(r0, mockFrequencyResults(model, r0)));
   const notRun = new Set(Array.isArray(model.cases_not_run) ? model.cases_not_run : []);
   const runs = n => !notRun.has(n);
   const all = allAnalysisCases(model);
   const deps = new Set();
-  if (all.some(c => (c.kind === "rs" || c.kind === "th") && runs(c.name))) deps.add(MODAL_CASE);
+  if (all.some(c => (c.kind === "rs" || c.kind === "th" || c.kind === "steady_state" || c.kind === "psd") && runs(c.name))) deps.add(MODAL_CASE);
   for (const [n, bc] of Object.entries(model.buckling_cases || {}))
     if (runs(n) && bc.base_case) deps.add(bc.base_case);
 
@@ -3227,6 +3229,7 @@ export function mockResults(model) {
     else if (c.kind === "pushover" && r.pushover) delete r.pushover[c.name];
     else if (c.kind === "buckling" && r.buckling) delete r.buckling[c.name];
     else if (c.kind === "staged" && r.staged) delete r.staged[c.name];
+    else if ((c.kind === "steady_state" || c.kind === "psd") && r[c.kind]) delete r[c.kind][c.name];
     else if (c.kind === "modal")
       r.modal = { periods: [], frequencies: [], participation: [], shapes: {} };
   }
@@ -3249,7 +3252,7 @@ export function mockResults(model) {
     for (const n of removed) delete r[key][n];
     if (!Object.keys(r[key]).length) delete r[key];
   }
-  for (const key of ["pushover", "buckling"])
+  for (const key of ["pushover", "buckling", "steady_state", "psd"])
     if (r[key] && !Object.keys(r[key]).length) delete r[key];
   r.case_status = case_status;
   r.combo_status = combo_status;
