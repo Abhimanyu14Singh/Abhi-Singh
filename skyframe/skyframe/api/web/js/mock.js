@@ -14,6 +14,8 @@ import { mockExtendResults } from "./mock_combo.js";   // extended combos / P-De
 import { augmentMockModel, augmentMockResults as augmentTableResults } from "./mock_tables.js";   // tables / frequency / energy mock blocks
 // G2 polygon shells — mock auto mesh (quads + triangles) for non-quad regions
 import { mockPolyMesh as g2MockPolyMesh, isLegacyQuad as g2IsLegacyQuad } from "./mock_poly.js";
+// Groups — user-defined stage results + section cuts defined by group
+import { mockUserStages as grpMockUserStages, mockCutAllows as grpMockCutAllows } from "./mock_groups.js";
 const G = 9.80665;
 
 function mulberry32(seed) {
@@ -1046,6 +1048,8 @@ function _mockResultsAll(model) {
         st[11] = one[11] * 0.95 * jit(0.03);
       }
     }
+    // Groups hook — user-defined stage list: per-stage cumulative states (final = last stage)
+    if (Array.isArray(sc.stages)) grpMockUserStages(model, sc, stagedState, { members });
     stagedState.member_stations = buildStations(stagedState.member_forces,
       udlOf(sc.pattern || "DEAD"));
     const pct = maxOne > 1e-9 ? +(100 * maxDiff / maxOne).toFixed(3) : 0.0;
@@ -1079,6 +1083,7 @@ function _mockResultsAll(model) {
       }
       stagedState.shortening = shortening;
     }
+    if (Array.isArray(sc.stages)) delete stagedState.shortening;   // Groups: no shortening report for stage lists
     staged[name] = stagedState;
   }
 
@@ -1359,6 +1364,7 @@ function _mockResultsAll(model) {
       if (!inRange(cp)) continue;
       const f = (cd.member_forces || {})[mm.uid];
       if (!f) continue;
+      if (!grpMockCutAllows(model, cut, "members", mm.uid)) continue;   // Groups: cut defined by group
       nMem++;
       FX += f[1]; FY += f[2]; FZ += -f[0];
       MX += f[3]; MY += f[4]; MZ += f[5];
@@ -1367,7 +1373,7 @@ function _mockResultsAll(model) {
       const zs = sh.corners.map(c => c[axisIdx]);
       const lo = Math.min(...zs), hi = Math.max(...zs);
       if (cut.coord > lo + 1e-6 && cut.coord < hi - 1e-6 &&
-          inRange(sh.corners[0])) nShell++;
+          inRange(sh.corners[0]) && grpMockCutAllows(model, cut, "shells", sh.uid)) nShell++;   // Groups filter
     }
     const warnings = [];
     if (!nMem && !nShell) warnings.push("no members or shells cross this cut plane");

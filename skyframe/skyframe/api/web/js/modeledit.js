@@ -3,6 +3,9 @@
 
 import { normalizeUnits } from "./units.js";   // v1.13 — model.display_units
 import * as CXR from "./combo_refs.js";        // extended combos / P-Delta / TH components refs
+// Groups — keep groups / stage-op pattern refs consistent on erase & rename (aliased)
+import { onObjectErased as grpOnObjectErased, stagePatternRefs as grpStagePatternRefs,
+  renamePatternInStages as grpRenamePatternInStages } from "./groups_model.js";
 
 const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
 const near = (a, b, tol = 1e-6) =>
@@ -231,7 +234,7 @@ export function normalizeModel(m) {
   for (const [n, sc] of Object.entries(m.staged_cases)) {
     sc.name = sc.name || n;
     sc.pattern = sc.pattern || "DEAD";
-    sc.stages = "per_story";
+    sc.stages = Array.isArray(sc.stages) ? sc.stages : "per_story";   // Groups: user-defined stage list kept
     sc.include_live = (sc.include_live && typeof sc.include_live === "object")
       ? sc.include_live : {};
     // v0.25 — time-dependent (creep/shrinkage) staged construction: null keeps
@@ -279,6 +282,7 @@ export function normalizeModel(m) {
         if (Array.isArray(c[k]) && c[k].length === 2 && c[k].every(isFinite))
           cut[k] = [Math.min(c[k][0], c[k][1]), Math.max(c[k][0], c[k][1])];
       }
+      if (typeof c.group === "string" && c.group) cut.group = c.group;   // Groups: section cut defined by group
       return cut;
     });
   m.spectrum_functions = (m.spectrum_functions && typeof m.spectrum_functions === "object")
@@ -1206,6 +1210,7 @@ export function eraseElement(model, ref) {
     for (const p of Object.values(model.patterns))
       p.area_loads = (p.area_loads || []).filter(l => l.region_uid !== ref.uid);
   }
+  if (removed) grpOnObjectErased(model, ref);   // Groups: drop the erased object from every group
   return removed;
 }
 
@@ -1342,7 +1347,8 @@ export function patternRefs(model, name) {
     .filter(c => (c.loads || []).some(l => l.pattern === name)).map(c => c.name)),
   ...Object.values(model.pushover_cases || {})
     .filter(pc => pc.load_distribution === "pattern" && pc.pattern === name).map(pc => pc.name),
-  ...CXR.patternRefsExtra(model, name)];   // P-Delta options + TH pattern components
+  ...CXR.patternRefsExtra(model, name),   // P-Delta options + TH pattern components
+  ...grpStagePatternRefs(model, name)];     // Groups: staged "load" operations
 }
 
 export function addPattern(model, base = "PAT") {
@@ -1369,6 +1375,7 @@ export function renamePattern(model, oldName, newName) {
   for (const pc of Object.values(model.pushover_cases || {}))
     if (pc.pattern === oldName) pc.pattern = newName;
   CXR.patternRefRename(model, oldName, newName);   // P-Delta options + TH components
+  grpRenamePatternInStages(model, oldName, newName);   // Groups: staged "load" operations
   return true;
 }
 

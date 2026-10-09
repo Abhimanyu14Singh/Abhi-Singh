@@ -2198,6 +2198,8 @@ export class LoadsEditor {
     note.innerHTML = `Stages <b>per story</b> (bottom → top). Upper stories settle less than a ` +
       `one-shot run — the “slab built level” effect. Every partial structure must be stable on its own.`;
     card.appendChild(note);
+    // Groups hook — "Auto by story" / "User-defined stages" + Stage Data… (js/stagedata.js)
+    if (window.__sky && window.__sky.grpStagedCard) window.__sky.grpStagedCard(card, m, sc, () => this._mutated());
     return card;
   }
 
@@ -2701,6 +2703,8 @@ export class LoadsEditor {
       (Array.isArray(cut.x_range) || Array.isArray(cut.y_range) || Array.isArray(cut.z_range)
         ? ` within the bounding box.` : `.`);
     card.appendChild(note);
+    // Groups hook — section cut "defined by group" (js/groups.js)
+    if (window.__sky && window.__sky.grpCutCard) window.__sky.grpCutCard(card, m, cut, () => this._mutated());
     return card;
   }
 

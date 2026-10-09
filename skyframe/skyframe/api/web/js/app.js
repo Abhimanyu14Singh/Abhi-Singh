@@ -43,6 +43,12 @@ import { initPolyDraw as g2InitPolyDraw } from "./polydraw.js";
 import { initInsertion as g2InitInsertion } from "./insertdlg.js";
 import { mockValidatePoly as g2MockValidatePoly } from "./mock_poly.js";
 
+// Groups + user-defined staged construction (Define > Groups, Stage Data,
+// per-stage results) and its mock validation (aliased imports)
+import { initGroups as grpInitGroups } from "./groups.js";
+import { initStageData as grpInitStageData } from "./stagedata.js";
+import { mockValidateGroups as grpMockValidateGroups } from "./mock_groups.js";
+
 /* ------------------------------------------------ state */
 const store = {
   model: null,
@@ -223,7 +229,8 @@ async function analyze() {
 async function postModel(payload) {
   if (store.mock) {
     await new Promise(r => setTimeout(r, 300));
-    const bad = mockValidateAssign(payload) || g2MockValidatePoly(payload);   // mirror backend ValueErrors (assign / G2 polygon + insertion fields)
+    const bad = mockValidateAssign(payload) || g2MockValidatePoly(payload)    // mirror backend ValueErrors (assign / G2 polygon + insertion fields)
+      || grpMockValidateGroups(payload);                                       // Groups / stage lists / cut groups
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -5168,7 +5175,8 @@ function membersCrossingCut(cutDef) {
     const cp = [0, 1, 2].map(i => mm.pi[i] + (mm.pj[i] - mm.pi[i]) * t);
     if (inRange(cp)) out.push(mm.uid);
   }
-  return out;
+  // Groups: a cut defined by group integrates only the group's members
+  return cutDef.group ? out.filter(u => (((store.model.groups || {})[cutDef.group] || {}).members || []).includes(u)) : out;
 }
 
 function renderCutsTab() {
@@ -5187,7 +5195,8 @@ function renderCutsTab() {
     <th>n·mem</th><th>n·shell</th><th class="txt">Warnings</th></tr></thead>`;
   const body = rows.map(row => {
     const d = row.def || {};
-    const plane = d.axis ? `${d.axis.toUpperCase()}=${U.fmt("length", d.coord, 2)}` : "—";
+    const plane = (d.axis ? `${d.axis.toUpperCase()}=${U.fmt("length", d.coord, 2)}` : "—") +
+      (d.group ? ` · group ${esc(d.group)}` : "");   // Groups: cut defined by group
     const warn = (row.warnings || []).length
       ? `<span class="cut-warn">⚠ ${esc((row.warnings || []).join(" · "))}</span>` : "";
     const sel = row.name === store.cutSel ? " is-sel" : "";
@@ -8444,6 +8453,10 @@ async function boot() {
   // G2 — polygon draw/edit + insertion-point / end-offset dialogs (additive __sky)
   try { g2InitPolyDraw(window.__sky); } catch (err) { console.error("polygon draw init failed", err); }
   try { g2InitInsertion(window.__sky); } catch (err) { console.error("insertion init failed", err); }
+
+  // Groups — Define/Assign/Select/Show Group, Stage Data, per-stage results (additive __sky)
+  try { grpInitGroups(window.__sky); } catch (err) { console.error("groups init failed", err); }
+  try { grpInitStageData(window.__sky); } catch (err) { console.error("stage data init failed", err); }
 }
 
 boot();

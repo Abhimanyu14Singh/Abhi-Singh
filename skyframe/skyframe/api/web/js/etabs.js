@@ -124,6 +124,8 @@ export function initEtabs(sky) {
       { sep: true },
       { label: "Grid Systems…", act: "def-grid", fn: () => sky.openGridEditor() },
       { label: "Stories…", act: "def-stories", fn: () => sky.openGridEditor() },
+      // Groups — ETABS Define > Groups (js/groups.js)
+      { label: "Groups…", act: "def-groups", hint: "staging · section cuts", fn: () => sky.openGroups && sky.openGroups() },
       { sep: true },
       { label: "Load Patterns…", act: "def-patterns", fn: () => gotoLoads("ls-patterns") },
       { label: "Load Cases…", act: "def-loadcases", hint: "all types", fn: () => sky.openLoadCases() },
@@ -193,6 +195,14 @@ export function initEtabs(sky) {
       { label: "Joint Loads · Ground Displacement…", act: "asn-jground", fn: () => sky.openJointLoads && sky.openJointLoads("ground") },
       { label: "Frame Loads · Concentrated…", act: "asn-fconc", hint: "force / moment", fn: () => sky.openFrameConcentrated && sky.openFrameConcentrated("moment") },
       { label: "Shell Loads · Uniform…", act: "asn-suniform", hint: "direction · joint pattern", fn: () => sky.openShellUniform && sky.openShellUniform() },
+      // Groups — assign the current selection to a group (js/groups.js)
+      { sep: true },
+      { label: "Assign Objects to Group…", act: "asn-group", hint: "selection", fn: () => sky.openAssignGroup && sky.openAssignGroup() },
+    ]],
+    // Groups — ETABS Select menu (js/groups.js)
+    ["Select", [
+      { label: "Select by Group…", act: "sel-group", fn: () => sky.openSelectByGroup && sky.openSelectByGroup() },
+      { label: "Clear Selection", act: "sel-clear", fn: () => sky.handleSelect && sky.handleSelect([], false) },
     ]],
     ["Analyze", [
       { label: "Set Load Cases to Run…", act: "an-cases-run", fn: () => sky.openCasesToRun() },
@@ -218,6 +228,9 @@ export function initEtabs(sky) {
       { label: "Mode Shape", act: "dis-mode", fn: () => clickChip("chipMode", "Mode-shape animation") },
       { label: "Shell Contours", act: "dis-contours", fn: () => clickChip("chipContours", "Shell force contours") },
       { label: "Show Tables…", act: "dis-tables", hint: "analysis results", fn: () => sky.openShowTables && sky.openShowTables() },
+      // Groups — highlight groups; per-stage staged results (js/groups.js, js/stagedata.js)
+      { label: "Show Group…", act: "dis-group", hint: "highlight", fn: () => sky.openShowGroup && sky.openShowGroup() },
+      { label: "Staged Construction Stages…", act: "dis-stages", hint: "per stage", fn: () => sky.openStageResults && sky.openStageResults() },
       { sep: true },
       { label: "Story Drifts & Shears", act: "dis-story", fn: () => showResult("story") },
       { label: "Modal", act: "dis-modal", fn: () => showResult("modal") },

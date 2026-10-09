@@ -1063,6 +1063,8 @@ export class Viewer3D {
     if (this.extraOverlay) { try { this.extraOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
     // G2 hook — insertion-point offset axes + badges (js/insertdlg.js)
     if (this.g2Overlay && !overlayActive) { try { this.g2Overlay(ctx, P, this); } catch (e) { /* never break the render */ } }
+    // Groups hook — Show Group highlight (js/groups.js)
+    if (this.grpOverlay && !overlayActive) { try { this.grpOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
 
     // ---- axis triad
     this._renderTriad(ctx, w, h);
@@ -1072,6 +1074,8 @@ export class Viewer3D {
   _caseData() {
     const r = this.results, name = this.overlay.caseName;
     if (!r || !name) return null;
+    // Groups hook — staged cases (per-stage node_disp when a stage is picked; js/stagedata.js)
+    if (this.grpCaseData) { const g = this.grpCaseData(name, r); if (g) return g; }
     if (name.startsWith("rs:"))                    // v0.3 response-spectrum case
       return (r.rs_cases && r.rs_cases[name.slice(3)]) || null;
     return (r.cases && r.cases[name]) || (r.combos && r.combos[name]) || null;

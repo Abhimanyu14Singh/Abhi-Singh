@@ -326,6 +326,8 @@ export class ElevEditor {
         "data-ref": `spring:${springKey(sp.point)}`,
       }));
     }
+    // Groups hook — Show Group highlight (js/groups.js)
+    if (this.grpOverlay) { try { this.grpOverlay(this); } catch (e) { console.error(e); } }
   }
 
   /** Opening rectangle of a wall in (s, z) space (bilinear on corners). */
