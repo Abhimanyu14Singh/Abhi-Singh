@@ -6194,3 +6194,273 @@ device (TH Newton) links.  FNA rejects them, so use direct integration.
   * the bearing types run under gravity plus lateral load;
   * a TH with a nonlinear named spring runs;
   * round trips match, and validation rejects bad inputs.
+
+## User-defined hinges and hinge overwrites
+
+ETABS Define > Frame Hinge Properties (user-defined backbones), Assign >
+Frame > Hinges, and Assign > Frame > Hinge Overwrites (B10).  Logic:
+`skyframe/core/user_hinges.py` (validation, (de)serialisation, envelope
+conversion, state classification) and `skyframe/engine/user_hinges.py`
+(OpenSees builders and per-step recording).  Every default reproduces the
+previous results byte-identically: `hinge_properties` is emitted only when
+non-empty, `hinge_overwrites` only when set, and a member whose `hinges` is
+a string keeps the existing `"none" | "auto_m3" | "fiber_pmm"` meaning.  A
+representative model (frame with column_base/all_ends/asce41 pushovers, a
+nonlinear TH and a nonlinear static case) hashes identically before and
+after, for both `to_dict()` and the full `run().to_dict()`.
+
+### Model JSON
+
+```json
+"hinge_properties": {
+  "BEAM_M3": {"type": "M3",
+              "backbone": [[0, 0], [0, 1.0], [0.02, 1.2], [0.03, 0.6],
+                           [0.05, 0.6]],
+              "scale": {"yield_value": 250.0, "yield_deformation": null},
+              "acceptance": {"IO": 0.005, "LS": 0.01, "CP": 0.015},
+              "hysteresis": "takeda", "drop_strength": "drops",
+              "k_elastic": null, "hysteresis_params": null},
+  "COL_P": {"type": "P",
+            "backbone": {"positive": [[0, 0], [0, 1.0], [0.01, 1.1]],
+                         "negative": [[0, 0], [0, -0.5], [-0.005, -0.5]]},
+            "scale": {"yield_value": 1500.0}, "hysteresis": "pivot"},
+  "FIB": {"type": "PMM_fiber", "acceptance": {"IO": 0.004, "LS": 0.01,
+                                              "CP": 0.02}}
+},
+"members": [{"uid": "B1", "...": "...",
+             "hinges": [{"property": "BEAM_M3", "relative_distance": 0.05},
+                        {"property": "BEAM_M3", "relative_distance": 0.95}],
+             "hinge_overwrites": {"auto_subdivide": true,
+                                  "relative_length": 0.1}}]
+```
+
+* `type`: `M3 | M2 | P | V2 | PMM_fiber`.  The hinge DOF is the member
+  LOCAL DOF, using the engine's local axes (`_local_axes`): P = local 1,
+  V2 = local 2, M2 = rotation about local 2 and M3 = rotation about
+  local 3.  For a vertical column, local 3 is global X, so an X push bends
+  the column about M2 and a Y push about M3.
+* `backbone`: ETABS points A-B-C-D-E as `[d, f]`.
+  * A must be `[0, 0]`.  Then 1 to 5 more points follow, at most 6 in all,
+    with non-decreasing d and `f_B > 0`.
+  * A list is symmetric.  `{"positive", "negative"}` is two-sided, and the
+    negative side may be given with either sign because magnitudes are
+    used.
+  * `d` is PLASTIC deformation (ETABS convention: the hinge is rigid up to
+    B).  The B deformation is ignored, so every point is shifted so that B
+    sits at 0.
+  * `PMM_fiber` needs no backbone.
+* `scale`:
+  * force = `f * yield_value` (default 1.0, i.e. absolute values);
+  * deformation = `d * SF_d`, where `SF_d` = 1 for `yield_deformation`
+    null (absolute), the given value, or `"auto"` = `F_B / k_member`
+    (multiples of the member yield deformation).
+  * `k_member` is `6EI33/L` (M3), `6EI22/L` (M2), `EA/L` (P) or
+    `12EI33/L^3` (V2), using modifier-scaled properties.
+* `acceptance` (optional): IO <= LS <= CP plastic deformations, in the same
+  scaled units.  A missing level is never reached.
+* `hysteresis`: `kinematic` (default) | `takeda` | `pivot` | `isotropic` |
+  `concrete`.  Kinematic and isotropic need a symmetric backbone (OpenSees
+  MultiLinear is symmetric).
+* `drop_strength`: behaviour after the LAST backbone point (C or E).
+  * `drops` (default, ETABS "drops to zero"): the strength drops to
+    `UH_RESIDUAL = 1e-6 * F_B` and stays there.
+  * `holds`: the last force is held.
+* `k_elastic` (optional): hinge elastic stiffness.  The default is
+  `UH_RIGID_FACTOR * k_member` with `UH_RIGID_FACTOR = 10`, the v0.5
+  stiff-hinge n.
+* `hysteresis_params` (optional; takeda/pivot/concrete): `pinch_x`,
+  `pinch_y`, `damage1`, `damage2`, `beta`.  Defaults:
+  * takeda: 1, 1, 0, 0, 0;
+  * pivot: 0.5, 0.25, 0, 0, 0 (the B11 pivot defaults);
+  * concrete: 0.8, 0.2, 0, 0, 0.
+* `FrameMember.hinges` (Assign > Frame > Hinges) can now also be a LIST of
+  `{"property", "relative_distance"}` with `relative_distance` in [0, 1],
+  measured along the joint-to-joint length.
+  * Several hinges per member are allowed (ETABS style, e.g. 0.05 / 0.95),
+    but the same property cannot appear twice at the same distance.
+  * A list REPLACES the case's automatic hinges for that member
+    (column_base / all_ends `My` hinges, auto_m3 / fiber_pmm).  An EMPTY
+    list means "no hinges".
+  * Rules enforced by `validate()`:
+    * unknown property names are rejected;
+    * axial-only members cannot take hinges;
+    * PMM_fiber hinges must sit at 0 or 1 and cannot be mixed with lumped
+      hinges on the same member;
+    * interior hinges (0 < d < 1) are rejected on members with rigid end
+      offsets or insertion / joint offsets.
+* `FrameMember.hinge_overwrites`: `{"auto_subdivide": bool,
+  "relative_length": x}` with `0 < x <= 0.5`.
+  * `relative_length` sets the HingeRadau plastic-hinge length of a
+    PMM_fiber member: `lp = relative_length * L`, instead of `0.5 h`.  For
+    lumped (M3/M2/P/V2) hinges it is RESERVED and has no effect, because a
+    zeroLength hinge has no length.
+  * `auto_subdivide` is accepted and stored but RESERVED: an interior
+    lumped hinge always subdivides the member (the mesher adds a node at
+    `d * L`), and end hinges never do.
+* Python API: `model.add_hinge_property(name, prop)`, then set
+  `member.hinges = [...]` and `member.hinge_overwrites = {...}`, or pass
+  `add_member(..., hinges=[...])`.
+
+### Engine
+
+* User hinges are active in every HINGED build (`_build(hinge_case=...)`):
+  pushover, nonlinear static (including chains and `start_from`) and
+  nonlinear time history.
+* Linear, eigen, RS and buckling analyses see the elastic member.  An
+  interior hinge location only adds a mesh node, which leaves linear results
+  unchanged.  Tested: the tip displacement matches the unsplit member to
+  1e-9.
+* Lumped hinge: a `zeroLength` element between the member's node at the
+  hinge location and a DUPLICATED node that the member segment connects
+  to instead.  The original node is the joint or support at an end, or the
+  split node inside the span.
+  * `-orient` uses the member local x and y axes.  All six local DOFs carry
+    a material: the hinge DOF gets the backbone material, and the other
+    five get `Elastic(UH_TIE_FACTOR * k)` with `UH_TIE_FACTOR = 1e8`, k =
+    `EA/L + 12EI/L^3` for translations and `max(6EI22, 6EI33, GJ)/L` for
+    rotations.
+  * These are springs rather than equalDOF ties, so a hinge at a
+    rigid-diaphragm slave never chains MP constraints.
+  * Deformation sign: the zeroLength convention (duplicate minus original,
+    along the local axis).  An asymmetric backbone's positive side is the
+    positive zeroLength deformation.
+* Envelope (`core.user_hinges.build_envelope`): each scaled plastic point
+  becomes the TOTAL hinge deformation `d = d_p + F/k_e`.
+  * A non-increasing step, i.e. a vertical drop such as C -> D at equal
+    deformation, is spread over the slope `-UH_DROP_RATIO * k_member` with
+    `UH_DROP_RATIO = 0.1`.  A vertical drop has no tangent, and the
+    spread slope stays softer than the member, so a cantilever cannot
+    snap back.
+  * `drops` appends `(d_last + (F_last - F_res)/k_drop, F_res)` and a flat
+    tail.  `holds` appends a flat tail at `F_last`.
+  * The material therefore has at most 7 points per side.
+* Material:
+  * `kinematic` uses `MultiLinear`, OpenSees' kinematic multi-linear
+    material.
+  * `isotropic` is APPROXIMATED by the same MultiLinear: OpenSees has no
+    multi-linear isotropic uniaxial material.  The monotonic envelope is
+    exact, but on reversal the elastic range is `2 F_y` (kinematic) instead
+    of `2 F_max`.  The results carry an `approximation` note.
+  * `takeda`, `pivot` and `concrete` use the classic `Hysteretic` when
+    both sides have the same 2 or 3 envelope points.  Otherwise they use
+    `HystereticSM`, the up-to-7-point generalisation, which is identical
+    to Hysteretic on a 3-point envelope (probed).  Both take
+    `pinch_x/pinch_y`, `damage1/2` and `beta`.
+  * Every backbone material is put in `Parallel` with
+    `Elastic(UH_PARALLEL_RATIO * k_member)`, where `UH_PARALLEL_RATIO =
+    1e-9`.  This keeps a plateau or failed hinge from making the tangent
+    EXACTLY singular, which happens when an axial or shear hinge DOF has
+    no other stiffness.  The force error is `<= 1e-9 * k_member * d`.
+* Why `UH_RIGID_FACTOR = 10` and not "rigid": probing showed that with
+  `k_e / k_plastic > ~1e3`, Newton cycles between the loading and
+  unloading branches on a load reversal.  A cyclic chain that solves at
+  10x and 30x fails at 100x.  Users who want a stiffer hinge can set
+  `k_elastic`.
+* PMM_fiber (references the existing v0.21 fiber machinery): in any hinged
+  build the member becomes the v0.21 HingeRadau forceBeamColumn, with
+  fibers at both ends.
+  * The acceptance values (scaled; `"auto"` multiplies by the backbone
+    thy) override IO/LS/CP of the ASCE 41 auto backbone.
+  * When the auto generator cannot size the section, `My` falls back to
+    `scale.yield_value`.
+  * `lp` comes from `hinge_overwrites.relative_length`, as above.
+  * Results are the v0.21 fiber entries, with `kind: "user_fiber"`.  The
+    nonlinear TH does not record fiber detail, as before.
+* Not supported: interior hinges with rigid / insertion offsets
+  (rejected), and hinges on axial-only members (rejected).
+
+### Results
+
+User hinges append entries to the existing hinge lists:
+
+* pushover `hinges`;
+* nonlinear static `nonlinear.hinges`;
+* nonlinear TH: a new top-level TH key `hinges`, emitted only when the
+  model has user hinges.
+
+Each entry looks like this:
+
+```json
+{"uid": "B1", "end": "i" | "j" | "0.05", "relative_distance": 0.05,
+ "property": "BEAM_M3", "type": "M3", "user": true, "kind": "user",
+ "My": F_B, "thy": d_B, "a": C_plastic, "b": last_point_plastic,
+ "c": F_last / F_B, "IO": x|null, "LS": x|null, "CP": x|null,
+ "k_elastic": k_e, "hysteresis": "takeda", "drop_strength": "drops",
+ "material": "MultiLinear" | "Hysteretic" | "HystereticSM",
+ "envelope": {"positive": [[d, F], ...], "negative": [[d, F], ...]},
+ "rot": [...], "moment": [...], "rot_plastic": [...],
+ "hinge_state": ["A-B", "B-IO", ...], "state": ["elastic", "IO", ...]}
+```
+
+* `rot` / `moment`: the hinge deformation and force per converged step.
+  For P and V2 hinges these are a displacement and a force; the key names
+  match the existing entries.
+* `rot_plastic`: `max(0, |d| - |F|/k_e)`.
+* `hinge_state` (ETABS): classified on `rot_plastic`, measured on the side
+  of the deformation's sign.
+  * `A-B` until the hinge yields.
+  * Up to the C marker: `B-IO | IO-LS | LS-CP | >CP`, by the acceptance
+    levels.
+  * Past C: `C-D | D-E | >E`.  The markers are the material points' plastic
+    deformations, so a spread vertical drop moves D.  Missing points are
+    never reached.
+* `state` is the legacy v0.19 vocabulary that existing consumers (the
+  server `hinge_summary` and the web viewer) understand:
+  * `A-B` -> `elastic`;
+  * `B-IO` -> `IO`;
+  * `IO-LS` -> `LS`;
+  * `LS-CP` -> `CP`;
+  * every other state -> `collapse`.
+* `hinge_rotations` (peak |d| per uid) includes M2/M3 user hinges.
+  `yielded` (nonlinear static / TH) includes every user hinge whose state
+  left A-B.
+
+### Validation (`tests/test_user_hinges.py`, 31 tests)
+
+Cantilever with L = 3, b = 0.3 and E = 25 GPa, with a user M3 hinge at the
+base (Y push):
+
+* Pushover follows the backbone exactly.  At every step:
+  * `theta = (d - V L^3/3EI)/L` equals the recorded hinge rotation
+    (1e-6);
+  * `V L` equals the envelope at theta (1e-6);
+  * the capacity curve passes through the hand breakpoints
+    `(M_X/L * L^3/3EI + (d_pX + M_X/k_e) L, M_X/L)` (1e-6).
+* The C -> D strength drop reproduces the D plateau `V = M_D/L` (1e-6).
+* A vertical C -> D drop is spread at `-0.1 k_member` (exact envelope
+  points).  `drops` then fails the hinge after E (`>E` / `collapse`,
+  V ~ 0).
+* Acceptance-state transitions:
+  * every step's state equals the hand classification of
+    `d_p = theta - M/k_e`;
+  * the sequence is A-B, B-IO, IO-LS, LS-CP, >CP, C-D, D-E;
+  * the first yielded step is the first one past the hand `d_B`.
+* Two hinges at 0.05 L / 0.95 L of a fixed-guided member:
+  * the mechanism shear is `2 My/(0.9 L)` (1e-6);
+  * the elastic stiffness is `1/(L^3/12EI + 2 (0.45 L)^2/k_e)` (1e-6);
+  * the mesh splits at 0.15 / 2.85.
+* A mid-height hinge gives `V = 2 My/L`.
+* An M2 hinge (X push) gives `V = My/L`.
+* A P hinge (nonlinear static on UZ) caps N at P_y, with elastic
+  `N = d/(L/EA + 1/k_e)`.
+* A V2 hinge caps V at V_y, with elastic `V = d/(L^3/3EI + 1/k_e)`.
+* Cyclic, at material level and through a nonlinear static
+  `start_from` chain:
+  * both rules unload at k_e;
+  * the structural unloading slope is `1/(L^3/3EI + L^2/k_e)` (1e-6);
+  * kinematic re-yields at `F_max - 2 F_y` and then follows the hardening
+    slope (1e-6);
+  * takeda reloads from `theta_0 = theta_max - F_max/k_e` on the line to
+    `(-theta_y, -F_y)` (1e-6).
+* Material selection: MultiLinear / Hysteretic / HystereticSM.  Every
+  hysteresis type reproduces the monotonic envelope (1e-9).
+* Envelope conversion hand values, including `yield_deformation: "auto"`.
+* Nonlinear TH: a `hinges` entry per step, with yielded uids, moments
+  bounded by the envelope, and the peak rotation.
+* User hinges replace the case's default_My hinge, and an empty list
+  means no hinges.
+* PMM_fiber reference: `lp = relative_length * L` versus the default
+  `0.5 h`, plus the acceptance override.
+* Round trip and validation errors (11 cases).
+* Defaults byte-identical: identical model and pushover JSON with an
+  unused property, and an unchanged mesh.

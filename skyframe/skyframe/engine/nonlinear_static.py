@@ -206,6 +206,8 @@ class _HingeRecorder:
                      for k in asm.hinge_backbone}
         self.fhist = {k: {"rot": [], "moment": [], "rot_plastic": [],
                           "state": []} for k in asm.fiber_hinges}
+        from skyframe.engine.user_hinges import Recorder
+        self.uh = Recorder(asm)                       # B10 user hinges
 
     def record(self) -> None:
         from skyframe.design.hinges import hinge_state as _hstate
@@ -253,6 +255,7 @@ class _HingeRecorder:
                 self.yielded.add(uid)
             if abs(rot) > self.peak.get(uid, 0.0):
                 self.peak[uid] = abs(rot)
+        self.uh.record(self.peak, self.yielded)
 
     def detail(self) -> List[dict]:
         out: List[dict] = []
@@ -271,6 +274,7 @@ class _HingeRecorder:
                         "kappa_y": spec["kappa_y"],
                         **{k: list(v) for k, v in
                            self.fhist[(uid, end)].items()}})
+        out.extend(self.uh.detail())
         return out
 
 

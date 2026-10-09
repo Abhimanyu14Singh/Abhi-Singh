@@ -1201,6 +1201,10 @@ class _Assembly:
     timo: Dict[str, Tuple[float, float]] = field(default_factory=dict)
     #   frame shear deformation: member uid -> (Avy, Avz) effective shear
     #   areas of members built as ElasticTimoshenkoBeam (absent = Euler)
+    user_hinges: List[dict] = field(default_factory=list)
+    #   B10 user hinges (engine/user_hinges.py): one entry per zeroLength
+    #   hinge {uid, end, relative_distance, property, prop, env, ele, dir,
+    #   material, orig, dup}
 
     def free_massed_dofs(self) -> int:
         """Number of massed (node, dof) pairs that are NOT restrained.
@@ -2388,8 +2392,9 @@ class OpenSeesEngine:
         skipped with a ``UserWarning`` (mirrors the auto_m3 rules).
         """
         plan: Dict[str, dict] = {}
+        from skyframe.engine import user_hinges as _uhe     # B10
         if getattr(case, "hinges", "") != "asce41":
-            return plan
+            return _uhe.fiber_plan(self, case)   # user PMM_fiber ({} default)
         from skyframe.design.hinges import auto_backbone
         hp = dict(getattr(case, "hinge_params", {}) or {})
         kw = {k: hp[k] for k in ("expected_factor", "rho", "rho_prime",
@@ -2411,6 +2416,7 @@ class OpenSeesEngine:
                     "left elastic", UserWarning)
                 continue
             plan[m.uid] = bb
+        plan.update(_uhe.fiber_plan(self, case))           # B10
         return plan
 
     def _build(self, pdelta: bool = False, hinge_case=None,
@@ -2662,6 +2668,13 @@ class OpenSeesEngine:
         mtag = 9                       # uniaxial material tags (guard uses 1)
         hinge_plan: Dict[Tuple[str, str], float] = (
             self._hinge_plan(hinge_case) if hinge_case is not None else {})
+        # B10 user hinges (engine/user_hinges.py; {} unless a member has a
+        # hinge list): replace the member's automatic hinges
+        from skyframe.engine import user_hinges as _uhe
+        uh_plan = _uhe.member_plan(self) if hinge_case is not None else {}
+        uh_pending: List[tuple] = []
+        if hinge_case is not None:
+            _uhe.drop_auto(model, hinge_plan)   # no-op without hinge lists
         # v0.21 fiber PMM hinges (asce41 pushovers only; empty otherwise —
         # every other analysis keeps the exact pre-v0.21 member path)
         fiber_plan: Dict[str, dict] = (
@@ -2704,6 +2717,9 @@ class OpenSeesEngine:
                 raise ValueError(
                     f"Member {m.uid}: rigid end offsets are not supported on "
                     "members split by shell-edge compatibility")
+            uh = uh_plan.get(m.uid)                          # B10
+            if uh:
+                _uhe.check_member(m, uh, has_offset, ecc)
             # --- v0.12 tension/compression-only members: a 2-force Truss ---
             axial_limit = getattr(m, "axial_limit", "both")
             if axial_limit != "both":
@@ -2840,6 +2856,10 @@ class OpenSeesEngine:
                     ops.node(tag, *mesh.points[seg.nj])
                     hinge_dups.append((m.uid, "j", m, nj_tag, tag, my_j))
                     nj_tag = tag
+                if uh:                                     # B10 user hinges
+                    ni_tag, nj_tag, tag = _uhe.dup_nodes(
+                        uh, m, seg, last, mesh, ni_tag, nj_tag, tag,
+                        uh_pending)
                 # rigid arms: insert an offset node inboard of each offset end
                 # and a very-stiff beam from the real/hinge node to it; the
                 # elastic element then spans the two offset nodes.
@@ -2965,6 +2985,9 @@ class OpenSeesEngine:
             asm.hinge_ele[(uid, end)] = etag
             asm.hinge_dup_of[dup_tag] = orig_tag
             asm.hinge_rot_yield[(uid, end)] = (my / k22, my / k33)
+        if uh_plan:                                        # B10
+            mtag, etag = _uhe.build_springs(self, asm, uh_pending, uh_plan,
+                                            mtag, etag)
 
         # --- v0.17 scissors panel-zone springs -------------------------------
         # zeroLength rotational spring K_theta about BOTH horizontal global
@@ -4286,7 +4309,7 @@ class OpenSeesEngine:
         ops.section("Elastic", esec, E, A_eff, I33_eff, I22_eff, G, J_eff)
         counters["integ"] += 1
         itag = counters["integ"]
-        lp = 0.5 * h_depth
+        lp = bb.get("lp") or 0.5 * h_depth      # B10 hinge_overwrites
         ops.beamIntegration("HingeRadau", itag, fsec, lp, fsec, lp, esec)
         ops.geomTransf(transf_name, etag, *vecxz)
         ops.element("forceBeamColumn", etag, ni_tag, nj_tag, etag, itag)
@@ -6299,6 +6322,8 @@ class OpenSeesEngine:
             key: {"rot": [], "moment": [], "rot_plastic": [], "state": []}
             for key in asm.fiber_hinges}
         from skyframe.design.hinges import hinge_state as _hstate
+        from skyframe.engine.user_hinges import Recorder as _UHRec
+        uh_rec = _UHRec(asm)                         # B10 user hinges
         for k in range(case.steps):
             ok = ops.analyze(1)
             if ok != 0:
@@ -6363,6 +6388,7 @@ class OpenSeesEngine:
                 hh["state"].append(_hstate(t_pl, spec["bb"], math.inf))
                 if abs(rot) > hinge_rot.get(uid, 0.0):
                     hinge_rot[uid] = abs(rot)
+            uh_rec.record(hinge_rot)
 
         hinge_detail: List[dict] = []
         for (uid, end), spec in asm.hinge_backbone.items():
@@ -6386,6 +6412,7 @@ class OpenSeesEngine:
                 "rot": hh["rot"], "moment": hh["moment"],
                 "rot_plastic": hh["rot_plastic"],
                 "state": hh["state"]})
+        hinge_detail.extend(uh_rec.detail())              # B10
 
         result = PushoverResults(
             name, roof_disp, base_shear, [u / Hc for u in roof_disp],
@@ -7084,6 +7111,8 @@ class OpenSeesEngine:
         hinge_rot: Dict[str, float] = {uid: 0.0
                                        for (uid, _e) in asm.hinge_ele}
         yielded: set = set()
+        from skyframe.engine.user_hinges import Recorder as _UHRec
+        uh_rec = _UHRec(asm)                         # B10 user hinges
         if mc is not None:
             ext_x = {s.name: mc.ext_above(1, s.elevation, asm.node_coords)
                      for s in stories}
@@ -7148,6 +7177,8 @@ class OpenSeesEngine:
                 ry_y, rz_y = asm.hinge_rot_yield[(uid, _end)]
                 if ry > ry_y * (1.0 + 1e-9) or rz > rz_y * (1.0 + 1e-9):
                     yielded.add(uid)
+            if asm.user_hinges:
+                uh_rec.record(hinge_rot, yielded)
 
         def peak(vals: Sequence[float]) -> float:
             return max(abs(v) for v in vals) if len(vals) else 0.0
@@ -7176,6 +7207,8 @@ class OpenSeesEngine:
             result.extra = tho.results()
         if mc is not None:
             result.extra.update(mc.extra())
+        if asm.user_hinges:                               # B10
+            result.extra = dict(result.extra, hinges=uh_rec.detail())
         self._th_cache[name] = result
         return result
 

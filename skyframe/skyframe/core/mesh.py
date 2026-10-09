@@ -805,6 +805,20 @@ def mesh_model(model: BuildingModel) -> MeshedModel:
         # match the FE node geometry exactly
         auto_idx[m.uid] = [(_dot(_sub(pool.points[k], pi), u), k)
                            for k in (pool.add(p) for _, p in lst)]
+    # B10 interior user-hinge locations (core.user_hinges): extra cuts,
+    # NOT auto_split (mass / offsets keep the plain-member rules).
+    # Empty by default.
+    from .user_hinges import interior_points as _uh_points
+    uh_pts = _uh_points(model)
+    uh_idx: Dict[str, List[Tuple[float, int]]] = {}
+    for m in model.members:
+        lst = uh_pts.get(m.uid)
+        if not lst:
+            continue
+        pi = tuple(map(float, m.pi))
+        u = tuple(d / m.length for d in _sub(tuple(map(float, m.pj)), pi))
+        uh_idx[m.uid] = [(_dot(_sub(pool.points[k], pi), u), k)
+                         for k in (pool.add(p) for _, p in lst)]
 
     quads: List[ShellQuad] = []
     region_trib: Dict[str, Dict[int, float]] = {}
@@ -825,7 +839,8 @@ def mesh_model(model: BuildingModel) -> MeshedModel:
 
     shell_pts = sorted({n for q in quads for n in q.nodes})
     segments = {m.uid: _split_member(m, pool, shell_pts, model,
-                                     auto_idx.get(m.uid))
+                                     (auto_idx.get(m.uid) or [])
+                                     + uh_idx.get(m.uid, []) or None)
                 for m in model.members}
 
     membrane_loads: Dict[str, List[TributaryMemberLoad]] = {}
