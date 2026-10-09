@@ -3530,3 +3530,104 @@ alpha changing a thermal axial force (None == model default), mass_density
 scaling a modal period (None == weight/g, 2x -> sqrt(2) period, element
 total == rho*V), and fc/fy/Ry/lambda flowing into the cracked-slab Mcr and
 the ASCE-41 hinge backbone with the None fallback preserved.
+
+# Joint moments, ground displacement, shell load directions and joint patterns
+
+ETABS Assign > Joint Loads / Shell Loads parity (analysis-only).  Every new
+field is optional with a default that reproduces the previous behavior; a
+model without them serializes AND solves byte-identically (verified on a
+frame + shell + membrane model: `to_dict()` JSON and the full
+`run().to_dict()` results are bit-for-bit equal to the pre-feature build).
+Bulk logic lives in `skyframe.core.loads_ext`.
+
+## Joint moments — `NodalLoad.mx / my / mz`
+
+kN*m about the GLOBAL axes (right-hand rule), default 0, scaled with the
+pattern like `fx/fy/fz`.  JSON: `{"point", "fx", "fy", "fz"}` plus
+`"mx"/"my"/"mz"` ONLY when non-zero.
+
+## Ground displacement — `LoadPattern.ground_displacements`
+
+```
+"ground_displacements": [            # key omitted when empty
+  {"point": [x, y, z], "ux": m, "uy": m, "uz": m,
+   "rx": rad, "ry": rad, "rz": rad}  # all default 0, global axes
+]
+```
+
+* `point` must be an explicit `PointSupport`, a `SpringSupport`, or (only
+  when the model has no explicit supports) lie at the automatic base level
+  (lowest member/shell z) — otherwise `validate()` raises
+  `"... is not at a support or spring point"`.  The engine re-checks that
+  the node is a support.
+* Imposed with `ops.sp(node, dof, value*scale)` inside the active load
+  pattern on every **restrained** dof; for a **point spring** the value is
+  imposed on the spring's grounded node (the spring's ground end moves) for
+  the sprung dofs, and the spring reaction becomes `-k*(u - u_ground)`.
+  A non-zero value on a FREE dof is ignored with a `UserWarning`
+  ("... is on a free dof; ignored").
+* Any pattern carrying ground displacements switches the model's
+  constraint handler to `Transformation` (OpenSees' Plain handler rejects
+  non-homogeneous sp on fixed dofs); models without them are untouched.
+* Staged construction: ground displacements of a staged pattern act in
+  stage 1.  The takedown `balance_ok` compares reactions with APPLIED
+  gravity only, so self-equilibrated settlement reactions are expected
+  to show there.
+
+## Shell (area) loads — `AreaLoad.direction / projected / joint_pattern`
+
+```
+{"region_uid": "S1", "q": kPa,
+ "direction": "gravity"|"global_x"|"global_y"|"global_z"
+              |"local_1"|"local_2"|"local_3",           # omitted if gravity
+ "projected": true,                                     # omitted if false
+ "joint_pattern": {"type": "linear", "a": .., "b": .., "c": .., "d": ..,
+                   "zero_negative": bool, "zero_positive": bool}}  # or absent
+```
+
+* `gravity` keeps the old meaning (positive = global -Z).  `global_*`:
+  positive along +axis.  `local_*`: shell load axes from the corner
+  ordering — `e3 = unit((c1-c0) x (c3-c0))` (same normal as the v0.23 wind
+  walls), `e1 = unit(Z x e3)` (horizontal; global +X for a horizontal
+  region), `e2 = e3 x e1` (up-slope / up the wall).  `local_3` is the
+  normal pressure.
+* `projected` (gravity / global directions only): q is per area projected
+  normal to the load direction — intensity scaled by `|n . d|` (a gravity
+  load on a sloped roof totals `q * plan area`).
+* `joint_pattern`: the load intensity is `q * p(x, y, z)` with
+  `p = a x + b y + c z + d` (ETABS joint pattern, e.g. hydrostatic
+  `q = gamma, c = -1, d = z_surface`); `zero_negative` / `zero_positive`
+  clip p to one sign (not both).
+* Distribution (any non-default load, shell behavior): CONSISTENT nodal
+  forces `F_i = int N_i q p(x) [|n.d|] d dA` over each kept mesh quad
+  (bilinear shape functions, 3x3 Gauss) — exact resultant AND first moment
+  for a linear pattern; a clipped pattern is exact when the zero line is a
+  mesh line.  The default load keeps the quarter-area tributary path.
+* Membrane slabs accept only uniform `gravity` loads (`projected` allowed,
+  scales q by |n_z|); other directions / joint patterns raise.
+* Mass source / story gravity / takedown use the downward component of
+  the load (`loads_ext.area_load_weight`; exactly `q*net_area` for
+  defaults).
+
+## Frame concentrated moments — `MemberLoad(kind="moment")`
+
+`w` = couple (kN*m) at fraction `a` (0..1); `direction` in
+`local_x|local_y|local_z` (aliases `local_1|2|3`) or `global_x|y|z` — the
+axis the couple acts about.  `w2`/`b` unused.  On a segment node it is a
+joint moment; inside a segment it is a `("moment", (mx, my, mz), x0)` span
+record through the exact condensed fixed-end path (Hermite-derivative
+consistent load, release condensation), and the statics stations
+(moment jump of the couple) and the closed-form deflection stations honor
+it.  Couples carry no net force (skipped by gravity sums and buckling).
+Axial-only (truss) members skip it like other member loads.
+
+Tests: `tests/test_loads_ext.py` (26 cases): cantilever tip couple
+`theta = ML/EI`, `delta = ML^2/2EI` (major and minor axes, torsion);
+member couple on cantilever / fixed-fixed (`R = 1.5M/L`, `M/4` end
+moments) / released end (`R = 9M/8L`); 2-span settlement
+`R_B = -6EI D/L^3`, `M_B = 3EI D/L^2`, end settlement, rotation settlement
+`4EI th/L`, spring ground-end settlement `R = D/(L^3/6EI + 1/k)`;
+hydrostatic wall resultant `gamma h^2 b/2` at `h/3` (with and without
+clipping); local_3 == global components on an inclined roof and a wall;
+global_x reaction `p*A`; projected gravity `q*plan area`; defaults
+serialize byte-identically; full model round trip.

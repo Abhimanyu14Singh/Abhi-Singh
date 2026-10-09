@@ -161,6 +161,7 @@ import numpy as np
 import openseespy.opensees as ops
 
 from skyframe.core.buckling import BucklingResult, buckling_analysis
+from skyframe.core import loads_ext as _lx
 from skyframe.core.mesh import (MeshedModel, Segment, edge_tie_chains,
                                 mesh_model)
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
@@ -446,6 +447,7 @@ _GAUSS3 = ((-math.sqrt(3.0 / 5.0), 5.0 / 9.0),
 # span-load record layouts (segment-local x, member-local force components):
 #   ("trap", (wx1, wy1, wz1), (wx2, wy2, wz2), xa, xb)   distributed, linear
 #   ("point", (px, py, pz), x0)                          concentrated
+#   ("moment", (mx, my, mz), x0)                         concentrated couple
 SpanLoad = tuple
 
 
@@ -699,6 +701,23 @@ def _consistent_load(records: Sequence[SpanLoad], L: float) -> np.ndarray:
         if rec[0] == "point":
             (px, py, pz), x0 = rec[1], rec[2]
             add_point(px, py, pz, x0)
+        elif rec[0] == "moment":
+            # work-equivalent couple: M * (Hermite shape-fn derivative)
+            (mx, my, mz), x0 = rec[1], rec[2]
+            xi = x0 / L
+            d1 = 6.0 * (xi * xi - xi) / L
+            d2 = (1.0 - xi) * (1.0 - 3.0 * xi)
+            d4 = xi * (3.0 * xi - 2.0)
+            f[3] += mx * (1.0 - xi)
+            f[9] += mx * xi
+            f[1] += mz * d1
+            f[5] += mz * d2
+            f[7] -= mz * d1
+            f[11] += mz * d4
+            f[2] -= my * d1
+            f[4] += my * d2
+            f[8] += my * d1
+            f[10] += my * d4
         else:
             w1, w2, xa, xb = rec[1], rec[2], rec[3], rec[4]
             span = xb - xa
@@ -759,6 +778,12 @@ def _defl_double_integral(V_i: float, M_i: float,
             p, x0 = rec[1][comp], rec[2]
             if xi > x0:
                 val += p * (xi - x0) ** 3 / 6.0
+        elif rec[0] == "moment":
+            # Mb jumps by -mz (x-y plane) / +my (x-z plane) past x0
+            m0 = -rec[1][2] if comp == 1 else rec[1][1]
+            x0 = rec[2]
+            if xi > x0:
+                val += m0 * (xi - x0) ** 2 / 2.0
         else:
             w1, w2 = rec[1][comp], rec[2][comp]
             xa, xb = rec[3], rec[4]
@@ -797,6 +822,11 @@ def _section_forces(fi: Sequence[float], records: Sequence[SpanLoad],
                 fz += pz
                 my += (x - x0) * pz
                 mz += (x0 - x) * py
+        elif rec[0] == "moment":
+            if rec[2] <= x + 1e-9:
+                mx += rec[1][0]
+                my += rec[1][1]
+                mz += rec[1][2]
         else:
             w1, w2, xa, xb = rec[1], rec[2], rec[3], rec[4]
             q = min(x, xb)
@@ -1071,6 +1101,13 @@ class _Assembly:
     #   redirected beam end must land on the node the element actually
     #   connects to (else the fixed-end MOMENT share would bypass the
     #   panel spring)
+    spring_ground: Dict[int, List[Tuple[int, Tuple[int, ...]]]] = field(
+        default_factory=dict)
+    #   ground displacement: real node tag -> [(ground node tag, 0-based
+    #   sprung dofs)] of every grounded zeroLength spring at that node
+    gd_present: bool = False
+    #   any pattern carries ground displacements (Transformation handler;
+    #   spring reactions use the spring deformation u - u_ground)
 
     def free_massed_dofs(self) -> int:
         """Number of massed (node, dof) pairs that are NOT restrained.
@@ -2724,6 +2761,8 @@ class OpenSeesEngine:
             etag += 1
             ops.element("zeroLength", etag, gnd, rt, "-mat", *mats,
                         "-dir", *dirs)
+            asm.spring_ground.setdefault(rt, []).append(
+                (gnd, tuple(d - 1 for d in dirs)))
             acc = asm.spring_nodes.setdefault(rt, [0.0] * 6)
             for d in range(6):
                 acc[d] += float(kvec[d])
@@ -2747,6 +2786,7 @@ class OpenSeesEngine:
                                  0.0, kz_ent)
             etag += 1
             ops.element("zeroLength", etag, gnd, rt, "-mat", mtag, "-dir", 3)
+            asm.spring_ground.setdefault(rt, []).append((gnd, (2,)))
             asm.ent_springs[rt] = asm.ent_springs.get(rt, 0.0) + kz_ent
             if rt not in asm.support_tags:
                 asm.support_tags.append(rt)
@@ -2911,6 +2951,10 @@ class OpenSeesEngine:
                 ops.equalDOF(orig_t, dup_t, *dofs)
         asm.use_transformation = (bool(asm.masters) or bool(hinge_dups)
                                   or bool(pz_map))
+        if _lx.model_has_ground_displacements(model):
+            # imposed sp on fixed dofs needs the Transformation handler
+            asm.gd_present = True
+            asm.use_transformation = True
 
         # --- zero-free-DOF guard --------------------------------------------
         # A model whose every node is fully restrained (e.g. a single
@@ -3361,7 +3405,7 @@ class OpenSeesEngine:
                                     ml.w2 * scale, ml.a, ml.b, ml.direction)
 
         for al in pat.area_loads:
-            self._apply_area_load(asm, al.region_uid, al.q * scale)
+            self._apply_area_load(asm, al.region_uid, al.q * scale, al)
 
         # v0.8 temperature loads: axial thermal fixed-end force per member.
         for tl in getattr(pat, "thermal_loads", ()):
@@ -3374,7 +3418,11 @@ class OpenSeesEngine:
         for nl in pat.nodal_loads:
             t = self._find_node(asm, nl.point)
             ops.load(t, nl.fx * scale, nl.fy * scale, nl.fz * scale,
-                     0.0, 0.0, 0.0)
+                     getattr(nl, "mx", 0.0) * scale,
+                     getattr(nl, "my", 0.0) * scale,
+                     getattr(nl, "mz", 0.0) * scale)
+        if getattr(pat, "ground_displacements", None):
+            self._apply_ground_displacements(asm, pat, scale)
 
         acc_tors = getattr(pat, "accidental_torsion", False)
         ecc = getattr(pat, "ecc", 0.05)
@@ -3496,6 +3544,9 @@ class OpenSeesEngine:
         # distributed/point member load on them (incl. self-weight) is skipped
         # (a Truss element rejects eleLoad).  Documented in CONTRACT v0.12.
         if getattr(member, "axial_limit", "both") != "both":
+            return
+        if kind == "moment":
+            self._apply_member_moment(asm, member, w, a, direction)
             return
         xax, yax, zax, _, vertical = _local_axes(member)
         if direction == "gravity" and vertical:
@@ -3669,17 +3720,95 @@ class OpenSeesEngine:
             key = (member.uid, seg.index)
             self._seg_fef[key] = self._seg_fef.get(key, np.zeros(12)) + f0
 
+    def _apply_member_moment(self, asm: _Assembly, member: FrameMember,
+                             M: float, a: float, direction: str) -> None:
+        """Concentrated couple ``M`` (kN*m, case-scaled) at fraction ``a``.
+
+        On a segment node it is a joint moment; inside a segment it goes
+        through the exact condensed fixed-end path (``("moment", ...)``
+        span record: Hermite-derivative consistent load, statics stations
+        and closed-form deflections all honor the couple)."""
+        if M == 0.0:
+            return
+        xax, yax, zax, _, _ = _local_axes(member)
+        loc, glo = _lx.member_moment_vectors(direction, M, xax, yax, zax)
+        segs = asm.mesh.segments[member.uid]
+        last = len(segs) - 1
+        toks = member.release_tokens()
+        x_p = a * member.length
+        seg = segs[-1]
+        for s_ in segs:
+            if s_.x0 - 1e-9 <= x_p <= s_.x0 + s_.length + 1e-9:
+                seg = s_
+                break
+        xi = min(max(x_p - seg.x0, 0.0), seg.length)
+        if xi < _TOL or xi > seg.length - _TOL:
+            node = seg.ni if xi < _TOL else seg.nj
+            ops.load(asm.pz_load_tag.get((member.uid, node), node + 1),
+                     0.0, 0.0, 0.0, *glo)
+            return
+        rel: List[int] = []
+        if "Mi" in toks and seg.index == 0:
+            rel += [4, 5]
+        if "Mj" in toks and seg.index == last:
+            rel += [10, 11]
+        self._apply_fef(asm, member, seg, [("moment", loc, xi)], rel)
+
+    def _apply_ground_displacements(self, asm: _Assembly, pat,
+                                    scale: float) -> None:
+        """ETABS ground displacement: ``ops.sp`` (in the active pattern) on
+        the restrained dofs of a support node, or on the GROUND node(s) of
+        a grounded spring for its sprung dofs.  Needs the Transformation
+        constraint handler (set at build when any pattern carries ground
+        displacements).  Non-zero values on free dofs are ignored with a
+        warning."""
+        for gd in pat.ground_displacements:
+            t = self._find_node(asm, gd.point)
+            if t not in asm.support_tags:
+                raise ValueError(f"Ground displacement at {tuple(gd.point)}: "
+                                 "node is not a support or spring")
+            restr = asm.node_restraints.get(t, (0,) * 6)
+            grounds = asm.spring_ground.get(t, [])
+            for d, v in enumerate(gd.values()):
+                val = v * scale
+                if val == 0.0:
+                    continue
+                gnds = [g for g, dofs in grounds if d in dofs]
+                if gnds:
+                    for g in gnds:
+                        ops.sp(g, d + 1, val)
+                elif restr[d]:
+                    ops.sp(t, d + 1, val)
+                else:
+                    warnings.warn(
+                        f"Ground displacement {_lx.GD_DOFS[d]} at "
+                        f"{tuple(gd.point)} is on a free dof; ignored",
+                        UserWarning)
+
     def _record(self, uid: str, seg_index: int, rec: SpanLoad) -> None:
         self._seg_span_loads.setdefault((uid, seg_index), []).append(rec)
 
     def _apply_area_load(self, asm: _Assembly, region_uid: str,
-                         q: float) -> None:
-        """Area load q (kPa, positive down, already case-scaled)."""
+                         q: float, al=None) -> None:
+        """Area load q (kPa, positive down, already case-scaled).
+
+        ``al`` (optional AreaLoad): a non-default direction / projected /
+        joint-pattern load is distributed by consistent integration
+        (:func:`skyframe.core.loads_ext.area_load_nodal_forces`)."""
         region = self.model._shell(region_uid)
         if region is None:
             raise ValueError(f"Area load references unknown shell region "
                              f"{region_uid!r}")
         mesh = asm.mesh
+        if al is not None and not _lx.area_load_is_default(al):
+            if region.behavior == "shell":
+                forces = _lx.area_load_nodal_forces(region, al, q,
+                                                    mesh.quads, mesh.points)
+                for pidx in sorted(forces):
+                    f = forces[pidx]
+                    ops.load(pidx + 1, f[0], f[1], f[2], 0.0, 0.0, 0.0)
+                return
+            q = q * _lx.membrane_scale(region, al)   # gravity (projected)
         if region.behavior == "shell":
             for pidx, trib_area in mesh.region_trib[region_uid].items():
                 ops.load(pidx + 1, 0.0, 0.0, -q * trib_area, 0.0, 0.0, 0.0)
@@ -4231,6 +4360,19 @@ class OpenSeesEngine:
         constraint), so ``nodeReaction`` reports 0 there — adding ``-k*disp``
         is exact and never double-counts the fixed (non-sprung) DOFs.
         """
+        if asm.gd_present:
+            # ground displacement: spring force from u_real - u_ground
+            node_disp = {t: list(v) for t, v in node_disp.items()}
+            for t, grounds in asm.spring_ground.items():
+                if t not in node_disp:
+                    continue
+                done: set = set()
+                for g, dofs in grounds:
+                    gdisp = ops.nodeDisp(g)
+                    for d in dofs:
+                        if d not in done:
+                            node_disp[t][d] -= gdisp[d]
+                            done.add(d)
         for t, kvec in asm.spring_nodes.items():
             disp = node_disp.get(t, [0.0] * 6)
             r = reactions.setdefault(t, [0.0] * 6)
@@ -4275,8 +4417,15 @@ class OpenSeesEngine:
                  key=lambda i: abs(g.y_lines[i] - y))
         return f"{g.x_labels[xi]}-{g.y_labels[yi]}"
 
-    def _area_load_fz(self, asm: _Assembly, region, q: float) -> float:
+    def _area_load_fz(self, asm: _Assembly, region, q: float,
+                      al=None) -> float:
         """Downward reaction-equivalent FZ (kN) of an area load q (kPa)."""
+        if al is not None and not _lx.area_load_is_default(al):
+            if region.behavior == "shell":
+                forces = _lx.area_load_nodal_forces(
+                    region, al, q, asm.mesh.quads, asm.mesh.points)
+                return -sum(f[2] for f in forces.values())
+            return q * _lx.membrane_scale(region, al) * region.net_area
         if region.behavior == "shell":
             trib = asm.mesh.region_trib.get(region.uid, {})
             return q * sum(trib.values())
@@ -4318,6 +4467,8 @@ class OpenSeesEngine:
                 m = self._members_by_uid.get(ml.member_uid)
                 if m is None:
                     continue
+                if ml.kind == "moment":
+                    continue                  # a couple has no net force
                 if ml.kind == "point":
                     w_tot = ml.w
                 elif ml.kind == "udl":
@@ -4345,7 +4496,8 @@ class OpenSeesEngine:
             for al in pat.area_loads:
                 region = model._shell(al.region_uid)
                 if region is not None:
-                    total += scale * self._area_load_fz(asm, region, al.q)
+                    total += scale * self._area_load_fz(asm, region, al.q,
+                                                        al)
         return total
 
     def _takedown(self, asm: _Assembly, cr: CaseResults,
@@ -4533,7 +4685,9 @@ class OpenSeesEngine:
                             not model._region_on_story(region, s):
                         continue
                     c = region.map_uv(0.5, 0.5)
-                    add(fac * al.q * region.net_area, c[0], c[1])
+                    add(fac * al.q * region.net_area
+                        if _lx.area_load_is_default(al) else
+                        fac * _lx.area_load_weight(region, al), c[0], c[1])
                 for nl in pat.nodal_loads:
                     if abs(nl.point[2] - s.elevation) < 1e-6:
                         add(fac * (-nl.fz), nl.point[0], nl.point[1])
@@ -5241,6 +5395,9 @@ class OpenSeesEngine:
             parts[self._stage_of_z(nl.point[2])].nodal_loads.append(nl)
         for sf in pat.story_forces:
             parts[sidx.get(sf.story, n - 1)].story_forces.append(sf)
+        if parts:   # ground displacements act at the base (first stage)
+            parts[0].ground_displacements.extend(
+                getattr(pat, "ground_displacements", ()))
         return parts
 
     def _stage_submodel(self, k: int) -> BuildingModel:
