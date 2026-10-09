@@ -1578,7 +1578,7 @@ DIAPHRAGM_OPTIONS = ("rigid", "none")
 #                section b as the panel thickness for rectangular sections)
 PANEL_ZONE_OPTIONS = ("none", "rigid", "scissors")
 
-COMBO_TYPES = ("add", "envelope")
+COMBO_TYPES = ("add", "envelope", "abs", "srss", "range")  # see combos_ext
 
 
 @dataclass
@@ -1588,13 +1588,15 @@ class LoadCombo:
     ``combo_type`` (v0.4):
       * ``"add"``      — linear result superposition (factors applied).
       * ``"envelope"`` — per-quantity min/max over the LISTED cases, each
-        case scaled by its factor first.  Envelope combos may reference
-        static load cases only (no RS/TH cases, no other combos).
+        case scaled by its factor first.
+      * ``"abs"`` / ``"srss"`` / ``"range"`` and RS/TH/staged/nested-combo
+        members: see :mod:`skyframe.core.combos_ext` and CONTRACT "Load
+        combinations: RS/TH/nested members and ABS/SRSS/Range types".
     """
 
     name: str
     cases: Dict[str, float]  # case name -> factor
-    combo_type: str = "add"  # "add" | "envelope"
+    combo_type: str = "add"  # "add" | "envelope" | "abs" | "srss" | "range"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -2099,27 +2101,15 @@ class BuildingModel:
         return cb
 
     def _validate_combo(self, combo: LoadCombo) -> None:
-        if combo.combo_type not in COMBO_TYPES:
-            raise ValueError(f"Combo {combo.name}: combo_type must be "
-                             f"add|envelope, got {combo.combo_type!r}")
-        if combo.combo_type == "envelope" and not combo.cases:
-            raise ValueError(f"Combo {combo.name}: an envelope combo needs "
-                             "at least one case")
-        for c in combo.cases:
-            if c not in self.cases:
-                if c in self.rs_cases:
-                    raise ValueError(f"Combo {combo.name}: response-spectrum "
-                                     f"case {c!r} cannot enter a load combo "
-                                     "(v0.3)")
-                if c in self.th_cases:
-                    raise ValueError(f"Combo {combo.name}: time-history case "
-                                     f"{c!r} cannot enter a load combo "
-                                     "(v0.4)")
-                if c in self.staged_cases:
-                    raise ValueError(f"Combo {combo.name}: staged case "
-                                     f"{c!r} cannot enter a load combo "
-                                     "(v0.6)")
-                raise ValueError(f"Combo {combo.name}: unknown case {c}")
+        self._validate_combo_ext(combo)
+
+    def _validate_combo_ext(self, combo: LoadCombo) -> None:
+        """Extended combos (CONTRACT "Load combinations: RS/TH/nested
+        members and ABS/SRSS/Range types"): members may be static, RS, RS
+        directional, TH, staged cases or other combos (cycle-checked);
+        pushover/buckling/steady-state/PSD/modal are rejected."""
+        from skyframe.core.combos_ext import validate_combo
+        validate_combo(self, combo)
 
     def add_rs_case(self, name: str, direction: str,
                     spectrum: Optional[List[List[float]]] = None,

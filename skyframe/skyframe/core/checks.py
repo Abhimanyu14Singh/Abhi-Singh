@@ -909,16 +909,18 @@ def _check_loads(ctx: _Ctx, fe_keys: Callable[[], set]) -> None:
         if not combo.cases:
             ctx.add("warning", "COMBO_EMPTY",
                     f"Combination {combo.name} has no cases", [combo.name])
+        from skyframe.core.combos_ext import MEMBER_KINDS, member_kind
         for c in combo.cases:
             if c in m.cases:
                 continue
-            other = (c in m.rs_cases or c in m.th_cases
-                     or c in m.staged_cases or c in m.combos)
-            if other:
+            kind = member_kind(m, c)
+            if kind in MEMBER_KINDS:      # RS / TH / staged / nested combo
+                continue
+            if kind is not None:
                 ctx.add("error", "COMBO_CASE_INVALID",
-                        f"Combination {combo.name} references {c!r}, which is "
-                        "not a static load case (combos accept static cases "
-                        "only)", [combo.name, c])
+                        f"Combination {combo.name} references {c!r}, a "
+                        f"{kind} case that cannot enter a load combination",
+                        [combo.name, c])
             else:
                 ctx.add("error", "COMBO_CASE_MISSING",
                         f"Combination {combo.name} references missing case "

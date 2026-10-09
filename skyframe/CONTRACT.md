@@ -4894,3 +4894,115 @@ reported even when the factor is 0.
   * factors 0 and 1 bracket a model with explicit 10x-stiff joint zones.
 * Byte-identical defaults on a `quick_building`, plus round-trip and
   validation tests.
+
+## Load combinations: RS/TH/nested members and ABS/SRSS/Range types
+
+ETABS Define > Load Combinations parity.  Model helpers:
+`skyframe.core.combos_ext`; evaluation: `skyframe.engine.combos_ext`.
+Supersedes the v0.4 rule "envelope/add combos reference static cases
+only"; every combo that was valid before (add/envelope over static cases,
+the "legacy" combos) keeps the original engine path and is
+byte-identical.
+
+### Model
+
+```python
+# LoadCombo.combo_type: "add" | "envelope" | "abs" | "srss" | "range"
+#   (COMBO_TYPES; abs/srss/range/envelope need >= 1 member)
+# LoadCombo.cases: {member name: factor (finite)}
+```
+
+Member lookup order (first match wins): static case, RS case, RS
+directional combo (`model.rs_combos`), TH case (linear, nonlinear or
+direct-integration options), staged case (its accumulated final state =
+`results["staged"][name]` minus `comparison`), another combo (nesting).
+Rejected with `ValueError` "Combo X: <kind> case 'N' cannot enter a load
+combo (...)": pushover, buckling, steady_state, psd, the reserved MODAL
+case.  Unknown -> "Combo X: unknown case N".  Nested combos are
+cycle-checked on `add_combo` and on `validate()`/`from_dict`:
+"Combo X: circular combo reference A -> C -> B -> A" (self reference:
+"cannot reference itself").  JSON round-trip unchanged (`combos` block).
+Check Model: `COMBO_CASE_INVALID` now only flags rejected kinds.
+
+### Rules (per output quantity)
+
+Each member with factor `f` contributes an interval `[lo, hi]`:
+
+| member | hi | lo |
+|---|---|---|
+| signed result `x` (static case, staged final state, single-valued add combo) | `f*x` | `f*x` |
+| RS / RS-directional (unsigned magnitude `r`) | `+abs(f)*r` | `-abs(f)*r` |
+| max/min result (envelope or any max/min combo; TH envelope) | `max(f*max, f*min)` | `min(f*max, f*min)` |
+
+RS signs are lost (ETABS behaviour): `1.2D + 1.0E` and `1.2D - 1.0E` give
+the same pair, `max = 1.2D + E`, `min = 1.2D - E`.
+
+| combo_type | max | min |
+|---|---|---|
+| `add` (Linear Add) | `sum(hi_i)` | `sum(lo_i)` |
+| `envelope` | `max(hi_i)` | `min(lo_i)` |
+| `abs` (Absolute Add) | `V = sum(max(abs(hi_i), abs(lo_i)))` | `-V` |
+| `srss` | `V = sqrt(sum(max(abs(hi_i), abs(lo_i))^2))` | `-V` |
+| `range` (Range Add) | `sum(max(hi_i, 0))` | `sum(min(lo_i, 0))` |
+
+Nested `add` combos are flattened into their leaf members first (leaf
+factors multiply down the tree; duplicates add).  This is exact under the
+interval rules.  Nested non-add combos enter as one max/min member.
+
+### Results shape
+
+* Single-valued: an `add` combo whose flattened leaves are all static
+  cases or staged final states.  Standard case shape, no `"min"`.  Static
+  leaves only: the original `_superpose`, so a nested combo is
+  bit-identical to the equivalent flat combo.  Staged leaves: every field
+  recorded by all parts is summed (node_disp, reactions, base,
+  member_forces, story, member_stations, member_deflections,
+  shell_forces).
+* Every other combo is a max/min pair in the existing envelope-combo shape.
+  The MAX values sit in the standard keys and a nested `"min"` block has
+  the same keys.  Combined quantities: `node_disp` (6 dof), `reactions`
+  (6), `base` {FX..MZ}, `member_forces` (12 local end forces),
+  `story` {ux, uy, drift_x, drift_y, shear_x, shear_y} and
+  `member_stations` {N, V2, V3, T, M2, M3} at the 11 stations (`x` copied).
+  `shell_forces` are absent and `member_deflections` is `{}` (same as
+  envelope combos).
+* Time-history members: the TH output records only story series and base
+  FX/FY.  A TH member contributes story `ux`/`uy` = [min, max] of the signed
+  series, `drift_x`/`drift_y` = [min, max] of the signed inter-story drift
+  series (the same h rule as the TH peaks), `shear_x`/`shear_y` =
+  +/- the recorded peak (no per-step shear series is stored), and base
+  `FX`/`FY` = [min, max] of the signed series.  A combo with a TH member
+  (directly or nested) keeps ONLY these quantities: `node_disp`,
+  `reactions`, `member_forces` and `member_stations` are `{}`, and `base`
+  holds just FX/FY.  The combo then has a `"warning"` that starts with
+  "time-history member(s) record only ...".
+
+### Run control (`run()`)
+
+Legacy combos are evaluated where they always were.  Extended combos are
+evaluated after the static, RS (and RS-directional), TH and staged runs.
+`results["combos"]` and `combo_status` are then put back in model order
+(the RS directional combos follow in `combo_status`, as before).  A combo
+is `"skipped"` when any member, checked recursively, did not run: a case
+that is not run, failed or was capped, or a nested combo that was skipped.
+The top-level warning gets "combo 'X' skipped: member(s) [...] not run".
+
+### Downstream consumers
+
+* Engine takedown, section cuts, piers, deflection checks and seismic
+  diagnostics (story stiffness/irregularity) use the single-valued combos
+  only; max/min combos are skipped.  For legacy combos this is the same
+  set as before ("add").  The takedown also needs static-only leaves:
+  nested static add combos get flattened pattern factors, and combos with
+  staged leaves are skipped.
+* `core.tables`: no change.  Its sources already skip any combo block that
+  has `"min"`.  Equilibrium folds nested pattern factors recursively and
+  leaves out combos that have staged leaves.
+* `core.codes.reduce_live_demands`: max/min combos are left unchanged.  A
+  single-valued nested combo uses its flattened LIVE factor.
+* Design defaults (`check_wall_piers`, composite deflection, the
+  `/api/design/seismic341` default combo) take single-valued add combos
+  only.  Explicitly named max/min combos in the design envelope helpers
+  read the MAX block, the same rule as envelope combos.
+
+Tests: `tests/test_combos_ext.py`.

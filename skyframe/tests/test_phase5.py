@@ -257,8 +257,9 @@ def test_envelope_validation():
     with pytest.raises(ValueError, match="at least one case"):
         mdl.add_combo("EMPTY", {}, combo_type="envelope")
     mdl.add_th_case("TH", "X", [0.0, 1.0], 0.01)
-    with pytest.raises(ValueError, match="time-history"):
-        mdl.add_combo("BADTH", {"TH": 1.0})
+    # extended combos: TH members are accepted (max/min combo)
+    mdl.add_combo("THC", {"TH": 1.0})
+    del mdl.combos["THC"]
     # combo_type round-trips
     d2 = BuildingModel.from_dict(mdl.to_dict())
     assert d2.combos["ENV"].combo_type == "envelope"

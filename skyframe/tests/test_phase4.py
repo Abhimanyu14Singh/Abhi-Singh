@@ -462,11 +462,14 @@ def test_pdelta_combo_superposition_warning():
     assert "warning" not in d["combos"]["G + HLIN"]
 
 
-def test_rs_case_cannot_enter_combo():
+def test_rs_case_can_enter_combo():
+    # extended load combinations: RS members are accepted (max/min combo);
+    # an unknown member is still rejected
     mdl = _sdof_column()
     mdl.add_rs_case("RSX", "X", [[0.0, 0.4], [10.0, 0.4]])
-    with pytest.raises(ValueError, match="cannot enter a load combo"):
-        mdl.add_combo("BAD", {"RSX": 1.0})
+    mdl.add_combo("E", {"RSX": 1.0})
+    with pytest.raises(ValueError, match="unknown case"):
+        mdl.add_combo("BAD", {"NOPE": 1.0})
 
 
 # --------------------------------------------------------------------------- #

@@ -1892,8 +1892,10 @@ def create_app() -> Flask:
         model = _state["model"]
         combo = body.get("combo")
         if combo is None:
+            from skyframe.core.combos_ext import is_single_valued
             combo = next((name for name, cb in model.combos.items()
-                          if getattr(cb, "combo_type", "add") == "add"),
+                          if getattr(cb, "combo_type", "add") == "add"
+                          and is_single_valued(model, name)),
                          None)
             if combo is None:
                 return jsonify({"error": "no additive combo to check — "

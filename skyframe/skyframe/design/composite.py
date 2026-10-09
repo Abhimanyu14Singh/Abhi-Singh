@@ -538,8 +538,10 @@ def check_composite_beams(model, results,
 
     d_res = results.to_dict() if hasattr(results, "to_dict") else results
     if combos is None:
+        from skyframe.core.combos_ext import is_single_valued
         combos = [name for name, cb in model.combos.items()
-                  if getattr(cb, "combo_type", "add") == "add"]
+                  if getattr(cb, "combo_type", "add") == "add"
+                  and is_single_valued(model, name)]
         if not combos:
             raise ValueError("no additive combos to check — supply "
                              "'combos' (combo or static case names) or add "
