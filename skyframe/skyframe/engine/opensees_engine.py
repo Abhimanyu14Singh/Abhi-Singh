@@ -167,6 +167,8 @@ from skyframe.core.mesh import (MeshedModel, Segment, edge_tie_chains,
 from skyframe.core.modifiers import shell_mods_default
 from skyframe.core.polymesh import newell_normal
 from skyframe.core import framemesh as _fm
+from skyframe.core import nonprismatic as _npx     # nonprismatic sections
+from skyframe.core import panelzones as _pzj      # per-joint panel zones
 from skyframe.engine.shell_modifiers import elastic_shell_section
 from skyframe.engine import pdelta as _pdelta      # model-wide P-Delta
 from skyframe.engine import diaphragms as _dgm     # named diaphragms/add. mass
@@ -549,7 +551,7 @@ def _panel_zone_joints(model: BuildingModel
             if kinds["column"] and kinds["beam"]}
 
 
-def compute_panel_zone_offsets(model: BuildingModel
+def compute_panel_zone_offsets(model: BuildingModel, skip=None
                                ) -> Dict[str, Tuple[float, float]]:
     """Effective rigid end-zone lengths per member for panel_zones "rigid".
 
@@ -573,12 +575,16 @@ def compute_panel_zone_offsets(model: BuildingModel
       member reverts to its user-set offsets with a ``UserWarning``.
 
     Returns ``{uid: (offset_i, offset_j)}`` (m) for EVERY member (members
-    away from joints simply carry their user offsets).
+    away from joints simply carry their user offsets).  ``skip``: joint
+    keys that get NO automatic end zones (per-joint panel-zone overrides,
+    :mod:`skyframe.core.panelzones`).
     """
     out: Dict[str, Tuple[float, float]] = {
         m.uid: (m.rigid_offset_i, m.rigid_offset_j) for m in model.members}
     computed: Dict[Tuple[str, str], float] = {}
     for key, kinds in _panel_zone_joints(model).items():
+        if skip and key in skip:
+            continue
         max_beam_h = max((model.sections[m.section].h
                           for m, _ in kinds["beam"]), default=0.0)
         max_col_h = max((model.sections[m.section].h
@@ -2121,7 +2127,8 @@ class OpenSeesEngine:
         """
         if self._pz_offsets is None:
             if getattr(self.model, "panel_zones", "none") == "rigid":
-                off = compute_panel_zone_offsets(self.model)
+                off = compute_panel_zone_offsets(
+                    self.model, skip=_pzj.override_keys(self.model))
                 if self._mesh is None:
                     self._mesh = mesh_model(self.model)
                 for m in self.model.members:
@@ -2656,9 +2663,12 @@ class OpenSeesEngine:
         # tag counter is live).  Restrained/support joints are skipped (the
         # equalDOF tie would hide the beam shear from the support reaction).
         pz_map: Dict[Vec3, Tuple[int, int, dict]] = {}
-        if getattr(model, "panel_zones", "none") == "scissors":
+        # model-wide scissors + per-joint overrides (core.panelzones);
+        # exactly compute_panel_zone_springs(model) without overrides
+        pz_specs = _pzj.effective_specs(model, compute_panel_zone_springs)
+        if pz_specs:
             key_tag = {_pkey(c): t for t, c in asm.struct_coords.items()}
-            for key, spec in compute_panel_zone_springs(model).items():
+            for key, spec in pz_specs.items():
                 orig = key_tag.get(key)
                 if orig is None:                       # pragma: no cover
                     continue
@@ -2783,13 +2793,13 @@ class OpenSeesEngine:
                 else:
                     seg = segs[0]
                     ni_tag, nj_tag = seg.ni + 1, seg.nj + 1
-                    if pz_map and m.kind == "beam":
+                    if pz_map and m.kind in ("beam", "brace"):
                         ent = pz_map.get(_pkey(mesh.points[seg.ni]))
-                        if ent is not None:
+                        if ent is not None and _pzj.attaches(ent[2], m.kind):
                             ni_tag = ent[1]
                             asm.pz_load_tag[(m.uid, seg.ni)] = ent[1]
                         ent = pz_map.get(_pkey(mesh.points[seg.nj]))
-                        if ent is not None:
+                        if ent is not None and _pzj.attaches(ent[2], m.kind):
                             nj_tag = ent[1]
                             asm.pz_load_tag[(m.uid, seg.nj)] = ent[1]
                     etag += 1
@@ -2807,7 +2817,11 @@ class OpenSeesEngine:
                                       timo_fallback)
             if timo_av is not None:
                 asm.timo[m.uid] = timo_av
+            np_var = _npx.is_varying(model, sec)    # nonprismatic member
             for seg in segs:
+                if np_var:
+                    A_eff, I22_eff, I33_eff, J_eff = _npx.segment_eff_props(
+                        model, m, seg.x0, seg.length)
                 etag += 1
                 beam_etag = etag
                 rel_i = "Mi" in toks and seg.index == 0
@@ -2845,15 +2859,15 @@ class OpenSeesEngine:
                 # (columns keep the original node — the spring between the
                 # pair is the panel flexibility).  FEF/thermal nodal loads
                 # of this end are redirected too (asm.pz_load_tag).
-                if pz_map and m.kind == "beam":
+                if pz_map and m.kind in ("beam", "brace"):
                     if seg.index == 0:
                         ent = pz_map.get(_pkey(mesh.points[seg.ni]))
-                        if ent is not None:
+                        if ent is not None and _pzj.attaches(ent[2], m.kind):
                             ni_tag = ent[1]
                             asm.pz_load_tag[(m.uid, seg.ni)] = ent[1]
                     if seg.index == last:
                         ent = pz_map.get(_pkey(mesh.points[seg.nj]))
-                        if ent is not None:
+                        if ent is not None and _pzj.attaches(ent[2], m.kind):
                             nj_tag = ent[1]
                             asm.pz_load_tag[(m.uid, seg.nj)] = ent[1]
                 # v0.5 pushover hinges: the member end connects to a
@@ -3906,6 +3920,12 @@ class OpenSeesEngine:
                         mat = (model.materials.get(sec.material)
                                if sec else None)
                         if sec is not None and mat is not None:
+                            if _npx.is_varying(model, sec):
+                                k_ = fac * swf * mat.unit_weight
+                                for a_, b_, A0, A1 in _npx.area_pieces(
+                                        model, m):
+                                    line(m, k_ * A0, k_ * A1, a_, b_)
+                                continue
                             w = fac * swf * sec.A * mat.unit_weight
                             line(m, w, w, 0.0, 1.0)
                     for region in model.shells:
@@ -3988,8 +4008,24 @@ class OpenSeesEngine:
             mat = model.materials.get(sec.material) if sec else None
             if sec is None or mat is None:
                 continue
-            mass = mat.mass_per_volume * sec.A * m.length * sec.mod_mass
+            mass = (mat.mass_per_volume * _npx.member_area(model, m, sec)
+                    * m.length * sec.mod_mass)
             if mass <= 0.0:
+                continue
+            if (asm.mesh is not None and m.uid in asm.mesh.auto_split
+                    and _npx.is_varying(model, sec)):
+                # nonprismatic: each analysis segment lumps its own
+                # rho * A(mid) * L_seg (exact for the linear area)
+                for seg in asm.mesh.segments[m.uid]:
+                    half = 0.5 * (mat.mass_per_volume * sec.mod_mass
+                                  * _npx.segment_raw_props(
+                                      model, m, seg.x0, seg.length)[0]
+                                  * seg.length)
+                    for pidx in (seg.ni, seg.nj):
+                        if lateral:
+                            add(pidx + 1, 1, half)
+                            add(pidx + 1, 2, half)
+                        add(pidx + 1, 3, half)
                 continue
             if asm.mesh is not None and m.uid in asm.mesh.auto_split:
                 # frame auto mesh: each analysis segment lumps its own
@@ -4493,6 +4529,16 @@ class OpenSeesEngine:
                 mat = model.materials.get(sec.material) if sec else None
                 if sec is None or mat is None:
                     continue
+                if _npx.is_varying(model, sec):
+                    # nonprismatic: exact trapezoid per segment (A linear)
+                    k_sw = swf * mat.unit_weight * sec.mod_weight
+                    for a_, b_, A0, A1 in _npx.area_pieces(model, member):
+                        if k_sw * (A0 + A1) == 0.0:
+                            continue
+                        self._apply_member_load(
+                            asm, member, "trapezoid", -k_sw * A0 * scale,
+                            -k_sw * A1 * scale, a_, b_, "global_z")
+                    continue
                 w_sw = (swf * sec.A * mat.unit_weight       # kN/m, downward
                         * sec.mod_weight)
                 if w_sw == 0.0:
@@ -4642,6 +4688,9 @@ class OpenSeesEngine:
         sec = model.sections[member.section]
         mat = model.materials[sec.material]
         A_eff, I22_eff, I33_eff, J_eff = self._eff_props(sec)
+        if _npx.is_varying(model, sec):          # nonprismatic: per segment
+            A_eff, I22_eff, I33_eff, J_eff = _npx.segment_eff_props(
+                model, member, seg.x0, seg.length)
         av = asm.timo.get(member.uid)
         if av is None:
             f0 = _condensed_fef(records, seg.length, mat.E, mat.G, A_eff,
@@ -4713,7 +4762,11 @@ class OpenSeesEngine:
                     lx * xax[1] + ly * yax[1] + lz * zax[1],
                     lx * xax[2] + ly * yax[2] + lz * zax[2])
 
+        np_var = _npx.is_varying(model, sec)
         for seg in asm.mesh.segments[member.uid]:
+            if np_var:                           # nonprismatic: segment A
+                N = mat.E * _npx.segment_eff_props(
+                    model, member, seg.x0, seg.length)[0] * alpha * dT
             f0 = np.zeros(12)
             f0[0] = N
             f0[6] = -N
@@ -4986,7 +5039,14 @@ class OpenSeesEngine:
 
         # per-segment elastic-line parameters: (vy_i, th_y, vz_i, th_z)
         params: Dict[int, Tuple[float, float, float, float, tuple, list]] = {}
+        np_var = _npx.is_varying(model, sec)     # nonprismatic member
+        seg_EI: Dict[int, Tuple[float, float]] = {}
         for seg in segs:
+            if np_var:
+                _, I22_s, I33_s, _ = _npx.segment_eff_props(
+                    model, m, seg.x0, seg.length)
+                EIz, EIy = mat.E * I33_s, mat.E * I22_s
+                seg_EI[seg.index] = (EIz, EIy)
             fi = corrected[seg.index][:6]
             recs = tuple(self._seg_span_loads.get((m.uid, seg.index), ()))
             Ls = seg.length
@@ -5025,6 +5085,8 @@ class OpenSeesEngine:
                     seg = segs[-1]
             xi = min(max(x - seg.x0, 0.0), seg.length)
             vy_i, th_y, vz_i, th_z, recs, fi = params[seg.index]
+            if np_var:
+                EIz, EIy = seg_EI[seg.index]
             if timo_av is not None:
                 dy.append(float(
                     vy_i + th_y * xi
@@ -5370,6 +5432,18 @@ class OpenSeesEngine:
                  + st_r["M2"][k] * st_v["M2"][k] / EI22
                  + st_r["T"][k] * st_v["T"][k] / GJ
                  for k in range(len(xs))]
+            if _npx.is_varying(model, sec):      # nonprismatic: props(x)
+                f = []
+                for k, x in enumerate(xs):
+                    A, I22, I33, J = _npx.props_at(model, m, x)
+                    f.append(st_r["N"][k] * st_v["N"][k]
+                             / (mat.E * A * sec.mod_A)
+                             + st_r["M3"][k] * st_v["M3"][k]
+                             / (mat.E * I33 * sec.mod_I33)
+                             + st_r["M2"][k] * st_v["M2"][k]
+                             / (mat.E * I22 * sec.mod_I22)
+                             + st_r["T"][k] * st_v["T"][k]
+                             / (mat.G * J * sec.mod_J))
             av = asm.timo.get(m.uid)
             if av is not None:      # Timoshenko member: + V*v/(G*Av) terms
                 f = [f[k] + st_r["V2"][k] * st_v["V2"][k] / (mat.G * av[0])
@@ -5541,8 +5615,8 @@ class OpenSeesEngine:
                     mat = model.materials.get(sec.material) if sec else None
                     if sec is None or mat is None:
                         continue
-                    total += (scale * swf * sec.A * mat.unit_weight
-                              * m.length * sec.mod_weight)
+                    total += (scale * swf * _npx.member_area(model, m, sec)
+                              * mat.unit_weight * m.length * sec.mod_weight)
                 for region in model.shells:
                     ssec = model.shell_sections.get(region.section)
                     mat = model.materials.get(ssec.material) if ssec else None
@@ -5758,7 +5832,8 @@ class OpenSeesEngine:
                         mat = (model.materials.get(sec.material)
                                if sec else None)
                         if sec is not None and mat is not None:
-                            add(fac * swf * sec.A * mat.unit_weight
+                            add(fac * swf * _npx.member_area(model, m, sec)
+                                * mat.unit_weight
                                 * m.length * sec.mod_weight, *mid(m))
                     for region in model.shells:
                         if not model._region_on_story(region, s):
@@ -6535,6 +6610,9 @@ class OpenSeesEngine:
         sub.links = [lk for lk in model.links
                      if max(lk.pi[2], lk.pj[2]) <= elev_k + _TOL]
         sub.panel_zones = getattr(model, "panel_zones", "none")   # v0.17
+        sub.joint_panel_zones = [                                # per joint
+            e for e in getattr(model, "joint_panel_zones", []) or []
+            if e["point"][2] <= elev_k + _TOL]
         sub.active_dof = list(getattr(model, "active_dof",         # v1.13
                                       DOF_LABELS))
         sub.num_modes = 0

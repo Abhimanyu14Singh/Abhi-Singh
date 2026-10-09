@@ -6383,3 +6383,204 @@ used by another case.
   `5 P e L^2 / 48 EI` to 3%), round trip, results keys, cases_not_run
   dependency, scale and combo superposition, validation errors and
   byte-identical defaults.
+
+## Nonprismatic sections and per-joint panel zones
+
+ETABS *Define > Frame Sections > Nonprismatic*
+(`skyframe/core/nonprismatic.py`) and *Assign > Joint > Panel Zone*
+(`skyframe/core/panelzones.py`).  Every default reproduces the earlier
+results byte for byte: prismatic sections serialise exactly as before (no
+new keys), and `joint_panel_zones` is left out of the JSON when empty.
+
+### Nonprismatic section JSON
+
+```json
+"sections": {
+  "NP": {"kind": "nonprismatic", "subdivisions": 16,
+         "segments": [
+           {"start_section": "DEEP", "end_section": "SHALLOW",
+            "length": 1.5, "length_type": "absolute",
+            "EI33": "cubic", "EI22": "linear"},
+           {"start_section": "SHALLOW", "end_section": "SHALLOW",
+            "length": 1.0, "length_type": "relative"}],
+         "material": "C", "A": 0.24, "I33": 0.0128, "I22": 0.0018,
+         "J": 0.0049, "b": 0.3, "h": 0.8,
+         "mod_A": 1.0, "mod_I33": 1.0, "mod_I22": 1.0, "mod_J": 1.0}}
+```
+
+* `kind`: `"prismatic"` (the default, not emitted) or `"nonprismatic"`.
+* `segments` run from end i to end j.  Each needs `start_section` and
+  `end_section`, which must be existing **prismatic** sections with
+  A, I33, I22 and J > 0 that all share **one** material.  Defaults:
+  `length` 1.0 (must be > 0), `length_type` `"relative"`, and `EI33` /
+  `EI22` `"linear"`.  Unknown keys are rejected.
+* Segment lengths follow the ETABS rule.  Absolute lengths are metres.
+  What is left of the member length is shared by the relative segments in
+  proportion to their `length`.  A member is rejected (`ValueError` from
+  `validate`) when:
+  * its absolute lengths exceed the member length;
+  * it has only absolute segments and they do not sum to the member
+    length (tolerance 1e-6 m);
+  * no length is left for the relative segments.
+* `subdivisions` is an integer in [1, 200], default **16**.  It is the
+  number of equal analysis sub-elements per **varying** segment.
+* `material`, `A`, `I33`, `I22`, `J`, `b` and `h` are **representative**
+  values copied from the i-end section by `resolve_sections` during
+  `validate`.  They may be left out of hand-written JSON.  Consumers that
+  need one value per section use them: drawing, panel-zone sizing,
+  pushover hinge springs and design.
+* The nonprismatic section's own `mod_A`, `mod_I33`, `mod_I22`, `mod_J`,
+  `mod_mass` and `mod_weight` apply to the interpolated properties.  The
+  referenced sections' own modifiers are not used.
+* Not supported, rejected by `validate`:
+  * frame shear deformation (`As2`, `As3`, `shear_deformation`);
+  * axial-only (`axial_limit != "both"`) members using a varying section.
+* Python helpers: `add_nonprismatic_section(model, name, segments,
+  subdivisions=16, **mods)` and `nonprismatic_section(...)`.
+
+### Property variation
+
+Within a segment at fraction `s` (0 at its start, 1 at its end):
+
+* A and J vary linearly;
+* I33 and I22 follow `I(s) = (I0^(1/n) + s (I1^(1/n) - I0^(1/n)))^n`, with
+  n = 1, 2 or 3 for `linear`, `parabolic` or `cubic` (the ETABS
+  convention).  `cubic` is exact for a linear depth taper of a rectangle.
+
+A **uniform** nonprismatic section is one whose start and end sections all
+have identical (A, I33, I22, J).  It is never divided, so it gives the
+same results as the prismatic section byte for byte.
+
+### Engine
+
+* **Sub-elements.** Every member with a varying section is cut at each
+  segment boundary and into `subdivisions` equal pieces per varying
+  segment.  The cuts go through the frame auto-mesh path, so:
+  * the member joins `MeshedModel.auto_split`;
+  * shell-node, Winkler and auto-mesh cuts merge with these cuts;
+  * results are stitched back per **drawn** member: end forces, the 11
+    stations or user output stations, and the exact deflection stations;
+  * releases and rigid end offsets act at the drawn ends only, and
+    offsets are kept when they fit in the end sub-elements.
+* **Stiffness.** Each analysis segment is an `elasticBeamColumn` with the
+  interpolated (A, I22, I33, J) at its midpoint, times the section
+  modifiers.  The condensed FEF of released ends, thermal
+  `N = E A_seg alpha dT` and the exact deflection recovery all use the
+  segment's own properties.  `run_virtual_work` integrates with the
+  continuous properties at each station.
+* **Weight.** Self-weight is an exact trapezoid `unit_weight * A(x)` over
+  each segment, both in the engine and in staged construction.  Story
+  self-weight, gravity totals, tables and story CM use the mean area
+  `integral(A dx) / L` (`member_area`).
+* **Mass.** In `element_self_mass` mode each analysis segment lumps
+  `rho A(mid) l / 2` on each of its nodes, which is exact for the linear
+  area.  The tributary story-mass path uses the trapezoids.
+* **P-Delta** `iterative_loads` column strings share the story load by
+  `E / integral(dx / A)`.
+* **Buckling and Ritz** (`core/buckling.py`, `core/ritz.py`) run on
+  `expanded_model(model)`.  This copy replaces each varying member by
+  prismatic sub-members named `"<uid>#np<k>"`.  Member loads keep
+  lumping to the drawn ends, and a drawn member's `base_N` applies to all
+  of its sub-members.  Mode shapes include the internal nodes.
+
+### Per-joint panel zones JSON
+
+```json
+"panel_zones": "none",
+"joint_panel_zones": [
+  {"point": [0.0, 0.0, 3.0], "property": "from_column",
+   "connectivity": "beams_to_panel"},
+  {"point": [6.0, 0.0, 3.0], "property": "elastic", "doubler_t": 0.02,
+   "connectivity": "beams_to_panel"},
+  {"point": [12.0, 0.0, 3.0], "property": "spring", "k": 20000.0,
+   "connectivity": "beams_and_braces_to_panel"}]
+```
+
+The model-wide `panel_zones` string is unchanged.  The per-joint list is a
+separate field, `joint_panel_zones`, because `panel_zones` is already the
+model-wide setting.
+
+* `property` (default `from_column`) sets the elastic scissors rotational
+  stiffness `K_theta`, which acts about global rx and ry:
+  * `from_column`: `G d_c d_b t_p`.  This is the same rule as model-wide
+    `"scissors"`: the deepest vertical column gives `d_c = h` and
+    `t_p = b`, and `d_b` is the deepest beam at the joint.
+  * `elastic`: `G d_c d_b (t_p + doubler_t)`.  `doubler_t` must be >= 0
+    and defaults to 0, which equals `from_column`.
+  * `spring`: the given `k`, which is required and must be > 0.
+  `k` is allowed only with `spring`, and `doubler_t` only with `elastic`.
+* `connectivity` (default `beams_to_panel`) names the member kinds whose
+  ends at the joint connect to the panel (the duplicate node):
+  * `beams_to_panel`: beams.  This is the model-wide scissors topology.
+  * `braces_to_panel`: braces.
+  * `beams_and_braces_to_panel`: beams and braces.
+  All other member ends stay on the joint node.
+* Validation (`validate`) normalises the entries in place and rejects:
+  * unknown keys;
+  * a malformed point;
+  * duplicate joints;
+  * a joint without at least one panel-side member end and one other
+    bending member end;
+  * `from_column` or `elastic` without a vertical column and a beam that
+    both have section b/h.
+
+### Per-joint panel zones in the engine
+
+* Joints without an override follow the model-wide setting exactly.
+* `effective_specs` returns `compute_panel_zone_springs(model)` when
+  `panel_zones == "scissors"` and `{}` otherwise.  Overrides then replace
+  or add joints.
+* With `"rigid"`, an overridden joint gets **no** automatic rigid end
+  zones (`compute_panel_zone_offsets(model, skip=...)`): its spring
+  replaces them, and every other joint keeps its rigid zones.
+* Support or restrained joints are skipped with a `UserWarning`, as for
+  model-wide scissors.
+* Staged-construction submodels keep the overrides of the included
+  stories.
+* `OpenSeesEngine.panel_zone_joints()` lists every spring that was built
+  (model-wide and overrides).
+
+### Validation (`tests/test_nonprismatic_panelzones.py`, 39 tests)
+
+* **Haunched cantilever** (depth 0.8 to 0.4 m, cubic, tip load).  The tip
+  deflection is compared with the virtual-work integral
+  `int P (L-x)^2 / (E I(x)) dx`:
+  * the error is +0.16% at the default 16 sub-elements;
+  * it converges as O(h^2): 11.2%, 2.69%, 0.66%, 0.16% and 0.041% for 2,
+    4, 8, 16 and 32 sub-elements.
+  The stations match `P (L-x)` exactly, the deflection stations equal the
+  tip node, and parabolic variation also matches its integral (0.1% at
+  n = 32).
+* **Tapered pinned-pinned column** (depth 0.3 to 0.6 m, cubic) under
+  linear buckling.  The reference is Euler with I(x), from a
+  finite-difference solution of `EI(x) y'' + P y = 0`:
+  * the error is -0.11% at the default (-1.9% at n = 4, -0.027% at
+    n = 32);
+  * the result lies between the Euler loads of the two end sections.
+* **Uniform nonprismatic** (start = end, one or several segments).  Static
+  results with self-weight, point, trapezoid and thermal loads and a
+  release, and buckling, are byte-identical to the prismatic section.
+* **Weight and mass.** Base FZ = `gamma int A dx` (1e-8), and the
+  fixed-end moment = `int w(x) x dx` (1e-6).  Story mass and element
+  self-mass equal `rho int A` (1e-10 / 1e-12), and the end-node mass is
+  `rho A(mid) l / 2`.
+* **Drawn ends.** With releases Mi and Mj on a symmetric haunch, the end
+  moments are 0, `M(mid) = wL^2/8` and the deflection is symmetric.  A
+  rigid i-offset gives the virtual-work integral over the clear span
+  (0.2%).  A thermal load gives free elongation `alpha dT L` with N = 0.
+* **Panel zones.**
+  * Without overrides the spec is exactly the model-wide one.
+  * On a single-joint frame, model-wide scissors equals a `from_column`
+    override byte for byte.
+  * An override on the middle joint of a 2-bay frame has the model-wide K
+    there, leaves the other joints centerline, and gives a drift between
+    the centerline and all-scissors models.
+  * A spring panel zone rotates by `M/k` (1e-8), and the tip deflection
+    matches the column + spring + beam hand value (0.1%).
+  * `elastic` gives `G d_c d_b (t_p + t_d)`.
+  * Under `"rigid"` the overridden joint loses its offsets while the
+    other joints keep theirs.
+  * The brace and beam connectivity variants redirect the right member
+    ends.
+  * Support joints warn and are skipped.
+  * Round trips match, and validation rejects bad inputs.

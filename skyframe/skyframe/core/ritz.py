@@ -259,6 +259,8 @@ def ritz_analysis(model: BuildingModel, n: int,
     ``len(periods)`` may be < ``n`` when the load-reachable subspace is
     smaller (e.g. more vectors than massed dofs were requested).
     """
+    from .nonprismatic import expanded_model
+    model = expanded_model(model)       # nonprismatic: prismatic sub-members
     if direction not in RITZ_DIRECTIONS:
         raise ValueError(f"Ritz direction must be one of "
                          f"{RITZ_DIRECTIONS}, got {direction!r}")
