@@ -193,13 +193,22 @@ def check_vibration(model, results, case: Optional[str] = None,
             chk.reason = "no deflection/station results for this member"
             continue
         mid = len(rel_d) // 2                     # station 6 of 11: x = L/2
-        delta = rel_d[mid]
+        if getattr(m, "output_stations", None) is None:
+            def at_mid(rel, _b=None):
+                return rel[mid]
+        else:                                     # variable stations
+            from skyframe.core.framemesh import value_at
+
+            def at_mid(rel, b_):
+                xs = b_["member_deflections"][m.uid]["x"]
+                return value_at(xs, rel, 0.5 * span)
+        delta = at_mid(rel_d, blk)
         W = W_d
         if live_blk is not None:
             rel_l = _chord_relative_dy(live_blk, m.uid, span)
             W_l = _station_load(live_blk, m.uid)
             if rel_l is not None:
-                delta += live_factor * rel_l[mid]
+                delta += live_factor * at_mid(rel_l, live_blk)
             if W_l is not None:
                 W += live_factor * W_l
         else:

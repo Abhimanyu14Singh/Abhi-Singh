@@ -166,6 +166,7 @@ from skyframe.core.mesh import (MeshedModel, Segment, edge_tie_chains,
                                 mesh_model)
 from skyframe.core.modifiers import shell_mods_default
 from skyframe.core.polymesh import newell_normal
+from skyframe.core import framemesh as _fm
 from skyframe.engine.shell_modifiers import elastic_shell_section
 from skyframe.engine import pdelta as _pdelta      # model-wide P-Delta
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
@@ -2022,7 +2023,9 @@ class OpenSeesEngine:
                 for m in self.model.members:
                     user = (m.rigid_offset_i, m.rigid_offset_j)
                     if (off[m.uid] != user
-                            and len(self._mesh.segments[m.uid]) != 1):
+                            and len(self._mesh.segments[m.uid]) != 1
+                            and not self._offsets_fit_auto_split(
+                                m, *off[m.uid])):
                         warnings.warn(
                             f"panel zones: member {m.uid!r} is split into "
                             "multiple segments; automatic rigid end zones "
@@ -2032,6 +2035,19 @@ class OpenSeesEngine:
             else:
                 self._pz_offsets = {}
         return self._pz_offsets
+
+    def _offsets_fit_auto_split(self, m: FrameMember, off_i: float,
+                                off_j: float) -> bool:
+        """Frame auto mesh: a member divided by the auto mesher keeps its
+        rigid end offsets (manual, auto or panel-zone) when the i offset
+        lies inside its FIRST analysis segment and the j offset inside its
+        LAST one -- the rigid arms then sit on the end segments only."""
+        mesh = self._mesh
+        if mesh is None or m.uid not in mesh.auto_split:
+            return False
+        segs = mesh.segments[m.uid]
+        return (off_i < segs[0].length - _TOL
+                and off_j < segs[-1].length - _TOL)
 
     def _member_offsets(self, m: FrameMember) -> Tuple[float, float]:
         """(offset_i, offset_j) the engine actually applies to a member."""
@@ -2062,7 +2078,8 @@ class OpenSeesEngine:
                     m = self._members_by_uid[uid]
                     user = (m.rigid_offset_i, m.rigid_offset_j)
                     if (off != user
-                            and len(self._mesh.segments[uid]) != 1):
+                            and len(self._mesh.segments[uid]) != 1
+                            and not self._offsets_fit_auto_split(m, *off)):
                         warnings.warn(
                             f"auto end offsets: member {uid!r} is split into "
                             "multiple segments; automatic offsets skipped "
@@ -2594,7 +2611,8 @@ class OpenSeesEngine:
             # insertion point / joint offsets: rigid -jntOffset eccentricity
             # (None = reference line = the exact pre-existing path)
             ecc = self._member_ecc(m)
-            if has_offset and len(segs) != 1:
+            if (has_offset and len(segs) != 1
+                    and not self._offsets_fit_auto_split(m, off_i, off_j)):
                 raise ValueError(
                     f"Member {m.uid}: rigid end offsets are not supported on "
                     "members split by shell-edge compatibility")
@@ -2689,9 +2707,11 @@ class OpenSeesEngine:
                     from skyframe.core.insertion import (jnt_offset_args,
                                                          offset_at)
                     e_si = offset_at(ecc, seg.x0 + (off_i if has_offset
+                                                    and seg.index == 0
                                                     else 0.0), m.length)
                     e_sj = offset_at(ecc, seg.x0 + seg.length
-                                     - (off_j if has_offset else 0.0),
+                                     - (off_j if has_offset
+                                        and seg.index == last else 0.0),
                                      m.length)
                     if seg_transf == "Corotational":
                         # CorotCrdTransf3d ignores rigid joint zones
@@ -2735,7 +2755,7 @@ class OpenSeesEngine:
                 # rigid arms: insert an offset node inboard of each offset end
                 # and a very-stiff beam from the real/hinge node to it; the
                 # elastic element then spans the two offset nodes.
-                if has_offset and off_i > _TOL:
+                if has_offset and off_i > _TOL and seg.index == 0:
                     pI = mesh.points[seg.ni]
                     p_off = (pI[0] + off_i * xax[0], pI[1] + off_i * xax[1],
                              pI[2] + off_i * xax[2])
@@ -2754,7 +2774,7 @@ class OpenSeesEngine:
                                 mat.G * RIGID_LINK_FACTOR, J_eff, I22_eff,
                                 I33_eff, etag)
                     ni_tag = tag
-                if has_offset and off_j > _TOL:
+                if has_offset and off_j > _TOL and seg.index == last:
                     pJ = mesh.points[seg.nj]
                     p_off = (pJ[0] - off_j * xax[0], pJ[1] - off_j * xax[1],
                              pJ[2] - off_j * xax[2])
@@ -3810,6 +3830,17 @@ class OpenSeesEngine:
             mass = mat.mass_per_volume * sec.A * m.length * sec.mod_mass
             if mass <= 0.0:
                 continue
+            if asm.mesh is not None and m.uid in asm.mesh.auto_split:
+                # frame auto mesh: each analysis segment lumps its own
+                # share at its two nodes (mass follows the refinement)
+                for seg in asm.mesh.segments[m.uid]:
+                    half = 0.5 * mass * seg.length / m.length
+                    for pidx in (seg.ni, seg.nj):
+                        if lateral:
+                            add(pidx + 1, 1, half)
+                            add(pidx + 1, 2, half)
+                        add(pidx + 1, 3, half)
+                continue
             tags = [node_at(m.pi), node_at(m.pj)]
             tags = [t for t in tags if t is not None]
             if not tags:
@@ -4679,11 +4710,11 @@ class OpenSeesEngine:
                 N = float(ops.eleResponse(etag, "basicForce")[0])
                 member_forces[m.uid] = [-N, 0.0, 0.0, 0.0, 0.0, 0.0,
                                         N, 0.0, 0.0, 0.0, 0.0, 0.0]
-                L = m.length
-                xs = [k * L / (_N_STATIONS - 1) for k in range(_N_STATIONS)]
-                zeros = [0.0] * _N_STATIONS
+                xs = _fm.station_xs(self.model, m,
+                                    asm.mesh.segments[m.uid])
+                zeros = [0.0] * len(xs)
                 member_stations[m.uid] = {
-                    "x": xs, "N": [N] * _N_STATIONS, "V2": list(zeros),
+                    "x": xs, "N": [N] * len(xs), "V2": list(zeros),
                     "V3": list(zeros), "T": list(zeros), "M2": list(zeros),
                     "M3": list(zeros)}
                 continue
@@ -4705,8 +4736,8 @@ class OpenSeesEngine:
             last = len(segs) - 1
             member_forces[m.uid] = corrected[0][:6] + corrected[last][6:]
 
-            L = m.length
-            xs = [k * L / (_N_STATIONS - 1) for k in range(_N_STATIONS)]
+            # output stations (core.framemesh; default = the fixed 11)
+            xs = _fm.station_xs(self.model, m, segs)
             cols: Dict[str, List[float]] = {k: [] for k in
                                             ("N", "V2", "V3", "T", "M2", "M3")}
             # v0.26: unsplit members (the common case) always land in their
@@ -5179,6 +5210,10 @@ class OpenSeesEngine:
                 f = [f[k] + st_r["V2"][k] * st_v["V2"][k] / (mat.G * av[0])
                      + st_r["V3"][k] * st_v["V3"][k] / (mat.G * av[1])
                      for k in range(len(xs))]
+            if getattr(m, "output_stations", None) is not None:
+                # variable output stations: non-uniform composite Simpson
+                contributions[m.uid] = float(_fm.integrate_stations(xs, f))
+                continue
             # composite Simpson on the 11 equally-spaced stations
             # (10 intervals): h/3 * (f0 + 4f1 + 2f2 + ... + 4f9 + f10)
             h = xs[1] - xs[0]

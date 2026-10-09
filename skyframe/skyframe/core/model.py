@@ -560,6 +560,16 @@ def _insertion_fields_to_dict(m) -> dict:
     return member_fields_to_dict(m)
 
 
+def _framemesh_model_to_dict(model) -> dict:
+    from skyframe.core.framemesh import model_to_dict
+    return model_to_dict(model)
+
+
+def _framemesh_member_to_dict(m) -> dict:
+    from skyframe.core.framemesh import member_to_dict
+    return member_to_dict(m)
+
+
 def _insertion_fields_from_dict(md: dict) -> dict:
     from skyframe.core.insertion import member_fields_from_dict
     return member_fields_from_dict(md)
@@ -637,6 +647,10 @@ class FrameMember:
     no_transform_stiffness: bool = False
     end_offsets: str = "manual"
     auto_rigid_factor: float = 0.0
+    # Frame auto mesh + output stations (skyframe.core.framemesh; None =
+    # model default / the fixed 11 stations = the pre-existing behaviour).
+    auto_mesh: Optional[dict] = None
+    output_stations: Optional[dict] = None
 
     @property
     def length(self) -> float:
@@ -674,6 +688,7 @@ class FrameMember:
                 "axial_limit": self.axial_limit,
                 "hinges": self.hinges,
                 **_insertion_fields_to_dict(self),
+                **_framemesh_member_to_dict(self),
                 "length": self.length}
 
 
@@ -1828,6 +1843,9 @@ class BuildingModel:
     # to_dict only when not the defaults.
     pdelta_options: Dict[str, object] = field(
         default_factory=pdelta_defaults)
+    # Model-wide frame auto mesh default (skyframe.core.framemesh); None =
+    # off.  Emitted by to_dict only when set.
+    frame_auto_mesh: Optional[dict] = None
 
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
@@ -3482,6 +3500,8 @@ class BuildingModel:
 
         validate_frequency(self)            # frequency-domain cases
         self._validate_pdelta_options()
+        from skyframe.core.framemesh import validate_model as _fm_validate
+        _fm_validate(self)                  # frame auto mesh / stations
 
     def _validate_pdelta_options(self) -> None:
         """Model-wide P-Delta options (see core.pdelta_options)."""
@@ -3585,6 +3605,7 @@ class BuildingModel:
 
             **frequency_to_dict(self),      # frequency-domain (if non-empty)
             **pdelta_to_dict(self),         # P-Delta options (if not default)
+            **_framemesh_model_to_dict(self),   # frame auto mesh (if set)
         }
 
     @classmethod
@@ -3938,6 +3959,11 @@ class BuildingModel:
 
         frequency_from_dict(mdl, d)         # frequency-domain (absent = {})
         pdelta_from_dict(mdl, d)            # P-Delta options (absent = none)
+        from skyframe.core.framemesh import (member_from_dict as _fm_mfd,
+                                             model_from_dict as _fm_from)
+        _fm_from(mdl, d)                    # frame auto mesh (absent = off)
+        for _m, _md in zip(mdl.members, d.get("members") or []):
+            _fm_mfd(_m, _md)
         mdl.validate()
         return mdl
 

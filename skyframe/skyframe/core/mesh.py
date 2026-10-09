@@ -183,6 +183,8 @@ class MeshedModel:
         default_factory=dict)                            # per unit q
     membrane_nodal: Dict[str, Dict[int, float]] = field(default_factory=dict)
     #   membrane regions: point idx -> downward kN per unit q
+    auto_split: set = field(default_factory=set)
+    #   uids of members divided by the frame auto mesh (core.framemesh)
 
 
 # --------------------------------------------------------------------------- #
@@ -271,7 +273,9 @@ def _mesh_region(region: ShellRegion, pool: _PointPool,
 # --------------------------------------------------------------------------- #
 def _split_member(member: FrameMember, pool: _PointPool,
                   shell_pts: List[int],
-                  model: Optional[BuildingModel] = None) -> List[Segment]:
+                  model: Optional[BuildingModel] = None,
+                  auto_cuts: Optional[List[Tuple[float, int]]] = None
+                  ) -> List[Segment]:
     """Split a member at shell mesh nodes and (v0.11) Winkler-foundation nodes.
 
     Shell-edge compatibility cuts (a shell mesh node on the axis) and
@@ -297,6 +301,8 @@ def _split_member(member: FrameMember, pool: _PointPool,
         nseg = foundation_segment_count(model, member)
         for i in range(1, nseg):
             cuts.append((i * length / nseg, None))
+    if auto_cuts:                    # frame auto mesh (core.framemesh)
+        cuts.extend(auto_cuts)
     cuts.sort(key=lambda c: c[0])
     # drop cuts closer than tolerance to each other; create pool points for
     # foundation cuts that survive.
@@ -784,6 +790,21 @@ def mesh_model(model: BuildingModel) -> MeshedModel:
     for lk in getattr(model, "links", []):
         pool.add(lk.pi)
         pool.add(lk.pj)
+    # frame auto mesh points (core.framemesh): pooled BEFORE the shell
+    # meshers so polygon shells conform to them.  Empty by default.
+    from .framemesh import auto_mesh_points
+    auto_pts = auto_mesh_points(model)
+    auto_idx: Dict[str, List[Tuple[float, int]]] = {}
+    for m in model.members:
+        lst = auto_pts.get(m.uid)
+        if not lst:
+            continue
+        pi = tuple(map(float, m.pi))
+        u = tuple(d / m.length for d in _sub(tuple(map(float, m.pj)), pi))
+        # station of the (1e-6-rounded) pool point, so segment lengths
+        # match the FE node geometry exactly
+        auto_idx[m.uid] = [(_dot(_sub(pool.points[k], pi), u), k)
+                           for k in (pool.add(p) for _, p in lst)]
 
     quads: List[ShellQuad] = []
     region_trib: Dict[str, Dict[int, float]] = {}
@@ -803,7 +824,8 @@ def mesh_model(model: BuildingModel) -> MeshedModel:
                         ShellQuad)
 
     shell_pts = sorted({n for q in quads for n in q.nodes})
-    segments = {m.uid: _split_member(m, pool, shell_pts, model)
+    segments = {m.uid: _split_member(m, pool, shell_pts, model,
+                                     auto_idx.get(m.uid))
                 for m in model.members}
 
     membrane_loads: Dict[str, List[TributaryMemberLoad]] = {}
@@ -822,4 +844,5 @@ def mesh_model(model: BuildingModel) -> MeshedModel:
                        segments=segments, quads=quads,
                        region_trib=region_trib,
                        membrane_loads=membrane_loads,
-                       membrane_nodal=membrane_nodal)
+                       membrane_nodal=membrane_nodal,
+                       auto_split=set(auto_idx))
