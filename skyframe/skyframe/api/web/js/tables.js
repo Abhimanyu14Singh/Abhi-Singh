@@ -301,7 +301,8 @@ export function tableCases(model, results) {
   const out = [];
   if (!results) return out;
   const cs = results.case_status || {}, cbs = results.combo_status || {};
-  const isEnv = n => ((model.combos || {})[n] || {}).combo_type === "envelope";
+  const isEnv = n => ((model.combos || {})[n] || {}).combo_type === "envelope" ||
+    !!((results.combos || {})[n] || {}).min;   // any max/min combo (abs/srss/range/RS members) — tables skip them
   for (const n of Object.keys((model && model.cases) || {})) {
     const st = cs[n] || ((results.cases || {})[n] ? "finished" : "not_run");
     out.push({ name: n, kind: "case", status: (results.cases || {})[n] ? (st === "not_run" ? "finished" : st) : st,

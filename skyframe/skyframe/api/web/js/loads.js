@@ -11,6 +11,8 @@ import { asce7SpectrumPreview, spectrumParameters, elfCs, nbccElfInfo } from "./
 import U from "./units.js";                    // v1.13 — display units (store stays SI)
 import { icon } from "./icons.js";
 import { frequencySection, caseOptionsButton } from "./casedlg.js";   // load-case parity dialogs
+import { thLoadDataBlock as g1ThLoadDataBlock } from "./combodlg.js";   // TH "Load Data" rows
+import * as G1CX from "./combo_refs.js";                                 // extended combo types / member pool
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fmt = (v, d = 2) => (v == null || !isFinite(v)) ? "—" :
@@ -1451,6 +1453,8 @@ export class LoadsEditor {
     }));
     card.appendChild(head);
 
+    card.appendChild(g1ThLoadDataBlock(m, name));                // ETABS Load Data (multi-component)
+
     /* v0.24: damping model (Rayleigh / per-mode modal) + zeta list */
     card.appendChild(this._thDamping(m, tc));
 
@@ -2284,7 +2288,8 @@ export class LoadsEditor {
     const sec = this._section("ls-combos", "Load combinations",
       "<b>add</b> = factored linear sum of case results · <b>envelope</b> = " +
       "component-wise max/min across the factored cases (tables gain a " +
-      "max/min toggle). Static cases only.",
+      "max/min toggle) · <b>abs / SRSS / range</b> and RS / TH / staged / nested members " +
+      "via <b>Data…</b> (ETABS Load Combination Data).",
       "+ Add combo", () => { ME.addCombo(m); this._mutated(); });
 
     const list = document.createElement("div");
@@ -2299,15 +2304,21 @@ export class LoadsEditor {
       row.className = "lc-row";
       row.appendChild(this._nameInput(name, "lc-name",
         nu => ME.renameCombo(m, name, nu)));
-      row.appendChild(this._factorChips(cb.cases, casePool, "Add a static case to this combo"));
+      row.appendChild(this._factorChips(cb.cases, [...casePool, ...G1CX.comboMemberPool(m, name).map(p => p.name).filter(n => !casePool.includes(n) && !G1CX.findComboCycle(m, name, { ...cb.cases, [n]: 1 }))], "Add a case or combo to this combo"));
 
       const typ = document.createElement("select");
       typ.className = "combo-type";
       typ.title = "add: factored sum · envelope: max/min across the factored cases";
-      typ.innerHTML = `<option value="add">add</option><option value="envelope">envelope</option>`;
-      typ.value = cb.combo_type === "envelope" ? "envelope" : "add";
+      typ.innerHTML = G1CX.COMBO_TYPES.map(t => `<option value="${t}">${esc(G1CX.COMBO_TYPE_LABEL[t])}</option>`).join("");
+      typ.value = G1CX.normComboType(cb.combo_type);
       typ.addEventListener("change", () => { cb.combo_type = typ.value; this._mutated(false); });
       row.appendChild(typ);
+      const g1Data = document.createElement("button");               // ETABS Load Combination Data
+      g1Data.className = "btn btn-small combo-data-btn";
+      g1Data.textContent = "Data…";
+      g1Data.title = "Load Combination Data — type, any case / combo members, scale factors";
+      g1Data.addEventListener("click", () => window.__sky && window.__sky.openComboData && window.__sky.openComboData(name));
+      row.appendChild(g1Data);
 
       row.appendChild(this._delBtn(null, `combo ${name}`, () => {
         if (ME.deleteCombo(m, name)) this._mutated();

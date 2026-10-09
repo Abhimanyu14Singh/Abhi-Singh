@@ -2,6 +2,7 @@
    (same shape as BuildingModel.to_dict(), see CONTRACT.md v0.2). */
 
 import { normalizeUnits } from "./units.js";   // v1.13 — model.display_units
+import * as CXR from "./combo_refs.js";        // extended combos / P-Delta / TH components refs
 
 const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
 const near = (a, b, tol = 1e-6) =>
@@ -79,7 +80,7 @@ export function normalizeModel(m) {
   for (const [n, cb] of Object.entries(m.combos)) {
     cb.name = cb.name || n;
     cb.cases = cb.cases || {};
-    cb.combo_type = cb.combo_type === "envelope" ? "envelope" : "add";   // v0.4
+    cb.combo_type = CXR.normComboType(cb.combo_type);   // v0.4 + abs/srss/range
   }
   // v0.4 — member orientation angle, stiffness modifiers, mass source,
   // time-history cases
@@ -355,10 +356,13 @@ export const caseNotRun = (m, name) =>
   !!(m && Array.isArray(m.cases_not_run) && m.cases_not_run.includes(name));
 
 function notRunRename(model, oldName, newName) {
+  CXR.comboMemberRename(model, oldName, newName);   // combo members follow (RS / TH / staged)
   if (!Array.isArray(model.cases_not_run)) return;
   model.cases_not_run = model.cases_not_run.map(n => n === oldName ? newName : n);
 }
+
 function notRunDelete(model, name) {
+  CXR.comboMemberDelete(model, name);   // no dangling combo members
   if (!Array.isArray(model.cases_not_run)) return;
   model.cases_not_run = model.cases_not_run.filter(n => n !== name);
 }
@@ -1337,7 +1341,8 @@ export function patternRefs(model, name) {
   ...["steady_state_cases", "psd_cases"].flatMap(k => Object.values(model[k] || {})
     .filter(c => (c.loads || []).some(l => l.pattern === name)).map(c => c.name)),
   ...Object.values(model.pushover_cases || {})
-    .filter(pc => pc.load_distribution === "pattern" && pc.pattern === name).map(pc => pc.name)];
+    .filter(pc => pc.load_distribution === "pattern" && pc.pattern === name).map(pc => pc.name),
+  ...CXR.patternRefsExtra(model, name)];   // P-Delta options + TH pattern components
 }
 
 export function addPattern(model, base = "PAT") {
@@ -1363,6 +1368,7 @@ export function renamePattern(model, oldName, newName) {
       for (const l of c.loads || []) if (l.pattern === oldName) l.pattern = newName;
   for (const pc of Object.values(model.pushover_cases || {}))
     if (pc.pattern === oldName) pc.pattern = newName;
+  CXR.patternRefRename(model, oldName, newName);   // P-Delta options + TH components
   return true;
 }
 
@@ -1433,11 +1439,13 @@ export function renameCombo(model, oldName, newName) {
   if (!newName || newName === oldName || model.combos[newName]) return false;
   model.combos[newName] = { ...model.combos[oldName], name: newName };
   delete model.combos[oldName];
+  CXR.comboMemberRename(model, oldName, newName);   // nested combo members follow
   return true;
 }
 
 export function deleteCombo(model, name) {
   delete model.combos[name];
+  CXR.comboMemberDelete(model, name);
   return true;
 }
 
@@ -1610,12 +1618,14 @@ export function renameThFunction(model, oldName, newName) {
   delete model.th_functions[oldName];
   for (const tc of Object.values(model.th_cases || {}))
     if (tc.function === oldName) tc.function = newName;
+  CXR.thFunctionRefRename(model, oldName, newName);   // TH load-data rows
   return true;
 }
 
 export function thFunctionRefs(model, name) {
-  return Object.values(model.th_cases || {})
+  const own = Object.values(model.th_cases || {})
     .filter(tc => tc.function === name).map(tc => tc.name);
+  return [...own, ...CXR.thFunctionRefsExtra(model, name).filter(n => !own.includes(n))];
 }
 
 export function deleteThFunction(model, name) {
