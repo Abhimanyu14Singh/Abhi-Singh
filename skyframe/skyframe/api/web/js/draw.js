@@ -463,6 +463,8 @@ export class PlanEditor {
         "pointer-events": "none", "data-ref": `punchhalo:${hp.uid || ""}`,
       }));
     }
+    // Groups hook — Show Group highlight (js/groups.js)
+    if (this.grpOverlay) { try { this.grpOverlay(this); } catch (e) { console.error(e); } }
   }
 
   /** Links visible on the current story plan (both endpoint z within span). */
