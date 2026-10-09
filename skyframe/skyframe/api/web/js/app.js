@@ -27,6 +27,8 @@ import { initEtabs } from "./etabs.js";   // ETABS-style chrome (menu bar, palet
 import U from "./units.js";
 import * as DLG from "./analysisdlg.js";
 import { buildStressStrainSection } from "./sscurve.js";
+import * as AS from "./assigndlg.js";                 // ETABS Assign / section-modifier dialogs
+import { mockValidateAssign } from "./mock_assign.js";
 
 /* ------------------------------------------------ state */
 const store = {
@@ -208,6 +210,8 @@ async function analyze() {
 async function postModel(payload) {
   if (store.mock) {
     await new Promise(r => setTimeout(r, 300));
+    const bad = mockValidateAssign(payload);       // mirror backend ValueErrors (assign fields)
+    if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
   return api("/api/model", payload);
@@ -1855,6 +1859,7 @@ function renderProps() {
   /* wiring */
   $("propClear").addEventListener("click", () => handleSelect([], false));
   $("propDelete").addEventListener("click", deleteSelection);
+  AS.decorateProps(box);                         // joint / concentrated / shell loads of the selection
 
   const on = (id, ev, fn) => { const n = $(id); if (n) n.addEventListener(ev, fn); };
 
@@ -2867,6 +2872,7 @@ function renderSectionMgr() {
       ]));
     }
     frameBox.appendChild(frameModsDetails(s));   // v0.4 stiffness modifiers
+    frameBox.appendChild(AS.frameSectionExtras(name, s));   // property modifiers + shear deformation
   }
 
   const shellBox = $("shellSectionRows");
@@ -2893,6 +2899,7 @@ function renderSectionMgr() {
       }),
     ]));
     shellBox.appendChild(shellLayeredDetails(m, s));   // v0.22 layered editor
+    shellBox.appendChild(AS.shellSectionExtras(name, s));   // f11 … v23 stiffness modifiers
   }
 
   const matBox = $("materialRows");
@@ -8388,6 +8395,8 @@ async function boot() {
     notRunEntries, syncRunStatusBadge, fetchMaterialCurve, fetchUnitsTable,
     mockMaterialCurve, keepSetup, markDirty,
   };
+
+  AS.initAssign(window.__sky);                   // Assign dialogs → __sky.assign / open* (additive)
 
   // ETABS-style chrome — menu bar, tool palette, model explorer, status bar.
   // Delegates to the store/functions exposed above; never re-implements logic.

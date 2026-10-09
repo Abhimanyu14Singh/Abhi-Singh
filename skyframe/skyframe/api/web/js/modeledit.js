@@ -1236,17 +1236,21 @@ export function setMemberUdl(model, pat, uid, w) {
     p.member_loads.push({ member_uid: uid, kind: "udl", w, w2: 0, a: 0, b: 1, direction: "gravity" });
 }
 
+/** Uniform gravity (pre-feature) area load: no direction / projected / joint pattern. */
+export const isPlainAreaLoad = l => (l.direction || "gravity") === "gravity" && !l.projected && l.joint_pattern == null;
+
 /** Area load q (kPa, downward) on a shell region in a pattern. */
 export function getAreaLoad(model, pat, uid) {
   const p = model.patterns[pat];
   if (!p) return null;
-  const l = (p.area_loads || []).find(l => l.region_uid === uid);
+  const l = (p.area_loads || []).find(l => l.region_uid === uid && isPlainAreaLoad(l));
   return l ? l.q : null;
 }
 
 export function setAreaLoad(model, pat, uid, q) {
   const p = ensurePattern(model, pat);
-  p.area_loads = p.area_loads.filter(l => l.region_uid !== uid);
+  // directional / projected / joint-pattern loads (Assign › Shell Loads) are kept
+  p.area_loads = p.area_loads.filter(l => !(l.region_uid === uid && isPlainAreaLoad(l)));
   if (isFinite(q) && q !== 0) p.area_loads.push({ region_uid: uid, q });
 }
 
