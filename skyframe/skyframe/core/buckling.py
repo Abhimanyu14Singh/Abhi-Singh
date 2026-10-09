@@ -461,7 +461,7 @@ def _gravity_nodal_vector(model: BuildingModel, gravity: Dict[str, float],
                 fac * nl.fz)
         for ml in pat.all_member_loads():
             m = members.get(ml.member_uid)
-            if m is None:
+            if m is None or ml.kind == "moment":
                 continue
             g = _load_global_components(ml)
             if g is None:

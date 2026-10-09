@@ -18,6 +18,12 @@ from typing import Dict, List, Optional, Tuple
 
 from skyframe.core.stress_strain import normalize_stress_strain
 
+from .loads_ext import (GroundDisplacement, area_load_to_dict,  # noqa: F401
+                        area_load_is_default, area_load_weight,
+                        nodal_load_to_dict,
+                        validate_area_load, validate_ground_displacement,
+                        validate_member_moment)
+
 G_ACCEL = 9.80665  # m/s^2
 _PLANAR_TOL = 1e-6  # m
 
@@ -747,13 +753,29 @@ class MemberLoad:
     a: float = 0.0
     b: float = 1.0
     direction: str = "gravity"
+    # kind == "moment" (ETABS frame concentrated moment): ``w`` = moment
+    # (kN*m) at fraction ``a`` about ``direction`` in
+    # loads_ext.MEMBER_MOMENT_DIRECTIONS (local_x/y/z == local_1/2/3, or
+    # global_x/y/z); see CONTRACT "Joint moments, ground displacement ...".
 
 
 @dataclass
 class AreaLoad:
-    """Uniform area load on a shell region (kPa, positive DOWNWARD)."""
+    """Area load on a shell region (kPa).
+
+    Default (pre-feature): uniform, ``direction="gravity"`` (positive
+    DOWNWARD).  ``direction`` in loads_ext.AREA_LOAD_DIRECTIONS
+    (``global_x|y|z`` positive along +axis, ``local_1|2|3`` along the shell
+    local axes, local_3 = corner-ordering normal); ``projected`` = load per
+    area projected normal to the load direction; ``joint_pattern`` =
+    ``{"type": "linear", "a", "b", "c", "d", "zero_negative"?,
+    "zero_positive"?}`` multiplies q by ``a*x + b*y + c*z + d``.
+    """
     region_uid: str
     q: float
+    direction: str = "gravity"
+    projected: bool = False
+    joint_pattern: Optional[dict] = None
 
 
 @dataclass
@@ -763,6 +785,9 @@ class NodalLoad:
     fx: float = 0.0
     fy: float = 0.0
     fz: float = 0.0
+    mx: float = 0.0     # joint moments (kN*m, global axes)
+    my: float = 0.0
+    mz: float = 0.0
 
 
 @dataclass
@@ -900,6 +925,9 @@ class LoadPattern:
     # kN/m) on every frame member and an area load (thickness*unit_weight,
     # kN/m^2) on every shell region.
     self_weight_factor: float = 0.0
+    # ETABS Assign > Joint Loads > Ground Displacement (support settlement)
+    ground_displacements: List[GroundDisplacement] = field(
+        default_factory=list)
 
     def all_member_loads(self) -> List[MemberLoad]:
         """member_loads plus legacy member_udls expressed as MemberLoads."""
@@ -911,14 +939,17 @@ class LoadPattern:
         return {
             "name": self.name, "kind": self.kind,
             "member_udls": [asdict(u) for u in self.member_udls],
-            "nodal_loads": [asdict(n) for n in self.nodal_loads],
+            "nodal_loads": [nodal_load_to_dict(n) for n in self.nodal_loads],
             "story_forces": [asdict(s) for s in self.story_forces],
             "member_loads": [asdict(m) for m in self.member_loads],
-            "area_loads": [asdict(a) for a in self.area_loads],
+            "area_loads": [area_load_to_dict(a) for a in self.area_loads],
             "thermal_loads": [asdict(t) for t in self.thermal_loads],
             "accidental_torsion": self.accidental_torsion,
             "ecc": self.ecc,
             "self_weight_factor": self.self_weight_factor,
+            **({"ground_displacements": [g.to_dict() for g in
+                                         self.ground_displacements]}
+               if self.ground_displacements else {}),
         }
 
 
@@ -2789,7 +2820,9 @@ class BuildingModel:
                     region = self._shell(al.region_uid)
                     if region is None or not self._region_on_story(region, s):
                         continue
-                    total_w += fac * al.q * region.net_area  # v0.5: openings
+                    total_w += (fac * al.q * region.net_area  # v0.5
+                                if area_load_is_default(al) else
+                                fac * area_load_weight(region, al))
                 for nl in pat.nodal_loads:
                     if abs(nl.point[2] - s.elevation) < 1e-6:
                         total_w += fac * (-nl.fz)  # downward = -fz
@@ -2946,6 +2979,9 @@ class BuildingModel:
                     raise ValueError(f"Pattern {pat.name}: member load "
                                      f"references unknown member "
                                      f"{ml.member_uid!r}")
+                if ml.kind == "moment":
+                    validate_member_moment(ml, pat.name)
+                    continue
                 if ml.kind not in MEMBER_LOAD_KINDS:
                     raise ValueError(f"Pattern {pat.name}: bad member load "
                                      f"kind {ml.kind!r}")
@@ -2965,6 +3001,9 @@ class BuildingModel:
                     raise ValueError(f"Pattern {pat.name}: area load "
                                      f"references unknown shell region "
                                      f"{al.region_uid!r}")
+                validate_area_load(al, self._shell(al.region_uid), pat.name)
+            for gd in getattr(pat, "ground_displacements", ()):
+                validate_ground_displacement(self, pat.name, gd)
             for tl in pat.thermal_loads:
                 if tl.member_uid not in uids:
                     raise ValueError(f"Pattern {pat.name}: thermal load "
@@ -3355,7 +3394,8 @@ class BuildingModel:
                 pat.nodal_loads.append(NodalLoad(
                     tuple(float(v) for v in n["point"]),
                     fx=float(n.get("fx", 0.0)), fy=float(n.get("fy", 0.0)),
-                    fz=float(n.get("fz", 0.0))))
+                    fz=float(n.get("fz", 0.0)), mx=float(n.get("mx", 0.0)),
+                    my=float(n.get("my", 0.0)), mz=float(n.get("mz", 0.0))))
             for s in pd.get("story_forces") or []:
                 pat.story_forces.append(StoryForce(
                     s["story"], fx=float(s.get("fx", 0.0)),
@@ -3367,8 +3407,15 @@ class BuildingModel:
                     a=float(m.get("a", 0.0)), b=float(m.get("b", 1.0)),
                     direction=m.get("direction", "gravity")))
             for a in pd.get("area_loads") or []:
-                pat.area_loads.append(AreaLoad(a["region_uid"],
-                                               float(a["q"])))
+                jp = a.get("joint_pattern")
+                pat.area_loads.append(AreaLoad(
+                    a["region_uid"], float(a["q"]),
+                    direction=a.get("direction", "gravity"),
+                    projected=bool(a.get("projected", False)),
+                    joint_pattern=dict(jp) if jp is not None else None))
+            for g in pd.get("ground_displacements") or []:
+                pat.ground_displacements.append(
+                    GroundDisplacement.from_dict(g))
             mdl.patterns[name] = pat
         for name, cd in (d.get("cases") or {}).items():
             pg = cd.get("pdelta_gravity")
@@ -3530,7 +3577,8 @@ def story_gravity_loads(model: "BuildingModel",
             if m is not None and m.story == s.name and m.kind != "column":
                 total += udl.w * m.length
         for ml in pat.member_loads:
-            if ml.direction not in ("gravity", "global_z"):
+            if (ml.direction not in ("gravity", "global_z")
+                    or ml.kind == "moment"):
                 continue
             m = model._member(ml.member_uid)
             if m is None or m.story != s.name or m.kind == "column":
@@ -3544,7 +3592,7 @@ def story_gravity_loads(model: "BuildingModel",
         for al in pat.area_loads:
             region = model._shell(al.region_uid)
             if region is not None and model._region_on_story(region, s):
-                total += al.q * region.net_area
+                total += area_load_weight(region, al)
         for nl in pat.nodal_loads:
             if abs(nl.point[2] - s.elevation) < 1e-6:
                 total += -nl.fz                       # downward = -fz
