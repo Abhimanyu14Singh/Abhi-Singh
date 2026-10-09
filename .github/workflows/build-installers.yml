@@ -20,7 +20,6 @@ on:
   workflow_dispatch:
   push:
     tags: ["v*"]
-    branches: ["claude/etabs-opensees-ui-rebuild-kt2zwh"]
 
 permissions:
   contents: write            # the release job needs this to publish assets
@@ -35,6 +34,9 @@ jobs:
           - os: windows-latest
             os_name: windows
             python: "3.12"    # openseespywin's binary module targets 3.12
+          - os: ubuntu-latest
+            os_name: linux
+            python: "3.11"
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     defaults:
