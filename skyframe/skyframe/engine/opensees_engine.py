@@ -1224,6 +1224,9 @@ class THResults:
     nonlinear: bool = False                                     # v0.6
     hinge_rotations: Dict[str, float] = field(default_factory=dict)  # v0.6
     yielded: List[str] = field(default_factory=list)            # v0.6
+    extra: dict = field(default_factory=dict)
+    #   direct-integration options: {"direct_integration": {...},
+    #   "energy": {...}} — only when the case sets an option
 
     def to_dict(self) -> dict:
         d = {
@@ -1242,6 +1245,8 @@ class THResults:
             d["hinge_rotations"] = {u: float(r) for u, r in
                                     self.hinge_rotations.items()}
             d["yielded"] = list(self.yielded)
+        if self.extra:
+            d.update(self.extra)
         return d
 
 
@@ -6332,7 +6337,14 @@ class OpenSeesEngine:
         asm = self._build(hinge_case=th if nonlinear else None)
         self._seg_span_loads = {}
         self._seg_fef = {}
-        if getattr(th, "damping_model", "rayleigh") == "modal":
+        # direct-integration options (None -> legacy path, bit-identical)
+        from skyframe.engine import thoptions as _tho_mod
+        tho = _tho_mod.make_run(self, th, asm, accel, dt, use_newton, modal)
+        if tho is not None:
+            tho.check_stability()
+        if tho is not None and tho.apply_damping(a0):
+            pass
+        elif getattr(th, "damping_model", "rayleigh") == "modal":
             # v0.24 per-mode viscous damping: eigen in THIS transient
             # domain (modalDamping consumes the domain's stored
             # eigenpairs, which survive the later wipeAnalysis), then one
@@ -6423,13 +6435,18 @@ class OpenSeesEngine:
                         else "Plain")
         ops.numberer("RCM")
         ops.system("BandGeneral")
-        if use_newton:
+        if tho is not None:
+            tho.apply_solution()
+        elif use_newton:
             ops.test("NormDispIncr", 1.0e-8, 25)
             ops.algorithm("Newton")
         else:
             ops.algorithm("Linear")
-        ops.integrator("Newmark", 0.5, 0.25)
+        if tho is None:
+            ops.integrator("Newmark", 0.5, 0.25)
         ops.analysis("Transient")
+        if tho is not None:
+            tho.begin(dof, th.scale)
 
         massed = [(t, d, m) for (t, d), m in asm.mass_map.items()
                   if d in (1, 2)]
@@ -6446,8 +6463,11 @@ class OpenSeesEngine:
                                        for (uid, _e) in asm.hinge_ele}
         yielded: set = set()
         for k in range(n):
-            ok = ops.analyze(1, dt)
-            if ok != 0 and use_newton:
+            if tho is not None:
+                ok = tho.step(k)
+            else:
+                ok = ops.analyze(1, dt)
+            if ok != 0 and use_newton and tho is None:
                 ops.algorithm("NewtonLineSearch")
                 ok = ops.analyze(1, dt)
                 ops.algorithm("Newton")
@@ -6516,6 +6536,8 @@ class OpenSeesEngine:
         result = THResults(name, t_out, sux, suy, bfx, bfy, peaks,
                            nonlinear=nonlinear, hinge_rotations=hinge_rot,
                            yielded=sorted(yielded))
+        if tho is not None:
+            result.extra = tho.results()
         self._th_cache[name] = result
         return result
 

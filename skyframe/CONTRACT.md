@@ -4156,3 +4156,107 @@ hydrostatic wall resultant `gamma h^2 b/2` at `h/3` (with and without
 clipping); local_3 == global components on an inclined roof and a wall;
 global_x reaction `p*A`; projected gravity `q*plan area`; defaults
 serialize byte-identically; full model round trip.
+
+# Direct-integration options + energy (ETABS TH parity, analysis-only)
+
+Pure option logic: `skyframe/core/di_options.py`; OpenSees runtime +
+energy: `skyframe/engine/thoptions.py`.  Applies to
+`OpenSeesEngine.run_time_history` (direct integration) only; FNA
+(`run_fna`) ignores these fields.
+
+## New optional `TimeHistoryCase` fields (all round-tripped)
+
+All default to `None` / `False`; with every one unset the engine runs the
+unchanged legacy code path (Newmark 1/2-1/4, legacy Rayleigh/modal,
+`NormDispIncr 1e-8, 25` + NewtonLineSearch retry) — bit-identical
+results, and `to_dict()` omits the keys (pre-existing files byte-equal).
+`add_th_case(..., integration=, di_damping=, solver=, energy=)`.
+
+* `integration`: `{"method": "newmark"|"hht"|"wilson"|"central_difference",
+  "gamma": 0.5, "beta": 0.25, "alpha": 0.0, "theta": 1.4}`
+  * newmark -> `integrator Newmark gamma beta`; gamma in [0.5, 1],
+    beta in (0, 0.5].
+  * hht -> `integrator HHT (1+alpha) gamma beta`; alpha in [-1/3, 0]
+    (HHT sign convention); omitted gamma/beta default to
+    `1/2 - alpha`, `(1 - alpha)^2/4`.
+  * wilson -> `integrator WilsonTheta theta` (available in this
+    openseespy build); theta in [1, 2] (>= 1.37 unconditionally stable).
+  * central_difference -> `integrator CentralDifference` with the Linear
+    algorithm and no substepping.  Requires mass on EVERY free equation
+    (checked with `systemSize`/`nodeDOFs`; else ValueError naming the
+    massless count — typical frames with massless rotations are rejected).
+  * Conditionally stable schemes (`2 beta < gamma`, incl. central
+    difference) are checked BEFORE the transient: `T_min` = shortest
+    period of the built domain (dense eigen of all massed dofs);
+    `dt >= T_min * Omega_crit/(2 pi)` with `Omega_crit = 1/sqrt(gamma/2 -
+    beta)` (central difference: `T_min/pi`) raises `ValueError` quoting
+    the computed limit.
+* `di_damping` (replaces the legacy Rayleigh fit when set; cannot be
+  combined with `damping_model "modal"`, which stays the modal option):
+  * `{"type": "rayleigh_by_periods", "T1", "xi1", "T2", "xi2",
+    "stiffness"}` -> `a1 = 2(xi2 w2 - xi1 w1)/(w2^2 - w1^2)`,
+    `a0 = 2 w1 w2 (xi1 w2 - xi2 w1)/(w2^2 - w1^2)`; exact ratios at T1/T2;
+    negative coefficients rejected.
+  * `{"type": "rayleigh_coefficients", "mass_coeff", "stiffness_coeff",
+    "stiffness"}`.
+  * `stiffness` basis `"initial"|"current"|"committed"` ->
+    `ops.rayleigh(a0,a1,0,0)` / `(a0,0,a1,0)` / `(a0,0,0,a1)`; default
+    `"current"` for linear and `"committed"` for hinge/device cases (the
+    legacy choices).
+* `solver`: `{"max_iterations": 25, "tolerance": 1e-8, "test":
+  "NormDispIncr"|"NormUnbalance"|"EnergyIncr", "max_halvings": 0}`.
+  A record step that fails (after the NewtonLineSearch retry) is re-solved
+  as two half steps, recursively, down to `dt/2**max_halvings` (<= 12).
+  Unknown keys rejected.
+* `energy: bool` — record the energy time series.
+
+## Results (`THResults.extra`, merged into `to_dict()` only when set)
+
+```
+th_cases[case]["direct_integration"] = {
+  "integration": {normalized}, "solver": {normalized},
+  "substepped_steps": [{"step": k (1-based), "t": s, "halvings": depth}],
+  "damping"?: {"type", "stiffness", "a0", "a1", (T1, xi1, T2, xi2),
+               "ratio_at_modes": [xi at each initial modal period]},
+  "dt_limit"?: s, "T_min"?: s }          # conditionally stable schemes
+th_cases[case]["energy"] = {             # cumulative, kN*m
+  "t", "input", "kinetic", "strain", "damping", "hysteretic",
+  "error", "error_normalized": [one per record step],
+  "max_abs_error_normalized", "normalization", "units", "method" }
+```
+
+The results key is the existing `th_cases` (ETABS "time_history[case]").
+
+## Energy method (relative frame; nodal work over all domain nodes)
+
+`P = P_grav - M iota ag(t)` (held gravity-stage loads + ground inertia);
+`f_S = R0 + unbal - alphaM M v` from `ops.reactions()` (`unbal` read AFTER
+each reactions call, which re-applies loads at the current time; the
+`alphaM M v` term is an OpenSees `Node::resetReactionForce` quirk);
+applied Rayleigh damping `f_D = R1 + unbal - M a - f_S` from
+`ops.reactions('-dynamic')` (elements with Rayleigh off, e.g. zeroLength
+hinges, contribute nothing — as in the solve); modal damping = the
+equilibrium residual `P - M a - f_S`.  Trapezoidal increments
+`0.5 (f_k + f_k+1) . du` (exactly consistent with Newmark average
+acceleration); kinetic `0.5 v'Mv`; hysteretic = nonlinear-element
+(zeroLength hinges, device links) basic work minus `F^2/(2 k0)` (initial
+material tangent); strain = resisting-force work - hysteretic (includes
+the work of held gravity forces); error = input - (kinetic + strain +
+damping + hysteretic), normalised by the run maximum energy.  Central
+difference uses its exact discrete balance (central increments
+`(u_n+1 - u_n-1)/2`, leapfrog kinetic, damping at the central velocity —
+OpenSees reports a different nodal velocity; samples at t_n).  Constraint
+forces (diaphragms, equalDOF) do no net work.  Limitations: fiber hinges
+are not split (their work counts as strain); for HHT / Wilson /
+linear-acceleration Newmark the error is the scheme's numerical
+dissipation + O(dt^2).
+
+Validation (`tests/test_th_options.py`, 45 cases): every integrator vs an
+independent numpy implementation (1e-7 of peak); Newmark avg-accel
+|lambda| = 1 and `w_bar dt = 2 atan(w dt/2)`; HHT alpha=-0.1 and Wilson
+spectral radius/frequency == amplification-matrix eigenvalues (1e-6);
+stability limits; Rayleigh-by-periods exact ratios + engine log
+decrement; energy balance to round-off for Newmark/central difference,
+`E_D == int c v^2 dt` (Rayleigh and modal) within 1 %, hysteretic energy
+on a yielding hinge; substepping recovery; byte-identical defaults;
+model/API round-trip.

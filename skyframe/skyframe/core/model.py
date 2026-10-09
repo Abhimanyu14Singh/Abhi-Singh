@@ -1113,18 +1113,31 @@ class TimeHistoryCase:
     function: str = ""              # v0.13: named th_functions entry
     damping_model: str = "rayleigh"                          # v0.24
     modal_zeta: Optional[List[float]] = None                 # v0.24
+    # direct-integration options (skyframe.core.di_options; None/False =
+    # legacy Newmark + Rayleigh path, bit-identical; keys omitted from
+    # to_dict when unset)
+    integration: Optional[dict] = None
+    di_damping: Optional[dict] = None
+    solver: Optional[dict] = None
+    energy: bool = False
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "direction": self.direction,
-                "accel": [float(a) for a in self.accel],
-                "dt": self.dt, "damping": self.damping, "scale": self.scale,
-                "nonlinear": self.nonlinear, "gravity": dict(self.gravity),
-                "hinges": self.hinges, "My": dict(self.My),
-                "default_My": self.default_My, "hardening": self.hardening,
-                "function": self.function,
-                "damping_model": self.damping_model,
-                "modal_zeta": (None if self.modal_zeta is None
-                               else [float(z) for z in self.modal_zeta])}
+        d = {"name": self.name, "direction": self.direction,
+             "accel": [float(a) for a in self.accel],
+             "dt": self.dt, "damping": self.damping, "scale": self.scale,
+             "nonlinear": self.nonlinear, "gravity": dict(self.gravity),
+             "hinges": self.hinges, "My": dict(self.My),
+             "default_My": self.default_My, "hardening": self.hardening,
+             "function": self.function,
+             "damping_model": self.damping_model,
+             "modal_zeta": (None if self.modal_zeta is None
+                            else [float(z) for z in self.modal_zeta])}
+        for key in ("integration", "di_damping", "solver"):
+            if getattr(self, key) is not None:
+                d[key] = dict(getattr(self, key))
+        if self.energy:
+            d["energy"] = True
+        return d
 
 
 PUSHOVER_DIRECTIONS = ("X", "Y")
@@ -1976,7 +1989,11 @@ class BuildingModel:
                     hardening: float = 0.02,
                     function: str = "",
                     damping_model: str = "rayleigh",
-                    modal_zeta: Optional[List[float]] = None
+                    modal_zeta: Optional[List[float]] = None,
+                    integration: Optional[dict] = None,
+                    di_damping: Optional[dict] = None,
+                    solver: Optional[dict] = None,
+                    energy: bool = False
                     ) -> TimeHistoryCase:
         th = TimeHistoryCase(
             name, direction, [float(a) for a in (accel or [])], float(dt),
@@ -1988,7 +2005,11 @@ class BuildingModel:
             hardening=float(hardening), function=str(function),
             damping_model=str(damping_model),
             modal_zeta=(None if modal_zeta is None
-                        else [float(z) for z in modal_zeta]))
+                        else [float(z) for z in modal_zeta]),
+            integration=(None if integration is None else dict(integration)),
+            di_damping=(None if di_damping is None else dict(di_damping)),
+            solver=(None if solver is None else dict(solver)),
+            energy=energy)
         self._validate_th_case(th)
         self.th_cases[name] = th
         return th
@@ -2024,6 +2045,8 @@ class BuildingModel:
                         and 0.0 < z < 1.0):
                     raise ValueError(f"TH case {th.name}: modal_zeta "
                                      "entries must be in (0, 1)")
+        from skyframe.core import di_options as _dio   # DI options
+        _dio.validate_case(th)
         if not math.isfinite(th.scale):
             raise ValueError(f"TH case {th.name}: scale must be finite")
         # v0.6 nonlinear fields (mirror the pushover-case rules)
@@ -3475,7 +3498,15 @@ class BuildingModel:
                 # v0.24 damping model; pre-v0.24 files stay Rayleigh
                 damping_model=str(td.get("damping_model", "rayleigh")),
                 modal_zeta=(None if td.get("modal_zeta") is None
-                            else [float(z) for z in td["modal_zeta"]]))
+                            else [float(z) for z in td["modal_zeta"]]),
+                # direct-integration options; absent -> legacy path
+                integration=(None if td.get("integration") is None
+                             else dict(td["integration"])),
+                di_damping=(None if td.get("di_damping") is None
+                            else dict(td["di_damping"])),
+                solver=(None if td.get("solver") is None
+                        else dict(td["solver"])),
+                energy=bool(td.get("energy", False)))
         for name, pd in (d.get("pushover_cases") or {}).items():
             dmy = pd.get("default_My")
             mdl.pushover_cases[name] = PushoverCase(
