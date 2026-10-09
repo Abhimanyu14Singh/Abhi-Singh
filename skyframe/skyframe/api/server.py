@@ -1925,6 +1925,53 @@ def create_app() -> Flask:
         _state["model"] = model
         return jsonify({"model": model.to_dict(), "warnings": warnings})
 
+    # ------------------------------- Check Model + stability diagnostics
+    def _check_target(body: Dict[str, Any]):
+        """The model to check: body['model'] (lenient load, the current
+        model is NOT replaced) or the current model."""
+        if body.get("model") is None:
+            return _state["model"]
+        from skyframe.core.checks import load_model_lenient
+        return load_model_lenient(body["model"])
+
+    @app.post("/api/check")
+    def check_model_endpoint():
+        """ETABS Analyze > Check Model.  Body: {model?, tolerance_m?
+        (default 0.001)} -> {"issues": [...], "summary": {...}}."""
+        from skyframe.core.checks import DEFAULT_TOLERANCE, check_model
+        body = request.get_json(silent=True) or {}
+        tol = body.get("tolerance_m", DEFAULT_TOLERANCE)
+        if (isinstance(tol, bool) or not isinstance(tol, (int, float))
+                or not (0.0 < float(tol) <= 1.0)):
+            return jsonify({"error": "'tolerance_m' must be a number in "
+                                     "(0, 1]"}), 400
+        try:
+            model = _check_target(body)
+        except (ValueError, KeyError, TypeError) as exc:
+            return jsonify({"error": f"bad model: {exc}"}), 400
+        return jsonify(check_model(model, float(tol)))
+
+    @app.post("/api/check/stability")
+    def check_stability_endpoint():
+        """Mechanism / ill-conditioning diagnostics of the assembled K.
+        Body: {model?, max_dofs? (default 3000, <= 6000)}."""
+        from skyframe.core.checks import (STABILITY_MAX_DOFS,
+                                          STABILITY_MAX_DOFS_LIMIT,
+                                          stability_diagnostics)
+        if not _OPENSEES_OK:
+            return jsonify({"error": "OpenSeesPy is not available"}), 400
+        body = request.get_json(silent=True) or {}
+        cap = body.get("max_dofs", STABILITY_MAX_DOFS)
+        if (isinstance(cap, bool) or not isinstance(cap, int)
+                or not 1 <= cap <= STABILITY_MAX_DOFS_LIMIT):
+            return jsonify({"error": "'max_dofs' must be an integer in "
+                                     f"[1, {STABILITY_MAX_DOFS_LIMIT}]"}), 400
+        try:
+            model = _check_target(body)
+        except (ValueError, KeyError, TypeError) as exc:
+            return jsonify({"error": f"bad model: {exc}"}), 400
+        return jsonify(stability_diagnostics(model, max_dofs=cap))
+
     return app
 
 
