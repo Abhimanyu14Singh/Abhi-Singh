@@ -4419,3 +4419,89 @@ building; PSD Crandall (fine grid 4e-7, refined coarse grid < 2%), force
 PSD, response-curve exactness, g^2/Hz units, full-correlation cross
 terms; linearity/phase/cancellation, zero loads, function interpolation,
 grid; round trip, back-compat byte identity, validation, API.
+
+## Pushover load distribution and control (`PushoverCase`, ETABS Nonlinear Static parity)
+
+New optional `PushoverCase` fields (appended; all round-tripped through
+`to_dict`/`from_dict`, emitted by `to_dict` ONLY when they differ from the
+default, so pre-feature model files serialize byte-identically; every
+default reproduces the pre-feature unit roof push bit-identically —
+verified list-for-list on frame/asce41/P-Delta/no-diaphragm pushovers):
+
+| field | default | meaning |
+|---|---|---|
+| `load_distribution` | `"roof_point"` | `roof_point` \| `pattern` \| `mode` \| `uniform_accel` \| `triangular` |
+| `pattern` | `None` | load pattern pushed by `pattern` (required there) |
+| `mode_number` | `None` | `mode`: 1-based mode; `None` = the mode with the largest effective modal-mass ratio in `direction` (ASCE 41 "first mode") |
+| `k` | `None` | `triangular` exponent; `None` = ASCE 7-16 §12.8.3 k(T) (1 for T<=0.5 s, 2 for T>=2.5 s, linear between; T = dominant-mode period in `direction`) |
+| `control_story` | `None` | monitored joint = that story's diaphragm master (else its lowest-tag node) |
+| `control_point` | `None` | monitored joint = the structural node at `[x, y, z]` (exclusive with `control_story`) |
+| `control_dof` | `None` | `"UX"` \| `"UY"`; `None` = the push `direction` |
+| `target_disp` | `None` | target control displacement (m, non-zero, signed); `None` = `target_drift * H_ctrl` |
+| `control_mode` | `"displacement_control"` | or `"load_control"` (LoadControl, `target_load/steps` per step) |
+| `target_load` | `1.0` | `load_control` final load factor lambda |
+| `start_from` | `None` | name of a static `LoadCase`; its `patterns` become the existing gravity stage (applied, held with `loadConst -time 0`) — exclusive with `gravity` |
+
+**Distributions** (forces only in the push `direction`;
+`skyframe/engine/pushover_distribution.py`).  `mode` / `uniform_accel` /
+`triangular` act per massed node of the elastic build (masses on
+restrained DOFs excluded): `f = m*phi` (phi from the engine's own elastic
+eigen solve), `f = m`, `f = m*h^k` (h = node elevation above the lowest
+structural node — ASCE 7 Eq. 12.8-12 C_vx realised node-by-node, i.e. a
+story force split over its nodes by mass), normalised so `sum f = 1`;
+base shear = lambda * `reference_base_shear` (= sum f = 1).  `pattern`
+pushes the pattern at scale lambda; `reference_base_shear` = the
+pattern's net applied force in the push direction, measured as minus the
+summed support (+ spring) reactions of a linear elastic solve of the
+pattern, so base shear = lambda * reference_base_shear exactly (statics).
+`roof_point` is the pre-feature unit force at the roof control node
+(always the roof, even with another monitored joint).
+
+**Control.**  H_ctrl = the monitored node's elevation (roof elevation for
+the default).  `roof_disp` / `roof_drift` are the MONITORED joint's
+displacement past the gravity state / that over H_ctrl.  Displacement
+control on a rigid-diaphragm SLAVE joint drives its story master (a slave
+has no free equation under Transformation); the joint's own displacement
+is still recorded.  `start_from` uses only the static case's pattern
+factors — the pushover's own `geometric` governs the gravity stage.
+
+**Results** (`PushoverResults.control` / `.distribution`; additive keys of
+`to_dict()`, always present; every pre-feature key unchanged):
+
+```json
+"capacity_curve": {"node": 45, "dof": "UX", "mode": "displacement_control",
+                   "height": 9.6, "start_from": null,
+                   "disp": [...], "base_shear": [...]},
+"distribution": {"type": "mode",
+                 "story_forces": {"Story1": 0.634, "Story2": 0.366},
+                 "normalization": "sum of applied push forces = 1 (base shear = lambda * reference_base_shear)",
+                 "reference_base_shear": 1.0,
+                 "params": {"mode_number": 2, "period": 0.0799, "mass_ratio": 0.995}}
+```
+
+`story_forces` = applied push force per story normalised by
+`reference_base_shear` (nodes off story planes are loaded but not listed;
+for `pattern` only story forces + nodal loads enter the shape).
+`params`: `mode` {mode_number, period, mass_ratio}; `triangular` {k[,
+period, mode_number when k is automatic]}; `pattern` {pattern};
+`roof_point` / `uniform_accel` {}.
+
+Validation (`_validate_pushover_distribution`, ValueError): unknown
+distribution / control_mode / control_dof, missing/unknown pattern,
+mode_number < 1, k <= 0, unknown control_story, control_story +
+control_point, malformed control_point, zero/non-finite target_disp or
+target_load, unknown start_from, start_from + gravity.
+`add_pushover_case(..., **opts)` takes the new fields as keywords
+(unknown keyword -> TypeError).  The API needs no change: `POST /api/model`
+round-trips the fields via `from_dict`, and `/api/analyze` pushover blocks
+carry the new keys.
+
+Tests: `tests/test_pushover_distribution.py` (37 cases) — elastic 2-story
+shear building: initial stiffness = hand 1/sum(V_i/k_i) for roof_point,
+uniform_accel, triangular (k = 1, 2) and mode (1e-3); uniform ∝ masses;
+triangular = ASCE 7 C_vx (k = 1, 2) and automatic k(T); mode = m*phi of
+the engine's own eigen solve (1e-8) and of the hand 2-DOF eig (1e-3);
+pattern = the linear static case at the matching lambda (1e-6); load
+control; monitored story / slave point / target_disp; start_from ==
+gravity dict; default == explicit roof_point; model round-trip;
+validation.

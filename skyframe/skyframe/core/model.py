@@ -1146,6 +1146,42 @@ class TimeHistoryCase:
 
 PUSHOVER_DIRECTIONS = ("X", "Y")
 PUSHOVER_HINGE_MODES = ("column_base", "all_ends")
+# pushover load distribution + control (ETABS Nonlinear Static parity)
+PUSHOVER_DISTRIBUTIONS = ("roof_point", "pattern", "mode", "uniform_accel",
+                          "triangular")
+PUSHOVER_CONTROL_MODES = ("displacement_control", "load_control")
+PUSHOVER_CONTROL_DOFS = ("UX", "UY")
+PUSHOVER_DIST_DEFAULTS = {
+    "load_distribution": "roof_point", "pattern": None, "mode_number": None,
+    "k": None, "control_story": None, "control_point": None,
+    "control_dof": None, "target_disp": None,
+    "control_mode": "displacement_control", "target_load": 1.0,
+    "start_from": None}
+
+
+def _coerce_pushover_dist(d: dict) -> dict:
+    """Typed PushoverCase distribution/control kwargs from a dict (only
+    the keys present in ``d`` that belong to PUSHOVER_DIST_DEFAULTS)."""
+    out: dict = {}
+    for key in PUSHOVER_DIST_DEFAULTS:
+        if key not in d:
+            continue
+        v = d[key]
+        if v is None:
+            out[key] = None
+        elif key == "control_point":
+            out[key] = [float(c) for c in v]
+        elif key == "mode_number" and isinstance(v, (int, float)) \
+                and not isinstance(v, bool) and float(v).is_integer():
+            out[key] = int(v)
+        elif key in ("k", "target_disp", "target_load") \
+                and not isinstance(v, bool):
+            out[key] = float(v)
+        elif isinstance(v, str):
+            out[key] = str(v)
+        else:
+            out[key] = v
+    return out
 
 
 @dataclass
@@ -1195,15 +1231,36 @@ class PushoverCase:
     # "corotational" (large-displacement pushover).  Same transformation
     # rules as LoadCase.geometric.
     geometric: str = "linear"
+    # ETABS Nonlinear Static parity — load distribution + control (see
+    # CONTRACT "Pushover load distribution and control").  Every default
+    # reproduces the pre-feature unit roof push bit-identically.
+    load_distribution: str = "roof_point"  # |pattern|mode|uniform_accel|triangular
+    pattern: Optional[str] = None          # "pattern": load pattern name
+    mode_number: Optional[int] = None      # "mode": None = dominant in direction
+    k: Optional[float] = None              # "triangular": None = ASCE 7 k(T)
+    control_story: Optional[str] = None    # monitored joint: story (master)
+    control_point: Optional[List[float]] = None   # ... or an explicit [x,y,z]
+    control_dof: Optional[str] = None      # "UX"|"UY"; None = push direction
+    target_disp: Optional[float] = None    # m; None = target_drift * H_ctrl
+    control_mode: str = "displacement_control"    # | "load_control"
+    target_load: float = 1.0               # load_control final load factor
+    start_from: Optional[str] = None       # static LoadCase held as gravity
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "direction": self.direction,
-                "gravity": dict(self.gravity),
-                "target_drift": self.target_drift, "steps": self.steps,
-                "hinges": self.hinges, "My": dict(self.My),
-                "default_My": self.default_My, "hardening": self.hardening,
-                "hinge_params": dict(self.hinge_params),
-                "geometric": self.geometric}
+        d = {"name": self.name, "direction": self.direction,
+             "gravity": dict(self.gravity),
+             "target_drift": self.target_drift, "steps": self.steps,
+             "hinges": self.hinges, "My": dict(self.My),
+             "default_My": self.default_My, "hardening": self.hardening,
+             "hinge_params": dict(self.hinge_params),
+             "geometric": self.geometric}
+        # distribution/control keys appear only when set (pre-feature
+        # files serialize byte-identically)
+        for key, dflt in PUSHOVER_DIST_DEFAULTS.items():
+            val = getattr(self, key)
+            if val != dflt:
+                d[key] = list(val) if key == "control_point" else val
+        return d
 
 
 STAGED_MODES = ("per_story",)
@@ -2300,8 +2357,16 @@ class BuildingModel:
                           default_My: Optional[float] = None,
                           hardening: float = 0.02,
                           hinge_params: Optional[Dict[str, float]] = None,
-                          geometric: str = "linear"
+                          geometric: str = "linear",
+                          **dist_opts
                           ) -> PushoverCase:
+        """``dist_opts``: the optional load-distribution/control fields
+        (keys of ``PUSHOVER_DIST_DEFAULTS``, e.g. ``load_distribution=
+        "mode"``, ``control_story="Story2"``, ``start_from="GRAV"``)."""
+        bad = set(dist_opts) - set(PUSHOVER_DIST_DEFAULTS)
+        if bad:
+            raise TypeError(f"add_pushover_case: unknown option(s) "
+                            f"{sorted(bad)}")
         po = PushoverCase(
             name, direction, gravity=dict(gravity or {}),
             target_drift=float(target_drift), steps=int(steps),
@@ -2311,7 +2376,8 @@ class BuildingModel:
             hardening=float(hardening),
             hinge_params={k: float(v)
                           for k, v in (hinge_params or {}).items()},
-            geometric=str(geometric))
+            geometric=str(geometric),
+            **_coerce_pushover_dist(dist_opts))
         self._validate_pushover_case(po)
         self.pushover_cases[name] = po
         return po
@@ -2364,6 +2430,69 @@ class BuildingModel:
                 math.isfinite(po.default_My) and po.default_My > 0.0):
             raise ValueError(f"Pushover case {po.name}: default_My must be "
                              "a finite value > 0 (or None)")
+        self._validate_pushover_distribution(po)
+
+    def _validate_pushover_distribution(self, po: PushoverCase) -> None:
+        """Load distribution / control / start_from fields of a pushover."""
+        nm = f"Pushover case {po.name}"
+        dist = getattr(po, "load_distribution", "roof_point")
+        if dist not in PUSHOVER_DISTRIBUTIONS:
+            raise ValueError(f"{nm}: load_distribution must be one of "
+                             f"{PUSHOVER_DISTRIBUTIONS}, got {dist!r}")
+        if dist == "pattern":
+            if not po.pattern:
+                raise ValueError(f"{nm}: load_distribution 'pattern' needs "
+                                 "a pattern name")
+            if po.pattern not in self.patterns:
+                raise ValueError(f"{nm}: pattern references unknown load "
+                                 f"pattern {po.pattern!r}")
+        if po.mode_number is not None and (
+                isinstance(po.mode_number, bool)
+                or not isinstance(po.mode_number, int)
+                or po.mode_number < 1):
+            raise ValueError(f"{nm}: mode_number must be an integer >= 1 "
+                             "(or None)")
+        if po.k is not None and not (
+                isinstance(po.k, (int, float)) and math.isfinite(po.k)
+                and po.k > 0.0):
+            raise ValueError(f"{nm}: k must be a finite value > 0 (or None)")
+        if po.control_story is not None and po.control_point is not None:
+            raise ValueError(f"{nm}: give control_story OR control_point, "
+                             "not both")
+        if po.control_story is not None and po.control_story not in {
+                s.name for s in self.stories}:
+            raise ValueError(f"{nm}: control_story references unknown story "
+                             f"{po.control_story!r}")
+        if po.control_point is not None and not (
+                len(po.control_point) == 3
+                and all(isinstance(v, (int, float)) and math.isfinite(v)
+                        for v in po.control_point)):
+            raise ValueError(f"{nm}: control_point must be [x, y, z]")
+        if po.control_dof is not None and \
+                po.control_dof not in PUSHOVER_CONTROL_DOFS:
+            raise ValueError(f"{nm}: control_dof must be one of "
+                             f"{PUSHOVER_CONTROL_DOFS}, got "
+                             f"{po.control_dof!r}")
+        if po.target_disp is not None and not (
+                isinstance(po.target_disp, (int, float))
+                and math.isfinite(po.target_disp) and po.target_disp != 0.0):
+            raise ValueError(f"{nm}: target_disp must be a finite non-zero "
+                             "value (or None)")
+        if po.control_mode not in PUSHOVER_CONTROL_MODES:
+            raise ValueError(f"{nm}: control_mode must be one of "
+                             f"{PUSHOVER_CONTROL_MODES}, got "
+                             f"{po.control_mode!r}")
+        if not (isinstance(po.target_load, (int, float))
+                and math.isfinite(po.target_load) and po.target_load != 0.0):
+            raise ValueError(f"{nm}: target_load must be a finite non-zero "
+                             "value")
+        if po.start_from is not None:
+            if po.start_from not in self.cases:
+                raise ValueError(f"{nm}: start_from references unknown "
+                                 f"static load case {po.start_from!r}")
+            if po.gravity:
+                raise ValueError(f"{nm}: give gravity OR start_from, not "
+                                 "both")
 
     def add_link(self, pi: Tuple[float, float, float],
                  pj: Tuple[float, float, float],
@@ -3540,7 +3669,8 @@ class BuildingModel:
                 hardening=float(pd.get("hardening", 0.02)),
                 hinge_params={k: float(v) for k, v in
                               (pd.get("hinge_params") or {}).items()},
-                geometric=str(pd.get("geometric", "linear")))    # v0.25
+                geometric=str(pd.get("geometric", "linear")),    # v0.25
+                **_coerce_pushover_dist(pd))      # distribution/control
         for name, sd in (d.get("staged_cases") or {}).items():
             td = sd.get("time_dependent")                        # v0.25
             mdl.staged_cases[name] = StagedCase(

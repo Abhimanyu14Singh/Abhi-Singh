@@ -1273,9 +1273,15 @@ class PushoverResults:
     # [{uid, end, My, thy, a, b, c, IO, LS, CP, rot: [per step],
     #   moment: [per step], state: [per step]}]; empty otherwise.
     hinge_detail: List[dict] = field(default_factory=list)
+    # pushover load distribution + control (CONTRACT "Pushover load
+    # distribution and control"): the monitored joint {node, dof, mode,
+    # height, start_from} and the applied reference-load report
+    # {type, story_forces (normalised), reference_base_shear, params}.
+    control: Optional[dict] = None
+    distribution: Optional[dict] = None
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "roof_disp": list(self.roof_disp),
             "base_shear": list(self.base_shear),
             "roof_drift": list(self.roof_drift),
@@ -1284,6 +1290,13 @@ class PushoverResults:
             "warnings": list(self.warnings),
             "hinges": [dict(hd) for hd in self.hinge_detail],
         }
+        if self.control is not None:
+            d["capacity_curve"] = dict(self.control, **{
+                "disp": list(self.roof_disp),
+                "base_shear": list(self.base_shear)})
+        if self.distribution is not None:
+            d["distribution"] = dict(self.distribution)
+        return d
 
 
 @dataclass
@@ -5659,6 +5672,11 @@ class OpenSeesEngine:
         and every hinge spring rotation are recorded.  On a step that fails
         to converge (Newton, then a NewtonLineSearch retry) the run stops
         early and returns the partial curve with a warning.
+
+        The push shape, monitored joint, control mode and ``start_from``
+        gravity case are configurable (CONTRACT "Pushover load
+        distribution and control"; ``pushover_distribution``); the
+        defaults are exactly the stages above.
         """
         if name in self._po_cache:
             return self._po_cache[name]
@@ -5675,6 +5693,11 @@ class OpenSeesEngine:
         geom_po = getattr(case, "geometric", "linear")
         po_transf = {"linear": None, "pdelta": "PDelta",
                      "corotational": "Corotational"}[geom_po]
+        # load distribution / control / start_from (ETABS Nonlinear Static
+        # parity; skyframe.engine.pushover_distribution).  None = the
+        # default unit roof push, bit-identical to the pre-feature path.
+        from skyframe.engine import pushover_distribution as _pod
+        plan = _pod.plan_push(self, case)
         asm = self._build(hinge_case=case, transf=po_transf)
         self._seg_span_loads = {}
         self._seg_fef = {}
@@ -5701,11 +5724,13 @@ class OpenSeesEngine:
         # equalDOF tie (it read ~0 on diaphragm buildings with hinges at
         # supported column bases; single-support models happened to work).
         warn_list: List[str] = []
+        mon, mdof, Hc = _pod.resolve_control(self, asm, case, ctrl, dof, H)
+        gravity = _pod.resolve_gravity(model, case)
         d0 = 0.0
-        if case.gravity:
+        if gravity:
             ops.timeSeries("Linear", 1)
             ops.pattern("Plain", 1, 1)
-            for pat_name, scale in case.gravity.items():
+            for pat_name, scale in gravity.items():
                 self._apply_pattern(asm, pat_name, scale)
             self._setup_pushover_analysis(asm)
             # v0.25: a corotational gravity stage ramps in increments (the
@@ -5715,15 +5740,27 @@ class OpenSeesEngine:
                 "corotational" if geom_po == "corotational" else "linear",
                 f"Pushover case {name!r}: gravity stage failed to converge")
             ops.loadConst("-time", 0.0)
-            d0 = ops.nodeDisp(ctrl, dof)
+            d0 = ops.nodeDisp(mon, mdof)
 
         ops.timeSeries("Linear", 2)
         ops.pattern("Plain", 2, 2)
-        vec = [0.0] * 6
-        vec[dof - 1] = 1.0
-        ops.load(ctrl, *vec)
-        du = case.target_drift * H / case.steps
-        self._setup_pushover_analysis(asm, ctrl=ctrl, dof=dof, du=du)
+        if plan is None:
+            vec = [0.0] * 6
+            vec[dof - 1] = 1.0
+            ops.load(ctrl, *vec)
+            v_ref = 1.0
+        else:
+            plan.apply(self, asm, dof, case)
+            v_ref = plan.v_ref
+        if case.control_mode == "load_control":
+            _pod.setup_load_control(asm, case.target_load / case.steps)
+        else:
+            if case.target_disp is not None:
+                du = case.target_disp / case.steps
+            else:
+                du = case.target_drift * Hc / case.steps
+            self._setup_pushover_analysis(
+                asm, ctrl=_pod.drive_node(asm, mon), dof=mdof, du=du)
 
         roof_disp: List[float] = []
         base_shear: List[float] = []
@@ -5749,9 +5786,13 @@ class OpenSeesEngine:
                     "the solution did not converge (partial capacity "
                     "curve returned)")
                 break
-            roof_disp.append(float(ops.nodeDisp(ctrl, dof)) - d0)
-            # unit reference load at the control DOF -> V_base = lambda
-            base_shear.append(float(ops.getLoadFactor(2)))
+            roof_disp.append(float(ops.nodeDisp(mon, mdof)) - d0)
+            # unit reference load at the control DOF -> V_base = lambda;
+            # a distributed reference load -> V_base = lambda * v_ref
+            if plan is None:
+                base_shear.append(float(ops.getLoadFactor(2)))
+            else:
+                base_shear.append(float(ops.getLoadFactor(2)) * v_ref)
             for (uid, end), etag in asm.hinge_ele.items():
                 defo = ops.eleResponse(etag, "deformation")
                 rot = (max(abs(defo[1]), abs(defo[2]))
@@ -5822,8 +5863,15 @@ class OpenSeesEngine:
                 "state": hh["state"]})
 
         result = PushoverResults(
-            name, roof_disp, base_shear, [u / H for u in roof_disp],
-            hinge_rot, warn_list, hinge_detail)
+            name, roof_disp, base_shear, [u / Hc for u in roof_disp],
+            hinge_rot, warn_list, hinge_detail,
+            control={"node": mon,
+                     "dof": "UX" if mdof == 1 else "UY",
+                     "mode": case.control_mode,
+                     "height": Hc,
+                     "start_from": getattr(case, "start_from", None)},
+            distribution=(plan.to_dict() if plan is not None
+                          else _pod.roof_point_dict(top.name)))
         self._po_cache[name] = result
         return result
 
