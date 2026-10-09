@@ -35,6 +35,12 @@ import { initTables } from "./tables.js";   // Show Tables + frequency/energy/pu
 
 import { initCheckModel } from "./checkmodel.js";   // Analyze > Check Model / Check Stability
 
+// G2 — polygon floors/walls/openings + vertex editing; frame insertion point /
+// automatic end offsets dialogs; mock validation of both (aliased imports)
+import { initPolyDraw as g2InitPolyDraw } from "./polydraw.js";
+import { initInsertion as g2InitInsertion } from "./insertdlg.js";
+import { mockValidatePoly as g2MockValidatePoly } from "./mock_poly.js";
+
 /* ------------------------------------------------ state */
 const store = {
   model: null,
@@ -215,7 +221,7 @@ async function analyze() {
 async function postModel(payload) {
   if (store.mock) {
     await new Promise(r => setTimeout(r, 300));
-    const bad = mockValidateAssign(payload);       // mirror backend ValueErrors (assign fields)
+    const bad = mockValidateAssign(payload) || g2MockValidatePoly(payload);   // mirror backend ValueErrors (assign / G2 polygon + insertion fields)
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -1744,8 +1750,10 @@ function renderProps() {
         (ops.length
           ? `<div class="open-row head"><span>u0</span><span>v0</span><span>u1</span><span>v1</span><span></span></div>` +
             ops.map((o, i) => `<div class="open-row" data-i="${i}">` +
+              // G2: polygon openings are edited by drawing — show a read-only tag
+              (o.polygon ? `<span class="muted" style="grid-column:span 4;font-size:11px">polygon · ${o.polygon.length} points</span>` :
               ["u0", "v0", "u1", "v1"].map(k =>
-                `<input type="number" min="0" max="1" step="0.05" data-k="${k}" value="${o[k]}" title="${k} — fraction of the region edge">`).join("") +
+                `<input type="number" min="0" max="1" step="0.05" data-k="${k}" value="${o[k]}" title="${k} — fraction of the region edge">`).join("")) +
               `<button class="chip-x open-del" data-del="${i}" title="Remove opening">✕</button></div>`).join("")
           : `<p class="muted open-empty">No openings — cutouts (doors / windows) removed from the mesh.</p>`) +
       `</div>
@@ -1866,6 +1874,7 @@ function renderProps() {
   $("propClear").addEventListener("click", () => handleSelect([], false));
   $("propDelete").addEventListener("click", deleteSelection);
   AS.decorateProps(box);                         // joint / concentrated / shell loads of the selection
+  if (window.__sky && window.__sky.g2DecorateProps) window.__sky.g2DecorateProps(box);   // G2: polygon geometry + insertion point
 
   const on = (id, ev, fn) => { const n = $(id); if (n) n.addEventListener(ev, fn); };
 
@@ -2183,6 +2192,8 @@ function renderProps() {
 function renderOpeningPreview(sh) {
   const svg = $("openPreview");
   if (!svg) return;
+  // G2 hook: polygon regions / polygon openings get an N-gon preview (polydraw.js)
+  if (window.__sky && window.__sky.g2OpeningPreview && window.__sky.g2OpeningPreview(sh, svg)) return;
   const du = Math.hypot(
     sh.corners[1][0] - sh.corners[0][0],
     sh.corners[1][1] - sh.corners[0][1],
@@ -8423,6 +8434,10 @@ async function boot() {
 
   try { initCheckModel(window.__sky); }      // Check Model / stability / pre-run check
   catch (err) { console.error("check model init failed", err); }
+
+  // G2 — polygon draw/edit + insertion-point / end-offset dialogs (additive __sky)
+  try { g2InitPolyDraw(window.__sky); } catch (err) { console.error("polygon draw init failed", err); }
+  try { g2InitInsertion(window.__sky); } catch (err) { console.error("insertion init failed", err); }
 }
 
 boot();

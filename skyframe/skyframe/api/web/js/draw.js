@@ -8,6 +8,8 @@ import U from "./units.js";   // v1.13 — cursor readout in display units
 import { springKey, lineSpringKey, anyThermalMember, onFoundation, axialLimit,
   axialLimitBadge, linkTypeOf, LINK_TYPES,
   gridSystems, gridSystemGeometry, snapGrids } from "./modeledit.js";
+// G2 — polygon shells: N-gon openings + polygon-wall plan footprint
+import { openingPolygon3 as g2OpeningPolygon3, wallPlanSegment as g2WallPlanSegment } from "./polygeom.js";
 
 const NS = "http://www.w3.org/2000/svg";
 const el = (tag, attrs = {}) => {
@@ -228,7 +230,7 @@ export class PlanEditor {
       // v0.5: slab openings render as even-odd cutouts in plan
       let d = s.corners.map((c, i) => `${i ? "L" : "M"}${c[0]},${c[1]}`).join(" ") + " Z";
       for (const o of (s.openings || [])) {
-        const q = openingPlanQuad(s.corners, o);
+        const q = openingPlanQuad(s, o);   // G2: polygon-aware
         d += " " + q.map((p, i) => `${i ? "L" : "M"}${p[0]},${p[1]}`).join(" ") + " Z";
       }
       this.gElems.appendChild(el("path", {
@@ -250,7 +252,7 @@ export class PlanEditor {
     for (const s of (m.shells || [])) {
       if (s.story !== story || s.kind !== "wall") continue;
       const seld = isSel("shell", s.uid);
-      const [a, b] = [s.corners[0], s.corners[1]];
+      const [a, b] = g2WallPlanSegment(s.corners);   // G2: polygon walls
       this.gElems.appendChild(el("line", {
         x1: a[0], y1: a[1], x2: b[0], y2: b[1],
         stroke: seld ? C.sel : C.wall, "stroke-width": 0.24,
@@ -615,7 +617,7 @@ export class PlanEditor {
     }
     for (const s of (m.shells || [])) {
       if (s.story !== story || s.kind !== "wall") continue;
-      const [a, b] = [s.corners[0], s.corners[1]];
+      const [a, b] = g2WallPlanSegment(s.corners);   // G2: polygon walls
       if (distToSeg(w.x, w.y, a[0], a[1], b[0], b[1]) <= Math.max(tol, 0.15))
         out.push({ type: "shell", uid: s.uid });
     }
@@ -661,8 +663,8 @@ export class PlanEditor {
     }
     for (const s of (m.shells || [])) {
       if (s.story !== story) continue;
-      const cx = s.corners.reduce((a, c) => a + c[0], 0) / 4;
-      const cy = s.corners.reduce((a, c) => a + c[1], 0) / 4;
+      const cx = s.corners.reduce((a, c) => a + c[0], 0) / s.corners.length;   // G2: N corners
+      const cy = s.corners.reduce((a, c) => a + c[1], 0) / s.corners.length;
       if (s.corners.some(c => inBox(c[0], c[1])) || inBox(cx, cy))
         refs.push({ type: "shell", uid: s.uid });
     }
@@ -904,6 +906,8 @@ export class PlanEditor {
         fill: C.box, stroke: C.boxEdge, "stroke-width": 1, "stroke-dasharray": "4 3",
       }));
     }
+    // G2 hook — polygon draw / vertex-edit overlay (js/polydraw.js)
+    if (this.g2Overlay) { try { this.g2Overlay(g, this); } catch (e) { console.error(e); } }
   }
 }
 
@@ -1034,12 +1038,10 @@ export function zipperGlyphPlan(x1, y1, x2, y2, a = 0.16) {
 }
 
 /* ------------------------------------------------ geometry helpers */
-/** Plan-space (x, y) quad of a slab opening via bilinear mapping. */
-function openingPlanQuad(corners, o) {
-  const [c0, c1, c2, c3] = corners;
-  const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-  const at = (u, v) => lerp(lerp(c0, c1, u), lerp(c3, c2, u), v);
-  return [[o.u0, o.v0], [o.u1, o.v0], [o.u1, o.v1], [o.u0, o.v1]].map(([u, v]) => at(u, v));
+/** Plan-space (x, y) outline of a slab opening (G2: polygon openings and
+    N-corner regions via polygeom; 4-corner rectangles stay bilinear). */
+function openingPlanQuad(shell, o) {
+  return g2OpeningPolygon3(shell, o).map(p => [p[0], p[1]]);
 }
 
 function distToSeg(px, py, x1, y1, x2, y2) {

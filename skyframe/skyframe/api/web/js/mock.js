@@ -11,6 +11,8 @@ import { mockFrequencyResults, augmentMockResults as augmentCaseResults } from "
 export { mockCheckModel, mockCheckStability } from "./mock_check.js";
 
 import { augmentMockModel, augmentMockResults as augmentTableResults } from "./mock_tables.js";   // tables / frequency / energy mock blocks
+// G2 polygon shells — mock auto mesh (quads + triangles) for non-quad regions
+import { mockPolyMesh as g2MockPolyMesh, isLegacyQuad as g2IsLegacyQuad } from "./mock_poly.js";
 const G = 9.80665;
 
 function mulberry32(seed) {
@@ -440,6 +442,9 @@ function _mockResultsAll(model) {
   const shell_quads = [];
   for (const sh of (model.shells || [])) {
     if (sh.behavior !== "shell") continue;
+    // G2 hook: polygon regions (3 / 5+ corners, polygon openings) → mock auto
+    // mesh with 3-node triangle entries (CONTRACT "Polygon shells and auto mesh")
+    if (!g2IsLegacyQuad(sh)) { for (const q of g2MockPolyMesh(sh, tagFor)) shell_quads.push(q); continue; }
     const [c0, c1, c2, c3] = sh.corners;
     const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
     const bilin = (u, v) => lerp3(lerp3(c0, c1, u), lerp3(c3, c2, u), v);
@@ -684,7 +689,8 @@ function _mockResultsAll(model) {
       const c = [0, 0, 0];
       for (const tg of q.nodes) {
         const p = nodes[tg];
-        c[0] += p[0] / 4; c[1] += p[1] / 4; c[2] += p[2] / 4;
+        const nq = q.nodes.length;   // G2: 3-node triangles too
+        c[0] += p[0] / nq; c[1] += p[1] / nq; c[2] += p[2] / nq;
       }
       const sh = regionOf[q.region];
       const kind = sh ? sh.kind : "slab";
@@ -3165,7 +3171,7 @@ export function mockCracked(model, body = {}) {
     const c = [0, 0];
     for (const tg of q.nodes) {
       const p = r.nodes[tg];
-      c[0] += p[0] / 4; c[1] += p[1] / 4;
+      c[0] += p[0] / q.nodes.length; c[1] += p[1] / q.nodes.length;   // G2: triangles
     }
     const xs = sh.corners.map(p => p[0]), ys = sh.corners.map(p => p[1]);
     const Lu = Math.max(...xs) - Math.min(...xs) || 1;

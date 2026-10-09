@@ -91,6 +91,9 @@ const v3 = {
   norm(a) { const l = this.len(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; },
 };
 
+// G2 — polygon openings on N-corner regions (CONTRACT "Polygon shells and auto mesh")
+import { openingPolygon3 as g2OpeningPolygon3 } from "./polygeom.js";
+
 export class Viewer3D {
   constructor(canvas, opts = {}) {
     this.canvas = canvas;
@@ -271,8 +274,10 @@ export class Viewer3D {
     };
     this.shellPolys = (m.shells || []).map(s => ({
       corners: s.corners, kind: s.kind, uid: s.uid, behavior: s.behavior,
-      openings: (s.openings || []).map(o =>
-        [[o.u0, o.v0], [o.u1, o.v0], [o.u1, o.v1], [o.u0, o.v1]]
+      // G2: polygon openings + N-corner regions (4-corner rects stay bilinear)
+      openings: (s.openings || []).map(o => (o.polygon || s.corners.length !== 4)
+        ? g2OpeningPolygon3(s, o)
+        : [[o.u0, o.v0], [o.u1, o.v0], [o.u1, o.v1], [o.u0, o.v1]]
           .map(([u, v]) => bilin(s.corners, u, v))),
     }));
 
@@ -1056,6 +1061,8 @@ export class Viewer3D {
 
     // ---- extra overlay hook: fn(ctx, P, viewer) (Check Model / stability markers)
     if (this.extraOverlay) { try { this.extraOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
+    // G2 hook — insertion-point offset axes + badges (js/insertdlg.js)
+    if (this.g2Overlay && !overlayActive) { try { this.g2Overlay(ctx, P, this); } catch (e) { /* never break the render */ } }
 
     // ---- axis triad
     this._renderTriad(ctx, w, h);
