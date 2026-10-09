@@ -5,8 +5,9 @@ import { designerProps, blankMaterial,                  // v0.21 — shoelace pr
   allAnalysisCases, MODAL_CASE, normalizeActiveDof,       // v1.13 — cases to run / DOF
   ssFamily, ssStrengths, ssDefaultParams, normalizeSsPoints } from "./modeledit.js";
 import { allUnitsTables } from "./units.js";              // v1.13 — GET /api/units mirror
-import { mockFrequencyResults, augmentMockResults } from "./mock_cases.js";  // load-case parity (SS / PSD / DI / pushover)
+import { mockFrequencyResults, augmentMockResults as augmentCaseResults } from "./mock_cases.js";  // load-case parity (SS / PSD / DI / pushover)
 
+import { augmentMockModel, augmentMockResults as augmentTableResults } from "./mock_tables.js";   // tables / frequency / energy mock blocks
 const G = 9.80665;
 
 function mulberry32(seed) {
@@ -272,7 +273,7 @@ export function mockModel(p = {}) {
   };
   const dprops = designerProps(dcol);
 
-  return {
+  return augmentMockModel({                 // + steady-state / PSD / energy / pushover-distribution demo data
     name: o.name,
     materials: { CONC: Object.assign(blankMaterial("CONC"), { E: o.E }) },
     sections: {
@@ -402,7 +403,7 @@ export function mockModel(p = {}) {
     },
     num_modes: Math.min(3 * o.stories, 12),
     _mock_params: o,
-  };
+  });
 }
 
 /** Mock results.to_dict() for a mock (or real-shaped) model dict — every
@@ -3207,7 +3208,7 @@ export function mockCracked(model, body = {}) {
    ================================================================ */
 export function mockResults(model) {
   const r0 = _mockResultsAll(model);
-  const r = augmentMockResults(model, Object.assign(r0, mockFrequencyResults(model, r0)));
+  const r = augmentCaseResults(model, Object.assign(r0, mockFrequencyResults(model, r0)));
   const notRun = new Set(Array.isArray(model.cases_not_run) ? model.cases_not_run : []);
   const runs = n => !notRun.has(n);
   const all = allAnalysisCases(model);
@@ -3277,6 +3278,7 @@ export function mockResults(model) {
       for (const cd of Object.values(grp || {})) scrub(cd);
   }
   r.active_dof = [...dofs];
+  augmentTableResults(model, r);                  // fills only missing blocks (tables / energy / pushover views)
   return r;
 }
 

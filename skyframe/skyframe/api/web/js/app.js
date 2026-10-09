@@ -31,6 +31,8 @@ import { buildStressStrainSection } from "./sscurve.js";
 import * as AS from "./assigndlg.js";                 // ETABS Assign / section-modifier dialogs
 import { mockValidateAssign } from "./mock_assign.js";
 
+import { initTables } from "./tables.js";   // Show Tables + frequency/energy/pushover/load-participation views
+
 /* ------------------------------------------------ state */
 const store = {
   model: null,
@@ -8405,6 +8407,8 @@ async function boot() {
   // Delegates to the store/functions exposed above; never re-implements logic.
   try { initEtabs(window.__sky); }
   catch (err) { console.error("etabs chrome init failed", err); }
+  try { initTables(window.__sky); }                 // Display > Show Tables… + result displays
+  catch (err) { console.error("tables init failed", err); }
 }
 
 boot();
