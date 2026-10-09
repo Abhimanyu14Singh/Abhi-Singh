@@ -2274,3 +2274,142 @@ tr.cm-active td { background: var(--accent-ghost) !important; }
   --text-1: #182430; --text-2: #47566a; --text-3: #7d8b9c;
   --accent-ghost: rgba(30,154,212,0.12);
 }
+
+/* ================================================================
+   v1.13 — analysis setup: Set Load Cases to Run · Active DOF · Mass
+   Source · display units · Nonlinear Material Data (stress–strain)
+   ================================================================ */
+/* menu-item glyphs */
+.etabs-menu-item .mi-label { display: inline-flex; align-items: center; gap: 7px; }
+.etabs-menu-item .mi-ico { width: 14px; height: 14px; flex: none; color: var(--text-2); }
+.etabs-menu-item:hover .mi-ico { color: var(--accent); }
+
+/* shared "not run" badge */
+.notrun-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; font-weight: 650; letter-spacing: .2px; white-space: nowrap;
+  color: var(--text-3); background: var(--surface-3);
+  border: 1px dashed var(--border); border-radius: 99px; padding: 1px 8px;
+  vertical-align: 1px; margin-left: 6px;
+}
+.run-status-badge { margin: 0 8px 0 0; cursor: help; color: var(--amber); border-color: rgba(229,165,10,.45); background: var(--amber-ghost); }
+.lc-row.is-not-run .lc-name, .rs-card.is-not-run .rs-name { color: var(--text-3); text-decoration: line-through; text-decoration-color: rgba(125,140,160,.6); }
+.lc-row.is-not-run, .rs-card.is-not-run { opacity: .78; }
+.rs-head .notrun-badge, .lc-row .notrun-badge { align-self: center; }
+
+/* dialogs */
+.sky-dlg .modal { max-height: 88vh; }
+.dlg-title { display: inline-flex; align-items: center; gap: 8px; }
+.dlg-ico { width: 17px; height: 17px; color: var(--accent); flex: none; }
+.dlg-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.dlg-foot-note { font-size: 11.5px; }
+.dlg-intro { font-size: 11.5px; margin: 0 0 10px; line-height: 1.45; }
+.dlg-error { margin: 8px 0 0; }
+.dlg-group-title {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px;
+  color: var(--text-3); margin: 10px 0 6px;
+}
+.dlg-group {
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px 10px;
+  margin: 0 0 12px; display: flex; flex-direction: column; gap: 6px;
+}
+.dlg-group legend { font-size: 11.5px; font-weight: 650; color: var(--text-2); padding: 0 6px; }
+.dlg-chk { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-1); cursor: pointer; }
+.dlg-chk input { width: auto; flex: none; }
+.dlg-chk input:disabled + * { opacity: .5; }
+.dlg-sub-row { display: flex; align-items: center; gap: 10px; padding-left: 24px; font-size: 12px; color: var(--text-2); }
+.dlg-sub-row select { width: auto; min-width: 180px; }
+
+/* Set Load Cases to Run */
+.dlg-cases { display: grid; grid-template-columns: 1fr auto; gap: 0 12px; }
+.dlg-cases .dlg-intro, .dlg-cases .dlg-combo-note { grid-column: 1 / -1; }
+.dlg-table-wrap { max-height: 46vh; }
+.dlg-case-actions { display: flex; flex-direction: column; gap: 6px; align-self: start; }
+.dlg-case-actions .btn { white-space: nowrap; }
+.dlg-combo-note { font-size: 11.5px; margin: 10px 0 0; }
+.dlg-case-table tbody tr { cursor: pointer; user-select: none; }
+.dlg-case-table tbody tr.is-sel td { background: var(--accent-ghost); }
+.dlg-case-table tbody tr.is-not-run td:first-child b { color: var(--text-3); }
+.run-st { font-size: 11.5px; font-weight: 600; }
+.run-st-finished { color: var(--green); }
+.run-st-not_run { color: var(--text-3); }
+.run-st-run_as_dependency { color: var(--accent); }
+.run-st-failed { color: var(--red); }
+.run-act {
+  font: inherit; font-size: 11.5px; font-weight: 650; cursor: pointer;
+  color: var(--green); background: rgba(52,195,132,.1);
+  border: 1px solid rgba(52,195,132,.35); border-radius: 5px; padding: 1px 9px; min-width: 84px;
+}
+.run-act.is-off { color: var(--text-3); background: var(--surface-3); border-color: var(--border); }
+
+/* Active DOF */
+.dof-presets { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.dof-preset {
+  font: inherit; font-size: 11.5px; font-weight: 600; color: var(--text-2);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 4px; cursor: pointer;
+}
+.dof-preset:hover { color: var(--text-1); border-color: #2e3947; }
+.dof-preset.is-active { color: var(--accent); border-color: rgba(53,181,229,.55); background: var(--accent-ghost); }
+.dof-ico { width: 22px; height: 22px; }
+.dof-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 12px; }
+.dof-chk { display: flex; align-items: center; gap: 6px; font: 600 12.5px var(--mono); color: var(--text-1); cursor: pointer; }
+.dof-chk input { width: auto; }
+
+/* Mass Source */
+.mass-pat-table { display: flex; flex-direction: column; gap: 4px; padding-left: 24px; }
+.mass-pat-row { display: grid; grid-template-columns: 1fr 110px 24px; gap: 6px; align-items: center; }
+.mass-pat-row.head span { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .5px; }
+.mass-pat-add { padding-left: 24px; }
+.mass-opts-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+.mass-opts-sum { font-size: 11.5px; }
+.btn-ico { width: 13px; height: 13px; flex: none; margin-right: 5px; vertical-align: -2px; }
+
+/* Units dialog */
+.units-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; margin-bottom: 10px; }
+.units-opt { display: flex; align-items: center; gap: 6px; font: 600 12.5px var(--mono); color: var(--text-1); cursor: pointer; }
+.units-opt input { width: auto; }
+.units-opt .muted { font: 400 11px inherit; margin-left: auto; }
+.units-src { margin-top: 8px; }
+
+/* status bar: units selector + DOF chip */
+.sb-units { gap: 5px; }
+.sb-units .sb-ico-wrap { display: inline-flex; color: var(--text-3); }
+.sb-units-sel { min-width: 76px; font-variant-numeric: tabular-nums; }
+.sb-dof { gap: 5px; }
+.sb-dof-txt { font: 600 10.5px var(--mono); }
+
+/* Model Explorer — Load Cases group */
+.ex-count { margin-left: auto; font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.ex-case.is-not-run { color: var(--text-3); }
+.ex-case.is-not-run .ex-leaf-lbl { text-decoration: line-through; text-decoration-color: rgba(125,140,160,.6); }
+.ex-notrun {
+  margin-left: auto; font-size: 9.5px; font-weight: 650; color: var(--text-3);
+  border: 1px dashed var(--border); border-radius: 99px; padding: 0 6px; flex: none;
+}
+
+/* Nonlinear Material Data (stress–strain) */
+.mpd-title-ico { width: 13px; height: 13px; vertical-align: -2px; margin-right: 6px; color: var(--accent); }
+.mpd-ss .mpd-sec-title { display: flex; align-items: center; }
+.ss-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 330px); gap: 12px; align-items: start; }
+.ss-form { grid-template-columns: minmax(0, 1fr); }
+.ss-plot-wrap {
+  background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 8px;
+  padding: 8px 10px; min-height: 120px; transition: opacity .15s;
+}
+.ss-plot-wrap.is-loading { opacity: .6; }
+.ss-svg { display: block; width: 100%; height: auto; }
+.ss-frame { fill: none; stroke: var(--border); stroke-width: 1; }
+.ss-zero { stroke: var(--text-3); stroke-width: 1; stroke-dasharray: 3 3; }
+.ss-path { stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.ss-pt-dot { fill: var(--surface-2); stroke: var(--accent); stroke-width: 1.4; }
+.ss-axis-text { fill: var(--text-2); font-size: 9px; font-variant-numeric: tabular-nums; }
+.ss-axis-unit { fill: var(--text-3); font-size: 9px; }
+.ss-notes { margin: 6px 0 0 14px; padding: 0; font-size: 10.5px; color: var(--text-3); }
+.ss-points { gap: 4px; }
+.ss-pt { display: grid; grid-template-columns: 1fr 1fr 24px; gap: 6px; align-items: center; }
+.ss-pt.head span { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .5px; }
+.ss-pt input { min-width: 0; }
+.ss-add { align-self: flex-start; margin-top: 2px; }
+.ss-default-note { grid-column: 1 / -1; }
+@media (max-width: 760px) { .ss-body { grid-template-columns: minmax(0, 1fr); } }

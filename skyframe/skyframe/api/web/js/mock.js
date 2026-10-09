@@ -1,7 +1,10 @@
 /* SkyFrame mock backend — matches CONTRACT.md shapes so the UI is fully
    explorable without the Flask server (offline / ?mock=1). */
 
-import { designerProps, blankMaterial } from "./modeledit.js";   // v0.21 — shoelace properties
+import { designerProps, blankMaterial,                  // v0.21 — shoelace properties
+  allAnalysisCases, MODAL_CASE, normalizeActiveDof,       // v1.13 — cases to run / DOF
+  ssFamily, ssStrengths, ssDefaultParams, normalizeSsPoints } from "./modeledit.js";
+import { allUnitsTables } from "./units.js";              // v1.13 — GET /api/units mirror
 
 const G = 9.80665;
 
@@ -401,8 +404,9 @@ export function mockModel(p = {}) {
   };
 }
 
-/** Mock results.to_dict() for a mock (or real-shaped) model dict. */
-export function mockResults(model) {
+/** Mock results.to_dict() for a mock (or real-shaped) model dict — every
+    case solved (the v1.13 wrapper below drops the "Do not Run" ones). */
+function _mockResultsAll(model) {
   const rnd = mulberry32(1234567);
   const jit = (a = 0.05) => 1 + (rnd() - 0.5) * 2 * a;
 
@@ -3189,4 +3193,186 @@ export function mockCracked(model, body = {}) {
   cd.case = name;
   cd.method = "cracked";
   return cd;
+}
+
+/* ================================================================
+   v1.13 — Set Load Cases to Run (cases_not_run) + case/combo status.
+   Mirrors POST /api/analyze: every case named in model.cases_not_run is
+   dropped from the results unless another running case needs it (then it is
+   "run_as_dependency": RS/TH need MODAL, a buckling case needs its stressed
+   base_case). Combinations referencing a case that did not run are
+   "skipped" and dropped. Inactive translational DOFs (model.active_dof) are
+   zeroed in the mock story/node displacements.
+   ================================================================ */
+export function mockResults(model) {
+  const r = _mockResultsAll(model);
+  const notRun = new Set(Array.isArray(model.cases_not_run) ? model.cases_not_run : []);
+  const runs = n => !notRun.has(n);
+  const all = allAnalysisCases(model);
+  const deps = new Set();
+  if (all.some(c => (c.kind === "rs" || c.kind === "th") && runs(c.name))) deps.add(MODAL_CASE);
+  for (const [n, bc] of Object.entries(model.buckling_cases || {}))
+    if (runs(n) && bc.base_case) deps.add(bc.base_case);
+
+  const case_status = {};
+  const removed = new Set();
+  for (const c of all) {
+    const st = runs(c.name) ? "finished" : deps.has(c.name) ? "run_as_dependency" : "not_run";
+    case_status[c.name] = st;
+    if (st !== "not_run") continue;
+    removed.add(c.name);
+    if (c.kind === "static" && r.cases) delete r.cases[c.name];
+    else if (c.kind === "rs" && r.rs_cases) delete r.rs_cases[c.name];
+    else if (c.kind === "th" && r.th_cases) delete r.th_cases[c.name];
+    else if (c.kind === "pushover" && r.pushover) delete r.pushover[c.name];
+    else if (c.kind === "buckling" && r.buckling) delete r.buckling[c.name];
+    else if (c.kind === "staged" && r.staged) delete r.staged[c.name];
+    else if (c.kind === "modal")
+      r.modal = { periods: [], frequencies: [], participation: [], shapes: {} };
+  }
+  // RS directional combinations whose components did not run disappear too
+  for (const [n, rc] of Object.entries(model.rs_combos || {}))
+    if (removed.has(rc.name_x) || removed.has(rc.name_y)) {
+      if (r.rs_cases) delete r.rs_cases[n];
+      removed.add(n);
+    }
+  const combo_status = {};
+  for (const [n, cb] of Object.entries(model.combos || {})) {
+    const skip = Object.keys(cb.cases || {}).some(cn => removed.has(cn));
+    combo_status[n] = skip ? "skipped" : "finished";
+    if (skip) { if (r.combos) delete r.combos[n]; removed.add(n); }
+  }
+  // derived per-case blocks keyed by case/combo name
+  for (const key of ["takedown", "deflection_checks", "section_cuts", "piers",
+                     "story_stiffness", "irregularity"]) {
+    if (!r[key]) continue;
+    for (const n of removed) delete r[key][n];
+    if (!Object.keys(r[key]).length) delete r[key];
+  }
+  for (const key of ["pushover", "buckling"])
+    if (r[key] && !Object.keys(r[key]).length) delete r[key];
+  r.case_status = case_status;
+  r.combo_status = combo_status;
+
+  // active DOF — zero the inactive translations in the mock displacements
+  const dofs = new Set(normalizeActiveDof(model.active_dof));
+  const zeroX = !dofs.has("UX"), zeroY = !dofs.has("UY");
+  if (zeroX || zeroY) {
+    const scrub = cd => {
+      if (!cd) return;
+      for (const st of Object.values(cd.story || {})) {
+        if (zeroX) { st.ux = 0; st.drift_x = 0; st.shear_x = 0; }
+        if (zeroY) { st.uy = 0; st.drift_y = 0; st.shear_y = 0; }
+      }
+      for (const d of Object.values(cd.node_disp || {})) {
+        if (zeroX) d[0] = 0;
+        if (zeroY) d[1] = 0;
+      }
+      if (cd.min) scrub(cd.min);
+    };
+    for (const grp of [r.cases, r.combos, r.rs_cases, r.staged])
+      for (const cd of Object.values(grp || {})) scrub(cd);
+  }
+  r.active_dof = [...dofs];
+  return r;
+}
+
+/* ================================================================
+   v1.13 — mock POST /api/materials/curve {material} →
+   {strain:[…], stress:[…] (kPa, compression negative), model, notes:[…]}.
+   Backbones: concrete simple = Hognestad parabola + linear descent; park =
+   Kent–Park (unconfined, 0.2·f'c residual); mander = Mander/Popovics
+   (unconfined, linear spalling branch past 2·εc0); steel simple = bilinear
+   Steel01 (hardening ratio b); park = Park strain hardening (plateau to
+   εsh, curve to fu at εsu); user = piecewise linear through the points.
+   Concrete tension: linear to ft, then cracked (zero). "Default" (null) =
+   the engine built-in law: simple for concrete/steel, elastic otherwise.
+   ================================================================ */
+export function mockMaterialCurve(material = {}) {
+  const mat = material || {};
+  const ss = mat.stress_strain && mat.stress_strain.model ? mat.stress_strain : null;
+  const fam = ssFamily(mat.material_type);
+  const model = ss ? ss.model : "default";
+  const law = ss ? ss.model : (fam === "other" ? "elastic" : "simple");
+  const prm = { ...ssDefaultParams(mat), ...((ss && ss.params) || {}) };
+  const { E, fc, fy, fu } = ssStrengths(mat);
+  const notes = [];
+  const strain = [], stress = [];
+  const add = (e, s) => { strain.push(+e.toPrecision(8)); stress.push(+s.toPrecision(8)); };
+  const N = 40;
+
+  if (law === "user") {
+    const pts = normalizeSsPoints(ss.points);
+    for (const [e, s] of pts) add(e, s);
+    notes.push(`piecewise linear through ${pts.length} points`);
+  } else if (law === "elastic") {
+    for (const e of [-0.003, 0, 0.003]) add(e, E * e);
+    notes.push("engine default: linear elastic (no nonlinear law for this material type)");
+  } else if (fam === "concrete") {
+    const ec0 = Math.abs(prm.eps_c0) || 0.002;
+    const ecu = Math.max(Math.abs(prm.eps_cu) || 0.0035, ec0 * 1.05);
+    const ft = isFinite(prm.ft) ? Math.max(prm.ft, 0) : 0;
+    let comp;           // |ε| → |σ| (kPa)
+    if (law === "park") {
+      const fcM = fc / 1000;
+      const e50u = Math.max((3 + 0.29 * fcM) / (145 * fcM - 1000), ec0 * 1.1);
+      const Z = 0.5 / (e50u - ec0);
+      comp = e => e <= ec0 ? fc * (2 * e / ec0 - (e / ec0) ** 2)
+        : Math.max(fc * (1 - Z * (e - ec0)), 0.2 * fc);
+      notes.push(`Kent–Park (unconfined): ε50u = ${e50u.toFixed(5)}, Z = ${Z.toFixed(1)}, residual 0.2·f'c`);
+    } else if (law === "mander") {
+      const Esec = fc / ec0;
+      const r = E / Math.max(E - Esec, 1e-9) > 1.01 ? E / (E - Esec) : 1.01;
+      const pop = e => { const x = e / ec0; return fc * x * r / (r - 1 + Math.pow(x, r)); };
+      const e2 = 2 * ec0;
+      comp = e => e <= e2 ? pop(e)
+        : (ecu > e2 ? Math.max(pop(e2) * (ecu - e) / (ecu - e2), 0) : 0);
+      notes.push(`Mander/Popovics (unconfined): r = ${r.toFixed(3)}, linear spalling branch to εcu`);
+    } else {
+      comp = e => e <= ec0 ? fc * (2 * e / ec0 - (e / ec0) ** 2)
+        : fc * (1 - 0.15 * (e - ec0) / (ecu - ec0));
+      notes.push("Hognestad parabola to εc0, linear 15 % descent to εcu");
+    }
+    for (let i = N; i >= 1; i--) { const e = ecu * i / N; add(-e, -comp(e)); }
+    add(0, 0);
+    if (ft > 0) {
+      const et = ft / E;
+      add(et, ft);
+      add(et * 1.0001, 0);
+      add(Math.max(10 * et, et * 1.01), 0);
+      notes.push("tension: linear to ft, then cracked (zero)");
+    }
+  } else {                                   // steel family
+    const ey = fy / E;
+    const esu = Math.max(Math.abs(prm.eps_su) || 0.09, ey * 2);
+    let ten;            // ε ≥ 0 → σ
+    if (law === "park") {
+      const esh = Math.min(Math.max(Math.abs(prm.eps_sh) || 0.01, ey), esu * 0.9);
+      const rr = esu - esh;
+      const mm = ((fu / fy) * (30 * rr + 1) ** 2 - 60 * rr - 1) / (15 * rr * rr);
+      ten = e => e <= ey ? E * e : e <= esh ? fy
+        : fy * ((mm * (e - esh) + 2) / (60 * (e - esh) + 2) +
+                (e - esh) * (60 - mm) / (2 * (30 * rr + 1) ** 2));
+      notes.push(`Park strain hardening: plateau to εsh = ${esh}, fu reached at εsu = ${esu}`);
+    } else {
+      const b = isFinite(prm.b) ? Math.max(prm.b, 0) : 0.01;
+      ten = e => e <= ey ? E * e : fy + b * E * (e - ey);
+      notes.push(`bilinear Steel01: yield at εy = ${ey.toPrecision(3)}, hardening b = ${b}`);
+    }
+    const xs = [];
+    for (let i = 1; i <= N; i++) xs.push(esu * Math.pow(i / N, 1.6));
+    xs.push(ey);
+    xs.sort((a, b) => a - b);
+    for (let i = xs.length - 1; i >= 0; i--) add(-xs[i], -ten(xs[i]));
+    add(0, 0);
+    for (const e of xs) add(e, ten(e));
+  }
+  if (!ss) notes.unshift("engine default law (stress_strain = null)");
+  if (ss && ss.hysteresis) notes.push(`hysteresis: ${ss.hysteresis}`);
+  return { strain, stress, model, notes };
+}
+
+/** v1.13 — mock GET /api/units: the client-side conversion tables. */
+export function mockUnits() {
+  return allUnitsTables();
 }

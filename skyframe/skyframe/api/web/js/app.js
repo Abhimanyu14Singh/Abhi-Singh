@@ -13,7 +13,8 @@ import { mockModel, mockResults, mockSectionLibrary, mockModelFiles, mockWindPat
   mockDesignerUpsert, mockDesignerDelete, mockDesignerPmm,
   mockNbccWindPattern, mockNbccElfPattern, mockShellWindPattern,
   mockDesignSeismic341,
-  mockRitz, mockFna, mockCracked } from "./mock.js";
+  mockRitz, mockFna, mockCracked,
+  mockMaterialCurve, mockUnits } from "./mock.js";                // v1.13
 import { PlanEditor } from "./draw.js";
 import { SectionDesigner } from "./secdesigner.js";   // v0.21
 import { ElevEditor } from "./elev.js";
@@ -21,6 +22,11 @@ import { LoadsEditor } from "./loads.js";
 import { openReport, buildReportHtml } from "./report.js";
 import * as ME from "./modeledit.js";
 import { initEtabs } from "./etabs.js";   // ETABS-style chrome (menu bar, palette, explorer, status bar)
+// v1.13 — display units (SI store, converted at display/input boundaries),
+// analysis-setup dialogs and the Nonlinear Material Data (stress–strain) section
+import U from "./units.js";
+import * as DLG from "./analysisdlg.js";
+import { buildStressStrainSection } from "./sscurve.js";
 
 /* ------------------------------------------------ state */
 const store = {
@@ -135,6 +141,12 @@ const $ = id => document.getElementById(id);
 const fmt = (v, d = 1) => (v == null || !isFinite(v)) ? "—" :
   v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+/* v1.13 — a raw coordinate as text: the exact SI number when the length
+   factor is 1 (keeps the kN-m view byte-identical), else 3 decimals. */
+const lenTxt = v => U.isIdentity("length") ? String(v) : U.fmt("length", v, 3);
+/* v1.13 — <input value> / label shorthands for unit-converted inputs */
+const uv = (kind, si) => U.inputValue(kind, si);
+const ul = kind => esc(U.label(kind));
 
 /* ------------------------------------------------ toasts + status */
 function toast(title, msg, type = "info", ms = 6000) {
@@ -291,7 +303,7 @@ async function designerAction(action, section) {
     the change is local-only (dirty). */
 async function applyDesignerAction(action, section) {
   const { model: md, live } = await designerAction(action, section);
-  store.model = ME.normalizeModel(md);
+  store.model = ME.normalizeModel(live ? keepSetup(md) : md);
   if (live) clearDirty(); else markDirty();
   store.modelEdited = false;
   viewer.setModel(store.model);
@@ -470,7 +482,7 @@ async function generateWindPattern(params) {
       delete payload._mock_params;
       await postModel(payload);
       const echoed = await api("/api/pattern/wind", params);
-      store.model = ME.normalizeModel(echoed);
+      store.model = ME.normalizeModel(keepSetup(echoed));
       store.modelEdited = true;
       clearDirty();                                // client == server state
       syncLoadsNav();
@@ -500,7 +512,7 @@ async function codeToolLive(path, params) {
   delete payload._mock_params;
   await postModel(payload);
   const echoed = await api(path, params);
-  store.model = ME.normalizeModel(echoed);
+  store.model = ME.normalizeModel(keepSetup(echoed));
   store.modelEdited = true;
   clearDirty();                                  // client == server state
   syncLoadsNav();
@@ -665,7 +677,7 @@ async function createNbccWindPattern(params) {
     try {
       await codeToolLive("/api/pattern/nbcc-wind", params);
       toast("NBCC wind pattern created",
-        `“${params.name}” · ${params.direction} · q=${fmt(params.q, 2)} kPa via POST /api/pattern/nbcc-wind`, "info", 5000);
+        `“${params.name}” · ${params.direction} · q=${U.fmtU("pressure", params.q, 2)} via POST /api/pattern/nbcc-wind`, "info", 5000);
       return store.model;
     } catch (e) { console.warn("NBCC wind endpoint unavailable, computing locally:", e.message); }
   }
@@ -699,7 +711,7 @@ async function createShellWindPattern(params) {
     try {
       await codeToolLive("/api/pattern/shell-wind", params);
       toast("Shell wind pattern created",
-        `“${params.name}” · q=${fmt(params.q, 2)} kPa on Cp-tagged regions via POST /api/pattern/shell-wind`, "info", 5000);
+        `“${params.name}” · q=${U.fmtU("pressure", params.q, 2)} on Cp-tagged regions via POST /api/pattern/shell-wind`, "info", 5000);
       return store.model;
     } catch (e) { console.warn("Shell-wind endpoint unavailable, computing locally:", e.message); }
   }
@@ -709,6 +721,32 @@ async function createShellWindPattern(params) {
   toast("Shell wind pattern created",
     `“${params.name}” computed locally (${store.mock ? "mock mode" : "backend lacks endpoint"})`, "info", 5000);
   return store.model;
+}
+
+/* ---- v1.13: material stress–strain backbone (POST /api/materials/curve
+   {material} → {strain, stress (kPa), model, notes}). Mock / a missing
+   endpoint samples the same backbone formulas locally. */
+async function fetchMaterialCurve(material) {
+  if (!store.mock) {
+    try { return await api("/api/materials/curve", { material }); }
+    catch (e) { console.warn("Material-curve endpoint unavailable, computing locally:", e.message); }
+  }
+  return mockMaterialCurve(material);
+}
+
+/* ---- v1.13: GET /api/units — the conversion table. The client table in
+   units.js is authoritative (exact factors, offline-safe); the backend copy
+   is only probed so the Units dialog can report it. */
+let unitsTableCache = null;
+async function fetchUnitsTable() {
+  if (unitsTableCache) return unitsTableCache;
+  let t = null;
+  if (!store.mock) {
+    try { t = await api("/api/units"); if (t && typeof t === "object") t._source = "server"; }
+    catch (e) { console.warn("Units endpoint unavailable, using the client table:", e.message); }
+  }
+  unitsTableCache = t || { ...mockUnits(), _source: "client" };
+  return unitsTableCache;
 }
 
 /* ---- v0.3: model files + section library.
@@ -764,7 +802,8 @@ function memberTooltip(seg) {
     const M = Math.max(Math.abs(f[5]), Math.abs(f[11]));
     html += `<br><span class="tt-forces">${esc(caseLabel(store.caseName))}</span>` +
       (isRsCase(store.caseName) ? ` <span style="color:var(--amber)">±</span>` : "") +
-      ` · N ${fmt(N)} · V ${fmt(V)} kN · M ${fmt(M)} kN·m`;
+      ` · N ${U.fmt("force", N)} · V ${U.fmt("force", V)} ${U.label("force")}` +
+      ` · M ${U.fmt("moment", M)} ${U.label("moment")}`;
   }
   return html;
 }
@@ -849,6 +888,19 @@ function rebuildCaseSelect() {
     Object.keys(r.rs_cases || {}).map(n => [`rs:${n}`, `RS: ${n}`]));
   mkGroup("Staged construction",
     Object.keys(r.staged || {}).map(n => [`staged:${n}`, `Staged: ${n}`]));
+  // v1.13 — cases set to "Do not Run" / combos skipped: listed, not selectable
+  const idle = notRunEntries();
+  if (idle.length) {
+    const g = document.createElement("optgroup");
+    g.label = "Not run / skipped";
+    for (const e of idle) {
+      const o = document.createElement("option");
+      o.value = `__notrun:${e.name}`; o.disabled = true;
+      o.textContent = `${e.name} — ${e.status === "skipped" ? "skipped" : "not run"}`;
+      g.appendChild(o);
+    }
+    sel.appendChild(g);
+  }
   if (!store.caseName || !caseNames().includes(store.caseName)) {
     // prefer a lateral case (non-trivial story results) for the first look
     const names = caseNames();
@@ -861,6 +913,48 @@ function rebuildCaseSelect() {
   }
   sel.value = store.caseName;
   $("caseSelectWrap").hidden = false;
+  syncRunStatusBadge();
+}
+
+/* ---- v1.13: run-status bookkeeping (Set Load Cases to Run) ----
+   [{name, kind, status}] for every case that did NOT run in the last solve
+   ("not_run") and every combination that was "skipped". Falls back to the
+   model's cases_not_run when an older backend returns no case_status. */
+function notRunEntries() {
+  const r = store.results, m = store.model;
+  if (!r || !m) return [];
+  const out = [];
+  for (const c of ME.allAnalysisCases(m)) {
+    const st = DLG.caseRunStatus(r, c.name, c.kind);
+    if (st === "not_run" && (r.case_status || ME.caseNotRun(m, c.name)))
+      out.push({ name: c.name, kind: c.kind, status: "not_run" });
+    else if (st === "failed") out.push({ name: c.name, kind: c.kind, status: "failed" });
+  }
+  for (const [n, st] of Object.entries(r.combo_status || {}))
+    if (st === "skipped") out.push({ name: n, kind: "combo", status: "skipped" });
+  return out;
+}
+/** Small tab-bar badge: "2 not run · 3 skipped" (tooltip lists them). */
+function syncRunStatusBadge() {
+  const b = $("runStatusBadge");
+  if (!b) return;
+  const idle = notRunEntries();
+  b.classList.toggle("hidden", !idle.length);
+  if (!idle.length) return;
+  const nr = idle.filter(e => e.status === "not_run").length;
+  const sk = idle.filter(e => e.status === "skipped").length;
+  const fl = idle.filter(e => e.status === "failed").length;
+  b.textContent = [nr ? `${nr} not run` : "", sk ? `${sk} skipped` : "", fl ? `${fl} failed` : ""]
+    .filter(Boolean).join(" · ");
+  b.title = "Last analysis — " + idle.map(e => `${e.name}: ${e.status.replace("_", " ")}`).join(" · ") +
+    "\nAnalyze → Set Load Cases to Run… to change";
+}
+/** "not run" note for a results tab whose case kind has idle entries. */
+function notRunNote(kind) {
+  const idle = notRunEntries().filter(e => e.kind === kind);
+  if (!idle.length) return "";
+  return ` <span class="notrun-badge" title="Set to Do not Run — Analyze → Set Load Cases to Run…">` +
+    `${idle.map(e => esc(e.name)).join(", ")} not run</span>`;
 }
 
 /* ------------------------------------------------ tabs */
@@ -949,7 +1043,100 @@ function markDirty() {
   renderSummary();
   syncDirtyUI();
   if (store.mode === "loads") syncLoadsNav();
+  document.dispatchEvent(new CustomEvent("sky:model-changed"));   // v1.13 — chrome refresh
 }
+
+/* ================================================================
+   v1.13 — display units + analysis-setup glue
+   ================================================================ */
+/** v1.13 fields an echoing backend might not know yet — carried over from the
+    working model so a save / code-tool round-trip never silently drops them. */
+const V113_KEYS = ["cases_not_run", "active_dof", "mass_options", "mass_source_mode", "display_units"];
+function keepSetup(echoed) {
+  const prev = store.model;
+  if (!prev || !echoed || typeof echoed !== "object") return echoed;
+  for (const k of V113_KEYS)
+    if (!(k in echoed) && prev[k] !== undefined) echoed[k] = JSON.parse(JSON.stringify(prev[k]));
+  for (const [n, mat] of Object.entries(echoed.materials || {})) {
+    const pm = (prev.materials || {})[n];
+    if (mat && pm && !("stress_strain" in mat) && pm.stress_strain !== undefined)
+      mat.stress_strain = JSON.parse(JSON.stringify(pm.stress_strain));
+  }
+  return echoed;
+}
+/** Follow the working model's display_units (re-renders when it changes). */
+function syncUnitsFromModel() {
+  if (store.model) U.setUnits(store.model.display_units || U.DEFAULT_UNITS);
+  syncFooterUnits();
+}
+/** Status-bar / Options entry point: persist on the model + re-render. */
+function setDisplayUnits(name) {
+  const nu = U.normalizeUnits(name);
+  if (store.model && store.model.display_units !== nu) {
+    store.model.display_units = nu;
+    markDirty();
+  }
+  U.setUnits(nu);
+}
+function syncFooterUnits() {
+  const f = $("footerUnits");
+  if (f) f.textContent = U.unitSet().label.replace(/ · /g, ", ") + ", s";
+  // design sub-tabs (out of the analysis-only scope) stay SI — say so
+  const d = $("designSiNote");
+  if (d) d.classList.toggle("hidden", U.getUnits() === U.DEFAULT_UNITS);
+}
+/** Re-render every unit-bearing view from the (unchanged) SI store. */
+function rerenderAll() {
+  U.applyStatic(document);
+  syncFooterUnits();
+  if (!store.model) return;
+  renderSummary();
+  syncStoryBadges();
+  rebuildElevSelect();
+  renderProps();
+  refreshDrawViews();
+  if (!$("sectionModal").classList.contains("hidden")) {
+    renderSectionMgr();
+    if (store.sectionLib) renderSectionLib();
+  }
+  if (!$("gridModal").classList.contains("hidden")) renderGridEditor();
+  if (!$("importModal").classList.contains("hidden") && store.importFmt === "dxf") renderImportStories();
+  if (loadsEditor && store.mode === "loads") loadsEditor.render();
+  if (store.results) {
+    renderResultsTabs();
+    renderMemberPanel();
+    renderContourLegend();
+    renderVwTable();
+    renderVibTable();
+  }
+  const ex = window.__sky && window.__sky.etabs;
+  if (ex && ex.refresh) ex.refresh();
+  document.dispatchEvent(new CustomEvent("sky:units-changed", { detail: U.getUnits() }));
+}
+/** Context handed to the analysis-setup dialogs (js/analysisdlg.js). */
+function dlgCtx() {
+  return {
+    store, markDirty, toast,
+    // "Run Now": the live backend analyzes its stored model, so unsaved setup
+    // edits (cases to run, DOF, mass …) are synced first (Save Model)
+    run: async () => {
+      if (!store.mock && store.dirty) await saveModel();
+      setMode("analyze");
+      doRun();
+    },
+    onChange: () => {
+      if (store.mode === "loads" && loadsEditor) loadsEditor.render();
+      const ex = window.__sky && window.__sky.etabs;
+      if (ex && ex.refresh) ex.refresh();
+    },
+    setUnits: setDisplayUnits,
+    fetchUnits: fetchUnitsTable,
+  };
+}
+const openCasesToRun = () => DLG.openCasesToRun(dlgCtx());
+const openActiveDof = () => DLG.openActiveDof(dlgCtx());
+const openMassSource = () => DLG.openMassSource(dlgCtx());
+const openUnitsDialog = () => DLG.openUnitsDialog(dlgCtx());
 function clearDirty() {
   store.dirty = false;
   syncDirtyUI();
@@ -995,7 +1182,7 @@ function rebuildElevSelect() {
     lines.forEach((v, i) => {
       const o = document.createElement("option");
       o.value = `${axis}:${i}`;
-      o.textContent = `${(labels && labels[i]) || i + 1}  ·  ${axis} = ${v} m`;
+      o.textContent = `${(labels && labels[i]) || i + 1}  ·  ${axis} = ${lenTxt(v)} ${U.label("length")}`;
       grp.appendChild(o);
     });
     sel.appendChild(grp);
@@ -1109,16 +1296,16 @@ function syncStoryBadges() {
   if (store.view === "elev") {                     // v0.5 elevation badge
     const pl = elevEditor && elevEditor.plane();
     $("planStoryBadge").innerHTML = pl
-      ? `<b>${pl.axis === "x" ? "X" : "Y"}-line ${esc(pl.label)}</b> · elevation @ ${esc(pl.axis)} = ${fmt(pl.coord, 1)} m`
+      ? `<b>${pl.axis === "x" ? "X" : "Y"}-line ${esc(pl.label)}</b> · elevation @ ${esc(pl.axis)} = ${U.fmtU("length", pl.coord, 1)}`
       : "";
     return;
   }
   const st = ME.storyByName(store.model, store.story);
   if (!st) { $("storyElev").textContent = ""; $("planStoryBadge").textContent = ""; return; }
   const zb = st.elevation - st.height;
-  $("storyElev").textContent = `z ${fmt(zb, 1)} – ${fmt(st.elevation, 1)} m`;
+  $("storyElev").textContent = `z ${U.fmt("length", zb, 1)} – ${U.fmtU("length", st.elevation, 1)}`;
   $("planStoryBadge").innerHTML =
-    `<b>${esc(st.name)}</b> · plan @ ${fmt(st.elevation, 1)} m` +
+    `<b>${esc(st.name)}</b> · plan @ ${U.fmtU("length", st.elevation, 1)}` +
     (store.applyAll ? ` · <span style="color:var(--amber)">all stories</span>` : "");
 }
 
@@ -1308,6 +1495,10 @@ function optionList(names, selected, mixed) {
   return html;
 }
 
+/* v1.13 — LINK_TYPES param unit strings → units.js quantity kinds */
+const LINK_UNIT_KIND = { "kN·s/m": "damping_coeff", "kN/m": "stiffness", "m": "length", "kN": "force" };
+const linkParamKind = unit => LINK_UNIT_KIND[unit] || "none";
+
 function renderProps() {
   const box = $("propsContent");
   const { members, shells, links, springs, lineSprings } = selObjects();
@@ -1393,12 +1584,12 @@ function renderProps() {
     html += `
       <h3 class="group-title">Rigid end offsets <span class="unit">rigid zones at member ends</span></h3>
       <div class="field-row">
-        <div class="field"><label for="propRigidI">i-end <span class="unit">m</span></label>
-          <input id="propRigidI" class="rigid-in" type="number" step="0.05" min="0"
-            value="${ri === undefined ? "" : ri}" placeholder="${ri === undefined ? "mixed" : ""}"></div>
-        <div class="field"><label for="propRigidJ">j-end <span class="unit">m</span></label>
-          <input id="propRigidJ" class="rigid-in" type="number" step="0.05" min="0"
-            value="${rj === undefined ? "" : rj}" placeholder="${rj === undefined ? "mixed" : ""}"></div>
+        <div class="field"><label for="propRigidI">i-end <span class="unit">${ul("length")}</span></label>
+          <input id="propRigidI" class="rigid-in" type="number" step="${U.step("length", "0.05")}" min="0"
+            value="${ri === undefined ? "" : uv("length", ri)}" placeholder="${ri === undefined ? "mixed" : ""}"></div>
+        <div class="field"><label for="propRigidJ">j-end <span class="unit">${ul("length")}</span></label>
+          <input id="propRigidJ" class="rigid-in" type="number" step="${U.step("length", "0.05")}" min="0"
+            value="${rj === undefined ? "" : uv("length", rj)}" placeholder="${rj === undefined ? "mixed" : ""}"></div>
       </div>
       <div class="field"><label for="propRigidFactor">Rigid factor <span class="unit">0 = none · 1 = fully rigid</span></label>
         <div class="rigid-factor-row">
@@ -1425,21 +1616,21 @@ function renderProps() {
       <div class="load-row">
         <div class="field"><label for="propUdlPat">Pattern</label>
           <select id="propUdlPat">${patOpts(store.loadPattern)}</select></div>
-        <div class="field"><label for="propUdlW">UDL <span class="unit">kN/m ↓</span></label>
-          <input id="propUdlW" type="number" step="1" min="0"
-            value="${udl === undefined ? "" : udl}" placeholder="${udl === undefined ? "mixed" : ""}"></div>
+        <div class="field"><label for="propUdlW">UDL <span class="unit">${ul("line_force")} ↓</span></label>
+          <input id="propUdlW" type="number" step="${U.step("line_force", "1")}" min="0"
+            value="${udl === undefined ? "" : uv("line_force", udl)}" placeholder="${udl === undefined ? "mixed" : ""}"></div>
       </div>`;
     }
     // v0.8 — thermal load (ΔT °C) into a pattern's thermal_loads
     const dT = commonVal(members, x => ME.getThermalLoad(m, store.loadPattern, x.uid) ?? 0);
     html += `
-      <h3 class="group-title">Thermal load <span class="unit">uniform ΔT · α ${(m.thermal_alpha ?? 1.2e-5).toExponential(1)} /°C</span></h3>
+      <h3 class="group-title">Thermal load <span class="unit">uniform ΔT · α ${U.toDisplay("thermal_coeff", m.thermal_alpha ?? 1.2e-5).toExponential(1)} ${ul("thermal_coeff")}</span></h3>
       <div class="load-row">
         <div class="field"><label for="propThermPat">Pattern</label>
           <select id="propThermPat">${patOpts(store.loadPattern)}</select></div>
-        <div class="field"><label for="propThermDT">ΔT <span class="unit">°C</span></label>
+        <div class="field"><label for="propThermDT">ΔT <span class="unit">${ul("temp_delta")}</span></label>
           <input id="propThermDT" type="number" step="5"
-            value="${dT === undefined ? "" : dT}" placeholder="${dT === undefined ? "mixed" : "0 = none"}"></div>
+            value="${dT === undefined ? "" : uv("temp_delta", dT)}" placeholder="${dT === undefined ? "mixed" : "0 = none"}"></div>
       </div>
       <p class="muted" style="font-size:11px">Adds a uniform temperature change to the selected member${members.length > 1 ? "s" : ""} in the chosen pattern (ETABS-style thermal load).</p>`;
     // v0.11 — elastic (Winkler) foundation: subgrade modulus ks + bearing width
@@ -1451,12 +1642,12 @@ function renderProps() {
       <h3 class="group-title">Foundation (Winkler) <span class="unit">elastic soil bed</span></h3>
       <div class="field"><label class="fdn-check"><input type="checkbox" id="propFdnOn"${fdnOn ? " checked" : ""}${onFdn === undefined ? ' data-mixed="1"' : ""}> On elastic foundation</label></div>
       <div class="field-row${fdnOn ? "" : " fdn-off"}" id="propFdnFields">
-        <div class="field"><label for="propFdnKs">Subgrade k<sub>s</sub> <span class="unit">kN/m³</span></label>
-          <input id="propFdnKs" type="number" step="1000" min="0"${fdnOn ? "" : " disabled"}
-            value="${ks === undefined ? "" : ks}" placeholder="${ks === undefined ? "mixed" : ""}"></div>
-        <div class="field"><label for="propFdnW">Bearing width <span class="unit">m</span></label>
-          <input id="propFdnW" type="number" step="0.05" min="0"${fdnOn ? "" : " disabled"}
-            value="${fw === undefined ? "" : fw}" placeholder="${fw === undefined ? "mixed" : ""}"></div>
+        <div class="field"><label for="propFdnKs">Subgrade k<sub>s</sub> <span class="unit">${ul("subgrade")}</span></label>
+          <input id="propFdnKs" type="number" step="${U.step("subgrade", "1000")}" min="0"${fdnOn ? "" : " disabled"}
+            value="${ks === undefined ? "" : uv("subgrade", ks)}" placeholder="${ks === undefined ? "mixed" : ""}"></div>
+        <div class="field"><label for="propFdnW">Bearing width <span class="unit">${ul("length")}</span></label>
+          <input id="propFdnW" type="number" step="${U.step("length", "0.05")}" min="0"${fdnOn ? "" : " disabled"}
+            value="${fw === undefined ? "" : uv("length", fw)}" placeholder="${fw === undefined ? "mixed" : ""}"></div>
       </div>
       <p class="muted" style="font-size:11px">Members on a foundation carry a soil/spring-bed glyph in plan &amp; 3D. Active only when both k<sub>s</sub> and width &gt; 0.</p>`;
   }
@@ -1477,9 +1668,9 @@ function renderProps() {
             <option value="shell"${beh === "shell" ? " selected" : ""} title="Meshed shell finite elements">shell (FE)</option>
             <option value="membrane"${beh === "membrane" ? " selected" : ""}${walls.length ? " disabled" : ""} title="No FE — two-way tributary load to edge beams (slabs only)">membrane</option>
           </select></div>
-        <div class="field"><label for="propMesh">Mesh <span class="unit">m</span></label>
-          <input id="propMesh" type="number" step="0.25" min="0.25"
-            value="${mesh === undefined ? "" : mesh}" placeholder="${mesh === undefined ? "mixed" : ""}"></div>
+        <div class="field"><label for="propMesh">Mesh <span class="unit">${ul("length")}</span></label>
+          <input id="propMesh" type="number" step="${U.step("length", "0.25")}" min="0"
+            value="${mesh === undefined ? "" : uv("length", mesh)}" placeholder="${mesh === undefined ? "mixed" : ""}"></div>
       </div>`;
     // v0.23 — optional wind pressure coefficient (blank = none)
     {
@@ -1511,9 +1702,9 @@ function renderProps() {
       <div class="load-row">
         <div class="field"><label for="propAreaPat">Pattern</label>
           <select id="propAreaPat">${patOpts(store.loadPattern)}</select></div>
-        <div class="field"><label for="propAreaQ">q <span class="unit">kPa ↓</span></label>
-          <input id="propAreaQ" type="number" step="0.5" min="0"
-            value="${q === undefined ? "" : q}" placeholder="${q === undefined ? "mixed" : ""}"></div>
+        <div class="field"><label for="propAreaQ">q <span class="unit">${ul("pressure")} ↓</span></label>
+          <input id="propAreaQ" type="number" step="${U.step("pressure", "0.5")}" min="0"
+            value="${q === undefined ? "" : uv("pressure", q)}" placeholder="${q === undefined ? "mixed" : ""}"></div>
       </div>`;
     }
     /* v0.22 — area spring (subgrade bed under the region) */
@@ -1526,9 +1717,9 @@ function renderProps() {
       <h3 class="group-title">Area spring (subgrade) <span class="unit">elastic bed under the region</span></h3>
       <div class="field"><label class="fdn-check"><input type="checkbox" id="propAspOn"${on ? " checked" : ""}${aspOn === undefined ? ' data-mixed="1"' : ""}> Area spring</label></div>
       <div class="field-row${on ? "" : " fdn-off"}" id="propAspFields">
-        <div class="field"><label for="propAspKz">k<sub>z</sub> <span class="unit">kN/m/m²</span></label>
-          <input id="propAspKz" type="number" step="1000" min="0"${on ? "" : " disabled"}
-            value="${aspKz == null ? "" : aspKz}" placeholder="${aspKz === undefined ? "mixed" : ""}"></div>
+        <div class="field"><label for="propAspKz">k<sub>z</sub> <span class="unit">${ul("subgrade")}</span></label>
+          <input id="propAspKz" type="number" step="${U.step("subgrade", "1000")}" min="0"${on ? "" : " disabled"}
+            value="${aspKz == null ? "" : uv("subgrade", aspKz)}" placeholder="${aspKz === undefined ? "mixed" : ""}"></div>
         <div class="field"><label class="fdn-check" style="margin-top:18px"><input type="checkbox" id="propAspCo"${aspCo ? " checked" : ""}${on ? "" : " disabled"}> compression-only</label></div>
       </div>
       <p class="muted" style="font-size:11px">Regions carrying an area spring show a subtle diagonal hatch in plan. Compression-only beds make the analysis <b>nonlinear</b>.</p>`;
@@ -1572,22 +1763,23 @@ function renderProps() {
     } else if (lt === "elastic") {
       const K_LABELS = ["kx", "ky", "kz", "krx", "kry", "krz"];
       html += `
-      <h3 class="group-title">Link stiffness <span class="unit">kN/m · kN·m/rad</span></h3>
+      <h3 class="group-title">Link stiffness <span class="unit">${ul("stiffness")} · ${ul("rot_stiffness")}</span></h3>
       <div class="link-stiff">` +
         K_LABELS.map((lbl, i) => {
           const v = commonVal(links, l => l.stiffness[i]);
           return `<label><span>${lbl}</span>
-          <input type="number" class="linkK" data-si="${i}" step="1000" min="0"
-            value="${v === undefined ? "" : v}" placeholder="${v === undefined ? "mixed" : ""}"></label>`;
+          <input type="number" class="linkK" data-si="${i}" step="${U.step(i < 3 ? "stiffness" : "rot_stiffness", "1000")}" min="0"
+            value="${v === undefined ? "" : uv(i < 3 ? "stiffness" : "rot_stiffness", v)}" placeholder="${v === undefined ? "mixed" : ""}"></label>`;
         }).join("") + `</div>`;
     } else {
       const def = ME.LINK_TYPES[lt];
       html += `<div class="link-stiff link-params">` +
         def.params.map(([k, unit]) => {
           const v = commonVal(links, l => (l.params || {})[k]);
-          return `<label><span>${esc(k)} <span class="unit">${esc(unit)}</span></span>
-          <input type="number" class="linkP" data-pk="${esc(k)}" step="any"
-            value="${v === undefined ? "" : v}" placeholder="${v === undefined ? "mixed" : ""}"></label>`;
+          const pk = linkParamKind(unit);
+          return `<label><span>${esc(k)} <span class="unit">${pk === "none" ? esc(unit) : ul(pk)}</span></span>
+          <input type="number" class="linkP" data-pk="${esc(k)}" data-kind="${pk}" step="any"
+            value="${v === undefined ? "" : uv(pk, v)}" placeholder="${v === undefined ? "mixed" : ""}"></label>`;
         }).join("") + `</div>`;
       // v0.21 — multilinear devices: editable (d, F) points table
       if (def.points) {
@@ -1595,10 +1787,10 @@ function renderProps() {
           const pts = ((links[0].params || {}).points) || [];
           html += `
       <div class="ml-points" id="mlPoints">
-        <div class="ml-row head"><span>d (m)</span><span>F (kN)</span><span></span></div>` +
+        <div class="ml-row head"><span>d (${ul("length")})</span><span>F (${ul("force")})</span><span></span></div>` +
             pts.map((p, i) => `<div class="ml-row" data-i="${i}">
-          <input type="number" step="0.01" data-mk="0" value="${p[0]}" title="Deformation d (m)">
-          <input type="number" step="10" data-mk="1" value="${p[1]}" title="Force F (kN)">
+          <input type="number" step="${U.step("length", "0.01")}" data-mk="0" value="${uv("length", p[0])}" title="Deformation d (${ul("length")})">
+          <input type="number" step="${U.step("force", "10")}" data-mk="1" value="${uv("force", p[1])}" title="Force F (${ul("force")})">
           <button class="chip-x ml-del" data-del="${i}" title="Remove point">✕</button></div>`).join("") +
           `</div>
       <button class="btn btn-small btn-block" id="mlAdd" style="margin-top:6px">+ Point</button>`;
@@ -1614,19 +1806,19 @@ function renderProps() {
   /* v0.8 — spring support stiffness (6 dof, grounded) */
   if (springs.length) {
     const SK = [
-      ["Kx", "kN/m"], ["Ky", "kN/m"], ["Kz", "kN/m"],
-      ["Krx", "kN·m/rad"], ["Kry", "kN·m/rad"], ["Krz", "kN·m/rad"],
+      ["Kx", "stiffness"], ["Ky", "stiffness"], ["Kz", "stiffness"],
+      ["Krx", "rot_stiffness"], ["Kry", "rot_stiffness"], ["Krz", "rot_stiffness"],
     ];
     const pt = springs.length === 1
-      ? ` <span class="unit">@ ${fmt(springs[0].point[0], 1)}, ${fmt(springs[0].point[1], 1)}, ${fmt(springs[0].point[2], 1)} m</span>` : "";
+      ? ` <span class="unit">@ ${U.fmt("length", springs[0].point[0], 1)}, ${U.fmt("length", springs[0].point[1], 1)}, ${U.fmt("length", springs[0].point[2], 1)} ${ul("length")}</span>` : "";
     html += `
       <h3 class="group-title">Spring support stiffness${pt}</h3>
       <div class="link-stiff spring-stiff">` +
-      SK.map(([lbl, unit], i) => {
+      SK.map(([lbl, kind], i) => {
         const v = commonVal(springs, s => s.stiffness[i]);
-        return `<label><span>${lbl} <span class="unit">${unit}</span></span>
-          <input type="number" class="springK" data-si="${i}" step="10000" min="0"
-            value="${v === undefined ? "" : v}" placeholder="${v === undefined ? "mixed" : ""}"></label>`;
+        return `<label><span>${lbl} <span class="unit">${ul(kind)}</span></span>
+          <input type="number" class="springK" data-si="${i}" step="${U.step(kind, "10000")}" min="0"
+            value="${v === undefined ? "" : uv(kind, v)}" placeholder="${v === undefined ? "mixed" : ""}"></label>`;
       }).join("") + `</div>
       <p class="muted" style="font-size:11px;margin-top:6px">Replaces base fixity at these points with a 6-dof elastic support.</p>`;
   }
@@ -1638,22 +1830,22 @@ function renderProps() {
     const ky = commonVal(lineSprings, s => s.ky ?? null);
     const co = commonVal(lineSprings, s => !!s.compression_only);
     const pt = lineSprings.length === 1
-      ? ` <span class="unit">@ ${fmt(lineSprings[0].p1[0], 1)}, ${fmt(lineSprings[0].p1[1], 1)} → ${fmt(lineSprings[0].p2[0], 1)}, ${fmt(lineSprings[0].p2[1], 1)} m</span>` : "";
+      ? ` <span class="unit">@ ${U.fmt("length", lineSprings[0].p1[0], 1)}, ${U.fmt("length", lineSprings[0].p1[1], 1)} → ${U.fmt("length", lineSprings[0].p2[0], 1)}, ${U.fmt("length", lineSprings[0].p2[1], 1)} ${ul("length")}</span>` : "";
     html += `
       <h3 class="group-title">Line spring (subgrade)${pt}</h3>
       <div class="link-stiff spring-stiff">
-        <label><span>kz <span class="unit">kN/m/m</span></span>
-          <input type="number" class="lineSpringK" data-lk="kz" step="1000" min="0"
-            value="${kz === undefined ? "" : kz}" placeholder="${kz === undefined ? "mixed" : ""}"></label>
-        <label><span>kx <span class="unit">kN/m/m · optional</span></span>
-          <input type="number" class="lineSpringK" data-lk="kx" step="1000" min="0"
-            value="${kx == null ? "" : kx}" placeholder="${kx === undefined ? "mixed" : "— none —"}"></label>
-        <label><span>ky <span class="unit">kN/m/m · optional</span></span>
-          <input type="number" class="lineSpringK" data-lk="ky" step="1000" min="0"
-            value="${ky == null ? "" : ky}" placeholder="${ky === undefined ? "mixed" : "— none —"}"></label>
+        <label><span>kz <span class="unit">${ul("line_spring")}</span></span>
+          <input type="number" class="lineSpringK" data-lk="kz" step="${U.step("line_spring", "1000")}" min="0"
+            value="${kz === undefined ? "" : uv("line_spring", kz)}" placeholder="${kz === undefined ? "mixed" : ""}"></label>
+        <label><span>kx <span class="unit">${ul("line_spring")} · optional</span></span>
+          <input type="number" class="lineSpringK" data-lk="kx" step="${U.step("line_spring", "1000")}" min="0"
+            value="${kx == null ? "" : uv("line_spring", kx)}" placeholder="${kx === undefined ? "mixed" : "— none —"}"></label>
+        <label><span>ky <span class="unit">${ul("line_spring")} · optional</span></span>
+          <input type="number" class="lineSpringK" data-lk="ky" step="${U.step("line_spring", "1000")}" min="0"
+            value="${ky == null ? "" : uv("line_spring", ky)}" placeholder="${ky === undefined ? "mixed" : "— none —"}"></label>
       </div>
       <div class="field" style="margin-top:6px"><label class="fdn-check"><input type="checkbox" id="propLsCo"${co ? " checked" : ""}${co === undefined ? ' data-mixed="1"' : ""}> Compression-only</label></div>
-      <p class="muted" style="font-size:11px;margin-top:6px">A grounded elastic bed along the line (kN/m per m of length). Clear kx / ky to drop the lateral bed. Compression-only makes the analysis <b>nonlinear</b>.</p>`;
+      <p class="muted" style="font-size:11px;margin-top:6px">A grounded elastic bed along the line (${ul("stiffness")} per ${ul("length")} of length). Clear kx / ky to drop the lateral bed. Compression-only makes the analysis <b>nonlinear</b>.</p>`;
   }
 
   html += `<h3 class="group-title"></h3>
@@ -1696,16 +1888,16 @@ function renderProps() {
     renderProps();
   });
   // v0.9 — rigid end offsets + rigid factor
-  const setRigid = (key, raw, hi) => {
-    const v = parseFloat(raw);
+  const setRigid = (key, raw, hi, kind) => {
+    const v = kind ? U.parse(kind, raw) : parseFloat(raw);
     if (!isFinite(v) || v < 0 || (hi != null && v > hi)) return;
     for (const mm of members) mm[key] = v;
     markDirty();
     store.modelEdited = true;
     refreshDrawViews();          // rigid-zone glyphs live in the element layer
   };
-  on("propRigidI", "change", e => setRigid("rigid_i", e.target.value));
-  on("propRigidJ", "change", e => setRigid("rigid_j", e.target.value));
+  on("propRigidI", "change", e => setRigid("rigid_i", e.target.value, null, "length"));
+  on("propRigidJ", "change", e => setRigid("rigid_j", e.target.value, null, "length"));
   on("propRigidFactor", "change", e => {
     setRigid("rigid_factor", e.target.value, 1);
     const rng = $("propRigidFactorRange");
@@ -1727,7 +1919,7 @@ function renderProps() {
   on("propRelMj", "change", applyReleases);
   on("propUdlPat", "change", e => { store.loadPattern = e.target.value; renderProps(); });
   on("propUdlW", "change", e => {
-    const w = parseFloat(e.target.value);
+    const w = U.parse("line_force", e.target.value);
     if (!isFinite(w) || w < 0) return;
     for (const b of beams) ME.setMemberUdl(m, $("propUdlPat").value, b.uid, w);
     markDirty();
@@ -1742,7 +1934,7 @@ function renderProps() {
     markDirty();
   });
   on("propMesh", "change", e => {
-    const v = parseFloat(e.target.value);
+    const v = U.parse("length", e.target.value);
     if (!isFinite(v) || v <= 0) return;
     for (const s of shells) s.mesh_size = v;
     markDirty();
@@ -1762,7 +1954,7 @@ function renderProps() {
   });
   on("propAreaPat", "change", e => { store.loadPattern = e.target.value; renderProps(); });
   on("propAreaQ", "change", e => {
-    const q = parseFloat(e.target.value);
+    const q = U.parse("pressure", e.target.value);
     if (!isFinite(q) || q < 0) return;
     for (const s of slabs) ME.setAreaLoad(m, $("propAreaPat").value, s.uid, q);
     markDirty();
@@ -1809,9 +2001,9 @@ function renderProps() {
   /* v0.5 — link stiffness wiring */
   box.querySelectorAll(".linkK").forEach(inp =>
     inp.addEventListener("change", () => {
-      const v = parseFloat(inp.value);
-      if (!isFinite(v) || v < 0) return;
       const i = parseInt(inp.dataset.si, 10);
+      const v = U.parse(i < 3 ? "stiffness" : "rot_stiffness", inp.value);
+      if (!isFinite(v) || v < 0) return;
       for (const l of links) l.stiffness[i] = v;
       markDirty();
     }));
@@ -1828,7 +2020,7 @@ function renderProps() {
   });
   box.querySelectorAll(".linkP").forEach(inp =>
     inp.addEventListener("change", () => {
-      const v = parseFloat(inp.value);
+      const v = U.parse(inp.dataset.kind || "none", inp.value);
       if (!isFinite(v)) return;
       const k = inp.dataset.pk;
       for (const l of links) {
@@ -1849,9 +2041,10 @@ function renderProps() {
     box.querySelectorAll("#mlPoints .ml-row:not(.head) input").forEach(inp =>
       inp.addEventListener("change", () => {
         const i = parseInt(inp.closest(".ml-row").dataset.i, 10);
-        const v = parseFloat(inp.value);
+        const mkind = +inp.dataset.mk === 0 ? "length" : "force";
+        const v = U.parse(mkind, inp.value);
         if (!isFinite(v) || !pts[i]) {
-          inp.value = pts[i] ? String(pts[i][+inp.dataset.mk]) : "";
+          inp.value = pts[i] ? uv(mkind, pts[i][+inp.dataset.mk]) : "";
           return;
         }
         pts[i][+inp.dataset.mk] = v;
@@ -1889,9 +2082,9 @@ function renderProps() {
   /* v0.8 — spring support stiffness wiring */
   box.querySelectorAll(".springK").forEach(inp =>
     inp.addEventListener("change", () => {
-      const v = parseFloat(inp.value);
-      if (!isFinite(v) || v < 0) return;
       const i = parseInt(inp.dataset.si, 10);
+      const v = U.parse(i < 3 ? "stiffness" : "rot_stiffness", inp.value);
+      if (!isFinite(v) || v < 0) return;
       for (const s of springs) s.stiffness[i] = v;
       markDirty();
     }));
@@ -1906,11 +2099,10 @@ function renderProps() {
         markDirty();
         return;
       }
-      const v = parseFloat(raw);
+      const v = U.parse("line_spring", raw);
       if (!isFinite(v) || v < 0) {
-        inp.value = k === "kz"
-          ? String(commonVal(lineSprings, s => s.kz) ?? "")
-          : (commonVal(lineSprings, s => s[k] ?? null) ?? "");
+        const cv = k === "kz" ? commonVal(lineSprings, s => s.kz) : commonVal(lineSprings, s => s[k] ?? null);
+        inp.value = cv == null ? "" : uv("line_spring", cv);
         return;
       }
       for (const ls of lineSprings) ls[k] = v;
@@ -1926,7 +2118,7 @@ function renderProps() {
   const applyAreaSpring = () => {
     const onChk = $("propAspOn").checked;
     if (onChk) {
-      let kz = parseFloat($("propAspKz").value);
+      let kz = U.parse("subgrade", $("propAspKz").value);
       if (!(isFinite(kz) && kz > 0)) kz = 30000;     // sensible default subgrade
       const co = !!$("propAspCo").checked;
       for (const s of shells) s.area_spring = { kz, compression_only: co };
@@ -1945,7 +2137,7 @@ function renderProps() {
   /* v0.8 — member thermal-load wiring */
   on("propThermPat", "change", e => { store.loadPattern = e.target.value; renderProps(); });
   on("propThermDT", "change", e => {
-    const v = parseFloat(e.target.value);
+    const v = U.parse("temp_delta", e.target.value);
     if (!isFinite(v)) return;
     for (const mm of members) ME.setThermalLoad(m, $("propThermPat").value, mm.uid, v);
     markDirty();
@@ -1958,8 +2150,8 @@ function renderProps() {
   const applyFoundation = () => {
     const on = $("propFdnOn").checked;
     if (on) {
-      let ks = parseFloat($("propFdnKs").value);
-      let fw = parseFloat($("propFdnW").value);
+      let ks = U.parse("subgrade", $("propFdnKs").value);
+      let fw = U.parse("length", $("propFdnW").value);
       if (!(isFinite(ks) && ks > 0)) ks = 30000;   // sensible default subgrade
       if (!(isFinite(fw) && fw > 0)) fw = 0.6;      // default bearing width (m)
       for (const mm of members) { mm.foundation_ks = ks; mm.foundation_width = fw; }
@@ -2042,7 +2234,8 @@ function renderSectionLib() {
     box.innerHTML = `<p class="lib-none">No library sections match “${esc(store.libSearch)}”.</p>`;
     return;
   }
-  box.appendChild(mgrRow(["Name", "A (m²)", "I33 (m⁴)", "I22 (m⁴)", ""], "mgr-row lib head"));
+  box.appendChild(mgrRow(["Name", `A (${U.label("area")})`, `I33 (${U.label("inertia")})`,
+    `I22 (${U.label("inertia")})`, ""], "mgr-row lib head"));
   for (const entry of rows) {
     const exists = !!m.sections[entry.name];
     const btn = document.createElement("button");
@@ -2061,7 +2254,7 @@ function renderSectionLib() {
       }
     });
     box.appendChild(mgrRow(
-      [entry.name, sci(entry.A), sci(entry.I33), sci(entry.I22), btn],
+      [entry.name, U.sci("area", entry.A), U.sci("inertia", entry.I33), U.sci("inertia", entry.I22), btn],
       "mgr-row lib" + (exists ? " added" : "")));
   }
 }
@@ -2088,13 +2281,16 @@ const mgrInput = (value, attrs = {}) => {
   Object.assign(i, { type: "text", value }, attrs);
   return i;
 };
-const mgrNum = (value, step, onChange) => {
-  const i = mgrInput(String(value), { type: "number" });
-  i.step = step;
+/* v1.13 — `kind` (units.js quantity) converts the shown value / the parsed
+   edit; the stored value stays SI. */
+const mgrNum = (value, step, onChange, kind = null) => {
+  const show = v => kind ? uv(kind, v) : String(v);
+  const i = mgrInput(show(value), { type: "number" });
+  i.step = kind ? U.step(kind, step) : step;
   i.addEventListener("change", () => {
-    const v = parseFloat(i.value);
-    if (isFinite(v) && v > 0) { onChange(v); markDirty(); }
-    else i.value = String(value);
+    const v = kind ? U.parse(kind, i.value) : parseFloat(i.value);
+    if (isFinite(v) && v > 0) { value = v; onChange(v); markDirty(); }
+    else i.value = show(value);
   });
   return i;
 };
@@ -2158,13 +2354,14 @@ function shellLayeredDetails(m, s) {
   const body = document.createElement("div");
   body.className = "layers-body";
 
-  const mm = v => (v * 1000).toFixed(v * 1000 % 1 ? 1 : 0);   // m → mm label
+  // v1.13 — layer thicknesses in the "small length" unit (mm / in)
+  const mm = v => { const d = U.toDisplay("small", v); return (+d).toFixed(Math.abs(d) % 1 > 1e-9 ? U.dec("small", 1) : 0); };
   const syncSum = () => {
     if (!s.layered) { sum.textContent = "Layered (nonlinear) · off"; return; }
     const tot = ME.layeredTotal(s.layered);
     const mismatch = Math.abs(tot - s.thickness) > 5e-4;
-    sum.innerHTML = `Layered (nonlinear) · ${s.layered.layers.length} layer${s.layered.layers.length === 1 ? "" : "s"} · Σt ${mm(tot)} mm` +
-      (mismatch ? ` <span class="layer-warn">≠ elastic ${mm(s.thickness)} mm</span>` : "");
+    sum.innerHTML = `Layered (nonlinear) · ${s.layered.layers.length} layer${s.layered.layers.length === 1 ? "" : "s"} · Σt ${mm(tot)} ${ul("small")}` +
+      (mismatch ? ` <span class="layer-warn">≠ elastic ${mm(s.thickness)} ${ul("small")}</span>` : "");
   };
 
   const render = () => {
@@ -2191,7 +2388,7 @@ function shellLayeredDetails(m, s) {
     rows.className = "layer-rows";
     const head = document.createElement("div");
     head.className = "layer-row head";
-    for (const h of ["t (mm)", "Material", "Kind", "", "", ""]) {
+    for (const h of [`t (${U.label("small")})`, "Material", "Kind", "", "", ""]) {
       const sp = document.createElement("span");
       sp.textContent = h;
       head.appendChild(sp);
@@ -2201,13 +2398,14 @@ function shellLayeredDetails(m, s) {
       const row = document.createElement("div");
       row.className = "layer-row";
       const tIn = document.createElement("input");
-      tIn.type = "number"; tIn.step = "5"; tIn.min = "1";
-      tIn.value = String(+(l.t * 1000).toFixed(2));
-      tIn.title = "Layer thickness (mm)";
+      tIn.type = "number"; tIn.step = U.step("small", "5"); tIn.min = "0";
+      const tShow = () => String(+(+U.toDisplay("small", l.t)).toFixed(U.dec("small", 2)));
+      tIn.value = tShow();
+      tIn.title = `Layer thickness (${U.label("small")})`;
       tIn.addEventListener("change", () => {
-        const v = parseFloat(tIn.value);
-        if (isFinite(v) && v > 0) { l.t = +(v / 1000).toFixed(5); markDirty(); syncSum(); }
-        else tIn.value = String(+(l.t * 1000).toFixed(2));
+        const v = U.parse("small", tIn.value);
+        if (isFinite(v) && v > 0) { l.t = +v.toFixed(7); markDirty(); syncSum(); }
+        else tIn.value = tShow();
       });
       const matSel = mgrMatSelect(m, l.material, v => l.material = v);
       const kindSel = document.createElement("select");
@@ -2338,14 +2536,19 @@ function mpdSelect(options, value, onChange) {
 /** Null-aware numeric input bound to mat[field]; reverts on invalid input.
     allowNull lets an empty field store null ("auto / typed default"). */
 function mpdNum(mat, field, { step = "any", allowNull = false, placeholder = "",
-                              title = "", validate = v => isFinite(v), after } = {}) {
+                              title = "", validate = v => isFinite(v), after, kind = null } = {}) {
+  // v1.13 — `kind` shows/edits the field in display units; validate() and the
+  // stored value are SI
+  const show = v => v == null ? "" : (kind ? uv(kind, v) : String(v));
   const inp = document.createElement("input");
   inp.type = "number";
-  inp.step = step;
-  inp.value = mat[field] == null ? "" : String(mat[field]);
+  inp.step = kind ? U.step(kind, step) : step;
+  if (kind) inp.dataset.kind = kind;
+  inp.dataset.field = field;
+  inp.value = show(mat[field]);
   if (placeholder) inp.placeholder = placeholder;
   if (title) inp.title = title;
-  const revert = () => { inp.value = mat[field] == null ? "" : String(mat[field]); };
+  const revert = () => { inp.value = show(mat[field]); };
   inp.addEventListener("change", () => {
     const raw = inp.value.trim();
     if (raw === "") {
@@ -2353,7 +2556,7 @@ function mpdNum(mat, field, { step = "any", allowNull = false, placeholder = "",
       else revert();
       return;
     }
-    const v = parseFloat(raw);
+    const v = kind ? U.parse(kind, raw) : parseFloat(raw);
     if (isFinite(v) && validate(v)) { mat[field] = v; markDirty(); after && after(); }
     else revert();
   });
@@ -2370,20 +2573,21 @@ function buildMaterialPanel(m, name, mat, swatch) {
   const gText = () => {
     if (sym === "uniaxial") return "n/a (uniaxial)";
     const g = mat.E / (2 * (1 + mat.nu));
-    return isFinite(g) ? fmtNum(g) + " kPa" : "—";
+    return isFinite(g) ? fmtNum(U.toDisplay("modulus", g)) + " " + U.label("modulus") : "—";
   };
   const fyeText = () => {
     if (mat.fy == null || mat.Ry == null) return "—";
     const v = mat.Ry * mat.fy;
-    return isFinite(v) ? fmtNum(v) + " kPa" : "—";
+    return isFinite(v) ? fmtNum(U.toDisplay("stress", v)) + " " + U.label("stress") : "—";
   };
   const massPlace = () => {
     const uw = mat.unit_weight;
-    return (uw != null && isFinite(uw)) ? `auto ${(uw / G_ACCEL).toFixed(4)}` : "auto";
+    return (uw != null && isFinite(uw))
+      ? `auto ${(+U.toDisplay("mass_density", uw / G_ACCEL)).toPrecision(5)}` : "auto";
   };
   const alphaPlace = () => {
     const a = (m.thermal_alpha != null && isFinite(m.thermal_alpha)) ? m.thermal_alpha : 1.2e-5;
-    return `auto ${a.toExponential(2)}`;
+    return `auto ${U.toDisplay("thermal_coeff", a).toExponential(2)}`;
   };
 
   /* ---- General Data ---- */
@@ -2400,6 +2604,7 @@ function buildMaterialPanel(m, name, mat, swatch) {
     }
   });
   const typeSel = mpdSelect(ME.MATERIAL_TYPES.map(t => [t, t]), type, v => {
+    // applyMaterialType also drops a stress–strain law the new type disallows
     ME.applyMaterialType(mat, v); markDirty(); renderSectionMgr();
   });
   const symSel = mpdSelect([["isotropic", "isotropic"], ["uniaxial", "uniaxial"]], sym, v => {
@@ -2421,7 +2626,7 @@ function buildMaterialPanel(m, name, mat, swatch) {
   const notesRow = mpdRow("Notes", "", notesIn, { wide: true });
 
   /* ---- Weight and Mass ---- */
-  const massInp = mpdNum(mat, "mass_density", { step: "0.001", validate: v => v > 0,
+  const massInp = mpdNum(mat, "mass_density", { step: "0.001", validate: v => v > 0, kind: "mass_density",
     title: "Mass per unit volume (drives modal / RS / TH inertia)" });
   const autoMass = mat.mass_density == null;
   massInp.disabled = autoMass;
@@ -2439,7 +2644,7 @@ function buildMaterialPanel(m, name, mat, swatch) {
       const uw = mat.unit_weight;
       const start = (uw != null && isFinite(uw)) ? +(uw / G_ACCEL).toFixed(4) : 0;
       mat.mass_density = start;
-      massInp.value = String(start); massInp.disabled = false; massInp.focus();
+      massInp.value = uv("mass_density", start); massInp.disabled = false; massInp.focus();
     }
     markDirty();
   });
@@ -2448,25 +2653,25 @@ function buildMaterialPanel(m, name, mat, swatch) {
   massBox.className = "mpd-mass";
   massBox.append(massInp, autoWrap);
 
-  const uwIn = mpdNum(mat, "unit_weight", { step: "0.5", validate: v => v > 0,
+  const uwIn = mpdNum(mat, "unit_weight", { step: "0.5", validate: v => v > 0, kind: "unit_weight",
     title: "Weight per unit volume — self-weight gravity load",
     after: () => { if (autoChk.checked) massInp.placeholder = massPlace(); } });
 
   /* ---- Mechanical Property Data ---- */
   const gDisp = mpdReadonly(gText);
-  const eIn = mpdNum(mat, "E", { step: "1000000", validate: v => v > 0,
+  const eIn = mpdNum(mat, "E", { step: "1000000", validate: v => v > 0, kind: "modulus",
     title: "Modulus of elasticity", after: () => { gDisp.textContent = gText(); } });
   const nuIn = mpdNum(mat, "nu", { step: "0.05", validate: v => v >= 0 && v < 0.5,
     after: () => { gDisp.textContent = gText(); } });
   if (sym === "uniaxial") { nuIn.disabled = true; nuIn.title = "Ignored for uniaxial (rebar / tendon)"; }
-  const alphaIn = mpdNum(mat, "alpha", { step: "1e-6", allowNull: true, validate: v => v > 0,
+  const alphaIn = mpdNum(mat, "alpha", { step: "1e-6", allowNull: true, validate: v => v > 0, kind: "thermal_coeff",
     placeholder: alphaPlace(), title: "Coefficient of thermal expansion (blank → model default)" });
 
   /* ---- Design / Analysis Strength (type-gated) ---- */
   const fyeDisp = mpdReadonly(fyeText);
   let strengthSec = null;
   if (type === "concrete" || type === "masonry") {
-    const fcIn = mpdNum(mat, "fc", { step: "1000", allowNull: true, validate: v => v > 0,
+    const fcIn = mpdNum(mat, "fc", { step: "1000", allowNull: true, validate: v => v > 0, kind: "stress",
       placeholder: "auto (from E)", title: "Specified compressive strength f'c (blank → fc_from_E)" });
     const lwChk = document.createElement("input");
     lwChk.type = "checkbox"; lwChk.checked = !!mat.lightweight;
@@ -2474,32 +2679,32 @@ function buildMaterialPanel(m, name, mat, swatch) {
     const lamIn = mpdNum(mat, "lam", { step: "0.05", validate: v => v > 0,
       title: "Lightweight λ — multiplies the cracked-slab modulus of rupture" });
     strengthSec = mpdSection("Design / Analysis Strength", [
-      mpdRow("Compressive strength f'c", "kPa", fcIn),
+      mpdRow("Compressive strength f'c", U.label("stress"), fcIn),
       mpdRow("Lightweight concrete", "", lwChk),
       mpdRow("Lightweight factor λ", "-", lamIn),
     ]);
   } else if (type === "steel" || type === "coldformed" || type === "rebar") {
-    const fyIn = mpdNum(mat, "fy", { step: "1000", allowNull: true, validate: v => v > 0,
+    const fyIn = mpdNum(mat, "fy", { step: "1000", allowNull: true, validate: v => v > 0, kind: "stress",
       placeholder: "auto", title: "Yield stress Fy", after: () => { fyeDisp.textContent = fyeText(); } });
-    const fuIn = mpdNum(mat, "fu", { step: "1000", allowNull: true, validate: v => v > 0,
+    const fuIn = mpdNum(mat, "fu", { step: "1000", allowNull: true, validate: v => v > 0, kind: "stress",
       title: "Tensile / ultimate stress Fu" });
     const ryIn = mpdNum(mat, "Ry", { step: "0.05", validate: v => v > 0 && v <= 2,
       title: "Expected/specified yield ratio — Fye = Ry·Fy",
       after: () => { fyeDisp.textContent = fyeText(); } });
     strengthSec = mpdSection("Design / Analysis Strength", [
-      mpdRow("Yield stress Fy", "kPa", fyIn),
-      mpdRow("Tensile stress Fu", "kPa", fuIn),
+      mpdRow("Yield stress Fy", U.label("stress"), fyIn),
+      mpdRow("Tensile stress Fu", U.label("stress"), fuIn),
       mpdRow("Overstrength Ry", "-", ryIn),
-      mpdRow("Expected yield Fye", "kPa", fyeDisp, { title: "Ry · Fy (read-only)" }),
+      mpdRow("Expected yield Fye", U.label("stress"), fyeDisp, { title: "Ry · Fy (read-only)" }),
     ]);
   } else if (type === "tendon") {
-    const fyIn = mpdNum(mat, "fy", { step: "1000", allowNull: true, validate: v => v > 0,
+    const fyIn = mpdNum(mat, "fy", { step: "1000", allowNull: true, validate: v => v > 0, kind: "stress",
       placeholder: "auto", title: "Yield stress Fy" });
-    const fuIn = mpdNum(mat, "fu", { step: "1000", allowNull: true, validate: v => v > 0,
+    const fuIn = mpdNum(mat, "fu", { step: "1000", allowNull: true, validate: v => v > 0, kind: "stress",
       title: "Tensile / ultimate stress Fu" });
     strengthSec = mpdSection("Design / Analysis Strength", [
-      mpdRow("Yield stress Fy", "kPa", fyIn),
-      mpdRow("Tensile stress Fu", "kPa", fuIn),
+      mpdRow("Yield stress Fy", U.label("stress"), fyIn),
+      mpdRow("Tensile stress Fu", U.label("stress"), fuIn),
     ]);
   } else {
     const none = document.createElement("p");
@@ -2525,20 +2730,27 @@ function buildMaterialPanel(m, name, mat, swatch) {
       notesRow,
     ]),
     mpdSection("Weight and Mass", [
-      mpdRow("Weight per Volume", "kN/m³", uwIn),
-      mpdRow("Mass per Volume", "t/m³", massBox),
+      mpdRow("Weight per Volume", U.label("unit_weight"), uwIn),
+      mpdRow("Mass per Volume", U.label("mass_density"), massBox),
     ]),
     mpdSection((sym === "uniaxial" ? "Uniaxial" : "Isotropic") + " Mechanical Property Data", [
-      mpdRow("Modulus of Elasticity E", "kPa", eIn),
+      mpdRow("Modulus of Elasticity E", U.label("modulus"), eIn),
       mpdRow("Poisson Ratio ν", "-", nuIn),
-      mpdRow("Shear Modulus G", "kPa", gDisp, { title: "E / (2·(1+ν)) — read-only" }),
-      mpdRow("Thermal Expansion α", "1/°C", alphaIn),
+      mpdRow("Shear Modulus G", U.label("modulus"), gDisp, { title: "E / (2·(1+ν)) — read-only" }),
+      mpdRow("Thermal Expansion α", U.label("thermal_coeff"), alphaIn),
     ]),
     strengthSec,
     mpdSection("Material Damping", [
       mpdRow("Modal Damping Ratio", "-", dampIn),
     ]),
   );
+  // v1.13 — Nonlinear Material Data: stress–strain law + hysteresis + live plot.
+  // Any edit elsewhere in the panel (E, f'c, Fy …) re-samples the backbone.
+  const ssSec = buildStressStrainSection(mat, { markDirty, fetchCurve: fetchMaterialCurve });
+  panel.appendChild(ssSec);
+  panel.addEventListener("change", e => {
+    if (!ssSec.contains(e.target)) ssSec.refreshPlot();
+  });
   return panel;
 }
 
@@ -2618,7 +2830,7 @@ function renderSectionMgr() {
 
   const frameBox = $("frameSectionRows");
   frameBox.textContent = "";
-  frameBox.appendChild(mgrRow(["Name", "b (m)", "h (m)", "Material", ""], "mgr-row head"));
+  frameBox.appendChild(mgrRow(["Name", `b (${U.label("dim")})`, `h (${U.label("dim")})`, "Material", ""], "mgr-row head"));
   for (const [name, s] of Object.entries(m.sections)) {
     const nameIn = mgrInput(name);
     nameIn.addEventListener("change", () => {
@@ -2635,8 +2847,8 @@ function renderSectionMgr() {
     if (!isLibrary) {           // rectangular — b/h editable
       frameBox.appendChild(mgrRow([
         nameIn,
-        mgrNum(s.b, "0.05", v => s.b = v),
-        mgrNum(s.h, "0.05", v => s.h = v),
+        mgrNum(s.b, "0.05", v => s.b = v, "dim"),
+        mgrNum(s.h, "0.05", v => s.h = v, "dim"),
         mgrMatSelect(m, s.material, v => s.material = v),
         del,
       ]));
@@ -2644,8 +2856,9 @@ function renderSectionMgr() {
       // v0.3: property-based section from the library (A / I33 / I22 / J)
       const props = document.createElement("span");
       props.className = "sec-props";
-      props.title = `A ${sci(s.A)} m² · I33 ${sci(s.I33)} m⁴ · I22 ${sci(s.I22)} m⁴ · J ${sci(s.J)} m⁴`;
-      props.textContent = `${s.shape === "W" ? "W-shape" : s.shape === "designer" ? "designer" : "library"} · A ${sci(s.A)} · I33 ${sci(s.I33)}`;
+      props.title = `A ${U.sci("area", s.A)} ${U.label("area")} · I33 ${U.sci("inertia", s.I33)} ${U.label("inertia")} · ` +
+        `I22 ${U.sci("inertia", s.I22)} ${U.label("inertia")} · J ${U.sci("inertia", s.J)} ${U.label("inertia")}`;
+      props.textContent = `${s.shape === "W" ? "W-shape" : s.shape === "designer" ? "designer" : "library"} · A ${U.sci("area", s.A)} · I33 ${U.sci("inertia", s.I33)}`;
       frameBox.appendChild(mgrRow([
         nameIn,
         props,
@@ -2658,7 +2871,7 @@ function renderSectionMgr() {
 
   const shellBox = $("shellSectionRows");
   shellBox.textContent = "";
-  shellBox.appendChild(mgrRow(["Name", "Thickness (m)", "mod", "Material", ""], "mgr-row head"));
+  shellBox.appendChild(mgrRow(["Name", `Thickness (${U.label("dim")})`, "mod", "Material", ""], "mgr-row head"));
   for (const [name, s] of Object.entries(m.shell_sections)) {
     const nameIn = mgrInput(name);
     nameIn.addEventListener("change", () => {
@@ -2672,7 +2885,7 @@ function renderSectionMgr() {
     modIn.title = "Stiffness modifier (multiplies the shell stiffness; default 1.0)";
     shellBox.appendChild(mgrRow([
       nameIn,
-      mgrNum(s.thickness, "0.025", v => s.thickness = v),
+      mgrNum(s.thickness, "0.025", v => s.thickness = v, "dim"),
       modIn,
       mgrMatSelect(m, s.material, v => s.material = v),
       mgrDel(used, used ? "In use by shell regions" : "Delete shell section", () => {
@@ -2694,7 +2907,8 @@ function renderSectionMgr() {
     if (!entries.length) {
       dsBox.innerHTML = `<p class="lib-none">No designer sections yet — click “Section Designer…” to draw one.</p>`;
     } else {
-      dsBox.appendChild(mgrRow(["Name", "A (m²)", "I33 (m⁴)", "I22 (m⁴)", ""], "mgr-row lib head"));
+      dsBox.appendChild(mgrRow(["Name", `A (${U.label("area")})`, `I33 (${U.label("inertia")})`,
+        `I22 (${U.label("inertia")})`, ""], "mgr-row lib head"));
       for (const [name] of entries) {
         const s = m.sections[name] || {};
         const edit = document.createElement("button");
@@ -2702,7 +2916,7 @@ function renderSectionMgr() {
         edit.textContent = "Edit…";
         edit.title = `Open ${name} in the Section Designer`;
         edit.addEventListener("click", () => openSectionDesigner(name));
-        dsBox.appendChild(mgrRow([name, sci(s.A), sci(s.I33), sci(s.I22), edit], "mgr-row lib"));
+        dsBox.appendChild(mgrRow([name, U.sci("area", s.A), U.sci("inertia", s.I33), U.sci("inertia", s.I22), edit], "mgr-row lib"));
       }
     }
   }
@@ -2803,12 +3017,13 @@ function renderGridSysEditor(sys) {
     wrap.append(span, input);
     return wrap;
   };
-  const numInput = (val, step, onChange) => {
+  const numInput = (val, step, onChange, kind = null) => {
+    const show = v => kind ? uv(kind, v) : String(v);
     const inp = document.createElement("input");
-    inp.type = "number"; inp.step = String(step); inp.value = String(val);
+    inp.type = "number"; inp.step = kind ? U.step(kind, String(step)) : String(step); inp.value = show(val);
     inp.addEventListener("change", () => {
-      const nv = parseFloat(inp.value);
-      if (isFinite(nv)) onChange(nv); else inp.value = String(val);
+      const nv = kind ? U.parse(kind, inp.value) : parseFloat(inp.value);
+      if (isFinite(nv)) onChange(nv); else inp.value = show(val);
     });
     return inp;
   };
@@ -2824,8 +3039,8 @@ function renderGridSysEditor(sys) {
   });
   meta.append(
     field("Name", nameIn),
-    field("Origin X (m)", numInput(sys.origin[0], 0.5, v => { sys.origin[0] = v; afterGridSysEdit(); })),
-    field("Origin Y (m)", numInput(sys.origin[1], 0.5, v => { sys.origin[1] = v; afterGridSysEdit(); })),
+    field(`Origin X (${U.label("length")})`, numInput(sys.origin[0], 0.5, v => { sys.origin[0] = v; afterGridSysEdit(); }, "length")),
+    field(`Origin Y (${U.label("length")})`, numInput(sys.origin[1], 0.5, v => { sys.origin[1] = v; afterGridSysEdit(); }, "length")),
     field("Rotation (° CCW)", numInput(sys.rotation, 5, v => { sys.rotation = v; afterGridSysEdit(); })),
   );
   box.appendChild(meta);
@@ -2856,11 +3071,12 @@ function orthoLineEditor(sys) {
       const lab = document.createElement("span");
       lab.className = "ge-label"; lab.textContent = (labels && labels[i]) || String(i + 1);
       const inp = document.createElement("input");
-      inp.type = "number"; inp.step = "0.5"; inp.value = String(v);
+      inp.type = "number"; inp.step = U.step("length", "0.5"); inp.value = uv("length", v);
+      inp.title = `Line position (${U.label("length")})`;
       inp.addEventListener("change", () => {
-        const nv = parseFloat(inp.value);
+        const nv = U.parse("length", inp.value);
         if (ME.setSysLine(sys, axis, i, nv)) afterGridSysEdit();
-        else { inp.value = String(v); toast("Grid edit rejected", "Positions must be numbers and can't collide with another line", "error", 4500); }
+        else { inp.value = uv("length", v); toast("Grid edit rejected", "Positions must be numbers and can't collide with another line", "error", 4500); }
       });
       const del = document.createElement("button");
       del.className = "del"; del.textContent = "✕";
@@ -2881,7 +3097,7 @@ function orthoLineEditor(sys) {
 function radialEditor(sys) {
   const wrap = document.createElement("div");
   wrap.className = "ge-cols";
-  const mkList = (title, arr, unit, addFn, setFn, delFn) => {
+  const mkList = (title, arr, unit, addFn, setFn, delFn, kind = null) => {
     const col = document.createElement("div");
     const head = document.createElement("div");
     head.className = "ge-col-head";
@@ -2896,13 +3112,14 @@ function radialEditor(sys) {
     arr.forEach((v, i) => {
       const row = document.createElement("div"); row.className = "ge-line";
       const lab = document.createElement("span");
-      lab.className = "ge-label"; lab.textContent = unit;
+      lab.className = "ge-label"; lab.textContent = kind ? U.label(kind) : unit;
       const inp = document.createElement("input");
-      inp.type = "number"; inp.step = "0.5"; inp.value = String(v);
+      inp.type = "number"; inp.step = kind ? U.step(kind, "0.5") : "0.5";
+      inp.value = kind ? uv(kind, v) : String(v);
       inp.addEventListener("change", () => {
-        const nv = parseFloat(inp.value);
+        const nv = kind ? U.parse(kind, inp.value) : parseFloat(inp.value);
         if (isFinite(nv) && setFn(sys, i, nv)) afterGridSysEdit();
-        else inp.value = String(v);
+        else inp.value = kind ? uv(kind, v) : String(v);
       });
       const del = document.createElement("button");
       del.className = "del"; del.textContent = "✕";
@@ -2915,7 +3132,7 @@ function radialEditor(sys) {
     return col;
   };
   wrap.append(
-    mkList("Radii", sys.radii, "m", ME.addSysRadius, ME.setSysRadius, ME.removeSysRadius),
+    mkList("Radii", sys.radii, "m", ME.addSysRadius, ME.setSysRadius, ME.removeSysRadius, "length"),
     mkList("Spoke angles", sys.theta_deg, "°", ME.addSysTheta, ME.setSysTheta, ME.removeSysTheta),
   );
   return wrap;
@@ -2968,8 +3185,8 @@ function renderStoryRows() {
   box.textContent = "";
   const head = document.createElement("div");
   head.className = "ge-story head";
-  head.innerHTML = `<span>Name</span><span>Height m</span>
-    <span style="text-align:right">Elev m</span><span>Diaphragm</span><span>Insert</span><span></span>`;
+  head.innerHTML = `<span>Name</span><span>Height ${ul("length")}</span>
+    <span style="text-align:right">Elev ${ul("length")}</span><span>Diaphragm</span><span>Insert</span><span></span>`;
   box.appendChild(head);
 
   for (const st of [...m.stories].reverse()) {
@@ -2988,19 +3205,20 @@ function renderStoryRows() {
     });
 
     const hIn = document.createElement("input");
-    hIn.type = "number"; hIn.step = "0.1"; hIn.min = "0.5";
-    hIn.value = String(st.height);
+    hIn.type = "number"; hIn.step = U.step("length", "0.1"); hIn.min = "0";
+    hIn.value = uv("length", st.height);
+    hIn.dataset.story = st.name;
     hIn.addEventListener("change", () => {
-      const v = parseFloat(hIn.value);
+      const v = U.parse("length", hIn.value);
       if (ME.setStoryHeight(m, st.name, v)) {
         store.modelEdited = true;
         afterGeometryEdit();
-      } else hIn.value = String(st.height);
+      } else hIn.value = uv("length", st.height);
     });
 
     const elev = document.createElement("span");
     elev.className = "ge-elev";
-    elev.textContent = `${fmt(st.elevation - st.height, 1)} – ${fmt(st.elevation, 1)}`;
+    elev.textContent = `${U.fmt("length", st.elevation - st.height, 1)} – ${U.fmt("length", st.elevation, 1)}`;
 
     // v0.5 — per-story diaphragm override (blank = model default)
     const dsel = document.createElement("select");
@@ -3073,7 +3291,7 @@ async function saveModel() {
     const payload = JSON.parse(JSON.stringify(store.model));
     delete payload._mock_params;
     const echoed = await postModel(payload);
-    if (echoed && !store.mock) store.model = ME.normalizeModel(echoed);
+    if (echoed && !store.mock) store.model = ME.normalizeModel(keepSetup(echoed));
     clearDirty();
     toast("Model saved", store.mock
       ? "Accepted locally (mock mode)"
@@ -3112,6 +3330,8 @@ async function discardModel() {
     renderProps();
     renderSummary();
     if (store.mode === "loads") { loadsEditor.render(); syncLoadsNav(); }
+    syncUnitsFromModel();                                          // v1.13
+    document.dispatchEvent(new CustomEvent("sky:model-changed"));
     toast("Model reloaded", "Local edits discarded", "info", 4000);
   } catch (err) {
     toast("Reload failed", err.message, "error");
@@ -3162,6 +3382,9 @@ function adoptModel(modelDict, fileName) {
   syncDirtyUI();
   if (store.mode === "loads") { loadsEditor.render(); syncLoadsNav(); }
   setStatus("ready", "Ready");
+  syncUnitsFromModel();                                            // v1.13
+  document.dispatchEvent(new CustomEvent("sky:model-changed"));
+  document.dispatchEvent(new CustomEvent("sky:results-changed"));
 }
 
 /* ---- tiny promise-based confirm modal */
@@ -3286,15 +3509,15 @@ function renderImportStories() {
   box.innerHTML = store.importStories.map((h, i) => `
     <div class="import-story-row" data-i="${i}">
       <span class="isr-label">Story ${i + 1}</span>
-      <input type="number" step="0.1" min="0.5" value="${h}" data-i="${i}">
+      <input type="number" step="${U.step("length", "0.1")}" min="0" value="${uv("length", h)}" data-i="${i}">
       <button class="chip-x" data-del="${i}" title="Remove story"${store.importStories.length <= 1 ? " disabled" : ""}>✕</button>
     </div>`).join("");
   box.querySelectorAll("input").forEach(inp =>
     inp.addEventListener("change", () => {
-      const v = parseFloat(inp.value);
+      const v = U.parse("length", inp.value);
       const i = parseInt(inp.dataset.i, 10);
       if (isFinite(v) && v > 0) store.importStories[i] = v;
-      else inp.value = String(store.importStories[i]);
+      else inp.value = uv("length", store.importStories[i]);
     }));
   box.querySelectorAll("[data-del]").forEach(btn =>
     btn.addEventListener("click", () => {
@@ -3509,18 +3732,26 @@ async function submitSaveAs() {
 /* ================================================================
    v0.2 — MEMBER DETAIL PANEL (Analyze mode)
    ================================================================ */
+// v1.13 — `kind` drives the display-unit conversion of each diagram
 const DIAG = [
-  { key: "N", title: "N — axial", unit: "kN", color: "#34c384" },
-  { key: "V2", title: "V2 — shear", unit: "kN", color: "#1e9ad4" },
-  { key: "M3", title: "M3 — moment", unit: "kN·m", color: "#d55181" },
+  { key: "N", title: "N — axial", kind: "force", color: "#34c384" },
+  { key: "V2", title: "V2 — shear", kind: "force", color: "#1e9ad4" },
+  { key: "M3", title: "M3 — moment", kind: "moment", color: "#d55181" },
 ];
 const DIAG_MINOR = [
-  { key: "V3", title: "V3 — minor shear", unit: "kN", color: "#77879b" },
-  { key: "M2", title: "M2 — minor moment", unit: "kN·m", color: "#77879b" },
-  { key: "T", title: "T — torsion", unit: "kN·m", color: "#77879b" },
+  { key: "V3", title: "V3 — minor shear", kind: "force", color: "#77879b" },
+  { key: "M2", title: "M2 — minor moment", kind: "moment", color: "#77879b" },
+  { key: "T", title: "T — torsion", kind: "moment", color: "#77879b" },
 ];
 // v0.16 — local transverse deflection diagram (mm), from member_deflections
-const DIAG_DEFL = { key: "dy", title: "δy — deflection", unit: "mm", color: "#e5a50a", dec: 2 };
+const DIAG_DEFL = { key: "dy", title: "δy — deflection", kind: "disp", color: "#e5a50a", dec: 2 };
+/** Station diagram in display units: values + station x converted, unit label. */
+function unitDiagram(xs, vsSi, d) {
+  const xd = xs.map(x => U.toDisplay("length", x));
+  const vd = vsSi.map(v => U.toDisplay(d.kind, v));
+  return stationDiagram(xd, vd, { ...d, unit: U.label(d.kind), dec: U.dec(d.kind, d.dec ?? 1),
+    xUnit: U.label("length"), xDec: U.dec("length", 1) });
+}
 
 function onMemberClick(seg) {
   if (store.mode !== "analyze" || !store.results) return;
@@ -3551,7 +3782,7 @@ function renderMemberPanel() {
   const L = (pi && pj) ? Math.hypot(pj[0] - pi[0], pj[1] - pi[1], pj[2] - pi[2]) : null;
   $("memberMeta").innerHTML = [
     ["Kind", rm.kind], ["Section", rm.section],
-    ["Story", rm.story], ["Length", L != null ? `${fmt(L, 2)} m` : "—"],
+    ["Story", rm.story], ["Length", L != null ? U.fmtU("length", L, 2) : "—"],
   ].map(([k, v]) => `<div><dt>${esc(k)}</dt><dd title="${esc(v)}">${esc(v)}</dd></div>`).join("");
 
   const cd = caseData();
@@ -3572,18 +3803,18 @@ function renderMemberPanel() {
   if (st) {
     const vals = k => (st[k] && st[k].length === st.x.length) ? st[k] : st.x.map(() => 0);
     for (const d of DIAG)
-      main.appendChild(stationDiagram(st.x, vals(d.key), d));
+      main.appendChild(unitDiagram(st.x, vals(d.key), d));
     for (const d of DIAG_MINOR)
-      minor.appendChild(stationDiagram(st.x, vals(d.key), d));
+      minor.appendChild(unitDiagram(st.x, vals(d.key), d));
   }
   if (hasDefl) {
     // δ diagram (mm) — appended alongside N/V2/M3; sag plots downward
-    const card = stationDiagram(md.x, md.dy.map(v => v * 1000), DIAG_DEFL);
+    const card = unitDiagram(md.x, md.dy, DIAG_DEFL);
     card.classList.add("diagram-defl");
     main.appendChild(card);
     if (st && Array.isArray(md.dz) && md.dz.some(v => Math.abs(v) > 1e-9))
-      minor.appendChild(stationDiagram(md.x, md.dz.map(v => v * 1000),
-        { key: "dz", title: "δz — minor deflection", unit: "mm", color: "#77879b", dec: 2 }));
+      minor.appendChild(unitDiagram(md.x, md.dz,
+        { key: "dz", title: "δz — minor deflection", kind: "disp", color: "#77879b", dec: 2 }));
   }
 }
 
@@ -3597,11 +3828,11 @@ function renderSummary() {
   $("sum-members").textContent = m.members.length;
   const g = m.grid;
   $("sum-footprint").textContent = g ?
-    `${fmt(g.x_lines[g.x_lines.length - 1] - g.x_lines[0], 0)} × ${fmt(g.y_lines[g.y_lines.length - 1] - g.y_lines[0], 0)} m` : "—";
+    `${U.fmt("length", g.x_lines[g.x_lines.length - 1] - g.x_lines[0], 0)} × ${U.fmtU("length", g.y_lines[g.y_lines.length - 1] - g.y_lines[0], 0)}` : "—";
   const H = m.stories.length ? m.stories[m.stories.length - 1].elevation : 0;
-  $("sum-height").textContent = `${fmt(H, 1)} m`;
+  $("sum-height").textContent = U.fmtU("length", H, 1);
   const mass = Object.values(m.story_masses || {}).reduce((a, b) => a + b, 0);
-  $("sum-mass").textContent = `${fmt(mass, 1)} t`;
+  $("sum-mass").textContent = U.fmtU("mass", mass, 1);
   $("sum-base").textContent = m.base_fixity;
   const nShells = (m.shells || []).length;
   $("footerInfo").textContent =
@@ -3722,12 +3953,13 @@ function renderStoryTab() {
 
   const cmcr = hasCmCr();
   const limRatio = store.driftLimitPct / 100;
+  const L = ul("length"), D = ul("disp"), F = ul("force");
   const head = `<thead><tr>
-    <th class="txt">Story</th><th>Elev m</th>
-    <th>ux mm</th><th>uy mm</th>
+    <th class="txt">Story</th><th>Elev ${L}</th>
+    <th>ux ${D}</th><th>uy ${D}</th>
     <th>drift ‰ x</th><th>drift ‰ y</th>
-    <th>Vx kN</th><th>Vy kN</th>` +
-    (cmcr ? `<th>CM x m</th><th>CM y m</th><th>CR x m</th><th>CR y m</th><th>e m</th>` : "") +
+    <th>Vx ${F}</th><th>Vy ${F}</th>` +
+    (cmcr ? `<th>CM x ${L}</th><th>CM y ${L}</th><th>CR x ${L}</th><th>CR y ${L}</th><th>e ${L}</th>` : "") +
     `</tr></thead>`;
   const rows = [...r.story_order].reverse().map(s => {
     const st = cd.story[s] || {};
@@ -3736,16 +3968,16 @@ function renderStoryTab() {
     const ecc = cc ? Math.hypot((cc.cm_x ?? 0) - (cc.cr_x ?? 0), (cc.cm_y ?? 0) - (cc.cr_y ?? 0)) : null;
     return `<tr${s === store.cmStory ? ` class="cm-active"` : ""}>
       <td class="txt">${esc(s)}</td>
-      <td class="dim">${fmt(r.story_elev[s], 1)}</td>
-      <td>${fmt((st.ux || 0) * 1000, 1)}</td>
-      <td>${fmt((st.uy || 0) * 1000, 1)}</td>
+      <td class="dim">${U.fmt("length", r.story_elev[s], 1)}</td>
+      <td>${U.fmt("disp", st.ux || 0, 1)}</td>
+      <td>${U.fmt("disp", st.uy || 0, 1)}</td>
       <td class="${exx ? "exceed" : ""}">${fmt(Math.abs(st.drift_x || 0) * 1000, 2)}</td>
       <td class="${exy ? "exceed" : ""}">${fmt(Math.abs(st.drift_y || 0) * 1000, 2)}</td>
-      <td>${fmt(st.shear_x || 0, 1)}</td>
-      <td>${fmt(st.shear_y || 0, 1)}</td>` +
+      <td>${U.fmt("force", st.shear_x || 0, 1)}</td>
+      <td>${U.fmt("force", st.shear_y || 0, 1)}</td>` +
       (cmcr ? (cc
-        ? `<td>${fmt(cc.cm_x, 2)}</td><td>${fmt(cc.cm_y, 2)}</td>
-           <td>${fmt(cc.cr_x, 2)}</td><td>${fmt(cc.cr_y, 2)}</td><td>${fmt(ecc, 3)}</td>`
+        ? `<td>${U.fmt("length", cc.cm_x, 2)}</td><td>${U.fmt("length", cc.cm_y, 2)}</td>
+           <td>${U.fmt("length", cc.cr_x, 2)}</td><td>${U.fmt("length", cc.cr_y, 2)}</td><td>${U.fmt("length", ecc, 3)}</td>`
         : `<td class="dim">—</td><td class="dim">—</td><td class="dim">—</td><td class="dim">—</td><td class="dim">—</td>`) : "") +
       `</tr>`;
   }).join("");
@@ -3793,8 +4025,8 @@ function renderDiagBlock() {
       : `no irregularities flagged`);
 
   const head = `<thead><tr>
-    <th class="txt">Story</th><th>Elev m</th>
-    <th>kx kN/m</th><th>ky kN/m</th>
+    <th class="txt">Story</th><th>Elev ${ul("length")}</th>
+    <th>kx ${ul("stiffness")}</th><th>ky ${ul("stiffness")}</th>
     <th>τ ratio x</th><th>τ ratio y</th><th class="txt">Torsion</th>
     <th>stiff ratio</th><th class="txt">Soft story</th></tr></thead>`;
   const rows = [...r.story_order].reverse().map(s => {
@@ -3803,8 +4035,8 @@ function renderDiagBlock() {
     const overX = isFinite(trx) && trx >= 1.2, overY = isFinite(tryy) && tryy >= 1.2;
     return `<tr>
       <td class="txt">${esc(s)}</td>
-      <td class="dim">${fmt(r.story_elev[s], 1)}</td>
-      <td>${fmt(k.kx, 0)}</td><td>${fmt(k.ky, 0)}</td>
+      <td class="dim">${U.fmt("length", r.story_elev[s], 1)}</td>
+      <td>${U.fmt("stiffness", k.kx, 0)}</td><td>${U.fmt("stiffness", k.ky, 0)}</td>
       <td class="${overX ? "exceed" : ""}">${fmt(trx, 2)}</td>
       <td class="${overY ? "exceed" : ""}">${fmt(tryy, 2)}</td>
       <td class="txt">${diagChip(TORS_CHIP, ir.flag || "none")}</td>
@@ -3834,8 +4066,8 @@ function renderCmCrBlock() {
   const cc = storyCmCr(store.cmStory);
   const ecc = cc ? Math.hypot((cc.cm_x ?? 0) - (cc.cr_x ?? 0), (cc.cm_y ?? 0) - (cc.cr_y ?? 0)) : 0;
   $("cmcrNote").innerHTML =
-    `<b>${esc(store.cmStory)}</b> · CM (${fmt(cc.cm_x, 2)}, ${fmt(cc.cm_y, 2)}) · ` +
-    `CR (${fmt(cc.cr_x, 2)}, ${fmt(cc.cr_y, 2)}) · eccentricity <b>e = ${fmt(ecc, 3)} m</b>`;
+    `<b>${esc(store.cmStory)}</b> · CM (${U.fmt("length", cc.cm_x, 2)}, ${U.fmt("length", cc.cm_y, 2)}) · ` +
+    `CR (${U.fmt("length", cc.cr_x, 2)}, ${U.fmt("length", cc.cr_y, 2)}) · eccentricity <b>e = ${U.fmtU("length", ecc, 3)}</b>`;
   $("cmcrPlan").innerHTML = cmcrPlanSvg(cc);
 }
 
@@ -3890,12 +4122,13 @@ function renderStagedShortening() {
   const r = store.results;
   $("stagedShortNote").textContent =
     `${caseLabel(store.caseName)} — elastic staged pass vs age-adjusted effective-modulus pass`;
-  const mm = v => fmt((v || 0) * 1000, 2);
+  const mm = v => U.fmt("disp", v || 0, 2);
   const maxAbs = Math.max(...Object.values(sh).map(e => Math.abs(e.delta || 0)), 1e-12);
+  const D = ul("disp");
   const head = `<thead><tr>
-    <th class="txt">Story</th><th>Elev m</th>
-    <th>uz elastic mm</th><th>uz time-dep mm</th>
-    <th>Δ creep+shrink mm</th><th class="txt">Δ share</th></tr></thead>`;
+    <th class="txt">Story</th><th>Elev ${ul("length")}</th>
+    <th>uz elastic ${D}</th><th>uz time-dep ${D}</th>
+    <th>Δ creep+shrink ${D}</th><th class="txt">Δ share</th></tr></thead>`;
   const rows = [...r.story_order].reverse()
     .filter(s => sh[s])
     .map(s => {
@@ -3903,7 +4136,7 @@ function renderStagedShortening() {
       const w = Math.min(100, Math.abs(e.delta || 0) / maxAbs * 100);
       return `<tr>
         <td class="txt">${esc(s)}</td>
-        <td class="dim">${fmt(r.story_elev[s], 1)}</td>
+        <td class="dim">${U.fmt("length", r.story_elev[s], 1)}</td>
         <td>${mm(e.uz_elastic)}</td>
         <td>${mm(e.uz_time_dependent)}</td>
         <td>${mm(e.delta)}</td>
@@ -3982,7 +4215,7 @@ function renderCrackedResult() {
      <b>${cracked.length}</b> of ${entries.length} slab quads cracked ·
      ${res.iterations} iteration${res.iterations === 1 ? "" : "s"} ·
      ratio ${fmt(res.cracked_ratio, 2)} · f<sub>r</sub> factor ${fmt(res.fr_factor ?? 0.62, 2)} ·
-     max deflection ${fmt(uzCr * 1000, 2)} mm` +
+     max deflection ${U.fmtU("disp", uzCr, 2)}` +
     (amp != null ? ` <span class="muted">(${fmt(amp, 2)}× elastic)</span>` : "");
   const warns = res.cracked_warnings || [];
   wbox.classList.toggle("hidden", !warns.length);
@@ -4002,11 +4235,11 @@ function renderCrackedResult() {
   }
   const head = `<thead><tr>
     <th class="txt">Slab region</th><th>quads</th><th>cracked</th>
-    <th>max Ma kN·m/m</th><th>Mcr kN·m/m</th><th class="txt">state</th></tr></thead>`;
+    <th>max Ma ${ul("line_moment")}</th><th>Mcr ${ul("line_moment")}</th><th class="txt">state</th></tr></thead>`;
   const rows = Object.entries(byRegion).map(([reg, g]) => `<tr${g.nc ? ` class="over"` : ""}>
     <td class="txt">${esc(reg)}</td>
     <td>${g.n}</td><td>${g.nc}</td>
-    <td>${fmt(g.Ma, 2)}</td><td>${fmt(g.Mcr, 2)}</td>
+    <td>${U.fmt("line_moment", g.Ma, 2)}</td><td>${U.fmt("line_moment", g.Mcr, 2)}</td>
     <td class="txt">${g.nc
       ? `<span class="status-chip st-ng">cracked</span>`
       : `<span class="status-chip st-ok">uncracked</span>`}</td></tr>`).join("");
@@ -4064,7 +4297,11 @@ function renderModalTab() {
   syncModalBasisUI();                              // v0.24 — basis toggle/badge
   const modal = store.results.modal;
   if (!modal || !modal.periods || !modal.periods.length) {
-    $("modalTable").innerHTML = `<tbody><tr><td class="txt dim">No modal results</td></tr></tbody>`;
+    // v1.13 — the MODAL case may have been set to "Do not Run"
+    const nr = notRunEntries().some(e => e.kind === "modal");
+    $("modalTable").innerHTML = `<tbody><tr><td class="txt dim">${nr
+      ? `<span class="notrun-badge">MODAL not run</span> — set to Do not Run (Analyze → Set Load Cases to Run…)`
+      : "No modal results"}</td></tr></tbody>`;
     return;
   }
   const bar = (v, cls = "") =>
@@ -4195,9 +4432,9 @@ function renderReactionsTab() {
     (caseData()?.min ? ` · envelope ${store.envSide}` : "") +
     (isRsCase(store.caseName) ? " · envelope ±" : "");
   const head = `<thead><tr>
-    <th class="txt">Node</th><th>X m</th><th>Y m</th>
-    <th>FX kN</th><th>FY kN</th><th>FZ kN</th>
-    <th>MX kN·m</th><th>MY kN·m</th><th>MZ kN·m</th></tr></thead>`;
+    <th class="txt">Node</th><th>X ${ul("length")}</th><th>Y ${ul("length")}</th>
+    <th>FX ${ul("force")}</th><th>FY ${ul("force")}</th><th>FZ ${ul("force")}</th>
+    <th>MX ${ul("moment")}</th><th>MY ${ul("moment")}</th><th>MZ ${ul("moment")}</th></tr></thead>`;
   const tags = (r.supports || []).slice().sort((a, b) => {
     const pa = r.nodes[a] || [0, 0], pb = r.nodes[b] || [0, 0];
     return pa[1] - pb[1] || pa[0] - pb[0];
@@ -4206,14 +4443,14 @@ function renderReactionsTab() {
     const p = r.nodes[t] || [0, 0, 0];
     const f = (cd.reactions && cd.reactions[t]) || [0, 0, 0, 0, 0, 0];
     return `<tr><td class="txt">${esc(t)}</td>
-      <td class="dim">${fmt(p[0], 1)}</td><td class="dim">${fmt(p[1], 1)}</td>
-      ${f.map(v => `<td>${fmt(v, 1)}</td>`).join("")}</tr>`;
+      <td class="dim">${U.fmt("length", p[0], 1)}</td><td class="dim">${U.fmt("length", p[1], 1)}</td>
+      ${f.map((v, i) => `<td>${U.fmt(i < 3 ? "force" : "moment", v, 1)}</td>`).join("")}</tr>`;
   }).join("");
   const b = cd.base || {};
   const totals = `<tr class="totals">
     <td class="txt">Σ base</td><td></td><td></td>
-    <td>${fmt(b.FX, 1)}</td><td>${fmt(b.FY, 1)}</td><td>${fmt(b.FZ, 1)}</td>
-    <td>${fmt(b.MX, 1)}</td><td>${fmt(b.MY, 1)}</td><td>${fmt(b.MZ, 1)}</td></tr>`;
+    <td>${U.fmt("force", b.FX, 1)}</td><td>${U.fmt("force", b.FY, 1)}</td><td>${U.fmt("force", b.FZ, 1)}</td>
+    <td>${U.fmt("moment", b.MX, 1)}</td><td>${U.fmt("moment", b.MY, 1)}</td><td>${U.fmt("moment", b.MZ, 1)}</td></tr>`;
   $("reactionsTable").innerHTML = head + `<tbody>${rows}${totals}</tbody>`;
 }
 
@@ -4250,16 +4487,16 @@ const FORCE_COLS = [
   { key: "kind", label: "Kind", txt: true },
   { key: "story", label: "Story", txt: true },
   { key: "section", label: "Section", txt: true },
-  { key: "N", label: "|N|max kN" },
-  { key: "V2", label: "|V2|max kN" },
-  { key: "M3", label: "|M3|max kN·m" },
+  { key: "N", label: "|N|max", kind: "force" },
+  { key: "V2", label: "|V2|max", kind: "force" },
+  { key: "M3", label: "|M3|max", kind: "moment" },
 ];
 
 function renderForcesTab() {
   const rows = forcesRows();
   const { key: sk, dir } = store.forcesSort;
   const head = `<thead><tr>` + FORCE_COLS.map(c =>
-    `<th class="sortable ${c.txt ? "txt" : ""}" data-key="${c.key}">${c.label}` +
+    `<th class="sortable ${c.txt ? "txt" : ""}" data-key="${c.key}">${c.label}${c.kind ? " " + ul(c.kind) : ""}` +
     (c.key === sk ? `<span class="sort-arrow">${dir > 0 ? "▲" : "▼"}</span>` : "") +
     `</th>`).join("") + `</tr></thead>`;
   const body = rows.map(x => `<tr>
@@ -4267,7 +4504,7 @@ function renderForcesTab() {
     <td class="txt dim">${esc(x.kind)}</td>
     <td class="txt dim">${esc(x.story)}</td>
     <td class="txt dim">${esc(x.section)}</td>
-    <td>${fmt(x.N, 1)}</td><td>${fmt(x.V2, 1)}</td><td>${fmt(x.M3, 1)}</td></tr>`).join("");
+    <td>${U.fmt("force", x.N, 1)}</td><td>${U.fmt("force", x.V2, 1)}</td><td>${U.fmt("moment", x.M3, 1)}</td></tr>`).join("");
   $("forcesTable").innerHTML = head + `<tbody>${body}</tbody>`;
   $("forcesCount").textContent = `${rows.length} members · ${caseLabel(store.caseName)}` +
     (caseData()?.min ? ` · envelope ${store.envSide}` : "") +
@@ -4333,6 +4570,7 @@ function renderThTab() {
   $("thMeta").textContent =
     `${td.t.length} steps · ${fmt(td.t[td.t.length - 1] || 0, 1)} s · ` +
     `dir ${dirX ? "X" : "Y"} · ${damp}`;
+  $("thMeta").insertAdjacentHTML("beforeend", notRunNote("th"));           // v1.13
   $("thFnaBadge").classList.toggle("hidden", !td._fna);
   $("thFnaBtn").disabled = !!td._fna;              // already an FNA record
 
@@ -4340,31 +4578,32 @@ function renderThTab() {
   box.textContent = "";
   const ux = (td.story_ux && td.story_ux[story]) || [];
   const uy = (td.story_uy && td.story_uy[story]) || [];
+  const dD = v => U.toDisplay("disp", v), dF = v => U.toDisplay("force", v);
   box.appendChild(timeSeriesChart(td.t, [
-    { label: `${story} ux`, values: ux.map(v => v * 1000), color: "#1e9ad4" },
-    { label: `${story} uy`, values: uy.map(v => v * 1000), color: "#d55181" },
-  ], { title: `Story displacement — ${story}`, unit: "mm", dec: 2 }));
+    { label: `${story} ux`, values: ux.map(dD), color: "#1e9ad4" },
+    { label: `${story} uy`, values: uy.map(dD), color: "#d55181" },
+  ], { title: `Story displacement — ${story}`, unit: U.label("disp"), dec: U.dec("disp", 2) }));
   box.appendChild(timeSeriesChart(td.t, [
-    { label: "base FX", values: td.base_FX || [], color: "#1e9ad4" },
-    { label: "base FY", values: td.base_FY || [], color: "#d55181" },
-  ], { title: "Base shear", unit: "kN", dec: 1 }));
+    { label: "base FX", values: (td.base_FX || []).map(dF), color: "#1e9ad4" },
+    { label: "base FY", values: (td.base_FY || []).map(dF), color: "#d55181" },
+  ], { title: "Base shear", unit: U.label("force"), dec: U.dec("force", 1) }));
 
   /* peaks table: per-story displacement peaks + base row */
   const head = `<thead><tr>
-    <th class="txt">Story</th><th>Elev m</th>
-    <th>peak |ux| mm</th><th>peak |uy| mm</th></tr></thead>`;
+    <th class="txt">Story</th><th>Elev ${ul("length")}</th>
+    <th>peak |ux| ${ul("disp")}</th><th>peak |uy| ${ul("disp")}</th></tr></thead>`;
   const rows = [...r.story_order].reverse().map(s => {
     const p = (td.peaks && td.peaks.story && td.peaks.story[s]) || {};
     return `<tr${s === story ? ` class="th-active"` : ""}>
       <td class="txt">${esc(s)}</td>
-      <td class="dim">${fmt(r.story_elev[s], 1)}</td>
-      <td>${fmt((p.ux || 0) * 1000, 2)}</td>
-      <td>${fmt((p.uy || 0) * 1000, 2)}</td></tr>`;
+      <td class="dim">${U.fmt("length", r.story_elev[s], 1)}</td>
+      <td>${U.fmt("disp", p.ux || 0, 2)}</td>
+      <td>${U.fmt("disp", p.uy || 0, 2)}</td></tr>`;
   }).join("");
   const pb = (td.peaks && td.peaks.base) || {};
   const totals = `<tr class="totals">
     <td class="txt">peak base shear</td><td></td>
-    <td>${fmt(pb.FX || 0, 1)} kN</td><td>${fmt(pb.FY || 0, 1)} kN</td></tr>`;
+    <td>${U.fmtU("force", pb.FX || 0, 1)}</td><td>${U.fmtU("force", pb.FY || 0, 1)}</td></tr>`;
   $("thPeaksTable").innerHTML = head + `<tbody>${rows}${totals}</tbody>`;
 
   /* v0.6 — nonlinear (plastic-hinge) run: yielded list + hinge-rotation table */
@@ -4471,6 +4710,7 @@ function renderPoTab() {
   $("poMeta").textContent =
     `dir ${pc.direction || "X"} · target ${fmt((pc.target_drift ?? 0.02) * 100, 1)} % drift · ` +
     `${(pd.roof_disp || []).length} steps · hardening ${fmt(pc.hardening ?? 0.02, 2)}`;
+  $("poMeta").insertAdjacentHTML("beforeend", notRunNote("pushover"));     // v1.13
 
   const wbox = $("poWarnings");
   wbox.textContent = "";
@@ -4492,7 +4732,7 @@ function renderPoTab() {
     bilinear: perf ? { dy: perf.dy, Vy: perf.Vy, du: perf.du, Vu: perf.Vu }
                    : null,
     marker: perf ? { x: perf.delta_t,
-                     label: `δt ${fmt(perf.delta_t * 1000, 0)} mm` } : null,
+                     label: `δt ${U.fmtU("disp", perf.delta_t, 0)}` } : null,
   }));
   renderPerfOut();
 
@@ -4515,12 +4755,12 @@ function renderPoTab() {
   const rows = Object.entries(pd.hinge_rotations || {}).sort((a, b) => b[1] - a[1]);
   const head = `<thead><tr>
     <th class="txt">Member</th><th class="txt">Kind</th><th class="txt">Story</th>
-    <th>θ mrad</th><th>My kN·m</th>${hasStates ? `<th class="txt">State</th>` : ""}</tr></thead>`;
+    <th>θ mrad</th><th>My ${ul("moment")}</th>${hasStates ? `<th class="txt">State</th>` : ""}</tr></thead>`;
   const body = rows.map(([uid, rot]) => {
     const mm = memBy[uid] || {};
-    const my = (pc.My && pc.My[uid] != null) ? fmt(pc.My[uid], 0)
-      : myOf[uid] != null ? fmt(myOf[uid], 0)
-      : (pc.default_My != null ? `${fmt(pc.default_My, 0)} (default)` : "—");
+    const my = (pc.My && pc.My[uid] != null) ? U.fmt("moment", pc.My[uid], 0)
+      : myOf[uid] != null ? U.fmt("moment", myOf[uid], 0)
+      : (pc.default_My != null ? `${U.fmt("moment", pc.default_My, 0)} (default)` : "—");
     const st = finalState[uid];
     const stCell = hasStates
       ? `<td class="txt">${st ? `<span class="hstate hstate-${st}">${st}</span>` : `<span class="dim">—</span>`}</td>`
@@ -4581,14 +4821,14 @@ function renderPerfOut() {
   const f = (v, d = 3) => fmt(v, d);
   out.innerHTML =
     `<span>T<sub>e</sub> <b>${f(perf.Te)} s</b></span>
-     <span>K<sub>e</sub> <b>${f(perf.Ke, 0)} kN/m</b></span>
-     <span>V<sub>y</sub> <b>${f(perf.Vy, 0)} kN</b></span>
+     <span>K<sub>e</sub> <b>${U.fmtU("stiffness", perf.Ke, 0)}</b></span>
+     <span>V<sub>y</sub> <b>${U.fmtU("force", perf.Vy, 0)}</b></span>
      <span>S<sub>a</sub> <b>${f(perf.Sa)} g</b></span>
      <span>μ <b>${f(perf.mu, 2)}</b></span>
      <span>C<sub>0</sub> <b>${f(perf.C0, 2)}</b></span>
      <span>C<sub>1</sub> <b>${f(perf.C1, 3)}</b></span>
      <span>C<sub>2</sub> <b>${f(perf.C2, 3)}</b></span>
-     <span class="perf-dt">δ<sub>t</sub> <b>${f(perf.delta_t * 1000, 1)} mm</b>
+     <span class="perf-dt">δ<sub>t</sub> <b>${U.fmtU("disp", perf.delta_t, 1)}</b>
        <span class="dim">@ step ${perf.step ?? "—"}</span></span>
      ${perf.elastic ? `<span class="hstate hstate-elastic" title="The capacity curve never yielded within the pushover — the idealization degenerates to the elastic line (Vy = Vu, conservative in C1/C2)">elastic response</span>` : ""}`;
   const hs = perf.hinge_summary || {};
@@ -4637,6 +4877,7 @@ function renderBucklingTab() {
     `gravity ${gravStr} · ${factors.length} mode${factors.length === 1 ? "" : "s"}` +
     (factors.length ? ` · λ₁ = ${fmt(factors[0], 3)}` : "") +
     (baseCase ? ` · from state of ${baseCase}` : "");
+  $("buckMeta").insertAdjacentHTML("beforeend", notRunNote("buckling"));   // v1.13
 
   // warnings (e.g. λ < 1)
   const wbox = $("buckWarnings");
@@ -4761,28 +5002,28 @@ function renderTakedownTab() {
   const ok = !!td.balance_ok;
   chip.className = `balance-chip ${ok ? "is-ok" : "is-bad"}`;
   chip.textContent = ok
-    ? `● balanced · ΣFZ ${fmt(total, 1)} = applied ${fmt(applied, 1)} kN`
-    : `▲ unbalanced · ΣFZ ${fmt(total, 1)} vs applied ${fmt(applied, 1)} kN (Δ ${fmt(total - applied, 1)})`;
+    ? `● balanced · ΣFZ ${U.fmt("force", total, 1)} = applied ${U.fmtU("force", applied, 1)}`
+    : `▲ unbalanced · ΣFZ ${U.fmt("force", total, 1)} vs applied ${U.fmtU("force", applied, 1)} (Δ ${U.fmt("force", total - applied, 1)})`;
 
   // table
   const head = `<thead><tr>
-    <th class="txt">Grid</th><th class="txt">Node</th><th>X m</th><th>Y m</th>
-    <th>FZ kN</th><th>FX kN</th><th>FY kN</th></tr></thead>`;
+    <th class="txt">Grid</th><th class="txt">Node</th><th>X ${ul("length")}</th><th>Y ${ul("length")}</th>
+    <th>FZ ${ul("force")}</th><th>FX ${ul("force")}</th><th>FY ${ul("force")}</th></tr></thead>`;
   const maxFz = Math.max(1e-9, ...rows.map(s => Math.abs(s.FZ || 0)));
   const body = rows.map(s => {
     const frac = Math.abs(s.FZ || 0) / maxFz;
     return `<tr>
       <td class="txt td-grid">${esc(s.grid || "—")}</td>
       <td class="txt dim">${esc(s.node)}</td>
-      <td class="dim">${fmt(s.x, 2)}</td><td class="dim">${fmt(s.y, 2)}</td>
-      <td class="td-fz"><span class="td-bar" style="--f:${(frac * 100).toFixed(1)}%"></span>${fmt(s.FZ, 1)}</td>
-      <td>${fmt(s.FX, 1)}</td><td>${fmt(s.FY, 1)}</td></tr>`;
+      <td class="dim">${U.fmt("length", s.x, 2)}</td><td class="dim">${U.fmt("length", s.y, 2)}</td>
+      <td class="td-fz"><span class="td-bar" style="--f:${(frac * 100).toFixed(1)}%"></span>${U.fmt("force", s.FZ, 1)}</td>
+      <td>${U.fmt("force", s.FX, 1)}</td><td>${U.fmt("force", s.FY, 1)}</td></tr>`;
   }).join("");
   const totals = `<tr class="totals">
     <td class="txt">Σ total</td><td></td><td></td><td></td>
-    <td>${fmt(total, 1)}</td>
-    <td>${fmt(rows.reduce((a, s) => a + (s.FX || 0), 0), 1)}</td>
-    <td>${fmt(rows.reduce((a, s) => a + (s.FY || 0), 0), 1)}</td></tr>`;
+    <td>${U.fmt("force", total, 1)}</td>
+    <td>${U.fmt("force", rows.reduce((a, s) => a + (s.FX || 0), 0), 1)}</td>
+    <td>${U.fmt("force", rows.reduce((a, s) => a + (s.FY || 0), 0), 1)}</td></tr>`;
   $("tdTable").innerHTML = head + `<tbody>${body}${totals}</tbody>`;
 
   $("tdBubble").innerHTML = takedownBubbleSvg(rows);
@@ -4835,7 +5076,7 @@ function takedownBubbleSvg(rows) {
     // label grid supports (grid-less mesh nodes stay uncluttered — bubble only)
     if (s.grid) {
       svg += `<text x="${cx}" y="${cy - r - 3}" fill="var(--text-2)" font-size="9" font-weight="700" text-anchor="middle" font-family="inherit">${esc(s.grid)}</text>`;
-      svg += `<text x="${cx}" y="${cy + 3}" fill="var(--text-1)" font-size="8.5" text-anchor="middle" font-family="inherit">${fmt(s.FZ, 0)}</text>`;
+      svg += `<text x="${cx}" y="${cy + 3}" fill="var(--text-1)" font-size="8.5" text-anchor="middle" font-family="inherit">${U.fmt("force", s.FZ, 0)}</text>`;
     }
   }
   svg += `</svg>`;
@@ -4910,25 +5151,25 @@ function renderCutsTab() {
   const rows = cutRows(cd);
 
   $("cutMeta").textContent =
-    `${rows.length} cut${rows.length === 1 ? "" : "s"} · ${store.cutCase} · resultants (kN, kN·m)`;
+    `${rows.length} cut${rows.length === 1 ? "" : "s"} · ${store.cutCase} · resultants (${U.label("force")}, ${U.label("moment")})`;
 
   const head = `<thead><tr>
     <th class="txt">Cut</th><th class="txt">Plane</th>
-    <th>FX kN</th><th>FY kN</th><th>FZ kN</th>
-    <th>MX kN·m</th><th>MY kN·m</th><th>MZ kN·m</th>
+    <th>FX ${ul("force")}</th><th>FY ${ul("force")}</th><th>FZ ${ul("force")}</th>
+    <th>MX ${ul("moment")}</th><th>MY ${ul("moment")}</th><th>MZ ${ul("moment")}</th>
     <th>n·mem</th><th>n·shell</th><th class="txt">Warnings</th></tr></thead>`;
   const body = rows.map(row => {
     const d = row.def || {};
-    const plane = d.axis ? `${d.axis.toUpperCase()}=${fmt(d.coord, 2)}` : "—";
+    const plane = d.axis ? `${d.axis.toUpperCase()}=${U.fmt("length", d.coord, 2)}` : "—";
     const warn = (row.warnings || []).length
       ? `<span class="cut-warn">⚠ ${esc((row.warnings || []).join(" · "))}</span>` : "";
     const sel = row.name === store.cutSel ? " is-sel" : "";
     return `<tr class="cut-row${sel}" data-cut="${esc(row.name)}" title="Click to highlight crossing members in 3D">
       <td class="txt cut-name">✂ ${esc(row.name)}</td>
       <td class="txt dim">${plane}</td>
-      <td>${fmt(row.FX, 1)}</td><td>${fmt(row.FY, 1)}</td>
-      <td class="cut-fz">${fmt(row.FZ, 1)}</td>
-      <td>${fmt(row.MX, 1)}</td><td>${fmt(row.MY, 1)}</td><td>${fmt(row.MZ, 1)}</td>
+      <td>${U.fmt("force", row.FX, 1)}</td><td>${U.fmt("force", row.FY, 1)}</td>
+      <td class="cut-fz">${U.fmt("force", row.FZ, 1)}</td>
+      <td>${U.fmt("moment", row.MX, 1)}</td><td>${U.fmt("moment", row.MY, 1)}</td><td>${U.fmt("moment", row.MZ, 1)}</td>
       <td class="dim">${row.n_members ?? 0}</td><td class="dim">${row.n_shells ?? 0}</td>
       <td class="txt">${warn}</td></tr>`;
   }).join("");
@@ -5029,10 +5270,10 @@ function pierSparkSvg(stories) {
 
 const PIER_COLS = [
   { key: "story", label: "Story", txt: true },
-  { key: "elev", label: "Elev m" },
-  { key: "P", label: "P kN" },
-  { key: "V", label: "V kN" },
-  { key: "M", label: "M kN·m" },
+  { key: "elev", label: "Elev", kind: "length" },
+  { key: "P", label: "P", kind: "force" },
+  { key: "V", label: "V", kind: "force" },
+  { key: "M", label: "M", kind: "moment" },
 ];
 
 function renderPiersTab() {
@@ -5047,7 +5288,7 @@ function renderPiersTab() {
 
   const { key: sk, dir } = store.pierSort;
   const head = `<thead><tr><th class="txt">Pier</th>` + PIER_COLS.map(c =>
-    `<th class="sortable ${c.txt ? "txt" : ""}" data-key="${c.key}">${c.label}` +
+    `<th class="sortable ${c.txt ? "txt" : ""}" data-key="${c.key}">${c.label}${c.kind ? " " + ul(c.kind) : ""}` +
     (c.key === sk ? `<span class="sort-arrow">${dir > 0 ? "▲" : "▼"}</span>` : "") +
     `</th>`).join("") + `</tr></thead>`;
 
@@ -5059,10 +5300,10 @@ function renderPiersTab() {
     const rows = g.stories.map(s => `<tr>
       <td class="txt dim"></td>
       <td class="txt">${esc(s.story)}</td>
-      <td class="dim">${fmt(s.elev, 1)}</td>
-      <td>${fmt(s.P, 1)}</td>
-      <td>${fmt(s.V, 1)}</td>
-      <td>${fmt(s.M, 1)}</td></tr>`).join("");
+      <td class="dim">${U.fmt("length", s.elev, 1)}</td>
+      <td>${U.fmt("force", s.P, 1)}</td>
+      <td>${U.fmt("force", s.V, 1)}</td>
+      <td>${U.fmt("moment", s.M, 1)}</td></tr>`).join("");
     return header + rows;
   }).join("");
   $("pierTable").innerHTML = head + `<tbody>${body}</tbody>`;
@@ -5133,8 +5374,8 @@ function svcRows(list) {
 const SVC_COLS = [
   { key: "uid", label: "Beam", txt: true },
   { key: "story", label: "Story", txt: true },
-  { key: "L", label: "L m" },
-  { key: "dyMm", label: "max |δ| mm" },
+  { key: "L", label: "L", kind: "length" },
+  { key: "dyMm", label: "max |δ|", kind: "disp" },
   { key: "ratioVal", label: "Ratio" },
   { key: "limit", label: "Limit", txt: true },
   { key: "ok", label: "Status", txt: true },
@@ -5156,15 +5397,15 @@ function renderSvcTab() {
 
   const { key: sk, dir } = store.svcSort;
   const head = `<thead><tr>` + SVC_COLS.map(c =>
-    `<th class="sortable ${c.txt ? "txt" : ""}" data-key="${c.key}">${c.label}` +
+    `<th class="sortable ${c.txt ? "txt" : ""}" data-key="${c.key}">${c.label}${c.kind ? " " + ul(c.kind) : ""}` +
     (c.key === sk ? `<span class="sort-arrow">${dir > 0 ? "▲" : "▼"}</span>` : "") +
     `</th>`).join("") + `</tr></thead>`;
   const body = rows.map(x => `
     <tr data-uid="${esc(x.uid)}" class="svc-row${x.ok ? "" : " over"}" title="Click to show ${esc(x.uid)} in 3D">
       <td class="txt">${esc(x.uid)}</td>
       <td class="txt dim">${esc(x.story || "—")}</td>
-      <td class="dim">${fmt(x.L, 2)}</td>
-      <td class="${x.ok ? "" : "exceed"}">${fmt(x.dyMm, 2)}</td>
+      <td class="dim">${U.fmt("length", x.L, 2)}</td>
+      <td class="${x.ok ? "" : "exceed"}">${U.fmt("disp", x.max_abs_dy || 0, 2)}</td>
       <td class="${x.ok ? "" : "exceed"}"><b>${esc(x.ratio_str || "—")}</b></td>
       <td class="txt dim">${esc(x.limit || "—")}</td>
       <td class="txt">${x.ok
@@ -6625,8 +6866,8 @@ function renderVibTable() {
   const head = `<thead><tr>
     <th class="txt">Beam</th><th class="txt">Story</th>
     <th title="Natural frequency of the floor panel">fn Hz</th>
-    <th title="Midspan deflection under the participating weight">Δmid mm</th>
-    <th title="Effective panel weight">W_eff kN</th>
+    <th title="Midspan deflection under the participating weight">Δmid ${ul("disp")}</th>
+    <th title="Effective panel weight">W_eff ${ul("force")}</th>
     <th title="Peak walking acceleration ratio">ap/g %</th>
     <th>limit %</th><th class="txt">Status</th></tr></thead>`;
   const body = rows.map(x => `<tr data-uid="${esc(x.uid)}"
@@ -6635,8 +6876,8 @@ function renderVibTable() {
     <td class="txt">${esc(x.uid)}${x.status === "NG" ? ` <span class="vib-pulse-glyph" title="pulsing amber in the 3D view">◉</span>` : ""}</td>
     <td class="txt dim">${esc(x.story || "—")}</td>
     <td>${fmt(x.fn, 2)}</td>
-    <td class="dim">${fmt((x.delta_mid || 0) * 1000, 2)}</td>
-    <td class="dim">${fmt(x.W_eff, 0)}</td>
+    <td class="dim">${U.fmt("disp", x.delta_mid || 0, 2)}</td>
+    <td class="dim">${U.fmt("force", x.W_eff, 0)}</td>
     <td class="${x.status === "NG" ? "exceed" : ""}"><b>${fmt((x.ap_over_g || 0) * 100, 2)}</b></td>
     <td class="dim">${fmt((x.limit ?? prm.ap_limit ?? 0.005) * 100, 2)}</td>
     <td class="txt">${chip(x.status)}</td></tr>`).join("");
@@ -6686,7 +6927,7 @@ async function runVirtualWork() {
     renderVwTable();
     applyVwColors();
     toast("Drift shares computed",
-      `${Object.keys(res.contributions || {}).length} members · roof ${fmt((res.roof_disp || 0) * 1000, 1)} mm · 3D members colored`,
+      `${Object.keys(res.contributions || {}).length} members · roof ${U.fmtU("disp", res.roof_disp || 0, 1)} · 3D members colored`,
       "info", 5000);
   } catch (err) {
     toast("Virtual-work run failed", err.message, "error", 8000);
@@ -6739,15 +6980,15 @@ function renderVwTable() {
   summary.classList.remove("hidden");
   summary.innerHTML =
     `<span class="ds-item"><b>${rows.length}</b> contributing members</span>` +
-    `<span class="ds-item">Σ contributions <b>${fmt(total * 1000, 2)} mm</b></span>` +
-    `<span class="ds-item">roof displacement <b>${fmt(roof * 1000, 2)} mm</b></span>` +
+    `<span class="ds-item">Σ contributions <b>${U.fmtU("disp", total, 2)}</b></span>` +
+    `<span class="ds-item">roof displacement <b>${U.fmtU("disp", roof, 2)}</b></span>` +
     `<span class="ds-item"><b class="${match ? "vw-match" : "ds-over"}" title="Σ member virtual-work contributions vs the analysis roof displacement — the two should match">${match ? "✓ totals match" : "≠ totals differ"}</b></span>` +
     `<span class="ds-item ds-prelim">${esc(caseLabel(res.case || ""))} · ${esc(res.direction || store.vwDir)}</span>`;
 
   const vmax = rows.length ? rows[0].v : 1;
   const head = `<thead><tr>
     <th>#</th><th class="txt">Member</th><th class="txt">Kind</th><th class="txt">Story</th>
-    <th title="Contribution to the roof displacement">δ mm</th>
+    <th title="Contribution to the roof displacement">δ ${ul("disp")}</th>
     <th title="Share of the total roof drift">% of total</th>
     <th class="txt">share</th></tr></thead>`;
   const body = top.map((x, i) => `<tr data-uid="${esc(x.uid)}" class="design-row vw-row"
@@ -6756,7 +6997,7 @@ function renderVwTable() {
     <td class="txt">${esc(x.uid)}</td>
     <td class="txt dim">${esc(x.kind)}</td>
     <td class="txt dim">${esc(x.story)}</td>
-    <td>${fmt(x.v * 1000, 3)}</td>
+    <td>${U.fmt("disp", x.v, 3)}</td>
     <td><b>${fmt(x.pct, 1)} %</b></td>
     <td class="txt"><span class="vw-bar-wrap"><span class="vw-bar"
       style="--w:${((x.v / (vmax || 1)) * 100).toFixed(1)}%; --c:${vwColor(x.v / (vmax || 1))}"></span></span></td>
@@ -6768,7 +7009,7 @@ function renderVwTable() {
   $("vwNote").textContent =
     `Top ${top.length} of ${rows.length} members by virtual-work share of the ` +
     `${res.direction || store.vwDir}-direction roof displacement under ${caseLabel(res.case || "")}. ` +
-    `Σ contributions ${fmt(total * 1000, 2)} mm vs roof displacement ${fmt(roof * 1000, 2)} mm — ` +
+    `Σ contributions ${U.fmtU("disp", total, 2)} vs roof displacement ${U.fmtU("disp", roof, 2)} — ` +
     "the two should match. The 3D view colors every contributing member (legend: drift energy share).";
 }
 
@@ -7034,11 +7275,14 @@ function renderContourLegend() {
     if (v > hi) hi = v;
   }
   const vmax = Math.max(Math.abs(lo), Math.abs(hi)) || 1;
+  // v1.13 — shell forces per unit length: N (force/length), M (moment/length)
+  const ck = comp.unit === "kN·m/m" ? "line_moment" : "line_force";
   $("contourLegendTitle").innerHTML =
-    `${esc(store.contour.comp)} <span class="unit">${esc(comp.unit)} · ${esc(caseLabel(store.caseName))}</span>`;
+    `${esc(store.contour.comp)} <span class="unit">${ul(ck)} · ${esc(caseLabel(store.caseName))}</span>`;
   // symmetric diverging scale about 0 — label the true data min/max
-  $("clMin").textContent = fmt(-vmax, vmax < 10 ? 2 : 1);
-  $("clMax").textContent = `+${fmt(vmax, vmax < 10 ? 2 : 1)}`;
+  const vd = U.toDisplay(ck, vmax);
+  $("clMin").textContent = fmt(-vd, vd < 10 ? 2 : 1);
+  $("clMax").textContent = `+${fmt(vd, vd < 10 ? 2 : 1)}`;
 }
 
 /* ================================================================
@@ -7051,6 +7295,11 @@ const csvEsc = v => {
 const toCsv = rows => rows.map(r => r.map(csvEsc).join(",")).join("\n") + "\n";
 const slug = s => String(s || "x").trim().replace(/[^A-Za-z0-9_-]+/g, "_")
   .replace(/^_+|_+$/g, "").slice(0, 48) || "x";
+
+/* v1.13 — CSV values in the current display units (still unrounded) and
+   unit-tagged headers; the default kN-m set reproduces the legacy headers. */
+const cv = (kind, v) => (v === "" || v == null || !isFinite(v)) ? v : U.toDisplay(kind, v);
+const ch = (base, kind) => `${base}_${U.csvTag(kind)}`;
 
 /** Rows (incl. header) for each exportable table — numbers UNROUNDED. */
 function csvRows(kind) {
@@ -7066,23 +7315,26 @@ function csvRows(kind) {
     const stiff = diag ? (r.story_stiffness[dcase] || {}) : {};
     const irr = diag ? (r.irregularity[dcase] || {}) : {};
     return [
-      ["story", "elev_m", "ux_m", "uy_m", "drift_x", "drift_y", "shear_x_kN", "shear_y_kN",
-        ...(cmcr ? ["cm_x_m", "cm_y_m", "cr_x_m", "cr_y_m", "ecc_m"] : []),
-        ...(diag ? [`kx_kN_m(${dcase})`, "ky_kN_m", "tors_ratio_x", "tors_ratio_y",
+      ["story", ch("elev", "length"), ch("ux", "length"), ch("uy", "length"), "drift_x", "drift_y",
+        ch("shear_x", "force"), ch("shear_y", "force"),
+        ...(cmcr ? [ch("cm_x", "length"), ch("cm_y", "length"), ch("cr_x", "length"),
+          ch("cr_y", "length"), ch("ecc", "length")] : []),
+        ...(diag ? [`${ch("kx", "stiffness")}(${dcase})`, ch("ky", "stiffness"), "tors_ratio_x", "tors_ratio_y",
           "tors_flag", "stiff_ratio", "soft_flag"] : [])],
       ...[...r.story_order].reverse().map(s => {
         const st = (cd.story && cd.story[s]) || {};
-        const base = [s, r.story_elev[s], st.ux || 0, st.uy || 0,
-          st.drift_x || 0, st.drift_y || 0, st.shear_x || 0, st.shear_y || 0];
+        const L = v => cv("length", v), F = v => cv("force", v);
+        const base = [s, L(r.story_elev[s]), L(st.ux || 0), L(st.uy || 0),
+          st.drift_x || 0, st.drift_y || 0, F(st.shear_x || 0), F(st.shear_y || 0)];
         if (cmcr) {
           const cc = storyCmCr(s);
           const ecc = cc ? Math.hypot((cc.cm_x ?? 0) - (cc.cr_x ?? 0), (cc.cm_y ?? 0) - (cc.cr_y ?? 0)) : "";
-          base.push(cc ? cc.cm_x ?? "" : "", cc ? cc.cm_y ?? "" : "",
-            cc ? cc.cr_x ?? "" : "", cc ? cc.cr_y ?? "" : "", cc ? ecc : "");
+          base.push(cc ? L(cc.cm_x ?? "") : "", cc ? L(cc.cm_y ?? "") : "",
+            cc ? L(cc.cr_x ?? "") : "", cc ? L(cc.cr_y ?? "") : "", cc ? L(ecc) : "");
         }
         if (diag) {
           const k = stiff[s] || {}, ir = irr[s] || {};
-          base.push(k.kx ?? "", k.ky ?? "", ir.tors_ratio_x ?? "", ir.tors_ratio_y ?? "",
+          base.push(cv("stiffness", k.kx ?? ""), cv("stiffness", k.ky ?? ""), ir.tors_ratio_x ?? "", ir.tors_ratio_y ?? "",
             ir.flag ?? "", ir.stiff_ratio ?? "", ir.soft_flag ?? "");
         }
         return base;
@@ -7111,30 +7363,33 @@ function csvRows(kind) {
     });
     const b = cd.base || {};
     return [
-      ["node", "x_m", "y_m", "FX_kN", "FY_kN", "FZ_kN", "MX_kNm", "MY_kNm", "MZ_kNm"],
+      ["node", ch("x", "length"), ch("y", "length"), ch("FX", "force"), ch("FY", "force"), ch("FZ", "force"),
+        ch("MX", "moment"), ch("MY", "moment"), ch("MZ", "moment")],
       ...tags.map(t => {
         const p = r.nodes[t] || [0, 0, 0];
         const f = (cd.reactions && cd.reactions[t]) || [0, 0, 0, 0, 0, 0];
-        return [t, p[0], p[1], ...f];
+        return [t, cv("length", p[0]), cv("length", p[1]), ...f.map((v, i) => cv(i < 3 ? "force" : "moment", v))];
       }),
-      ["TOTAL", "", "", b.FX || 0, b.FY || 0, b.FZ || 0, b.MX || 0, b.MY || 0, b.MZ || 0],
+      ["TOTAL", "", "", cv("force", b.FX || 0), cv("force", b.FY || 0), cv("force", b.FZ || 0),
+        cv("moment", b.MX || 0), cv("moment", b.MY || 0), cv("moment", b.MZ || 0)],
     ];
   }
   if (kind === "forces") {
     if (!cd || !cd.member_forces) return null;
     // unrounded values, same filter+sort view the user sees
     return [
-      ["member", "kind", "story", "section", "absN_max_kN", "absV2_max_kN", "absM3_max_kNm"],
-      ...forcesRows().map(x => [x.uid, x.kind, x.story, x.section, x.N, x.V2, x.M3]),
+      ["member", "kind", "story", "section", ch("absN_max", "force"), ch("absV2_max", "force"), ch("absM3_max", "moment")],
+      ...forcesRows().map(x => [x.uid, x.kind, x.story, x.section,
+        cv("force", x.N), cv("force", x.V2), cv("moment", x.M3)]),
     ];
   }
   if (kind === "pushover") {
     const pd = poData();
     if (!pd) return null;
     return [
-      ["step", "roof_disp_m", "roof_drift", "base_shear_kN"],
+      ["step", ch("roof_disp", "length"), "roof_drift", ch("base_shear", "force")],
       ...(pd.roof_disp || []).map((u, i) => [
-        i, u, (pd.roof_drift || [])[i] ?? "", (pd.base_shear || [])[i] ?? 0,
+        i, cv("length", u), (pd.roof_drift || [])[i] ?? "", cv("force", (pd.base_shear || [])[i] ?? 0),
       ]),
     ];
   }
@@ -7213,18 +7468,20 @@ function csvRows(kind) {
   if (kind === "vibration") {
     if (!store.vibResult || !store.vibResult.beams) return null;
     return [
-      ["beam", "story", "fn_Hz", "delta_mid_m", "W_eff_kN", "ap_over_g", "limit", "status"],
-      ...vibRows().map(x => [x.uid, x.story ?? "", x.fn ?? "", x.delta_mid ?? "",
-        x.W_eff ?? "", x.ap_over_g ?? "", x.limit ?? "", x.status ?? ""]),
+      ["beam", "story", "fn_Hz", ch("delta_mid", "length"), ch("W_eff", "force"), "ap_over_g", "limit", "status"],
+      ...vibRows().map(x => [x.uid, x.story ?? "", x.fn ?? "", cv("length", x.delta_mid ?? ""),
+        cv("force", x.W_eff ?? ""), x.ap_over_g ?? "", x.limit ?? "", x.status ?? ""]),
     ];
   }
   if (kind === "svc") {
     const list = svcData();
     if (!list) return null;
     return [
-      ["beam", "story", "L_m", "max_abs_dy_m", "max_abs_dy_mm", "ratio", "limit", "ok"],
-      ...svcRows(list).map(x => [x.uid, x.story, x.L, x.max_abs_dy,
-        x.dyMm, x.ratio_str, x.limit, x.ok ? "OK" : "NG"]),
+      ["beam", "story", ch("L", "length"), ch("max_abs_dy", "length"),
+        U.csvTag("disp") === U.csvTag("length") ? ch("max_abs_dy_disp", "disp") : ch("max_abs_dy", "disp"),
+        "ratio", "limit", "ok"],
+      ...svcRows(list).map(x => [x.uid, x.story, cv("length", x.L), cv("length", x.max_abs_dy),
+        cv("disp", x.max_abs_dy || 0), x.ratio_str, x.limit, x.ok ? "OK" : "NG"]),
     ];
   }
   if (kind === "livered") {
@@ -7260,11 +7517,12 @@ function csvRows(kind) {
     if (!td) return null;
     const rows = tdRows(td);
     return [
-      ["grid", "node", "x_m", "y_m", "FZ_kN", "FX_kN", "FY_kN"],
-      ...rows.map(s => [s.grid || "", s.node, s.x, s.y, s.FZ, s.FX, s.FY]),
-      ["TOTAL", "", "", "", td.total_FZ || 0,
-        rows.reduce((a, s) => a + (s.FX || 0), 0), rows.reduce((a, s) => a + (s.FY || 0), 0)],
-      ["APPLIED_FZ", "", "", "", td.applied_FZ || 0, "", ""],
+      ["grid", "node", ch("x", "length"), ch("y", "length"), ch("FZ", "force"), ch("FX", "force"), ch("FY", "force")],
+      ...rows.map(s => [s.grid || "", s.node, cv("length", s.x), cv("length", s.y),
+        cv("force", s.FZ), cv("force", s.FX), cv("force", s.FY)]),
+      ["TOTAL", "", "", "", cv("force", td.total_FZ || 0),
+        cv("force", rows.reduce((a, s) => a + (s.FX || 0), 0)), cv("force", rows.reduce((a, s) => a + (s.FY || 0), 0))],
+      ["APPLIED_FZ", "", "", "", cv("force", td.applied_FZ || 0), "", ""],
       ["BALANCE_OK", "", "", "", td.balance_ok ? "true" : "false", "", ""],
     ];
   }
@@ -7272,12 +7530,13 @@ function csvRows(kind) {
     const cd = cutData();
     if (!cd) return null;
     return [
-      ["cut", "axis", "coord_m", "FX_kN", "FY_kN", "FZ_kN",
-        "MX_kNm", "MY_kNm", "MZ_kNm", "n_members", "n_shells", "warnings"],
+      ["cut", "axis", ch("coord", "length"), ch("FX", "force"), ch("FY", "force"), ch("FZ", "force"),
+        ch("MX", "moment"), ch("MY", "moment"), ch("MZ", "moment"), "n_members", "n_shells", "warnings"],
       ...cutRows(cd).map(row => {
         const d = row.def || {};
-        return [row.name, d.axis || "", d.coord ?? "", row.FX, row.FY, row.FZ,
-          row.MX, row.MY, row.MZ, row.n_members ?? 0, row.n_shells ?? 0,
+        return [row.name, d.axis || "", cv("length", d.coord ?? ""), cv("force", row.FX), cv("force", row.FY),
+          cv("force", row.FZ), cv("moment", row.MX), cv("moment", row.MY), cv("moment", row.MZ),
+          row.n_members ?? 0, row.n_shells ?? 0,
           (row.warnings || []).join("; ")];
       }),
     ];
@@ -7285,9 +7544,10 @@ function csvRows(kind) {
   if (kind === "piers") {
     const pd = pierData();
     if (!pd) return null;
-    const out = [["pier", "story", "elev_m", "P_kN", "V_kN", "M_kNm"]];
+    const out = [["pier", "story", ch("elev", "length"), ch("P", "force"), ch("V", "force"), ch("M", "moment")]];
     for (const g of pierRows(pd))
-      for (const s of g.stories) out.push([g.pier, s.story, s.elev, s.P, s.V, s.M]);
+      for (const s of g.stories) out.push([g.pier, s.story, cv("length", s.elev),
+        cv("force", s.P), cv("force", s.V), cv("moment", s.M)]);
     return out;
   }
   if (kind === "th") {
@@ -7295,12 +7555,12 @@ function csvRows(kind) {
     if (!td) return null;
     const pb = (td.peaks && td.peaks.base) || {};
     return [
-      ["story", "elev_m", "peak_ux_m", "peak_uy_m"],
+      ["story", ch("elev", "length"), ch("peak_ux", "length"), ch("peak_uy", "length")],
       ...[...r.story_order].reverse().map(s => {
         const p = (td.peaks && td.peaks.story && td.peaks.story[s]) || {};
-        return [s, r.story_elev[s], p.ux || 0, p.uy || 0];
+        return [s, cv("length", r.story_elev[s]), cv("length", p.ux || 0), cv("length", p.uy || 0)];
       }),
-      ["BASE_SHEAR_PEAK_kN", "", pb.FX || 0, pb.FY || 0],
+      [ch("BASE_SHEAR_PEAK", "force"), "", cv("force", pb.FX || 0), cv("force", pb.FY || 0)],
     ];
   }
   return null;
@@ -7408,7 +7668,9 @@ async function doGenerate(e) {
   for (const [k, v] of fd.entries()) {
     if (k === "name" || k === "base_fixity") params[k] = v;
     else {
-      const n = parseFloat(v);
+      // v1.13 — unit-bound inputs (data-uq) are typed in display units → SI
+      const el = $("quickForm").elements[k];
+      const n = el && el.dataset && el.dataset.uq ? U.readStatic(el) : parseFloat(v);
       if (isFinite(n)) params[k] = ["bays_x", "bays_y", "stories"].includes(k) ? Math.round(n) : n;
     }
   }
@@ -7473,6 +7735,11 @@ async function doRun() {
     syncContoursUI();                              // v0.4
     renderSummary();
     setStatus("solved", "Solved ✓");
+    document.dispatchEvent(new CustomEvent("sky:results-changed"));   // v1.13
+    const idle = notRunEntries();
+    if (idle.length) toast("Analysis complete",
+      `${idle.filter(e => e.status === "not_run").length} case(s) not run · ` +
+      `${idle.filter(e => e.status === "skipped").length} combination(s) skipped`, "info", 4500);
     if (!store.firstSolveDone) {
       store.firstSolveDone = true;
       switchTab("story");
@@ -7489,6 +7756,9 @@ async function doRun() {
 
 /* ------------------------------------------------ wiring */
 function wire() {
+  // v1.13 — every unit-bearing view re-renders from the SI store on a switch
+  U.onUnitsChange(() => rerenderAll());
+  U.applyStatic(document);
   $("quickForm").addEventListener("submit", doGenerate);
   $("runBtn").addEventListener("click", doRun);
 
@@ -8010,6 +8280,7 @@ async function boot() {
     onNbccWind: createNbccWindPattern,
     onNbccElf: createNbccElfPattern,
     onShellWind: createShellWindPattern,
+    onMassSource: () => openMassSource(),          // v1.13 — Mass Source dialog
   });
   wire();
   try {
@@ -8025,6 +8296,7 @@ async function boot() {
     syncDirtyUI();
     syncLoadsNav();
     setStatus("ready", "Ready");
+    syncUnitsFromModel();                                          // v1.13
   } catch (err) {
     setStatus("error", "Error");
     toast("Failed to load model", err.message, "error");
@@ -8108,6 +8380,13 @@ async function boot() {
     // ETABS-restructure — entrypoints the new chrome (js/etabs.js) delegates to
     fileNew, fileSave, openFileDialog, openSaveAs, setView, setElevLine,
     stepStory, setStory, rebuildStorySelect, syncStoryBadges, toast,
+    // v1.13 — display units, Set Load Cases to Run, active DOF, mass source,
+    // material stress–strain curves
+    U, setDisplayUnits, rerenderAll, syncUnitsFromModel,
+    openCasesToRun, openActiveDof, openMassSource, openUnitsDialog,
+    closeDialog: DLG.closeDialog, caseRunStatus: DLG.caseRunStatus,
+    notRunEntries, syncRunStatusBadge, fetchMaterialCurve, fetchUnitsTable,
+    mockMaterialCurve, keepSetup, markDirty,
   };
 
   // ETABS-style chrome — menu bar, tool palette, model explorer, status bar.

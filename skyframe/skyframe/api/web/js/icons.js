@@ -67,6 +67,18 @@ export const ICONS = {
   "exleaf-pushover": '<path d="M4 4 V16 H16"/><path d="M4 15 C8 15 10 7 16 5"/>',
   "exleaf-buckling": '<path d="M8 3 C14 8 6 12 12 17"/>',
   "exleaf-cuts": '<path d="M3.5 8 H16.5" stroke-dasharray="3 2"/><path d="M6 8 V12 M4.7 10.8 L6 12.2 L7.3 10.8"/><path d="M14 8 V12 M12.7 10.8 L14 12.2 L15.3 10.8"/>',
+
+  /* ---- v1.13: analysis-setup dialogs ---- */
+  // Set Load Cases to Run — case list with run (▶) / do-not-run (–) marks
+  "cases-run": '<path d="M8.5 5 H16 M8.5 10 H16 M8.5 15 H16"/><path d="M3.5 3.6 L6.4 5 L3.5 6.4 Z" fill="currentColor" stroke="none"/><path d="M3.5 8.6 L6.4 10 L3.5 11.4 Z" fill="currentColor" stroke="none"/><path d="M3.4 15 H6.4"/>',
+  // Active degrees of freedom — X/Z axis pair with a rotation arc about Y
+  "active-dof": '<path d="M4 16 H16 M4 16 V4"/><path d="M14 14 L16 16 L14 18 M2 6 L4 4 L6 6"/><path d="M8.2 11.8 A3 3 0 1 1 11.8 11.8"/><path d="M11.8 11.8 L12.6 9.9 M11.8 11.8 L9.9 11.5"/>',
+  // Mass source — weight block with a downward mass arrow
+  "mass-source": '<path d="M5 9 H15 L16 17 H4 Z"/><path d="M8.3 9 A1.7 1.7 0 0 1 11.7 9"/><path d="M10 2.5 V6.5 M8.4 5 L10 6.6 L11.6 5"/>',
+  // Units — ruler with graduations
+  "units": '<path d="M3 13.5 L13.5 3 L17 6.5 L6.5 17 Z"/><path d="M6.2 10.3 L7.8 11.9 M8.3 8.2 L9.4 9.3 M10.4 6.1 L12 7.7 M12.5 4.0 L13.6 5.1"/>',
+  // Stress–strain curve — axes + nonlinear backbone with softening branch
+  "ss-curve": '<path d="M3 17 V3 M3 17 H17"/><path d="M3 17 C5 9 7 6 10 5.5 C12.5 5.2 14 7 16.5 9.5"/><circle cx="10" cy="5.5" r="1.1" fill="currentColor" stroke="none"/>',
 };
 
 /** Full <svg> element string for icon `id` in the house stroke style. */
@@ -137,6 +149,19 @@ export const EXLEAF_ICON = {
   "Buckling": "exleaf-buckling",
   "Section Cuts": "exleaf-cuts",
   "Design": "menu-design",
+  // v1.13
+  "Set Load Cases to Run": "cases-run",
+  "Active Degrees of Freedom": "active-dof",
+  "Units": "units",
+};
+
+// v1.13 — menu items (data-act) that carry a leading glyph
+export const MENUITEM_ICON = {
+  "an-cases-run": "cases-run",
+  "an-dof": "active-dof",
+  "def-mass": "mass-source",
+  "opt-units": "units",
+  "def-materials": "ss-curve",
 };
 
 // status-bar view segment: data-view → glyph id

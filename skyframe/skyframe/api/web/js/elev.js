@@ -6,6 +6,7 @@
    onDraw / onErase / onSelect callbacks (same contract as PlanEditor). */
 
 import { springKey, lineSpringKey, linkTypeOf, LINK_TYPES } from "./modeledit.js";
+import U from "./units.js";   // v1.13 — readout / level labels in display units
 
 const NS = "http://www.w3.org/2000/svg";
 const el = (tag, attrs = {}) => {
@@ -359,7 +360,7 @@ export class ElevEditor {
     // story labels on the left: name + elevation
     mk(s0 - mS - 12 / this.scale, z0, "Base", "end");
     for (const st of (m ? m.stories : []))
-      mk(s0 - mS - 12 / this.scale, st.elevation, `${st.name} · ${st.elevation.toFixed(1)}`, "end");
+      mk(s0 - mS - 12 / this.scale, st.elevation, `${st.name} · ${U.fmt("length", st.elevation, 1).replace(/,/g, "")}`, "end");
 
     // v0.15: link device-type letters (D/G/H/I) on in-plane non-elastic links
     for (const lk of ((m && m.links) || [])) {
@@ -675,11 +676,11 @@ export class ElevEditor {
   _readout(w) {
     if (!this.opts.onReadout) return;
     const t = this.hoverSnap || w;
-    const val = this.hoverSnap
-      ? `${t.s.toFixed(2)}, z ${t.z.toFixed(2)} m`
-      : `${w.s.toFixed(2)}, z ${w.z.toFixed(2)} m`;
+    const f = v => U.fmt("length", v, 2).replace(/,/g, "");
+    const lu = U.label("length");
+    const val = `${f(t.s)}, z ${f(t.z)} ${lu}`;
     this.opts.onReadout(this.pending
-      ? `${this.pending.s.toFixed(2)}, z ${this.pending.z.toFixed(2)} → ${val}`
+      ? `${f(this.pending.s)}, z ${f(this.pending.z)} → ${val}`
       : val);
   }
 

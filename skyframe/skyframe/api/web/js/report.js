@@ -4,6 +4,11 @@
    temporarily switching charts.js to its light theme. No frameworks. */
 
 import { renderStoryCharts, spectrumChart, pushoverChart, setChartTheme } from "./charts.js";
+import U from "./units.js";   // v1.13 — report in the current display units (model stays SI)
+
+/* unit-aware cell + header helpers */
+const uf = (kind, v, d) => U.fmt(kind, v, d);
+const uh = (base, kind) => `${base} (${U.label(kind)})`;
 
 const esc = s => String(s).replace(/[&<>"]/g, c =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -125,11 +130,11 @@ export function buildReportHtml(model, results, opts = {}) {
           const mm = memBy[uid] || {};
           return [T(uid), D(mm.kind || "—"), D(mm.story || "—"),
             fmt(rot * 1000, 2),
-            (pc.My && pc.My[uid] != null) ? fmt(pc.My[uid], 0) : D("default").v];
+            (pc.My && pc.My[uid] != null) ? uf("moment", pc.My[uid], 0) : D("default").v];
         });
       const hingeTable = hinges.length
         ? table([{ label: "Member", txt: true }, { label: "Kind", txt: true },
-                 { label: "Story", txt: true }, "θ (mrad)", "My (kN·m)"], hinges)
+                 { label: "Story", txt: true }, "θ (mrad)", uh("My", "moment")], hinges)
         : `<p class="note">No hinge rotations reported.</p>`;
       const warn = (po.warnings || []).length
         ? `<p class="note po-warn">⚠ ${(po.warnings || []).map(esc).join(" · ")}</p>` : "";
@@ -163,18 +168,21 @@ export function buildReportHtml(model, results, opts = {}) {
       String(model.stories.length),
       `${model.members.length}  (${kindStr})`,
       shellStr,
-      model.grid ? `${fmt(model.grid.x_lines[model.grid.x_lines.length - 1] - model.grid.x_lines[0], 1)} × ${fmt(model.grid.y_lines[model.grid.y_lines.length - 1] - model.grid.y_lines[0], 1)} m` : "—",
-      `${fmt(model.stories.length ? model.stories[model.stories.length - 1].elevation : 0, 1)} m`,
+      model.grid ? `${uf("length", model.grid.x_lines[model.grid.x_lines.length - 1] - model.grid.x_lines[0], 1)} × ${U.fmtU("length", model.grid.y_lines[model.grid.y_lines.length - 1] - model.grid.y_lines[0], 1)}` : "—",
+      U.fmtU("length", model.stories.length ? model.stories[model.stories.length - 1].elevation : 0, 1),
       model.base_fixity || "fixed",
     ]]);
 
   const matTable = table(
     [{ label: "Material", txt: true }, { label: "Type", txt: true },
-     "E (kPa)", "ν", "γ (kN/m³)", "f'c (kPa)", "Fy (kPa)", "α (1/°C)"],
+     uh("E", "modulus"), "ν", uh("γ", "unit_weight"), uh("f'c", "stress"), uh("Fy", "stress"),
+     uh("α", "thermal_coeff"), { label: "σ–ε law", txt: true }],
     Object.values(model.materials || {}).map(m =>
       [T(m.name), D(m.material_type || "concrete"),
-       fmt(m.E, 0), fmt(m.nu, 2), fmt(m.unit_weight, 0),
-       fmt(m.fc, 0), fmt(m.fy, 0), sci(m.alpha)]));
+       uf("modulus", m.E, 0), fmt(m.nu, 2), uf("unit_weight", m.unit_weight, 2),
+       uf("stress", m.fc, 0), uf("stress", m.fy, 0),
+       m.alpha == null ? "—" : sci(U.toDisplay("thermal_coeff", m.alpha)),
+       D(m.stress_strain ? `${m.stress_strain.model} · ${m.stress_strain.hysteresis || "—"}` : "default")]));
 
   const secTable = table(
     [{ label: "Frame section", txt: true }, { label: "Geometry", txt: true },
@@ -182,29 +190,44 @@ export function buildReportHtml(model, results, opts = {}) {
     Object.values(model.sections || {}).map(s => [
       T(s.name),
       D(s.b > 0 && s.h > 0 && s.shape !== "W"
-        ? `${fmt(s.b, 2)} × ${fmt(s.h, 2)} m`
-        : `A ${sci(s.A)} m² · I33 ${sci(s.I33)} m⁴`),
+        ? `${uf("dim", s.b, 2)} × ${U.fmtU("dim", s.h, 2)}`
+        : `A ${U.sci("area", s.A)} ${U.label("area")} · I33 ${U.sci("inertia", s.I33)} ${U.label("inertia")}`),
       D(s.material),
       fmt(s.mod_A ?? 1, 2), fmt(s.mod_I33 ?? 1, 2),
       fmt(s.mod_I22 ?? 1, 2), fmt(s.mod_J ?? 1, 2),
     ]));
 
   const shellSecTable = table(
-    [{ label: "Shell section", txt: true }, "t (m)", { label: "Material", txt: true }, "mod"],
+    [{ label: "Shell section", txt: true }, uh("t", "dim"), { label: "Material", txt: true }, "mod"],
     Object.values(model.shell_sections || {}).map(s =>
-      [T(s.name), fmt(s.thickness, 3), D(s.material), fmt(s.mod ?? 1, 2)]));
+      [T(s.name), uf("dim", s.thickness, 3), D(s.material), fmt(s.mod ?? 1, 2)]));
 
   /* ---- loads summary */
   const patTable = table(
     [{ label: "Pattern", txt: true }, { label: "Kind", txt: true },
-     "Member loads (kN)", "Area loads (kN)", "Story ΣFx (kN)", "Story ΣFy (kN)"],
+     uh("Member loads", "force"), uh("Area loads", "force"), uh("Story ΣFx", "force"), uh("Story ΣFy", "force")],
     Object.values(model.patterns || {}).map(p => {
       const t = patternTotals(model, p);
-      return [T(p.name), D(p.kind || "—"), fmt(t.mem, 1), fmt(t.area, 1), fmt(t.fx, 1), fmt(t.fy, 1)];
+      return [T(p.name), D(p.kind || "—"), uf("force", t.mem, 1), uf("force", t.area, 1),
+        uf("force", t.fx, 1), uf("force", t.fy, 1)];
     }));
 
   const massStr = Object.entries(model.mass_source || {})
     .map(([k, f]) => `${f} × ${k}`).join("  +  ") || "1.0 × DEAD";
+  // v1.13 — mass options + analysis setup (cases not run, active DOF)
+  const mo = model.mass_options || {};
+  const massOptStr = [
+    mo.self_mass !== false ? `element self mass (${model.mass_source_mode === "element_self_mass" ? "material mass density" : "weight / g"})` : "",
+    mo.patterns !== false ? "specified load patterns" : "",
+  ].filter(Boolean).join(" + ") + " · " +
+    [mo.include_lateral !== false ? "lateral" : "", mo.include_vertical ? "vertical" : ""].filter(Boolean).join(" + ") +
+    " mass" + (mo.include_lateral !== false && mo.lump_at_stories !== false ? ", lumped at story levels" : "");
+  const notRun = (model.cases_not_run || []);
+  const dofStr = (model.active_dof || ["UX", "UY", "UZ", "RX", "RY", "RZ"]).join(", ");
+  const statusStr = Object.entries(r.case_status || {})
+    .filter(([, st]) => st !== "finished").map(([n, st]) => `${n}: ${st.replace(/_/g, " ")}`).join(" · ");
+  const comboSkip = Object.entries(r.combo_status || {})
+    .filter(([, st]) => st === "skipped").map(([n]) => n).join(", ");
 
   const caseTable = table(
     [{ label: "Static case", txt: true }, { label: "Patterns", txt: true }, { label: "P-Δ", txt: true }],
@@ -264,20 +287,21 @@ export function buildReportHtml(model, results, opts = {}) {
   };
   const hasCmCr = r.story_order.some(s => cmcrOf({}, s));
   const storyTableFor = cd => table(
-    [{ label: "Story", txt: true }, "Elev (m)", "ux (mm)", "uy (mm)",
-     "drift ‰ x", "drift ‰ y", "Vx (kN)", "Vy (kN)",
-     ...(hasCmCr ? ["CM x (m)", "CM y (m)", "CR x (m)", "CR y (m)", "e (m)"] : [])],
+    [{ label: "Story", txt: true }, uh("Elev", "length"), uh("ux", "disp"), uh("uy", "disp"),
+     "drift ‰ x", "drift ‰ y", uh("Vx", "force"), uh("Vy", "force"),
+     ...(hasCmCr ? [uh("CM x", "length"), uh("CM y", "length"), uh("CR x", "length"),
+       uh("CR y", "length"), uh("e", "length")] : [])],
     [...r.story_order].reverse().map(s => {
       const st = (cd.story && cd.story[s]) || {};
-      const row = [T(s), fmt(r.story_elev[s], 1),
-        fmt((st.ux || 0) * 1000, 2), fmt((st.uy || 0) * 1000, 2),
+      const row = [T(s), uf("length", r.story_elev[s], 1),
+        uf("disp", st.ux || 0, 2), uf("disp", st.uy || 0, 2),
         fmt((st.drift_x || 0) * 1000, 3), fmt((st.drift_y || 0) * 1000, 3),
-        fmt(st.shear_x || 0, 1), fmt(st.shear_y || 0, 1)];
+        uf("force", st.shear_x || 0, 1), uf("force", st.shear_y || 0, 1)];
       if (hasCmCr) {
         const cc = cmcrOf(cd, s);
         const ecc = cc ? Math.hypot((cc.cm_x ?? 0) - (cc.cr_x ?? 0), (cc.cm_y ?? 0) - (cc.cr_y ?? 0)) : null;
-        row.push(fmt(cc && cc.cm_x, 2), fmt(cc && cc.cm_y, 2),
-          fmt(cc && cc.cr_x, 2), fmt(cc && cc.cr_y, 2), fmt(ecc, 3));
+        row.push(uf("length", cc && cc.cm_x, 2), uf("length", cc && cc.cm_y, 2),
+          uf("length", cc && cc.cr_x, 2), uf("length", cc && cc.cr_y, 2), uf("length", ecc, 3));
       }
       return row;
     }));
@@ -304,13 +328,13 @@ export function buildReportHtml(model, results, opts = {}) {
         const ss = ssAll[cn] || {}, ir = irAll[cn] || {};
         const rows = [...r.story_order].reverse().map(s => {
           const k = ss[s] || {}, x = ir[s] || {};
-          return [T(s), fmt(k.kx, 0), fmt(k.ky, 0),
+          return [T(s), uf("stiffness", k.kx, 0), uf("stiffness", k.ky, 0),
             fmt(x.tors_ratio_x, 2), fmt(x.tors_ratio_y, 2),
             { html: chip(x.flag || "none"), txt: true },
             x.stiff_ratio == null ? D("—") : fmt(x.stiff_ratio, 2),
             { html: x.stiff_ratio == null ? "—" : chip(x.soft_flag || "none"), txt: true }];
         });
-        const t = table([{ label: "Story", txt: true }, "kx (kN/m)", "ky (kN/m)",
+        const t = table([{ label: "Story", txt: true }, uh("kx", "stiffness"), uh("ky", "stiffness"),
           "τ ratio x", "τ ratio y", { label: "Torsion", txt: true },
           "stiff ratio", { label: "Soft story", txt: true }], rows);
         return `<div class="case-block"><h3>${esc(cn)} <span class="tag">diagnostics</span></h3>${t}</div>`;
@@ -320,12 +344,12 @@ export function buildReportHtml(model, results, opts = {}) {
   }
 
   const baseTable = table(
-    [{ label: "Case", txt: true }, "FX (kN)", "FY (kN)", "FZ (kN)",
-     "MX (kN·m)", "MY (kN·m)", "MZ (kN·m)"],
+    [{ label: "Case", txt: true }, uh("FX", "force"), uh("FY", "force"), uh("FZ", "force"),
+     uh("MX", "moment"), uh("MY", "moment"), uh("MZ", "moment")],
     caseEntries.map(([name, cd]) => {
       const b = cd.base || {};
-      return [T(name), fmt(b.FX, 1), fmt(b.FY, 1), fmt(b.FZ, 1),
-        fmt(b.MX, 1), fmt(b.MY, 1), fmt(b.MZ, 1)];
+      return [T(name), uf("force", b.FX, 1), uf("force", b.FY, 1), uf("force", b.FZ, 1),
+        uf("moment", b.MX, 1), uf("moment", b.MY, 1), uf("moment", b.MZ, 1)];
     }));
 
   /* ---- v0.11: load takedown — gravity landing at each support per gravity
@@ -339,17 +363,17 @@ export function buildReportHtml(model, results, opts = {}) {
           : ((a.grid || "").localeCompare(b.grid || "", undefined, { numeric: true })
             || (a.y - b.y) || (a.x - b.x)));
       const rows = sups.map(s => [T(s.grid || "—"), D(s.node),
-        fmt(s.x, 2), fmt(s.y, 2), fmt(s.FZ, 1), fmt(s.FX, 1), fmt(s.FY, 1)]);
-      rows.push([T("Σ total"), D(""), "", "", fmt(td.total_FZ, 1),
-        fmt(sups.reduce((a, s) => a + (s.FX || 0), 0), 1),
-        fmt(sups.reduce((a, s) => a + (s.FY || 0), 0), 1)]);
+        uf("length", s.x, 2), uf("length", s.y, 2), uf("force", s.FZ, 1), uf("force", s.FX, 1), uf("force", s.FY, 1)]);
+      rows.push([T("Σ total"), D(""), "", "", uf("force", td.total_FZ, 1),
+        uf("force", sups.reduce((a, s) => a + (s.FX || 0), 0), 1),
+        uf("force", sups.reduce((a, s) => a + (s.FY || 0), 0), 1)]);
       const t = table([{ label: "Grid", txt: true }, { label: "Node", txt: true },
-        "X (m)", "Y (m)", "FZ (kN)", "FX (kN)", "FY (kN)"], rows);
+        uh("X", "length"), uh("Y", "length"), uh("FZ", "force"), uh("FX", "force"), uh("FY", "force")], rows);
       const ok = !!td.balance_ok;
       const chipColor = ok ? "#1a7f4b" : "#c0392b";
       const chip = `<span style="font-weight:650;color:${chipColor}">${ok
-        ? `● balanced — ΣFZ ${fmt(td.total_FZ, 1)} = applied ${fmt(td.applied_FZ, 1)} kN`
-        : `▲ unbalanced — ΣFZ ${fmt(td.total_FZ, 1)} vs applied ${fmt(td.applied_FZ, 1)} kN`}</span>`;
+        ? `● balanced — ΣFZ ${uf("force", td.total_FZ, 1)} = applied ${U.fmtU("force", td.applied_FZ, 1)}`
+        : `▲ unbalanced — ΣFZ ${uf("force", td.total_FZ, 1)} vs applied ${U.fmtU("force", td.applied_FZ, 1)}`}</span>`;
       return `<div class="case-block"><h3>${esc(name)} <span class="tag">gravity takedown</span></h3>
         <p class="note">${chip}</p>${t}</div>`;
     }).join("");
@@ -363,7 +387,7 @@ export function buildReportHtml(model, results, opts = {}) {
     const cutDefs = model.section_cuts || [];
     const planeOf = name => {
       const d = cutDefs.find(c => c.name === name);
-      return d ? `${(d.axis || "z").toUpperCase()} = ${fmt(d.coord, 2)} m` : "—";
+      return d ? `${(d.axis || "z").toUpperCase()} = ${U.fmtU("length", d.coord, 2)}` : "—";
     };
     cutsHtml = Object.entries(scAll).map(([caseName, cd]) => {
       const names = cutDefs.length ? cutDefs.map(c => c.name).filter(n => cd[n]) : Object.keys(cd);
@@ -371,12 +395,12 @@ export function buildReportHtml(model, results, opts = {}) {
         const v = cd[n] || {};
         const warn = (v.warnings || []).length ? (v.warnings || []).join("; ") : "";
         return [T(`✂ ${n}`), D(planeOf(n)),
-          fmt(v.FX, 1), fmt(v.FY, 1), fmt(v.FZ, 1),
-          fmt(v.MX, 1), fmt(v.MY, 1), fmt(v.MZ, 1),
+          uf("force", v.FX, 1), uf("force", v.FY, 1), uf("force", v.FZ, 1),
+          uf("moment", v.MX, 1), uf("moment", v.MY, 1), uf("moment", v.MZ, 1),
           D(String(v.n_members ?? 0)), D(String(v.n_shells ?? 0)), D(warn)];
       });
       const t = table([{ label: "Cut", txt: true }, { label: "Plane", txt: true },
-        "FX (kN)", "FY (kN)", "FZ (kN)", "MX (kN·m)", "MY (kN·m)", "MZ (kN·m)",
+        uh("FX", "force"), uh("FY", "force"), uh("FZ", "force"), uh("MX", "moment"), uh("MY", "moment"), uh("MZ", "moment"),
         "n·mem", "n·shell", { label: "Warnings", txt: true }], rows);
       return `<div class="case-block"><h3>${esc(caseName)} <span class="tag">section cut forces</span></h3>${t}</div>`;
     }).join("");
@@ -395,12 +419,12 @@ export function buildReportHtml(model, results, opts = {}) {
         sts.forEach((s, i) => {
           const f = pd[pier][s] || {};
           rows.push([i === 0 ? T(`▮ ${pier}`) : D(""), T(s),
-            fmt(r.story_elev && r.story_elev[s], 1),
-            fmt(f.P, 1), fmt(f.V, 1), fmt(f.M, 1)]);
+            uf("length", r.story_elev && r.story_elev[s], 1),
+            uf("force", f.P, 1), uf("force", f.V, 1), uf("moment", f.M, 1)]);
         });
       }
       const t = table([{ label: "Pier", txt: true }, { label: "Story", txt: true },
-        "Elev (m)", "P (kN)", "V (kN)", "M (kN·m)"], rows);
+        uh("Elev", "length"), uh("P", "force"), uh("V", "force"), uh("M", "moment")], rows);
       return `<div class="case-block"><h3>${esc(caseName)} <span class="tag">wall piers</span></h3>${t}</div>`;
     }).join("");
   }
@@ -412,12 +436,12 @@ export function buildReportHtml(model, results, opts = {}) {
     const chipOf = ok => `<span style="font-weight:650;color:${ok ? "#1a7f4b" : "#c0392b"}">${ok ? "OK" : "NG"}</span>`;
     svcHtml = Object.entries(dcAll).map(([caseName, list]) => {
       const rows = (list || []).map(c => [T(c.uid), D(c.story || "—"),
-        fmt(c.L, 2), fmt((c.max_abs_dy || 0) * 1000, 2),
+        uf("length", c.L, 2), uf("disp", c.max_abs_dy || 0, 2),
         T(c.ratio_str || "—"), D(c.limit || "—"),
         { html: chipOf(!!c.ok), txt: true }]);
       const ng = (list || []).filter(c => !c.ok).length;
       const t = table([{ label: "Beam", txt: true }, { label: "Story", txt: true },
-        "L (m)", "max |δ| (mm)", { label: "Ratio", txt: true },
+        uh("L", "length"), uh("max |δ|", "disp"), { label: "Ratio", txt: true },
         { label: "Limit", txt: true }, { label: "Status", txt: true }], rows);
       return `<div class="case-block"><h3>${esc(caseName)} <span class="tag">deflection checks</span>` +
         (ng ? ` <span class="tag" style="color:#c0392b;border-color:#e6b8b3;background:#fdf0ee">${ng} NG</span>` : "") +
@@ -444,12 +468,12 @@ export function buildReportHtml(model, results, opts = {}) {
     .map(([uid, e]) => {
       const m = memInfo[uid] || {};
       return [T(uid), D(m.kind || "—"), D(m.story || "—"), D(m.section || "—"),
-        fmt(e.N, 1), fmt(e.V2, 1), fmt(e.M3, 1)];
+        uf("force", e.N, 1), uf("force", e.V2, 1), uf("moment", e.M3, 1)];
     });
   const envTable = table(
     [{ label: "Member", txt: true }, { label: "Kind", txt: true },
      { label: "Story", txt: true }, { label: "Section", txt: true },
-     "|N|max (kN)", "|V2|max (kN)", "|M3|max (kN·m)"],
+     uh("|N|max", "force"), uh("|V2|max", "force"), uh("|M3|max", "moment")],
     envRows);
 
   /* ---- assemble */
@@ -517,7 +541,7 @@ export function buildReportHtml(model, results, opts = {}) {
 <header class="rhead">
   <div>
     <h1>${esc(model.name || "Untitled model")}</h1>
-    <div class="sub">Structural analysis report · Units kN, m, s · E in kPa</div>
+    <div class="sub">Structural analysis report · Units ${esc(U.unitSet().label)}, s · E in ${esc(U.label("modulus"))}</div>
   </div>
   <div class="stamp">
     <b>SkyFrame — OpenSees inside</b>
@@ -529,7 +553,11 @@ export function buildReportHtml(model, results, opts = {}) {
 
 ${section("1 · Model summary", summaryTable + matTable + secTable + shellSecTable)}
 ${section("2 · Loads", patTable +
-  `<p class="note">Mass source: <b>${esc(massStr)}</b></p>` +
+  `<p class="note">Mass source: <b>${esc(massStr)}</b> · ${esc(massOptStr)}</p>` +
+  `<p class="note">Active DOF: <b>${esc(dofStr)}</b>` +
+  (notRun.length ? ` · cases set to <b>Do not Run</b>: ${esc(notRun.join(", "))}` : "") +
+  (statusStr ? ` · last run: ${esc(statusStr)}` : "") +
+  (comboSkip ? ` · combinations skipped: ${esc(comboSkip)}` : "") + `</p>` +
   caseTable + comboTable + rsTable + thTable,
   "Member/area totals are unfactored sums of the raw pattern loads.")}
 ${section("3 · Modal analysis", modalHtml,

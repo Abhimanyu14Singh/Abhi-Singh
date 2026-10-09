@@ -4,6 +4,7 @@
    the onDraw / onErase / onSelect callbacks. */
 
 import { linkGlyphPath, lineSpringGlyphPath } from "./elev.js";
+import U from "./units.js";   // v1.13 — cursor readout in display units
 import { springKey, lineSpringKey, anyThermalMember, onFoundation, axialLimit,
   axialLimitBadge, linkTypeOf, LINK_TYPES,
   gridSystems, gridSystemGeometry, snapGrids } from "./modeledit.js";
@@ -820,9 +821,11 @@ export class PlanEditor {
   _readout(w) {
     if (!this.opts.onReadout) return;
     let txt = "";
-    if (this.hoverSnap) txt = `${this.hoverSnap.x.toFixed(2)}, ${this.hoverSnap.y.toFixed(2)} m`;
-    else if (w) txt = `${w.x.toFixed(2)}, ${w.y.toFixed(2)} m`;
-    if (this.pending) txt = `${this.pending.x.toFixed(2)}, ${this.pending.y.toFixed(2)} → ${txt}`;
+    const f = v => U.fmt("length", v, 2).replace(/,/g, "");
+    const lu = U.label("length");
+    if (this.hoverSnap) txt = `${f(this.hoverSnap.x)}, ${f(this.hoverSnap.y)} ${lu}`;
+    else if (w) txt = `${f(w.x)}, ${f(w.y)} ${lu}`;
+    if (this.pending) txt = `${f(this.pending.x)}, ${f(this.pending.y)} → ${txt}`;
     this.opts.onReadout(txt);
   }
 

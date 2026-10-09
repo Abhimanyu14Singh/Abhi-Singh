@@ -8,10 +8,15 @@
 import * as ME from "./modeledit.js";
 import { spectrumChart, thSparkline } from "./charts.js";
 import { asce7SpectrumPreview, spectrumParameters, elfCs, nbccElfInfo } from "./mock.js";
+import U from "./units.js";                    // v1.13 — display units (store stays SI)
+import { icon } from "./icons.js";
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fmt = (v, d = 2) => (v == null || !isFinite(v)) ? "—" :
   v.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: d });
+
+/* v1.13 — acceleration record ↔ textarea text in display units */
+const accelText = arr => (arr || []).map(v => +(+U.toDisplay("accel", v)).toFixed(4)).join(", ");
 
 const KIND_LABEL = { dead: "dead", live: "live", quake: "quake", other: "other",
   notional: "notional", wind: "wind" };
@@ -63,6 +68,18 @@ export class LoadsEditor {
     this._nbccElf = { name: "EQ-NBCC", Sa02: 0.65, Sa05: 0.4, Sa10: 0.2, Sa20: 0.1,
       RdRo: 4.0, Ie: 1.0, direction: "X" };
     this._shellWind = { name: "WIND-SHELL", q: 0.5 };
+    // v1.13 — opens the ETABS-style Mass Source dialog (Define → Mass Source…)
+    this.onMassSource = opts.onMassSource || null;
+  }
+
+  /** v1.13 — "not run" tag for a case set to Do not Run (null otherwise). */
+  _notRunTag(m, name) {
+    if (!ME.caseNotRun(m, name)) return null;
+    const t = document.createElement("span");
+    t.className = "notrun-badge";
+    t.textContent = "not run";
+    t.title = "Set to Do not Run — Analyze → Set Load Cases to Run…";
+    return t;
   }
 
   /** mutation helpers — structural edits re-render, value edits don't */
@@ -312,16 +329,16 @@ export class LoadsEditor {
         <span class="muted">global α · assign per-member ΔT in Model mode</span>
       </div>
       <div class="wind-fields">
-        <label class="rs-field"><span>α <span class="unit">/°C</span></span>
-          <input id="thermAlpha" type="number" step="1e-6" min="0" value="${m.thermal_alpha ?? 1.2e-5}"></label>
+        <label class="rs-field"><span>α <span class="unit">${esc(U.label("thermal_coeff"))}</span></span>
+          <input id="thermAlpha" type="number" step="1e-6" min="0" value="${U.inputValue("thermal_coeff", m.thermal_alpha ?? 1.2e-5)}"></label>
         <span class="code-note muted" style="flex:1 1 200px">Coefficient of thermal expansion applied to every member's
           ΔT thermal load. Select a beam/column in <b>Model</b> mode to assign ΔT.</span>
       </div>`;
     const inp = card.querySelector("#thermAlpha");
     inp.addEventListener("change", () => {
-      const v = parseFloat(inp.value);
+      const v = U.parse("thermal_coeff", inp.value);
       if (isFinite(v) && v >= 0) { m.thermal_alpha = v; this._mutated(false); }
-      else inp.value = String(m.thermal_alpha ?? 1.2e-5);
+      else inp.value = U.inputValue("thermal_coeff", m.thermal_alpha ?? 1.2e-5);
     });
     return card;
   }
@@ -345,8 +362,8 @@ export class LoadsEditor {
             <option value="X"${w.direction === "X" ? " selected" : ""}>X</option>
             <option value="Y"${w.direction === "Y" ? " selected" : ""}>Y</option>
           </select></label>
-        <label class="rs-field"><span>V (m/s)</span>
-          <input id="windV" type="number" min="10" step="1" value="${w.V}"></label>
+        <label class="rs-field"><span>V (${esc(U.label("velocity"))})</span>
+          <input id="windV" type="number" min="0" step="${U.step("velocity", "1")}" value="${U.inputValue("velocity", w.V)}"></label>
         <label class="rs-field"><span>exposure</span>
           <select id="windExp">
             ${["B", "C", "D"].map(e =>
@@ -360,8 +377,8 @@ export class LoadsEditor {
     $id("windName").addEventListener("change", e => { w.name = e.target.value.trim() || "WX"; });
     $id("windDir").addEventListener("change", e => { w.direction = e.target.value; });
     $id("windV").addEventListener("change", e => {
-      const v = parseFloat(e.target.value);
-      if (isFinite(v) && v > 0) w.V = v; else e.target.value = String(w.V);
+      const v = U.parse("velocity", e.target.value);
+      if (isFinite(v) && v > 0) w.V = v; else e.target.value = U.inputValue("velocity", w.V);
     });
     $id("windExp").addEventListener("change", e => { w.exposure = e.target.value; });
     $id("windCp").addEventListener("change", e => {
@@ -616,8 +633,8 @@ export class LoadsEditor {
             <option value="X"${s.direction === "X" ? " selected" : ""}>X</option>
             <option value="Y"${s.direction === "Y" ? " selected" : ""}>Y</option>
           </select></label>
-        <label class="rs-field"><span>q <span class="unit">kPa</span></span>
-          <input id="nwQ" type="number" min="0.05" step="0.05" value="${s.q}"
+        <label class="rs-field"><span>q <span class="unit">${esc(U.label("pressure"))}</span></span>
+          <input id="nwQ" type="number" min="0" step="${U.step("pressure", "0.05")}" value="${U.inputValue("pressure", s.q)}"
             title="Reference velocity pressure q (1-in-50-year)"></label>
         <label class="rs-field"><span>exposure</span>
           <select id="nwExp">
@@ -634,8 +651,8 @@ export class LoadsEditor {
     $("nwName").addEventListener("change", e => { s.name = e.target.value.trim() || "NBCC-WX"; e.target.value = s.name; });
     $("nwDir").addEventListener("change", e => { s.direction = e.target.value; });
     $("nwQ").addEventListener("change", e => {
-      const v = parseFloat(e.target.value);
-      if (isFinite(v) && v > 0) s.q = v; else e.target.value = String(s.q);
+      const v = U.parse("pressure", e.target.value);
+      if (isFinite(v) && v > 0) s.q = v; else e.target.value = U.inputValue("pressure", s.q);
     });
     $("nwExp").addEventListener("change", e => { s.exposure = e.target.value; });
     $("nwGen").addEventListener("click", () =>
@@ -685,7 +702,7 @@ export class LoadsEditor {
     const readout = () => {
       const r = nbccElfInfo(s, hn);
       $("neReadout").innerHTML = `Base shear <b>V = ${fmt(r.Cs, 4)}·W</b> ` +
-        `(S(Ta) ${fmt(r.S, 3)} g · Ta ≈ ${fmt(r.Ta, 3)} s · hn ${fmt(hn, 1)} m). ` +
+        `(S(Ta) ${fmt(r.S, 3)} g · Ta ≈ ${fmt(r.Ta, 3)} s · hn ${U.fmtU("length", hn, 1)}). ` +
         `Distribution Wx·hx/ΣWi·hi with the Ft top force when Ta &gt; 0.7 s — ` +
         `computed from the model mass (live via POST /api/pattern/nbcc-elf).`;
     };
@@ -723,8 +740,8 @@ export class LoadsEditor {
       <div class="wind-fields">
         <label class="rs-field"><span>name</span>
           <input id="shwName" type="text" value="${esc(s.name)}" spellcheck="false"></label>
-        <label class="rs-field"><span>q <span class="unit">kPa</span></span>
-          <input id="shwQ" type="number" min="0.05" step="0.05" value="${s.q}"></label>
+        <label class="rs-field"><span>q <span class="unit">${esc(U.label("pressure"))}</span></span>
+          <input id="shwQ" type="number" min="0" step="${U.step("pressure", "0.05")}" value="${U.inputValue("pressure", s.q)}"></label>
         <button class="btn btn-small" id="shwGen">Generate</button>
       </div>
       <p class="code-note muted">Applies <b>p = q·Cp</b> to every shell region with a
@@ -734,8 +751,8 @@ export class LoadsEditor {
     const $ = id => card.querySelector("#" + id);
     $("shwName").addEventListener("change", e => { s.name = e.target.value.trim() || "WIND-SHELL"; e.target.value = s.name; });
     $("shwQ").addEventListener("change", e => {
-      const v = parseFloat(e.target.value);
-      if (isFinite(v) && v > 0) s.q = v; else e.target.value = String(s.q);
+      const v = U.parse("pressure", e.target.value);
+      if (isFinite(v) && v > 0) s.q = v; else e.target.value = U.inputValue("pressure", s.q);
     });
     $("shwGen").addEventListener("click", () =>
       this._runTool($("shwGen"), this.onShellWind, { ...s }, "Shell wind generation failed"));
@@ -924,7 +941,7 @@ export class LoadsEditor {
       const cs = r ? fmt(r.Cs, 4) : "—";
       const ta = r ? fmt(r.Ta, 3) : "—";
       readout.innerHTML = `Seismic response coefficient <b>Cs = ${cs}</b> ` +
-        `(Ta ≈ ${ta} s, hn ${fmt(hn, 1)} m). Base shear <b>V = Cs·W</b> and the story-force ` +
+        `(Ta ≈ ${ta} s, hn ${U.fmtU("length", hn, 1)}). Base shear <b>V = Cs·W</b> and the story-force ` +
         `distribution are computed <b>server-side</b> from the model mass.`;
     };
     syncReadout();
@@ -1032,6 +1049,8 @@ export class LoadsEditor {
 
       row.appendChild(this._nameInput(name, "lc-name",
         nu => ME.renameCase(m, name, nu)));
+      const nrt = this._notRunTag(m, name);                       // v1.13
+      if (nrt) { row.classList.add("is-not-run"); row.appendChild(nrt); }
       row.appendChild(this._factorChips(c.patterns, patPool, "Add a pattern to this case"));
 
       // v0.25 — geometric-nonlinearity select (replaces the P-Δ toggle);
@@ -1168,6 +1187,8 @@ export class LoadsEditor {
     head.className = "rs-head";
     head.appendChild(this._nameInput(name, "rs-name",
       nu => ME.renameRsCase(m, name, nu)));
+    const nrt = this._notRunTag(m, name);                         // v1.13
+    if (nrt) { card.classList.add("is-not-run"); head.appendChild(nrt); }
 
     const mkField = (label, node) => {
       const w = document.createElement("label");
@@ -1348,7 +1369,7 @@ export class LoadsEditor {
   /* ============================================================ TH cases (v0.4) */
   _thSection(m) {
     const sec = this._section("ls-th", "Time-history cases",
-      "Linear modal time-history — ground acceleration record in m/s². " +
+      `Linear modal time-history — ground acceleration record in ${esc(U.label("accel"))}. ` +
       "Results land in the <b>Time History</b> tab after a solve.",
       "+ Add TH case", () => { ME.addThCase(m); this._mutated(); });
 
@@ -1372,6 +1393,8 @@ export class LoadsEditor {
     head.className = "rs-head";
     head.appendChild(this._nameInput(name, "rs-name",
       nu => ME.renameThCase(m, name, nu)));
+    const nrt = this._notRunTag(m, name);                         // v1.13
+    if (nrt) { card.classList.add("is-not-run"); head.appendChild(nrt); }
 
     const mkField = (label, node) => {
       const w = document.createElement("label");
@@ -1438,13 +1461,13 @@ export class LoadsEditor {
     left.className = "th-record";
     const lbl = document.createElement("div");
     lbl.className = "th-label";
-    lbl.innerHTML = `Acceleration record <span class="unit">m/s² · comma / whitespace separated</span>`;
+    lbl.innerHTML = `Acceleration record <span class="unit">${esc(U.label("accel"))} · comma / whitespace separated</span>`;
     const ta = document.createElement("textarea");
     ta.className = "th-accel";
     ta.spellcheck = false;
     ta.rows = 5;
     ta.placeholder = "0, 0.12, 0.31, …";
-    const fill = () => { ta.value = tc.accel.map(v => +(+v).toFixed(4)).join(", "); };
+    const fill = () => { ta.value = accelText(tc.accel); };
     fill();
     ta.addEventListener("change", () => {
       const vals = ME.parseAccel(ta.value);
@@ -1453,7 +1476,7 @@ export class LoadsEditor {
         fill();
         return;
       }
-      tc.accel = vals;
+      tc.accel = vals.map(v => U.fromDisplay("accel", v));
       this._mutated(false);
       drawSpark();
     });
@@ -1496,7 +1519,8 @@ export class LoadsEditor {
       title.innerHTML = `Record preview <span class="unit">${esc(tc.direction)} · ζ ${fmt(tc.damping, 3)} · ×${fmt(tc.scale, 2)} · ${src}</span>`;
       right.appendChild(title);
       const rec = activeRecord();
-      right.appendChild(thSparkline(rec.values, rec.dt, { width: 320, height: 84 }));
+      right.appendChild(thSparkline(rec.values.map(v => U.toDisplay("accel", v)), rec.dt,
+        { width: 320, height: 84, unit: U.label("accel") }));
     };
     drawSpark();
     dir.addEventListener("change", drawSpark);
@@ -1654,6 +1678,20 @@ export class LoadsEditor {
       w.append(s, node);
       return w;
     };
+    // v1.13 — unit-converted twin of mkNum (value shown / parsed in display units)
+    const mkNumU = (value, step, min, set, kind) => {
+      const i = document.createElement("input");
+      i.type = "number"; i.step = U.step(kind, step); i.min = String(min);
+      const show = () => { i.value = value != null ? U.inputValue(kind, value) : ""; };
+      show();
+      i.addEventListener("change", () => {
+        if (i.value.trim() === "") { set(null); this._mutated(false); return; }
+        const v = U.parse(kind, i.value);
+        if (isFinite(v) && v >= min && set(v) !== false) { value = v; this._mutated(false); }
+        else show();
+      });
+      return i;
+    };
 
     /* row: gravity factors + default My + hardening + hinges */
     const row = document.createElement("div");
@@ -1668,11 +1706,11 @@ export class LoadsEditor {
       "Add a gravity pattern held during the record"));
     row.appendChild(grav);
 
-    row.appendChild(mkField("default M<sub>y</sub> <span class='unit'>kN·m</span>",
-      mkNum(tc.default_My, "25", 0, v => {
+    row.appendChild(mkField(`default M<sub>y</sub> <span class='unit'>${esc(U.label("moment"))}</span>`,
+      mkNumU(tc.default_My, "25", 0, v => {
         if (v == null) { delete tc.default_My; return; }
         if (v <= 0) return false; tc.default_My = v;
-      })));
+      }, "moment")));
     row.appendChild(mkField("hardening",
       mkNum(tc.hardening, "0.01", 0, v => { if (v >= 1) return false; tc.hardening = v; })));
 
@@ -1696,8 +1734,9 @@ export class LoadsEditor {
     const memSel = document.createElement("select");
     memSel.className = "po-mem";
     const myIn = document.createElement("input");
-    myIn.type = "number"; myIn.step = "25"; myIn.min = "1"; myIn.value = "250";
-    myIn.title = "Hinge yield moment My (kN·m)";
+    myIn.type = "number"; myIn.step = U.step("moment", "25"); myIn.min = "0";
+    myIn.value = U.inputValue("moment", 250);
+    myIn.title = `Hinge yield moment My (${U.label("moment")})`;
     const rebuildMemSel = () => {
       const st = storySel.value, kd = kindSel.value;
       const cands = m.members.filter(mm =>
@@ -1714,7 +1753,7 @@ export class LoadsEditor {
     const addBtn = document.createElement("button");
     addBtn.className = "btn btn-small"; addBtn.textContent = "+ My override";
     addBtn.addEventListener("click", () => {
-      const uid = memSel.value, v = parseFloat(myIn.value);
+      const uid = memSel.value, v = U.parse("moment", myIn.value);
       if (!uid || !isFinite(v) || v <= 0) return;
       tc.My[uid] = v; this._mutated();
     });
@@ -1729,7 +1768,7 @@ export class LoadsEditor {
       let n = 0;
       for (const mm of m.members) if (mm.kind === "column") { tc.My[mm.uid] = v; n++; }
       this._mutated();
-      this.toast("My overrides set", `My = ${v} kN·m on ${n} columns`, "info", 3500);
+      this.toast("My overrides set", `My = ${U.fmtU("moment", v, 1)} on ${n} columns`, "info", 3500);
     });
     pick.append(storySel, kindSel, memSel, myIn, addBtn, applyCols);
     panel.appendChild(pick);
@@ -1742,7 +1781,7 @@ export class LoadsEditor {
     if (entries.length) {
       const headRow = document.createElement("div");
       headRow.className = "po-row head";
-      headRow.innerHTML = `<span>Member</span><span>Kind · story</span><span>M<sub>y</sub> kN·m</span><span></span>`;
+      headRow.innerHTML = `<span>Member</span><span>Kind · story</span><span>M<sub>y</sub> ${esc(U.label("moment"))}</span><span></span>`;
       rows.appendChild(headRow);
     } else {
       const empty = document.createElement("p");
@@ -1758,11 +1797,11 @@ export class LoadsEditor {
       const mm = memBy[uid];
       meta.textContent = mm ? `${mm.kind} · ${mm.story}` : "missing member";
       const inp = document.createElement("input");
-      inp.type = "number"; inp.step = "25"; inp.min = "1"; inp.value = String(my);
+      inp.type = "number"; inp.step = U.step("moment", "25"); inp.min = "0"; inp.value = U.inputValue("moment", my);
       inp.addEventListener("change", () => {
-        const v = parseFloat(inp.value);
+        const v = U.parse("moment", inp.value);
         if (isFinite(v) && v > 0) { tc.My[uid] = v; this._mutated(false); }
-        else inp.value = String(tc.My[uid]);
+        else inp.value = U.inputValue("moment", tc.My[uid]);
       });
       const x = document.createElement("button");
       x.className = "chip-x"; x.textContent = "✕"; x.title = "Remove override";
@@ -1800,6 +1839,8 @@ export class LoadsEditor {
     head.className = "rs-head";
     head.appendChild(this._nameInput(name, "rs-name",
       nu => ME.renamePushoverCase(m, name, nu)));
+    const nrt = this._notRunTag(m, name);                         // v1.13
+    if (nrt) { card.classList.add("is-not-run"); head.appendChild(nrt); }
 
     const mkField = (label, node) => {
       const w = document.createElement("label");
@@ -1859,26 +1900,26 @@ export class LoadsEditor {
     const defRow = document.createElement("div");
     defRow.className = "po-defrow";
     const defIn = document.createElement("input");
-    defIn.type = "number"; defIn.step = "25"; defIn.min = "0";
+    defIn.type = "number"; defIn.step = U.step("moment", "25"); defIn.min = "0";
     defIn.id = "poDefaultMy";
-    defIn.value = pc.default_My != null ? String(pc.default_My) : "";
+    defIn.value = pc.default_My != null ? U.inputValue("moment", pc.default_My) : "";
     defIn.placeholder = "—";
     defIn.addEventListener("change", () => {
-      const v = parseFloat(defIn.value);
+      const v = U.parse("moment", defIn.value);
       if (isFinite(v) && v > 0) { pc.default_My = v; this._mutated(false); }
       else if (defIn.value.trim() === "") { delete pc.default_My; this._mutated(false); }
-      else defIn.value = pc.default_My != null ? String(pc.default_My) : "";
+      else defIn.value = pc.default_My != null ? U.inputValue("moment", pc.default_My) : "";
     });
     const defLbl = document.createElement("label");
     defLbl.className = "rs-field";
-    defLbl.innerHTML = `<span>default M<sub>y</sub> kN·m</span>`;
+    defLbl.innerHTML = `<span>default M<sub>y</sub> ${esc(U.label("moment"))}</span>`;
     defLbl.appendChild(defIn);
     const applyBtn = document.createElement("button");
     applyBtn.className = "btn btn-small";
     applyBtn.textContent = "Apply to all columns";
     applyBtn.title = "Assign the default My as a hinge on every column";
     applyBtn.addEventListener("click", () => {
-      const v = parseFloat(defIn.value);
+      const v = U.parse("moment", defIn.value);
       if (!isFinite(v) || v <= 0) {
         this.toast("No default My", "Enter a positive default My first", "error", 4000);
         return;
@@ -1887,7 +1928,7 @@ export class LoadsEditor {
       let n = 0;
       for (const mm of m.members) if (mm.kind === "column") { pc.My[mm.uid] = v; n++; }
       this._mutated();
-      this.toast("Hinges assigned", `My = ${v} kN·m on ${n} columns`, "info", 3500);
+      this.toast("Hinges assigned", `My = ${U.fmtU("moment", v, 1)} on ${n} columns`, "info", 3500);
     });
     const count = document.createElement("span");
     count.className = "muted po-count";
@@ -1907,8 +1948,9 @@ export class LoadsEditor {
     const memSel = document.createElement("select");
     memSel.className = "po-mem";
     const myIn = document.createElement("input");
-    myIn.type = "number"; myIn.step = "25"; myIn.min = "1"; myIn.value = "250";
-    myIn.title = "Hinge yield moment My (kN·m)";
+    myIn.type = "number"; myIn.step = U.step("moment", "25"); myIn.min = "0";
+    myIn.value = U.inputValue("moment", 250);
+    myIn.title = `Hinge yield moment My (${U.label("moment")})`;
     const rebuildMemSel = () => {
       const st = storySel.value, kd = kindSel.value;
       const cands = m.members.filter(mm =>
@@ -1927,7 +1969,7 @@ export class LoadsEditor {
     addBtn.textContent = "+ Hinge";
     addBtn.addEventListener("click", () => {
       const uid = memSel.value;
-      const v = parseFloat(myIn.value);
+      const v = U.parse("moment", myIn.value);
       if (!uid || !isFinite(v) || v <= 0) return;
       pc.My[uid] = v;
       this._mutated();
@@ -1944,7 +1986,7 @@ export class LoadsEditor {
     if (entries.length) {
       const headRow = document.createElement("div");
       headRow.className = "po-row head";
-      headRow.innerHTML = `<span>Member</span><span>Kind · story</span><span>M<sub>y</sub> kN·m</span><span></span>`;
+      headRow.innerHTML = `<span>Member</span><span>Kind · story</span><span>M<sub>y</sub> ${esc(U.label("moment"))}</span><span></span>`;
       rows.appendChild(headRow);
     }
     for (const [uid, my] of entries) {
@@ -1957,12 +1999,12 @@ export class LoadsEditor {
       const mm = memBy[uid];
       meta.textContent = mm ? `${mm.kind} · ${mm.story}` : "missing member";
       const inp = document.createElement("input");
-      inp.type = "number"; inp.step = "25"; inp.min = "1";
-      inp.value = String(my);
+      inp.type = "number"; inp.step = U.step("moment", "25"); inp.min = "0";
+      inp.value = U.inputValue("moment", my);
       inp.addEventListener("change", () => {
-        const v = parseFloat(inp.value);
+        const v = U.parse("moment", inp.value);
         if (isFinite(v) && v > 0) { pc.My[uid] = v; this._mutated(false); }
-        else inp.value = String(pc.My[uid]);
+        else inp.value = U.inputValue("moment", pc.My[uid]);
       });
       const x = document.createElement("button");
       x.className = "chip-x"; x.textContent = "✕"; x.title = "Remove hinge";
@@ -2001,6 +2043,8 @@ export class LoadsEditor {
     head.className = "rs-head";
     head.appendChild(this._nameInput(name, "rs-name",
       nu => ME.renameBucklingCase(m, name, nu)));
+    const nrt = this._notRunTag(m, name);                         // v1.13
+    if (nrt) { card.classList.add("is-not-run"); head.appendChild(nrt); }
 
     const mkField = (label, node) => {
       const w = document.createElement("label");
@@ -2100,6 +2144,8 @@ export class LoadsEditor {
     head.className = "rs-head";
     head.appendChild(this._nameInput(name, "rs-name",
       nu => ME.renameStagedCase(m, name, nu)));
+    const nrt = this._notRunTag(m, name);                         // v1.13
+    if (nrt) { card.classList.add("is-not-run"); head.appendChild(nrt); }
 
     const mkField = (label, node) => {
       const w = document.createElement("label");
@@ -2305,7 +2351,7 @@ export class LoadsEditor {
     thGroup.className = "fn-group";
     const thHead = document.createElement("div");
     thHead.className = "fn-group-head";
-    thHead.innerHTML = `<h4>Time-history functions <span class="muted">ground accel · m/s²</span></h4>`;
+    thHead.innerHTML = `<h4>Time-history functions <span class="muted">ground accel · ${esc(U.label("accel"))}</span></h4>`;
     const addTh = document.createElement("button");
     addTh.className = "btn btn-small"; addTh.id = "addThFn"; addTh.textContent = "+ TH function";
     addTh.addEventListener("click", () => { ME.addThFunction(m); this._mutated(); });
@@ -2473,11 +2519,11 @@ export class LoadsEditor {
     left.className = "th-record";
     const lbl = document.createElement("div");
     lbl.className = "th-label";
-    lbl.innerHTML = `Values <span class="unit">m/s² · comma / whitespace separated</span>`;
+    lbl.innerHTML = `Values <span class="unit">${esc(U.label("accel"))} · comma / whitespace separated</span>`;
     const ta = document.createElement("textarea");
     ta.className = "th-accel"; ta.spellcheck = false; ta.rows = 5;
     ta.placeholder = "0, 0.12, 0.31, …";
-    const fill = () => { ta.value = tf.values.map(v => +(+v).toFixed(4)).join(", "); };
+    const fill = () => { ta.value = accelText(tf.values); };
     fill();
     ta.addEventListener("change", () => {
       const vals = ME.parseAccel(ta.value);
@@ -2485,7 +2531,7 @@ export class LoadsEditor {
         this.toast("Record not parsed", "Only numbers, commas and whitespace are allowed", "error", 5000);
         fill(); return;
       }
-      tf.values = vals; this._mutated(false); drawSpark();
+      tf.values = vals.map(v => U.fromDisplay("accel", v)); this._mutated(false); drawSpark();
     });
     const foot = document.createElement("div");
     foot.className = "rs-table-foot";
@@ -2508,7 +2554,8 @@ export class LoadsEditor {
       title.className = "chart-title";
       title.innerHTML = `Record preview <span class="unit">${tf.values.length} pts · dt ${fmt(tf.dt, 3)} s</span>`;
       right.appendChild(title);
-      right.appendChild(thSparkline(tf.values, tf.dt, { width: 320, height: 84 }));
+      right.appendChild(thSparkline(tf.values.map(v => U.toDisplay("accel", v)), tf.dt,
+        { width: 320, height: 84, unit: U.label("accel") }));
     };
     drawSpark();
     body.append(left, right);
@@ -2562,13 +2609,13 @@ export class LoadsEditor {
     head.appendChild(mkField("axis", axisSel));
 
     const coord = document.createElement("input");
-    coord.type = "number"; coord.step = "0.5"; coord.value = String(cut.coord);
+    coord.type = "number"; coord.step = U.step("length", "0.5"); coord.value = U.inputValue("length", cut.coord);
     coord.addEventListener("change", () => {
-      const v = parseFloat(coord.value);
+      const v = U.parse("length", coord.value);
       if (isFinite(v)) { cut.coord = v; this._mutated(); }
-      else coord.value = String(cut.coord);
+      else coord.value = U.inputValue("length", cut.coord);
     });
-    head.appendChild(mkField("coord m", coord));
+    head.appendChild(mkField(`coord ${U.label("length")}`, coord));
 
     head.appendChild(this._delBtn(null, `section cut ${cut.name}`, () => {
       if (ME.deleteSectionCut(m, cut.name)) this._mutated();
@@ -2593,16 +2640,16 @@ export class LoadsEditor {
         const cb = document.createElement("input");
         cb.type = "checkbox"; cb.checked = on; cb.className = "cut-range-cb";
         const lo = document.createElement("input");
-        lo.type = "number"; lo.step = "0.5"; lo.className = "cut-range-num";
-        lo.placeholder = "lo"; lo.value = on ? String(cut[key][0]) : "";
+        lo.type = "number"; lo.step = U.step("length", "0.5"); lo.className = "cut-range-num";
+        lo.placeholder = "lo"; lo.value = on ? U.inputValue("length", cut[key][0]) : "";
         const hi = document.createElement("input");
-        hi.type = "number"; hi.step = "0.5"; hi.className = "cut-range-num";
-        hi.placeholder = "hi"; hi.value = on ? String(cut[key][1]) : "";
+        hi.type = "number"; hi.step = U.step("length", "0.5"); hi.className = "cut-range-num";
+        hi.placeholder = "hi"; hi.value = on ? U.inputValue("length", cut[key][1]) : "";
         lo.disabled = hi.disabled = !on;
         const label = document.createElement("span");
         label.className = "cut-range-lbl"; label.textContent = ax.toUpperCase();
         const commit = () => {
-          const l = parseFloat(lo.value), h = parseFloat(hi.value);
+          const l = U.parse("length", lo.value), h = U.parse("length", hi.value);
           if (cb.checked && isFinite(l) && isFinite(h)) ME.setCutRange(cut, key, l, h);
           else if (cb.checked) { /* incomplete — leave as-is */ }
           else ME.setCutRange(cut, key, null, null);
@@ -2633,7 +2680,7 @@ export class LoadsEditor {
 
     const note = document.createElement("p");
     note.className = "muted staged-note";
-    note.innerHTML = `Plane <b>${cut.axis.toUpperCase()} = ${fmt(cut.coord, 2)} m</b>. ` +
+    note.innerHTML = `Plane <b>${cut.axis.toUpperCase()} = ${U.fmtU("length", cut.coord, 2)}</b>. ` +
       `The resultant sums the internal forces of members crossing the plane` +
       (Array.isArray(cut.x_range) || Array.isArray(cut.y_range) || Array.isArray(cut.z_range)
         ? ` within the bounding box.` : `.`);
@@ -2655,6 +2702,29 @@ export class LoadsEditor {
     row.appendChild(this._factorChips(m.mass_source, ME.patternNames(m),
       "Add a pattern to the mass source"));
     sec.appendChild(row);
+    // v1.13 — mass options summary + the ETABS-style Mass Source dialog
+    const mo = ME.normalizeMassOptions(m.mass_options);
+    const info = document.createElement("div");
+    info.className = "mass-opts-row";
+    const sum = document.createElement("span");
+    sum.className = "muted mass-opts-sum";
+    sum.innerHTML = [
+      mo.self_mass ? `self mass <b>${m.mass_source_mode === "element_self_mass" ? "(mass density)" : "(W/g)"}</b>` : "",
+      mo.patterns ? "load patterns" : "",
+    ].filter(Boolean).join(" + ") + " · " +
+      [mo.include_lateral ? "lateral" : "", mo.include_vertical ? "vertical" : ""].filter(Boolean).join(" + ") +
+      " mass" + (mo.include_lateral && mo.lump_at_stories ? " · lumped at stories" : "");
+    info.appendChild(sum);
+    if (this.onMassSource) {
+      const b = document.createElement("button");
+      b.className = "btn btn-small";
+      b.id = "openMassSourceDlg";
+      b.innerHTML = `${icon("mass-source", "btn-ico")}Mass Source…`;
+      b.title = "Define → Mass Source… (ETABS Mass Source Data dialog)";
+      b.addEventListener("click", () => this.onMassSource());
+      info.appendChild(b);
+    }
+    sec.appendChild(info);
     return sec;
   }
 }

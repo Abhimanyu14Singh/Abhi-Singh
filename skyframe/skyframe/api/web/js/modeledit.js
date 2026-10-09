@@ -1,6 +1,8 @@
 /* SkyFrame model editing — pure mutations on the client-side model dict
    (same shape as BuildingModel.to_dict(), see CONTRACT.md v0.2). */
 
+import { normalizeUnits } from "./units.js";   // v1.13 — model.display_units
+
 const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
 const near = (a, b, tol = 1e-6) =>
   Math.abs(a[0] - b[0]) < tol && Math.abs(a[1] - b[1]) < tol && Math.abs(a[2] - b[2]) < tol;
@@ -301,7 +303,199 @@ export function normalizeModel(m) {
   // older backend didn't provide one, synthesize it from the client-side
   // shoelace properties so section dropdowns stay consistent.
   m.designer_sections = normalizeDesignerSections(m);
+  // v1.13 — analysis setup (contract v1.13): cases to run, active DOF, mass
+  // options, display units, per-material stress–strain curves. All absent
+  // keys take the contract defaults so older models keep working unchanged.
+  const known = new Set(allAnalysisCases(m).map(c => c.name));
+  m.cases_not_run = Array.isArray(m.cases_not_run)
+    ? [...new Set(m.cases_not_run.filter(n => typeof n === "string" && known.has(n)))]
+    : [];
+  m.active_dof = normalizeActiveDof(m.active_dof);
+  m.mass_options = normalizeMassOptions(m.mass_options);
+  if (m.mass_source_mode != null &&
+      m.mass_source_mode !== "weight" && m.mass_source_mode !== "element_self_mass")
+    delete m.mass_source_mode;
+  m.display_units = normalizeUnits(m.display_units);
+  for (const mat of Object.values(m.materials)) {
+    if (!mat || typeof mat !== "object") continue;
+    mat.stress_strain = normalizeStressStrain(mat.stress_strain, mat);
+  }
   return m;
+}
+
+/* ================================================================
+   v1.13 — Set Load Cases to Run · Active DOF · Mass Source options
+   ================================================================ */
+/** Pseudo-name of the modal (eigen) case — the model carries no modal case
+    dict, but ETABS lists it alongside every other load case. */
+export const MODAL_CASE = "MODAL";
+
+/** Every analysis case of the model, ETABS order: static, modal, RS, TH,
+    pushover, buckling, staged. [{name, type, kind}] — kind keys the dict. */
+export function allAnalysisCases(m) {
+  if (!m) return [];
+  const out = [];
+  const push = (dict, type, kind) => {
+    for (const n of Object.keys(dict || {})) out.push({ name: n, type, kind });
+  };
+  push(m.cases, "Linear Static", "static");
+  out.push({ name: MODAL_CASE, type: "Modal - Eigen", kind: "modal" });
+  push(m.rs_cases, "Response Spectrum", "rs");
+  push(m.th_cases, "Time History", "th");
+  push(m.pushover_cases, "Nonlinear Static (Pushover)", "pushover");
+  push(m.buckling_cases, "Buckling", "buckling");
+  push(m.staged_cases, "Staged Construction", "staged");
+  return out;
+}
+
+/** Is a case flagged "Do not Run"? */
+export const caseNotRun = (m, name) =>
+  !!(m && Array.isArray(m.cases_not_run) && m.cases_not_run.includes(name));
+
+function notRunRename(model, oldName, newName) {
+  if (!Array.isArray(model.cases_not_run)) return;
+  model.cases_not_run = model.cases_not_run.map(n => n === oldName ? newName : n);
+}
+function notRunDelete(model, name) {
+  if (!Array.isArray(model.cases_not_run)) return;
+  model.cases_not_run = model.cases_not_run.filter(n => n !== name);
+}
+
+export const DOF_NAMES = ["UX", "UY", "UZ", "RX", "RY", "RZ"];
+export const DOF_PRESETS = {
+  "3D": { label: "Full 3D", dofs: ["UX", "UY", "UZ", "RX", "RY", "RZ"] },
+  XZ: { label: "XZ Plane", dofs: ["UX", "UZ", "RY"] },
+  YZ: { label: "YZ Plane", dofs: ["UY", "UZ", "RX"] },
+  XY: { label: "XY Plane", dofs: ["UX", "UY", "RZ"] },
+};
+/** Canonical-order subset of the six DOFs (default: all six). */
+export function normalizeActiveDof(v) {
+  if (!Array.isArray(v)) return DOF_NAMES.slice();
+  const set = new Set(v.map(s => String(s).toUpperCase()));
+  const out = DOF_NAMES.filter(d => set.has(d));
+  return out.length ? out : DOF_NAMES.slice();
+}
+/** Preset key ("3D" | "XZ" | "YZ" | "XY") matching a DOF list, else null. */
+export function dofPresetOf(dofs) {
+  const key = normalizeActiveDof(dofs).join(",");
+  for (const [k, p] of Object.entries(DOF_PRESETS)) if (p.dofs.join(",") === key) return k;
+  return null;
+}
+
+export const MASS_OPTION_DEFAULTS = {
+  self_mass: true, patterns: true, include_lateral: true,
+  include_vertical: false, lump_at_stories: true,
+};
+export function normalizeMassOptions(o) {
+  const src = (o && typeof o === "object") ? o : {};
+  const out = {};
+  for (const [k, dv] of Object.entries(MASS_OPTION_DEFAULTS))
+    out[k] = typeof src[k] === "boolean" ? src[k] : dv;
+  for (const [k, v] of Object.entries(src)) if (!(k in out)) out[k] = v;   // round-trip unknowns
+  return out;
+}
+
+/* ================================================================
+   v1.13 — material stress–strain curves (Nonlinear Material Data)
+   stress_strain = null (engine default laws) | {model, hysteresis, params,
+   points?}; compression negative, stress kPa. "default" is never stored.
+   ================================================================ */
+export const SS_MODEL_LABELS = {
+  default: "Default (engine built-in)", simple: "Simple", mander: "Mander",
+  park: "Park", user: "User (points)",
+};
+export const SS_HYSTERESIS = ["kinematic", "takeda", "pivot", "elastic"];
+
+/** Material family for curve purposes: "concrete" | "steel" | "other". */
+export function ssFamily(type) {
+  if (type === "concrete" || type === "masonry") return "concrete";
+  if (["steel", "rebar", "tendon", "coldformed", "aluminum"].includes(type)) return "steel";
+  return "other";
+}
+/** Allowed explicit models per material type (contract v1.13). */
+export function ssAllowedModels(type) {
+  const fam = ssFamily(type);
+  return fam === "concrete" ? ["simple", "mander", "park", "user"]
+    : fam === "steel" ? ["simple", "park", "user"] : ["user"];
+}
+const SS_STEEL_DEFAULT_FY = { steel: 344740, rebar: 413690, tendon: 1689900, coldformed: 227530, aluminum: 240000 };
+
+/** Resolved analysis strengths (kPa) — fc falls back to fc_from_E
+    (E = 4700√f'c MPa), fy to a type default, fu to 1.3·fy. */
+export function ssStrengths(mat) {
+  const E = (isFinite(mat.E) && mat.E > 0) ? +mat.E : 25e6;
+  const fc = (isFinite(mat.fc) && mat.fc > 0) ? +mat.fc
+    : Math.pow(E / 1000 / 4700, 2) * 1000;
+  const fy = (isFinite(mat.fy) && mat.fy > 0) ? +mat.fy
+    : (SS_STEEL_DEFAULT_FY[mat.material_type] || 344740);
+  const fu = (isFinite(mat.fu) && mat.fu > fy) ? +mat.fu : 1.3 * fy;
+  return { E, fc, fy, fu };
+}
+export function ssDefaultHysteresis(type) {
+  const fam = ssFamily(type);
+  return fam === "concrete" ? "takeda" : fam === "steel" ? "kinematic" : "elastic";
+}
+/** Default type-specific parameters (concrete: eps_c0, eps_cu, ft kPa; steel:
+    eps_sh, eps_su, b). "other" materials carry no params. */
+export function ssDefaultParams(mat) {
+  const fam = ssFamily(mat.material_type);
+  if (fam === "concrete") {
+    const { fc } = ssStrengths(mat);
+    return { eps_c0: 0.002, eps_cu: 0.0035, ft: Math.round(620 * Math.sqrt(fc / 1000)) };
+  }
+  if (fam === "steel") return { eps_sh: 0.01, eps_su: 0.09, b: 0.01 };
+  return {};
+}
+/** Seed points for a "user" curve: a piecewise copy of the simple law. */
+export function ssDefaultPoints(mat) {
+  const fam = ssFamily(mat.material_type);
+  const { E, fc, fy, fu } = ssStrengths(mat);
+  const r = v => +(+v).toPrecision(6);
+  if (fam === "concrete") {
+    const ft = Math.round(620 * Math.sqrt(fc / 1000));
+    return [[-0.0035, r(-0.85 * fc)], [-0.002, r(-fc)], [-0.001, r(-0.75 * fc)],
+      [0, 0], [r(ft / E), ft]];
+  }
+  if (fam === "steel") {
+    const ey = r(fy / E);
+    return [[-0.09, r(-fu)], [-ey, r(-fy)], [0, 0], [ey, r(fy)], [0.09, r(fu)]];
+  }
+  const e = 0.002;
+  return [[-e, r(-E * e)], [0, 0], [e, r(E * e)]];
+}
+/** Fresh curve object for `model` on `mat` (null for "default"). */
+export function newStressStrain(mat, model) {
+  if (!model || model === "default") return null;
+  const ss = {
+    model, hysteresis: ssDefaultHysteresis(mat.material_type),
+    params: ssDefaultParams(mat),
+  };
+  if (model === "user") ss.points = ssDefaultPoints(mat);
+  return ss;
+}
+/** Sort + dedupe user points by strain and make sure the origin is present. */
+export function normalizeSsPoints(pts) {
+  const clean = (Array.isArray(pts) ? pts : [])
+    .filter(p => Array.isArray(p) && p.length >= 2 && isFinite(p[0]) && isFinite(p[1]))
+    .map(p => [+p[0], +p[1]]);
+  if (!clean.some(p => Math.abs(p[0]) < 1e-15)) clean.push([0, 0]);
+  clean.sort((a, b) => a[0] - b[0]);
+  return clean.filter((p, i) => i === 0 || Math.abs(p[0] - clean[i - 1][0]) > 1e-15);
+}
+export function normalizeStressStrain(ss, mat) {
+  if (!ss || typeof ss !== "object" || !ss.model || ss.model === "default") return null;
+  const type = mat && mat.material_type;
+  if (!ssAllowedModels(type).includes(ss.model)) return null;
+  const out = { ...ss };
+  out.hysteresis = SS_HYSTERESIS.includes(ss.hysteresis) ? ss.hysteresis : ssDefaultHysteresis(type);
+  const defs = ssDefaultParams(mat || {});
+  const src = (ss.params && typeof ss.params === "object") ? ss.params : {};
+  out.params = { ...src };
+  for (const [k, dv] of Object.entries(defs))
+    if (!(isFinite(src[k]))) out.params[k] = dv; else out.params[k] = +src[k];
+  if (out.model === "user") out.points = normalizeSsPoints(ss.points);
+  else delete out.points;
+  return out;
 }
 
 /* ================================================================
@@ -472,6 +666,7 @@ export function blankMaterial(name, type = "concrete") {
     fc: null, fy: null, fu: null, Ry: 1.1,
     damping: 0, lightweight: false, lam: 1,
     color: "#8a8f98", notes: "",
+    stress_strain: null,          // v1.13 — engine default laws
   };
   if (type && type !== "concrete") applyMaterialType(m, type);
   return m;
@@ -493,6 +688,10 @@ export function applyMaterialType(mat, type) {
   mat.fy = t.fy;
   mat.fu = t.fu;
   mat.Ry = t.Ry;
+  // v1.13 — a curve law the new type doesn't allow falls back to the engine default
+  if (mat.stress_strain && !ssAllowedModels(type).includes(mat.stress_strain.model))
+    mat.stress_strain = null;
+  else if (mat.stress_strain) mat.stress_strain = normalizeStressStrain(mat.stress_strain, mat);
   return mat;
 }
 
@@ -509,7 +708,7 @@ export const DEFAULT_LIBRARY = [
 export function addLibraryMaterial(model, entry) {
   let name = entry.name;
   if (model.materials[name]) name = uniqueKey(model.materials, entry.name + "-");
-  model.materials[name] = { ...entry, name };
+  model.materials[name] = { ...entry, name, stress_strain: null };
   return name;
 }
 
@@ -961,11 +1160,13 @@ export function renamePushoverCase(model, oldName, newName) {
   if (!newName || newName === oldName || model.pushover_cases[newName]) return false;
   model.pushover_cases[newName] = { ...model.pushover_cases[oldName], name: newName };
   delete model.pushover_cases[oldName];
+  notRunRename(model, oldName, newName);   // v1.13 — cases_not_run follows
   return true;
 }
 
 export function deletePushoverCase(model, name) {
   delete model.pushover_cases[name];
+  notRunDelete(model, name);
   return true;
 }
 
@@ -1187,6 +1388,7 @@ export function renameCase(model, oldName, newName) {
   // v0.25 — buckling stressed-state references follow the rename
   for (const bc of Object.values(model.buckling_cases || {}))
     if (bc.base_case === oldName) bc.base_case = newName;
+  notRunRename(model, oldName, newName);   // v1.13 — cases_not_run follows
   return true;
 }
 
@@ -1194,6 +1396,7 @@ export function renameCase(model, oldName, newName) {
 export function deleteCase(model, name) {
   if (caseRefs(model, name).length) return false;
   delete model.cases[name];
+  notRunDelete(model, name);
   return true;
 }
 
@@ -1237,11 +1440,13 @@ export function renameRsCase(model, oldName, newName) {
   if (!newName || newName === oldName || model.rs_cases[newName]) return false;
   model.rs_cases[newName] = { ...model.rs_cases[oldName], name: newName };
   delete model.rs_cases[oldName];
+  notRunRename(model, oldName, newName);   // v1.13 — cases_not_run follows
   return true;
 }
 
 export function deleteRsCase(model, name) {
   delete model.rs_cases[name];
+  notRunDelete(model, name);
   return true;
 }
 
@@ -1260,11 +1465,13 @@ export function renameBucklingCase(model, oldName, newName) {
   if (!newName || newName === oldName || model.buckling_cases[newName]) return false;
   model.buckling_cases[newName] = { ...model.buckling_cases[oldName], name: newName };
   delete model.buckling_cases[oldName];
+  notRunRename(model, oldName, newName);   // v1.13 — cases_not_run follows
   return true;
 }
 
 export function deleteBucklingCase(model, name) {
   delete model.buckling_cases[name];
+  notRunDelete(model, name);
   return true;
 }
 
@@ -1905,11 +2112,13 @@ export function renameThCase(model, oldName, newName) {
   if (!newName || newName === oldName || model.th_cases[newName]) return false;
   model.th_cases[newName] = { ...model.th_cases[oldName], name: newName };
   delete model.th_cases[oldName];
+  notRunRename(model, oldName, newName);   // v1.13 — cases_not_run follows
   return true;
 }
 
 export function deleteThCase(model, name) {
   delete model.th_cases[name];
+  notRunDelete(model, name);
   return true;
 }
 
@@ -1930,11 +2139,13 @@ export function renameStagedCase(model, oldName, newName) {
   if (!newName || newName === oldName || model.staged_cases[newName]) return false;
   model.staged_cases[newName] = { ...model.staged_cases[oldName], name: newName };
   delete model.staged_cases[oldName];
+  notRunRename(model, oldName, newName);   // v1.13 — cases_not_run follows
   return true;
 }
 
 export function deleteStagedCase(model, name) {
   delete model.staged_cases[name];
+  notRunDelete(model, name);
   return true;
 }
 

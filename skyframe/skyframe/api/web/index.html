@@ -219,38 +219,38 @@
           <div class="field-row">
             <div class="field"><label for="f-bays_x">Bays X</label>
               <input id="f-bays_x" name="bays_x" type="number" min="1" max="20" step="1" value="3"></div>
-            <div class="field"><label for="f-bay_width_x">Width X <span class="unit">m</span></label>
-              <input id="f-bay_width_x" name="bay_width_x" type="number" min="1" step="0.5" value="6"></div>
+            <div class="field"><label for="f-bay_width_x">Width X <span class="unit" data-ul="length">m</span></label>
+              <input id="f-bay_width_x" name="bay_width_x" type="number" min="0" step="0.5" value="6" data-uq="length"></div>
           </div>
           <div class="field-row">
             <div class="field"><label for="f-bays_y">Bays Y</label>
               <input id="f-bays_y" name="bays_y" type="number" min="1" max="20" step="1" value="2"></div>
-            <div class="field"><label for="f-bay_width_y">Width Y <span class="unit">m</span></label>
-              <input id="f-bay_width_y" name="bay_width_y" type="number" min="1" step="0.5" value="6"></div>
+            <div class="field"><label for="f-bay_width_y">Width Y <span class="unit" data-ul="length">m</span></label>
+              <input id="f-bay_width_y" name="bay_width_y" type="number" min="0" step="0.5" value="6" data-uq="length"></div>
           </div>
 
           <h3 class="group-title">Stories</h3>
           <div class="field-row">
             <div class="field"><label for="f-stories">Count</label>
               <input id="f-stories" name="stories" type="number" min="1" max="40" step="1" value="4"></div>
-            <div class="field"><label for="f-story_height">Height <span class="unit">m</span></label>
-              <input id="f-story_height" name="story_height" type="number" min="2" step="0.1" value="3.2"></div>
+            <div class="field"><label for="f-story_height">Height <span class="unit" data-ul="length">m</span></label>
+              <input id="f-story_height" name="story_height" type="number" min="0" step="0.1" value="3.2" data-uq="length"></div>
           </div>
 
           <h3 class="group-title">Sections &amp; material</h3>
           <div class="field">
-            <label for="f-E">E <span class="unit">kPa</span></label>
-            <input id="f-E" name="E" type="number" min="1" step="1000000" value="25000000">
+            <label for="f-E">E <span class="unit" data-ul="modulus">kPa</span></label>
+            <input id="f-E" name="E" type="number" min="0" step="1000000" value="25000000" data-uq="modulus">
           </div>
           <div class="field-row">
-            <div class="field"><label for="f-column_size">Column <span class="unit">m sq.</span></label>
-              <input id="f-column_size" name="column_size" type="number" min="0.1" step="0.05" value="0.5"></div>
-            <div class="field"><label for="f-beam_b">Beam b <span class="unit">m</span></label>
-              <input id="f-beam_b" name="beam_b" type="number" min="0.1" step="0.05" value="0.3"></div>
+            <div class="field"><label for="f-column_size">Column <span class="unit"><span data-ul="dim">m</span> sq.</span></label>
+              <input id="f-column_size" name="column_size" type="number" min="0" step="0.05" value="0.5" data-uq="dim"></div>
+            <div class="field"><label for="f-beam_b">Beam b <span class="unit" data-ul="dim">m</span></label>
+              <input id="f-beam_b" name="beam_b" type="number" min="0" step="0.05" value="0.3" data-uq="dim"></div>
           </div>
           <div class="field-row">
-            <div class="field"><label for="f-beam_h">Beam h <span class="unit">m</span></label>
-              <input id="f-beam_h" name="beam_h" type="number" min="0.1" step="0.05" value="0.6"></div>
+            <div class="field"><label for="f-beam_h">Beam h <span class="unit" data-ul="dim">m</span></label>
+              <input id="f-beam_h" name="beam_h" type="number" min="0" step="0.05" value="0.6" data-uq="dim"></div>
             <div class="field"><label for="f-base_fixity">Base fixity</label>
               <select id="f-base_fixity" name="base_fixity">
                 <option value="fixed" selected>Fixed</option>
@@ -260,10 +260,10 @@
 
           <h3 class="group-title">Loads</h3>
           <div class="field-row">
-            <div class="field"><label for="f-dead_udl">Dead <span class="unit">kN/m</span></label>
-              <input id="f-dead_udl" name="dead_udl" type="number" min="0" step="1" value="25"></div>
-            <div class="field"><label for="f-live_udl">Live <span class="unit">kN/m</span></label>
-              <input id="f-live_udl" name="live_udl" type="number" min="0" step="1" value="10"></div>
+            <div class="field"><label for="f-dead_udl">Dead <span class="unit" data-ul="line_force">kN/m</span></label>
+              <input id="f-dead_udl" name="dead_udl" type="number" min="0" step="1" value="25" data-uq="line_force"></div>
+            <div class="field"><label for="f-live_udl">Live <span class="unit" data-ul="line_force">kN/m</span></label>
+              <input id="f-live_udl" name="live_udl" type="number" min="0" step="1" value="10" data-uq="line_force"></div>
           </div>
           <div class="field">
             <label for="f-quake_coeff">Seismic coefficient <span class="unit">V/W</span></label>
@@ -360,6 +360,7 @@
         <button class="tab hidden" data-tab="piers" role="tab" id="pierTabBtn">Wall Piers</button>
         <button class="tab hidden" data-tab="svc" role="tab" id="svcTabBtn">Serviceability</button>
         <div class="tabbar-spacer"></div>
+        <span class="notrun-badge run-status-badge hidden" id="runStatusBadge" title="Cases not run in the last analysis"></span>
         <span class="staged-badge hidden" id="stagedBadge" title="Staged construction vs one-shot analysis — max column-axial difference"></span>
         <div class="seg-toggle env-toggle hidden" id="envToggle" title="Envelope combo — switch tables between the max and min envelope">
           <button class="seg-btn is-active" data-env="max">max</button>
@@ -663,6 +664,7 @@
               <button class="seg-btn" data-dk="seismic341" title="AISC 341 seismic joint checks — strong-column/weak-beam + panel zones (v0.23)">Seismic 341</button>
             </div>
             <span class="prelim-badge" title="These checks are screening-level only — not a substitute for a full code design">PRELIMINARY — screening only</span>
+            <span class="prelim-badge si-only-badge hidden" id="designSiNote" title="Design checks are outside the analysis-only scope of the display-unit conversion — their inputs and tables stay in kN · m · kPa · mm">SI units</span>
             <span class="toolbar-spacer"></span>
             <button class="chip csv-btn" id="csvDesign" title="Download the check table as CSV (unrounded)">⬇ CSV</button>
           </div>
@@ -1090,7 +1092,7 @@
 
   <footer class="footer etabs-statusbar">
     <div class="etabs-status" id="etabsStatus"></div>
-    <span class="footer-solver">Solver: OpenSees 3.7 · Units: kN, m, s</span>
+    <span class="footer-solver">Solver: OpenSees 3.7 · Units: <span id="footerUnits">kN, m, °C, s</span></span>
     <span class="footer-right" id="footerInfo"></span>
   </footer>
 
@@ -1286,7 +1288,7 @@
           </div>
         </section>
         <section class="story-pane-edit">
-          <h3 class="ge-title">Stories <span class="muted">top → bottom · heights in m</span></h3>
+          <h3 class="ge-title">Stories <span class="muted">top → bottom · heights in <span data-ul="length">m</span></span></h3>
           <p class="muted ge-note">Changing a height re-computes elevations and moves that story's members with it. Deleting a story deletes its members.</p>
           <div class="ge-stories" id="storyRows"></div>
         </section>
@@ -1354,7 +1356,7 @@
           </div>
           <div class="import-stories">
             <div class="import-stories-head">
-              <b>Story heights <span class="unit">m · bottom → top</span></b>
+              <b>Story heights <span class="unit"><span data-ul="length">m</span> · bottom → top</span></b>
               <button class="btn btn-small" id="importAddStory">+ Story</button>
             </div>
             <div class="import-story-rows" id="importStoryRows"></div>

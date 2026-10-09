@@ -2,6 +2,8 @@
    Three linked charts: story displacement, drift ratio (with limit line),
    story shear. Vertical axis = story elevation; series X / Y direction. */
 
+import U from "./units.js";   // v1.13 — display units (inputs to these charts are SI)
+
 const S = {
   x: "var(--series-x)", y: "var(--series-y)",
   xRaw: "#1e9ad4", yRaw: "#d55181",
@@ -201,7 +203,7 @@ function storyChart(rows, opts) {
     cross.setAttribute("y2", yOf(best.elev));
     cross.setAttribute("visibility", "visible");
     showTip(
-      `<b>${best.story}</b> · ${fmt(best.elev, 1)} m<br>` +
+      `<b>${best.story}</b> · ${U.fmtU("length", best.elev, 1)}<br>` +
       `<span style="color:${S.xRaw}">●</span> X ${fmt(best.vx, opts.dec ?? 2)} ${opts.unit}<br>` +
       `<span style="color:${S.yRaw}">●</span> Y ${fmt(best.vy, opts.dec ?? 2)} ${opts.unit}`,
       e.clientX, e.clientY);
@@ -258,7 +260,7 @@ export function stationDiagram(xs, vs, opts = {}) {
   svg.appendChild(txt("text", {
     x: M.l + pw, y: H - 4, fill: S.axis, "font-size": 9, "text-anchor": "end",
     style: "font-variant-numeric:tabular-nums",
-  }, `${fmt(L, 1)} m`));
+  }, `${fmt(L, opts.xDec ?? 1)} ${opts.xUnit || "m"}`));
 
   // filled area + stroke
   let dArea = `M${xOf(xs[0]).toFixed(1)},${yOf(0).toFixed(1)}`;
@@ -288,7 +290,7 @@ export function stationDiagram(xs, vs, opts = {}) {
     svg.appendChild(txt("text", {
       x: px, y: py, fill: S.text, "font-size": 9, "text-anchor": "middle",
       style: "font-variant-numeric:tabular-nums",
-    }, `${fmt(v, dec)} @ ${fmt(xs[i], 1)}`));
+    }, `${fmt(v, dec)} @ ${fmt(xs[i], opts.xDec ?? 1)}`));
   };
   label(iMax, true);
   if (iMin !== iMax) label(iMin, false);
@@ -412,7 +414,7 @@ export function renderStoryCharts(container, results, caseData, driftLimitPct) {
     const st = caseData.story[s] || {};
     return {
       story: s, elev: results.story_elev[s],
-      vx: (st.ux || 0) * 1000, vy: (st.uy || 0) * 1000,   // m → mm
+      vx: U.toDisplay("disp", st.ux || 0), vy: U.toDisplay("disp", st.uy || 0),   // m → mm / in
     };
   });
   const driftRows = results.story_order.map(s => {
@@ -426,18 +428,18 @@ export function renderStoryCharts(container, results, caseData, driftLimitPct) {
     const st = caseData.story[s] || {};
     return {
       story: s, elev: results.story_elev[s],
-      vx: Math.abs(st.shear_x || 0), vy: Math.abs(st.shear_y || 0),
+      vx: Math.abs(U.toDisplay("force", st.shear_x || 0)), vy: Math.abs(U.toDisplay("force", st.shear_y || 0)),
     };
   });
 
   container.appendChild(storyChart(dispRows, {
-    title: "Story displacement", unit: "mm", kind: "line", dec: 1,
+    title: "Story displacement", unit: U.label("disp"), kind: "line", dec: U.dec("disp", 1),
   }));
   container.appendChild(storyChart(driftRows, {
     title: "Story drift ratio", unit: "%", kind: "line", limit: driftLimitPct, dec: 3,
   }));
   container.appendChild(storyChart(shearRows, {
-    title: "Story shear", unit: "kN", kind: "step", dec: 1,
+    title: "Story shear", unit: U.label("force"), kind: "step", dec: U.dec("force", 1),
   }));
 }
 
@@ -617,7 +619,11 @@ export function pushoverChart(disp, shear, opts = {}) {
   const M = { l: 60, r: 16, t: 30, b: 34 };
   const pw = W - M.l - M.r, ph = H_ - M.t - M.b;
   const Hm = opts.H || 1;                       // building height, m
-  const dm = disp.map(v => v * 1000);           // m → mm
+  // v1.13 — display units: displacement mm/in, shear kN/kip … (inputs stay SI)
+  const dm = disp.map(v => U.toDisplay("disp", v));
+  const dU = U.label("disp"), fU = U.label("force");
+  const dFac = U.factor("disp");                // display disp per m
+  shear = shear.map(v => U.toDisplay("force", v));
   const dMax = Math.max(...dm, 1e-9);
   const vTicks = niceTicks(Math.max(...shear, 1e-9) * 1.06);
   const vMax = vTicks[vTicks.length - 1];
@@ -650,7 +656,7 @@ export function pushoverChart(disp, shear, opts = {}) {
     svg.appendChild(txt("text", {
       x: xOf(t), y: M.t - 6, fill: S.text, "font-size": 9, "text-anchor": "middle",
       style: "font-variant-numeric:tabular-nums",
-    }, fmt(t / 1000 / Hm * 100, 2)));
+    }, fmt(t / dFac / Hm * 100, 2)));
   }
   // axes + units
   svg.appendChild(el("line", { x1: M.l, x2: M.l, y1: M.t, y2: M.t + ph, stroke: S.axis, "stroke-width": 1 }));
@@ -658,13 +664,13 @@ export function pushoverChart(disp, shear, opts = {}) {
   svg.appendChild(el("line", { x1: M.l, x2: M.l + pw, y1: M.t, y2: M.t, stroke: S.axis, "stroke-width": 1, "stroke-opacity": 0.5 }));
   svg.appendChild(txt("text", {
     x: M.l + pw, y: M.t + ph + 26, fill: S.axis, "font-size": 9, "text-anchor": "end",
-  }, "roof displacement  mm"));
+  }, `roof displacement  ${dU}`));
   svg.appendChild(txt("text", {
     x: M.l + pw, y: M.t - 18, fill: S.axis, "font-size": 9, "text-anchor": "end",
   }, "roof drift  %"));
   svg.appendChild(txt("text", {
     x: M.l - 6, y: 10, fill: S.axis, "font-size": 9, "text-anchor": "end",
-  }, "V  kN"));
+  }, `V  ${fU}`));
 
   // capacity curve (filled)
   let dArea = `M${xOf(dm[0]).toFixed(1)},${yOf(0).toFixed(1)}`;
@@ -685,7 +691,7 @@ export function pushoverChart(disp, shear, opts = {}) {
   // opts.bilinear = {dy, Vy, du, Vu} (m, kN); opts.marker = {x (m), label}
   if (opts.bilinear && isFinite(opts.bilinear.Vy)) {
     const b = opts.bilinear;
-    const pts = [[0, 0], [b.dy * 1000, b.Vy], [b.du * 1000, b.Vu]]
+    const pts = [[0, 0], [b.dy * dFac, U.toDisplay("force", b.Vy)], [b.du * dFac, U.toDisplay("force", b.Vu)]]
       .map(([x, y]) => `${xOf(Math.min(x, dMax)).toFixed(1)},` +
                        `${yOf(Math.min(y, vMax)).toFixed(1)}`);
     svg.appendChild(el("path", {
@@ -693,13 +699,13 @@ export function pushoverChart(disp, shear, opts = {}) {
       "stroke-width": 1.6, "stroke-dasharray": "6 4", "stroke-opacity": 0.9,
     }));
     svg.appendChild(txt("text", {
-      x: xOf(Math.min(b.dy * 1000, dMax)) + 5,
-      y: yOf(Math.min(b.Vy, vMax)) + 12,
+      x: xOf(Math.min(b.dy * dFac, dMax)) + 5,
+      y: yOf(Math.min(U.toDisplay("force", b.Vy), vMax)) + 12,
       fill: S.amber, "font-size": 9, "font-weight": 650,
-    }, `Vy ${fmt(b.Vy, 0)} kN`));
+    }, `Vy ${U.fmtU("force", b.Vy, 0)}`));
   }
   if (opts.marker && isFinite(opts.marker.x)) {
-    const mx = xOf(Math.min(opts.marker.x * 1000, dMax));
+    const mx = xOf(Math.min(opts.marker.x * dFac, dMax));
     svg.appendChild(el("line", {
       x1: mx, x2: mx, y1: M.t, y2: M.t + ph, stroke: "#e05d5d",
       "stroke-width": 1.6, "stroke-dasharray": "4 3",
@@ -707,7 +713,7 @@ export function pushoverChart(disp, shear, opts = {}) {
     svg.appendChild(txt("text", {
       x: Math.min(mx + 4, M.l + pw - 44), y: M.t + 12,
       fill: "#e05d5d", "font-size": 9, "font-weight": 650,
-    }, opts.marker.label || `δt ${fmt(opts.marker.x * 1000, 0)} mm`));
+    }, opts.marker.label || `δt ${U.fmtU("disp", opts.marker.x, 0)}`));
   }
 
   // yield-point markers (slope drop > 20%)
@@ -720,7 +726,7 @@ export function pushoverChart(disp, shear, opts = {}) {
       x: Math.min(xOf(dm[i]) + 7, M.l + pw - 30), y: Math.max(yOf(shear[i]) - 8, M.t + 10),
       fill: S.amber, "font-size": 9, "font-weight": 650,
       style: "font-variant-numeric:tabular-nums",
-    }, `yield · ${fmt(shear[i], 0)} kN`));
+    }, `yield · ${fmt(shear[i], U.dec("force", 0))} ${fU}`));
   }
 
   // crosshair + tooltip
@@ -743,8 +749,8 @@ export function pushoverChart(disp, shear, opts = {}) {
     cross.setAttribute("x2", xOf(dm[i]));
     cross.setAttribute("visibility", "visible");
     showTip(
-      `<b>u = ${fmt(dm[i], 1)} mm</b> · drift ${fmt(dm[i] / 1000 / Hm * 100, 3)} %<br>` +
-      `<span style="color:${S.xRaw}">●</span> base shear ${fmt(shear[i], 1)} kN`,
+      `<b>u = ${fmt(dm[i], U.dec("disp", 1))} ${dU}</b> · drift ${fmt(dm[i] / dFac / Hm * 100, 3)} %<br>` +
+      `<span style="color:${S.xRaw}">●</span> base shear ${fmt(shear[i], U.dec("force", 1))} ${fU}`,
       e.clientX, e.clientY);
   });
   hot.addEventListener("mouseleave", () => {
@@ -757,7 +763,7 @@ export function pushoverChart(disp, shear, opts = {}) {
   card.className = "chart-card";
   const title = document.createElement("div");
   title.className = "chart-title";
-  title.innerHTML = `${opts.title || "Capacity curve"} <span class="unit">base shear kN vs roof displacement mm</span>`;
+  title.innerHTML = `${opts.title || "Capacity curve"} <span class="unit">base shear ${fU} vs roof displacement ${dU}</span>`;
   card.appendChild(title);
   card.appendChild(svg);
   return card;
@@ -799,6 +805,6 @@ export function thSparkline(accel, dt, opts = {}) {
   svg.appendChild(txt("text", {
     x: M.l + pw, y: H - 3, fill: S.text, "font-size": 9, "text-anchor": "end",
     style: "font-variant-numeric:tabular-nums",
-  }, `peak ${fmt(peak, 2)} m/s²`));
+  }, `peak ${fmt(peak, 2)} ${opts.unit || "m/s²"}`));
   return svg;
 }

@@ -6,7 +6,9 @@
    / switchTab / doRun and the existing managers (Section Manager, Grid editor,
    Section Designer, gallery, import, loads editor sections, design sub-tabs). */
 
-import { icon, TOOL_ICON, MENU_ICON, EXGROUP_ICON, EXLEAF_ICON, VIEW_ICON } from "./icons.js";
+import { icon, TOOL_ICON, MENU_ICON, EXGROUP_ICON, EXLEAF_ICON, VIEW_ICON, MENUITEM_ICON } from "./icons.js";
+import U from "./units.js";                       // v1.13 — status-bar units selector
+import * as ME from "./modeledit.js";             // v1.13 — case list / DOF presets
 
 export function initEtabs(sky) {
   const S = sky.store;
@@ -133,7 +135,7 @@ export function initEtabs(sky) {
       { label: "Load Combinations…", act: "def-combos", fn: () => gotoLoads("ls-combos") },
       { label: "Functions (RS / TH)…", act: "def-functions", fn: () => gotoLoads("ls-functions") },
       { label: "Section Cuts…", act: "def-cuts", fn: () => gotoLoads("ls-cuts") },
-      { label: "Mass Source…", act: "def-mass", fn: () => gotoLoads("ls-mass") },
+      { label: "Mass Source…", act: "def-mass", fn: () => sky.openMassSource() },
       { sep: true },
       { label: "Code Tools (ASCE 7 · NBCC · EC)…", act: "def-codetools", fn: () => gotoLoads("ls-codetools") },
     ]],
@@ -176,6 +178,8 @@ export function initEtabs(sky) {
       { label: "Area Loads", act: "asn-aload", fn: () => assignHint("area loads") },
     ]],
     ["Analyze", [
+      { label: "Set Load Cases to Run…", act: "an-cases-run", fn: () => sky.openCasesToRun() },
+      { label: "Set Active Degrees of Freedom…", act: "an-dof", fn: () => sky.openActiveDof() },
       { label: "Run Analysis", act: "an-run", key: "R", fn: () => runNow() },
       { sep: true },
       { label: "Analysis Options (P-Δ · modal · damping)…", act: "an-opts", fn: () => { gotoLoads("ls-cases"); toast("Analysis options", "P-Δ, modal count and damping are set per case in the Cases editor."); } },
@@ -219,7 +223,7 @@ export function initEtabs(sky) {
       { label: "Section Optimization", act: "des-optimize", fn: () => { showDesign("steel"); requestAnimationFrame(() => { const p = $("optimizePanel"); if (p) p.scrollIntoView({ block: "start", behavior: "smooth" }); }); } },
     ]],
     ["Options", [
-      { label: "Units: kN · m · s", act: "opt-units", disabled: true },
+      { label: "Units…", act: "opt-units", hint: () => U.getUnits(), fn: () => sky.openUnitsDialog() },
       { sep: true },
       { label: "Snap to Grid", act: "opt-snap", check: () => snapOn, fn: () => toggleSnap() },
       { label: "Auto Edge Constraints", act: "opt-edge", check: () => !!(S.model && S.model.edge_constraints), fn: () => toggleEdge() },
@@ -256,6 +260,10 @@ export function initEtabs(sky) {
     dd.querySelectorAll(".etabs-menu-item").forEach(it => {
       const item = actMap[it.dataset.act];
       if (item && item.check) it.classList.toggle("checked", !!item.check());
+      if (item && typeof item.hint === "function") {
+        const h = it.querySelector(".mi-hint");
+        if (h) h.textContent = item.hint();
+      }
     });
     wrap.querySelector(".etabs-menu-btn").setAttribute("aria-expanded", "true");
     openWrap = wrap;
@@ -270,13 +278,16 @@ export function initEtabs(sky) {
     items.forEach(item => {
       if (item.sep) { dd.appendChild(el("div", { class: "etabs-menu-sep" })); return; }
       actMap[item.act] = item;
+      const lbl = el("span", { class: "mi-label", text: item.label });
+      if (MENUITEM_ICON[item.act]) lbl.insertAdjacentHTML("afterbegin", icon(MENUITEM_ICON[item.act], "mi-ico"));
+      const hint = typeof item.hint === "function" ? item.hint() : item.hint;
       const row = el("button", {
         class: "etabs-menu-item" + (item.disabled ? " is-disabled" : ""),
         role: "menuitem", "data-act": item.act,
       }, [
         el("span", { class: "mi-check", text: "✓" }),
-        el("span", { class: "mi-label", text: item.label }),
-        item.key ? el("kbd", { text: item.key }) : (item.hint ? el("span", { class: "mi-hint", text: item.hint }) : null),
+        lbl,
+        item.key ? el("kbd", { text: item.key }) : (hint ? el("span", { class: "mi-hint", text: hint }) : null),
       ]);
       if (!item.disabled) row.addEventListener("click", () => { closeMenus(); item.fn && item.fn(); });
       dd.appendChild(row);
@@ -333,7 +344,10 @@ export function initEtabs(sky) {
       ["Load Cases", () => gotoLoads("ls-cases")],
       ["Combinations", () => gotoLoads("ls-combos")],
       ["Functions", () => gotoLoads("ls-functions")],
-      ["Mass Source", () => gotoLoads("ls-mass")],
+      ["Mass Source", () => sky.openMassSource()],
+      ["Set Load Cases to Run", () => sky.openCasesToRun()],
+      ["Active Degrees of Freedom", () => sky.openActiveDof()],
+      ["Units", () => sky.openUnitsDialog()],
     ]],
     ["Assignments", [
       ["Frame Assignments", () => assignHint("frame properties")],
@@ -358,6 +372,53 @@ export function initEtabs(sky) {
       ["Design", () => showResult("design")],
     ]],
   ];
+  /* v1.13 — "Load Cases" group: every analysis case (static, modal, RS, TH,
+     pushover, buckling, staged); cases set to Do not Run are greyed with a
+     badge, and the last-run status shows on hover. Rebuilt on model/results
+     changes. Click → the case's editor section; double-click → Set Load
+     Cases to Run. */
+  const casesGroup = el("div", { class: "ex-group ex-cases open" });
+  const casesHead = el("button", { class: "ex-group-head" }, [
+    el("span", { class: "ex-caret", html: "&#9656;" }),
+    el("span", { class: "ex-ico", html: icon("cases-run") }),
+    el("span", { text: "Load Cases" }),
+    el("span", { class: "ex-count", id: "exCasesCount" }),
+  ]);
+  casesHead.addEventListener("click", () => casesGroup.classList.toggle("open"));
+  const casesList = el("div", { class: "ex-leaves", id: "exCasesList" });
+  casesGroup.append(casesHead, casesList);
+  const KIND_ANCHOR = { static: "ls-cases", modal: null, rs: "ls-rs", th: "ls-th",
+    pushover: "ls-pushover", buckling: "ls-buckling", staged: "ls-staged" };
+  const STATUS_TXT = { finished: "finished", not_run: "not run", run_as_dependency: "run as dependency", failed: "failed" };
+  const refreshCases = () => {
+    const m = S.model;
+    casesList.textContent = "";
+    const cases = m ? ME.allAnalysisCases(m) : [];
+    const cnt = casesGroup.querySelector("#exCasesCount");
+    const off = cases.filter(c => ME.caseNotRun(m, c.name)).length;
+    cnt.textContent = cases.length ? (off ? `${cases.length - off}/${cases.length}` : String(cases.length)) : "";
+    cnt.title = off ? `${off} case(s) set to Do not Run` : "";
+    for (const c of cases) {
+      const nr = ME.caseNotRun(m, c.name);
+      const st = S.results && sky.caseRunStatus ? sky.caseRunStatus(S.results, c.name, c.kind) : null;
+      const leaf = el("button", {
+        class: "ex-leaf ex-case" + (nr ? " is-not-run" : ""), "data-case": c.name,
+        title: `${c.name} · ${c.type}` + (nr ? " · Do not Run" : " · Run") +
+          (st ? ` · last run: ${STATUS_TXT[st] || st}` : "") + "\nDouble-click: Set Load Cases to Run…",
+      }, [
+        el("span", { class: "ex-ico", html: icon(EXLEAF_ICON[c.kind === "modal" ? "Modal" : "Load Cases"] || "exleaf-cases") }),
+        el("span", { class: "ex-leaf-lbl", text: c.name }),
+        nr ? el("span", { class: "ex-notrun", text: "not run" }) : null,
+      ]);
+      leaf.addEventListener("click", () => {
+        const a = KIND_ANCHOR[c.kind];
+        if (a) gotoLoads(a); else showResult("modal");
+      });
+      leaf.addEventListener("dblclick", () => sky.openCasesToRun());
+      casesList.appendChild(leaf);
+    }
+  };
+
   const explorer = $("etabsExplorer");
   explorer.textContent = "";
   const exHead = el("div", { class: "ex-head" }, [
@@ -391,6 +452,7 @@ export function initEtabs(sky) {
     });
     grp.appendChild(list);
     exBody.appendChild(grp);
+    if (group === "Definitions") exBody.appendChild(casesGroup);   // v1.13
   });
   const canvas = $("etabsCanvas");
   const workspace = document.querySelector(".workspace");
@@ -421,10 +483,36 @@ export function initEtabs(sky) {
   const runBtn = el("button", { class: "sb-run", title: "Run analysis (R)", html: icon("status-run", "sb-ico") }, "Run");
   runBtn.addEventListener("click", () => runNow());
 
+  /* v1.13 — ETABS-style units selector (bottom-right) + active-DOF chip */
+  const unitsSel = el("select", { class: "sb-select sb-units-sel", id: "sbUnitsSelect",
+    title: "Display units — every input, table, diagram, CSV and report converts; the model stays SI",
+    "aria-label": "Display units" });
+  for (const n of U.UNIT_SET_NAMES) {
+    const o = document.createElement("option");
+    o.value = n; o.textContent = n;
+    unitsSel.appendChild(o);
+  }
+  unitsSel.value = U.getUnits();
+  unitsSel.addEventListener("change", () => sky.setDisplayUnits(unitsSel.value));
+  const unitsItem = el("span", { class: "sb-item sb-units", title: "Display units" }, [
+    el("span", { class: "sb-ico-wrap", html: icon("units", "sb-ico") }), unitsSel]);
+  const dofChip = el("button", { class: "sb-chip sb-dof", id: "sbDofChip",
+    title: "Active degrees of freedom — click to edit", html: icon("active-dof", "sb-ico") });
+  const dofTxt = el("span", { class: "sb-dof-txt", text: "3D" });
+  dofChip.appendChild(dofTxt);
+  dofChip.addEventListener("click", () => sky.openActiveDof());
+  const syncSetup = () => {
+    if (unitsSel.value !== U.getUnits()) unitsSel.value = U.getUnits();
+    const dofs = (S.model && S.model.active_dof) || ME.DOF_NAMES;
+    const key = ME.dofPresetOf(dofs);
+    dofTxt.textContent = key || "Custom";
+    dofChip.title = `Active DOF: ${ME.normalizeActiveDof(dofs).join(", ")}` +
+      (key ? ` (${ME.DOF_PRESETS[key].label})` : "") + " — click to edit";
+    dofChip.classList.toggle("is-on", key !== "3D");
+  };
+
   status.append(
     el("span", { class: "sb-item" }, [el("label", { class: "sb-lbl", text: "Story" }), storySel]),
-    el("span", { class: "sb-sepv" }),
-    el("span", { class: "sb-item sb-units", title: "Model units", text: "kN · m · s" }),
     el("span", { class: "sb-sepv" }),
     el("span", { class: "sb-item" }, [el("span", { class: "sb-lbl", text: "Cursor" }), coordEl]),
     el("span", { class: "sb-sepv" }),
@@ -432,6 +520,9 @@ export function initEtabs(sky) {
     el("span", { class: "sb-sepv" }),
     viewSeg,
     el("span", { class: "sb-spacer" }),
+    dofChip,
+    unitsItem,
+    el("span", { class: "sb-sepv" }),
     runStatus,
     runBtn,
   );
@@ -458,6 +549,7 @@ export function initEtabs(sky) {
     snapChip.classList.toggle("is-on", snapOn);
     if (storySel.value !== (S.story || "")) storySel.value = S.story || storySel.value;
     syncPalette();
+    syncSetup();                                   // v1.13
   }
 
   // Mirror the plan/elevation cursor readout into the status bar.
@@ -465,7 +557,7 @@ export function initEtabs(sky) {
   if (planReadout) {
     const mo = new MutationObserver(() => {
       const t = planReadout.textContent.trim();
-      coordEl.textContent = t || "—, — m";
+      coordEl.textContent = t || `—, — ${U.label("length")}`;
     });
     mo.observe(planReadout, { childList: true, characterData: true, subtree: true });
   }
@@ -494,6 +586,14 @@ export function initEtabs(sky) {
   rebuildStorySel();
   applySnap(true);
   syncStatus();
+  // v1.13 — case list / status chips follow model + results + unit changes
+  refreshCases();
+  document.addEventListener("sky:model-changed", () => { refreshCases(); syncSetup(); });
+  document.addEventListener("sky:results-changed", () => refreshCases());
+  document.addEventListener("sky:units-changed", () => {
+    syncSetup();
+    if (!$("planReadout") || !$("planReadout").textContent.trim()) coordEl.textContent = `—, — ${U.label("length")}`;
+  });
 
   /* ================= TEST HOOK ================= */
   sky.etabs = {
@@ -516,6 +616,8 @@ export function initEtabs(sky) {
     explorerNodes: () => Object.keys(nodeMap),
     toggleExplorer: () => exHead.querySelector(".ex-collapse").click(),
     setStory: v => { storySel.value = v; sky.setStory(v); },
-    rebuildStorySel, refresh: syncStatus,
+    rebuildStorySel, refresh: () => { syncStatus(); refreshCases(); },
+    // v1.13
+    refreshCases, unitsSelect: unitsSel, dofChip,
   };
 }
