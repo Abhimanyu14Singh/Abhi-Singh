@@ -176,6 +176,11 @@ export function initEtabs(sky) {
       { label: "Supports / Springs", act: "asn-support", fn: () => assignHint("supports & springs") },
       { label: "Frame Loads", act: "asn-fload", fn: () => assignHint("member loads") },
       { label: "Area Loads", act: "asn-aload", fn: () => assignHint("area loads") },
+      { sep: true },
+      { label: "Joint Loads · Force / Moment…", act: "asn-jforce", fn: () => sky.openJointLoads && sky.openJointLoads("force") },
+      { label: "Joint Loads · Ground Displacement…", act: "asn-jground", fn: () => sky.openJointLoads && sky.openJointLoads("ground") },
+      { label: "Frame Loads · Concentrated…", act: "asn-fconc", hint: "force / moment", fn: () => sky.openFrameConcentrated && sky.openFrameConcentrated("moment") },
+      { label: "Shell Loads · Uniform…", act: "asn-suniform", hint: "direction · joint pattern", fn: () => sky.openShellUniform && sky.openShellUniform() },
     ]],
     ["Analyze", [
       { label: "Set Load Cases to Run…", act: "an-cases-run", fn: () => sky.openCasesToRun() },
