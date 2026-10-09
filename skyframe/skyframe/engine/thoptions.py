@@ -126,6 +126,10 @@ class EnergyTracker:
         self.ele_work: Dict[int, float] = {e: 0.0 for e in self.nl}
         self.Pg = np.zeros((n, 6))
         self.prev = None
+        # multi-component / load-pattern cases: callable
+        # ext(t, tracker) -> (external load array, f_S correction)
+        # (skyframe.engine.thmulti); None = legacy single record
+        self.ext = None
 
     # ------------------------------------------------------------ helpers
     def _nodes(self, name: str) -> np.ndarray:
@@ -169,8 +173,13 @@ class EnergyTracker:
         R1 = self._nodes("nodeReaction") + self._nodes("nodeUnbalance")
         fs = R0 - self.alpha_m * self.M * v
         fd = R1 - self.M * a - fs
-        ag = self.scale * path_value(self.accel, self.dt, t)
-        P = self.Pg - self.M * self.iota * ag
+        if self.ext is None:
+            ag = self.scale * path_value(self.accel, self.dt, t)
+            P = self.Pg - self.M * self.iota * ag
+        else:
+            Pe, corr = self.ext(t, self)
+            P = self.Pg + Pe
+            fs = fs + corr      # element-load part -> external work
         return {"t": t, "u": u, "v": v, "a": a, "P": P, "fs": fs, "fd": fd,
                 "ele": self._ele_state()}
 
@@ -401,7 +410,7 @@ class DirectIntegrationRun:
             ops.algorithm("Linear")
         ops.integrator(*dio.integrator_args(self.integ))
 
-    def begin(self, dof: int, scale: float) -> None:
+    def begin(self, dof: int, scale: float, ext=None) -> None:
         if not self.want_energy:
             return
         nl: Dict[int, str] = {e: "hinge" for e in self.asm.hinge_ele.values()}
@@ -415,6 +424,7 @@ class DirectIntegrationRun:
         self.tracker = EnergyTracker(
             self.asm, dof, self.accel, self.dt, scale, self.alpha_m, modal,
             nl, method=self.integ["method"])
+        self.tracker.ext = ext
         self.tracker.begin()
 
     # ------------------------------------------------------------ stepping

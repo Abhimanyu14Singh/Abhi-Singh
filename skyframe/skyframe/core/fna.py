@@ -157,6 +157,7 @@ def fna_modal_th(omega: Sequence[float], zeta: Sequence[float],
                  B: Optional[np.ndarray] = None,
                  k_lin: Optional[Sequence[float]] = None,
                  maxit: int = 200, tol: float = 1.0e-10,
+                 p_ext: Optional[np.ndarray] = None,
                  ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Integrate the FNA modal equations (see the module docstring).
 
@@ -169,6 +170,11 @@ def fna_modal_th(omega: Sequence[float], zeta: Sequence[float],
     stiffnesses.  Returns ``(q, qd, qdd, F_dev)`` histories, each
     ``n x n_modes`` (``F_dev``: ``n x n_comp`` TOTAL device forces),
     row k = the state at t = (k+1)*dt.
+
+    ``p_ext`` (optional, ``n x n_modes``): additional modal loads, row k
+    applied at t = (k+1)*dt (multi-component ground motion and
+    load-pattern components, :mod:`skyframe.core.th_components`); it is
+    ADDED to ``-gamma * ag``.
     """
     w = np.asarray(omega, dtype=float)
     z = np.asarray(zeta, dtype=float)
@@ -199,6 +205,8 @@ def fna_modal_th(omega: Sequence[float], zeta: Sequence[float],
     for kstep in range(n):
         ag1 = ag[kstep + 1] if kstep + 1 < n else 0.0
         p = -g * ag1
+        if p_ext is not None:
+            p = p + p_ext[kstep]
         # Newmark predictor pieces (constant across the fixed point)
         v_pred = v + dt * (1.0 - gam) * a
         q_pred = q + dt * v + dt * dt * (0.5 - beta) * a

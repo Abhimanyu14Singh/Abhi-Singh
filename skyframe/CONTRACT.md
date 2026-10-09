@@ -4742,3 +4742,107 @@ the field when a value is bad:
 * `shear_deformation` must be a bool.
 
 Tests: `tests/test_modifiers_shear.py` (40 cases).
+
+## Multi-component and load-pattern time histories
+
+Pure logic: `skyframe/core/th_components.py`; OpenSees runtime:
+`skyframe/engine/thmulti.py`.  Applies to `run_time_history` (direct
+integration, linear and nonlinear, all v1.13 integration / damping /
+solver / energy options) and `run_fna` (modal superposition = linear
+modal TH when no device links).
+
+### `TimeHistoryCase.components` (optional, round-tripped)
+
+Default `None`: the key is omitted from `to_dict()` and the engine runs
+the unchanged single-record path (`direction` + `accel`/`dt` or
+`function`) — byte-identical results.  When set, `direction` is ignored
+and `accel`/`dt` (or the case `function`) serve only as the default record
+of ground components that name no function.
+`add_th_case(..., components=[...])`.
+
+```
+components: [
+  {"direction": "UX"|"UY"|"UZ",          # ground acceleration component
+   "function"?: th_functions name,      # omitted/"" -> the case record
+   "scale"?: 1.0, "angle_deg"?: 0.0, "time_shift"?: 0.0},
+  {"pattern": load-pattern name,        # load-pattern component
+   "function": th_functions name,       # time function f(t) (required)
+   "scale"?: 1.0, "time_shift"?: 0.0}
+]
+```
+
+* `angle_deg` rotates a horizontal component counter-clockwise in plan:
+  UX at theta acts along `(cos theta, sin theta)`, UY along
+  `(-sin theta, cos theta)`; UZ must have 0.  The case `scale` multiplies
+  every component (effective factor = case scale * component scale).
+* `time_shift` (s, >= 0): the component is 0 before `t = time_shift`.
+* Common grid: `dt` = smallest component record dt; each record is
+  resampled onto `t_k = k dt` with the OpenSees Path rule (linear, 0
+  outside); steps `n = max ceil((shift + (n_c - 1) dt_c)/dt) + 1`
+  (= `len(accel)` for one unshifted component); outputs at `(k+1) dt`.
+* Validation (ValueError): non-empty list of objects; ground XOR pattern
+  keys; unknown keys; direction in UX|UY|UZ; named functions/patterns must
+  exist; pattern components need `function`; finite scale/angle/shift,
+  shift >= 0; a ground component without `function` needs a case record.
+  At run time a pattern with `ground_displacements` is rejected.
+
+### Engine
+
+* Direct integration: one `UniformExcitation` per ground component and
+  nonzero global direction cosine (`Path -dt dt -values <resampled> 0.0
+  -factor scale*cos`; the trailing 0.0 keeps the last sample when the
+  accumulated domain time lands a few ulps past it); one `Plain` pattern
+  per load-pattern component with a `Path` series of its time function
+  holding the pattern loads (nodal, member, area, thermal, story forces)
+  at factor 1.  Gravity stage, hinges, devices and the DI options behave
+  as before.
+* FNA / modal: modal loads `p_i(t) = -sum_d Gamma_id ag_d(t) +
+  sum_p f_p(t) phi_i' P_p` added to the uncoupled Newmark modal equations
+  (`fna_modal_th(..., p_ext=)`).  `P_p` = consistent nodal load of the
+  pattern (nodal + element-load equivalent forces, read as
+  `-nodeReaction` with the pattern at factor 1 at u = 0).  Base series
+  `R_d = sum_i L_id (qdd_i + 2 zeta_i w_i qd_i) + M_d ag_d - iota_d' P(t)`.
+  Modal truncation applies (exact for the full massed-dof basis).
+* UZ components act on UZ mass only: `mass_options.include_vertical`
+  (tributary vertical mass) and/or explicit nodal `mz`.  A UserWarning is
+  issued when a UZ component is requested and the model has no UZ mass
+  ("no vertical (UZ) mass") or `include_vertical` is false (only explicit
+  nodal `mz` carry it).
+* Story shears (peaks): `sum_above (f_p(t) P_p - m a_total)` — the legacy
+  inertia rule extended by the applied pattern loads at nodes at/above
+  the story elevation (element-load equivalents sit at member end nodes).
+
+### Results (same `THResults` shape)
+
+```
+th_cases[case]["multi_component"] = {          # only when components set
+  "dt": s, "n_steps": n,
+  "components": [{"direction", "function", "effective_scale",
+                  "angle_deg", "time_shift", "cosines": [cx, cy, cz]}
+                 | {"pattern", "function", "effective_scale",
+                    "time_shift"}],
+  "base_FZ": [kN per step, past the gravity state] }
+```
+
+### Energy
+
+With components the tracker's external load is
+`P = P_grav - M sum_d iota_d ag_d(t) + sum_p f_p(t) P_p`, so `input`
+includes the work of the pattern loads; the element-load part
+`f_p(t) p0_p` (carried by OpenSees inside the element resisting forces)
+is moved to the external side, keeping `strain = 0.5 u'Ku` for an
+elastic structure.  Balance is round-off for Newmark average acceleration.
+
+Validation (`tests/test_th_multicomp.py`, 45 cases): 0 deg + 90 deg
+components == vector sum of the single-direction runs (DI and modal,
+~1e-15); a component at theta == cos theta X + sin theta Y (and UY at
+theta == -sin X + cos Y); time_shift == zero-padded record; UZ on an axial
+mass-spring column == numpy Newmark (1e-14, DI and FNA); harmonic pattern
+load `p0 sin(W t)` == closed-form steady state + transient (2.3e-4 of
+peak at dt = 1 ms) and == numpy Newmark (1e-12); FNA == DI with pattern
+loads on a 2-story frame (8e-14); ground + pattern == superposition;
+quasi-static story shears == applied story forces; energy input == the
+independent trapezoidal work of P (nodal and member-UDL patterns), balance
+5.5e-14 (Newmark) / 1.1e-3 (HHT alpha = -0.05) on a mixed frame case;
+single unrotated component == legacy run bit-for-bit (DI, energy,
+nonlinear); round-trip, API and validation.

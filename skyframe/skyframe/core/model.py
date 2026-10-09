@@ -1188,6 +1188,10 @@ class TimeHistoryCase:
     di_damping: Optional[dict] = None
     solver: Optional[dict] = None
     energy: bool = False
+    # multi-component ground motion / load-pattern time histories
+    # (skyframe.core.th_components; None = legacy single record, key
+    # omitted from to_dict)
+    components: Optional[List[dict]] = None
 
     def to_dict(self) -> dict:
         d = {"name": self.name, "direction": self.direction,
@@ -1205,6 +1209,8 @@ class TimeHistoryCase:
                 d[key] = dict(getattr(self, key))
         if self.energy:
             d["energy"] = True
+        if self.components is not None:
+            d["components"] = [dict(c) for c in self.components]
         return d
 
 
@@ -2155,7 +2161,8 @@ class BuildingModel:
                     integration: Optional[dict] = None,
                     di_damping: Optional[dict] = None,
                     solver: Optional[dict] = None,
-                    energy: bool = False
+                    energy: bool = False,
+                    components: Optional[List[dict]] = None
                     ) -> TimeHistoryCase:
         th = TimeHistoryCase(
             name, direction, [float(a) for a in (accel or [])], float(dt),
@@ -2172,6 +2179,9 @@ class BuildingModel:
             di_damping=(None if di_damping is None else dict(di_damping)),
             solver=(None if solver is None else dict(solver)),
             energy=energy)
+        if components is not None:
+            from skyframe.core import th_components as _thc
+            th.components = _thc.normalize(components)
         self._validate_th_case(th)
         self.th_cases[name] = th
         return th
@@ -2186,14 +2196,15 @@ class BuildingModel:
                 raise ValueError(f"TH case {th.name}: function "
                                  f"{th.function!r} is not a defined "
                                  "th_function")
-        elif not th.accel:
+        elif not th.accel and th.components is None:
             raise ValueError(f"TH case {th.name}: accel record is empty "
                              "(or name a function)")
         for a in th.accel:
             if not math.isfinite(float(a)):
                 raise ValueError(f"TH case {th.name}: accel values must be "
                                  "finite")
-        if not th.function and not (math.isfinite(th.dt) and th.dt > 0.0):
+        if not th.function and th.components is None and not (
+                math.isfinite(th.dt) and th.dt > 0.0):
             raise ValueError(f"TH case {th.name}: dt must be > 0")
         if not 0.0 < th.damping < 1.0:
             raise ValueError(f"TH case {th.name}: damping must be in (0, 1)")
@@ -2209,6 +2220,9 @@ class BuildingModel:
                                      "entries must be in (0, 1)")
         from skyframe.core import di_options as _dio   # DI options
         _dio.validate_case(th)
+        if th.components is not None:
+            from skyframe.core import th_components as _thc
+            _thc.validate_case(self, th)
         if not math.isfinite(th.scale):
             raise ValueError(f"TH case {th.name}: scale must be finite")
         # v0.6 nonlinear fields (mirror the pushover-case rules)
@@ -3758,7 +3772,10 @@ class BuildingModel:
                             else dict(td["di_damping"])),
                 solver=(None if td.get("solver") is None
                         else dict(td["solver"])),
-                energy=bool(td.get("energy", False)))
+                energy=bool(td.get("energy", False)),
+                components=(None if td.get("components") is None
+                            else [dict(c) if isinstance(c, dict) else c
+                                  for c in td["components"]]))
         for name, pd in (d.get("pushover_cases") or {}).items():
             dmy = pd.get("default_My")
             mdl.pushover_cases[name] = PushoverCase(
