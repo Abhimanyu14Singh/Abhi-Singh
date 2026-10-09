@@ -173,6 +173,7 @@ from skyframe.engine import diaphragms as _dgm     # named diaphragms/add. mass
 
 from skyframe.core import springprops as _sprp     # B9/B11 named springs
 from skyframe.engine import hysteresis as _hyst    # B9/B11 builders
+from skyframe.engine import hinge_ties as _hinge_ties  # sprung hinge bases
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
                                  FP_DEFAULT_KINIT, G_ACCEL,
                                  ISOLATOR_DEFAULT_KV, TFP_DEFAULT_MINFV,
@@ -3540,8 +3541,19 @@ class OpenSeesEngine:
         # softening ~1e-8, far below every validation tolerance), which
         # involves no constraint at all; everything else keeps the exact
         # v0.5 equalDOF (bit-identical legacy behavior).
+        # Spring-support fix: an equalDOF whose RETAINED node carries a
+        # PARTIAL single-point restraint on the tied dofs (a column base on
+        # a grounded spring: ux sprung/free, uy/uz fixed; or a dof dropped
+        # by Set Active DOFs) is mis-condensed by the Transformation handler
+        # (openseespy 3.7.1): the duplicate's free translation reads zero,
+        # so the hinge bypassed the support spring (pushover / nonlinear
+        # static / nonlinear TH on a sprung base gave the FIXED-base
+        # stiffness).  Such ties take the same stiff-element path.
+        _tie_partial = _hinge_ties.partial_sp_checker(
+            asm, model.active_dof_mask())
         for orig_t, dup_t, dofs, k_tie in pending_ties:
-            if k_tie is not None and orig_t in dia_slave_master:
+            if k_tie is not None and (orig_t in dia_slave_master
+                                      or _tie_partial(orig_t, dofs)):
                 mtag += 1
                 ops.uniaxialMaterial("Elastic", mtag, k_tie)
                 etag += 1

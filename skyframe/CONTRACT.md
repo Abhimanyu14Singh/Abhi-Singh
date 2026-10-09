@@ -6194,3 +6194,41 @@ device (TH Newton) links.  FNA rejects them, so use direct integration.
   * the bearing types run under gravity plus lateral load;
   * a TH with a nonlinear named spring runs;
   * round trips match, and validation rejects bad inputs.
+
+## Pushover / nonlinear static with spring supports
+
+A plastic hinge at a column base (`column_base` / `all_ends` with `My` /
+`default_My`, or `asce41` `auto_m3`) connects the member end to a
+DUPLICATE node.  The support's grounded spring (inline `SpringSupport`
+stiffness or a named `spring_properties` entry) stays between the ground
+node and the ORIGINAL support node.  So the spring, the base hinge and the
+column act in SERIES.  This holds in pushover, nonlinear static and
+nonlinear time history (all use `_build(hinge_case=...)`).
+
+* Bug fixed: the duplicate's translations were tied to the original with
+  `equalDOF`.  When the original carried a PARTIAL restraint on the tied
+  dofs (ux sprung and so free, uy/uz fixed), openseespy 3.7.1's
+  Transformation handler held the duplicate's free translation at zero.
+  The spring was bypassed and the fixed-base stiffness was reported.  A
+  dof dropped by Set Active DOFs is the same partial restraint, which is
+  why a planar (UX, UZ, RY) `all_ends` portal read about 0 base shear.
+* Rule (`skyframe.engine.hinge_ties.partial_sp_checker`): a hinge tie
+  whose original is restrained on SOME but not ALL of ux/uy/uz (support
+  restraints after sprung dofs are cleared, plus inactive dofs) uses the
+  v0.19 stiff zeroLength tie element.  That element is k_tie = 1e8 x the
+  member end stiffness, and its relative softening is about 1e-8.  Fully
+  restrained and fully free originals keep the exact equalDOF.  Models
+  without such a node are byte-identical.
+* Not affected: fiber PMM hinges (no duplicate node), staged construction
+  (no hinges), panel-zone ties (restrained joints are skipped), and spring
+  models without hinges.
+* Hand checks (`tests/test_pushover_springs.py`, with k_th = 10 x 6EI/L):
+  * translational spring: `1/K = 1/k_s + L^3/3EI + L^2/k_th` (1e-6);
+  * rotational spring: `1/K = L^2/k_r + L^3/3EI + L^2/k_th` (1e-6);
+  * with hardening 0, `V_max = My/L` exactly;
+  * a multilinear spring follows `u = curve^-1(V) + V (L^3/3EI + L^2/k_th)`;
+  * a compression-only spring settles by `W/kz` under gravity;
+  * in nonlinear static displacement control the base FX equals
+    -lambda (the spring reaction is included);
+  * the nonlinear TH period is `2 pi sqrt(m/K)` (2e-3);
+  * auto_m3 and fiber W18x50 on a spring are in series (1e-6).
