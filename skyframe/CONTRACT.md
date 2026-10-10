@@ -8026,3 +8026,154 @@ shells[i]: {..., "distribution": "one_way", "one_way_dir": 2}   # omitted if def
 
 Results JSON is unchanged in shape. `cases[c].shell_forces` now also has
 entries for ASDShellT3 triangles.
+
+## Open structure wind, model info, run log and report data
+
+### Open structure wind (`skyframe/core/openwind.py`)
+
+ETABS Assign > Frame Loads > Open Structure Wind Parameters plus the
+"Open Structure" wind pattern (ASCE 7 Ch. 29, other structures).
+
+**Per-member parameters.** `FrameMember.open_wind` is `null` by default
+(not assigned). `to_dict` emits it only when it is set. The stored
+(canonical) form is:
+
+```json
+"open_wind": {"include": true, "cf": null, "width": "auto", "shielding": 1.0}
+```
+
+* `include` (bool): `false` keeps the assignment but leaves the member
+  unloaded.
+* `cf` (> 0 or null): the drag / force coefficient. `null` means use the
+  generator's `cf`.
+* `width` (`"auto"` or > 0, in m): the exposed width. `"auto"` means the
+  section depth `h`, or `b` when `h` is 0. If neither is set, the
+  generator raises an error.
+* `shielding` (0 < s <= 1): a shielding / solidity reduction factor.
+
+Unknown keys or bad values are rejected (400 / `ValueError`).
+
+**Generator.** `compute(model, V, code="asce7_22", exposure="C",
+direction="X", angle=None, Kzt=1, Kd=0.85, ze=0, Ke=None, G=0.85, cf=2.0,
+members="assigned", segments=4, z_ground=0, tower=None)`.
+
+* `code`: `asce7_16` or `asce7_22`.
+* `direction`: `X`, `Y`, `-X` or `-Y`. Alternatively give `angle` in
+  degrees from +X in plan.
+* `members`: `"assigned"` (only members whose `open_wind.include` is
+  true), `"all"` (unassigned members use the defaults), or a list of
+  uids.
+* `tower`: `{shape: "square"|"triangle", solidity: e}`. This replaces the
+  default `cf` with the ASCE Table 29.4-2 trussed-tower value:
+  `4.0e^2 - 5.9e + 4.0` (square) or `3.4e^2 - 4.7e + 3.4` (triangle).
+
+The load per unit member length, acting along the horizontal wind unit
+vector d, is:
+
+```
+w(z)  = p(z) * width * shielding * proj,   proj = sqrt(1 - (t . d)^2)
+7-16: qz = 0.613 Kz Kzt Kd Ke V^2 / 1000 [kPa]  (builder.wind_kz, 2.01..., 4.6 m floor)
+      p  = qz G Cf
+7-22: qz = 0.613 Kz Kzt Ke V^2 / 1000           (autolateral.asce22_kz, 2.41..., 15 ft floor)
+      p  = qz Kd G Cf
+z = point elevation - z_ground;  Ke = autolateral.asce22_ke(ze) unless given
+```
+
+* Horizontal members get one `udl` load.
+* Other members get `segments` equal `trapezoid` loads. Their end
+  ordinates are the exact w(z) at each segment end.
+* Each load is written as `global_x` / `global_y` components of d (a zero
+  component is skipped).
+* A member parallel to the wind (proj below 1e-9) is skipped.
+
+`generate(model, name="OWIND", add_case=True, **params)` replaces the
+pattern `name` (kind `"wind"`). If no case of that name exists, it also
+adds the linear static case `{name: 1.0}`.
+
+The summary shape:
+
+```json
+{"code","V","exposure","angle","d":[dx,dy],"G","Kd","Kzt","Ke","cf_default","segments",
+ "members":[{"uid","cf","width","shielding","proj","z_i","z_j","qz_i","qz_j",
+             "p_i","p_j","w_i","w_j","F","segments":[[a,b,w_a,w_b],...]}],
+ "FX","FY","F"}
+```
+
+**Endpoints**
+
+| Endpoint | Body | Returns |
+|---|---|---|
+| `POST /api/member/open-wind` | `{uids:[...], params:{...}\|null}` (null clears; all-or-nothing) | model |
+| `POST /api/pattern/open-wind/preview` | `{V, ...generator params}` | summary (model unchanged) |
+| `POST /api/pattern/open-wind` | `{name?, add_case?, V, ...}` | model |
+
+Errors return 400: a missing `V`, an unknown key, a bad value, or no
+loaded member.
+
+### Run log, model info, report data (`skyframe/core/runlog.py`)
+
+* `POST /api/analyze` now times each case and captures Python warnings.
+  **Its response is unchanged (byte-identical).**
+  `OpenSeesEngine.case_times` (`{case: seconds}`) is set by `run()` for
+  every case that goes through its per-case runner: static, modal, RS,
+  TH, nonlinear static, pushover, staged, hyperstatic and buckling.
+* `GET /api/analyze/log` returns `{"available": false}` before any run.
+  After a run it returns:
+
+```json
+{"available": true, "current": <model unchanged since the run>,
+ "version": 1, "started": "ISO-8601 UTC", "total_s", "model_name",
+ "counts": {"cases","combos","rs_cases","th_cases","modes"},
+ "cases": [{"name","kind","status","time_s"|null}],
+ "combos": [{"name","status"}],
+ "warnings": [{"source": "run"|<case>|"engine", "message"}]}
+```
+
+  `warnings` gathers, de-duplicated and in this order:
+  1. the results `warning` string, split into its items;
+  2. each case's `warning` / `warnings`;
+  3. Python warnings raised during the run (`"Category: message"`).
+
+* `GET /api/model/info` returns:
+  * `name`, `units`, `display_units`, `members_by_kind`, `shells_by_kind`,
+    `height`, `plan`, `diaphragm`, `base_fixity`, `cases_not_run`;
+  * `counts`: stories, joints, frames, shells, links, materials,
+    frame_sections, shell_sections, load_patterns, load_cases,
+    load_combos, rs_cases, th_cases, pushover_cases, staged_cases,
+    buckling_cases, nonlinear_static_cases, supports, spring_supports,
+    groups, section_cuts, assigned_loads, open_wind_members;
+  * `last_analysis`: null, or `{started, total_s, n_warnings, current}`.
+* `POST /api/report/data` takes `{tables?: [keys], cases?: [names]}` and
+  returns `{model_info, run_log, results_available, tables: {key: <table
+  as /api/tables/<key>> | {"error"}}}`.
+  * It uses stored results only and **never solves**. With no stored
+    results for the current model, `tables` is `{}`.
+  * The default tables are: load_pattern_summary, load_case_equilibrium,
+    modal_periods, modal_mass_ratios, base_reactions, story_drifts,
+    story_forces.
+  * The frontend report does not depend on this endpoint.
+
+### Validation
+
+* `tests/test_openwind.py` (19 tests) uses hand line loads on a 3-panel,
+  4 m square lattice tower (V = 40 m/s, exposure C, G = Kd = 0.85,
+  Cf = 2).
+  * Struts normal to the wind at 10 / 20 / 30 m: w = qz Kd G Cf b. At
+    10 m this is 0.212282 kN/m; at 30 m it is 0.265635 kN/m.
+  * Struts parallel to the wind are not loaded.
+  * Leg trapezoids carry the exact qz at the segment ends and are within
+    0.5 % of the integrated power law.
+  * Face-diagonal projection is 10/sqrt(116).
+  * The 7-16 form is checked (qz(20 m) = 0.965560 kPa).
+  * Per-member cf / width / shielding / include, the tower Cf, 45 degree
+    components and -Y are checked.
+  * Pattern totals equal the summary, and engine base FX = -sum F
+    (1e-9).
+  * Round-trip and validation are checked, plus the endpoints.
+* `tests/test_runlog.py` (5 tests) covers counts, warning splitting and
+  de-duplication, case times, the stale flag, and report tables
+  (equilibrium error < 1e-3 %). It also checks that the analyze payload
+  keys are unchanged.
+* Defaults: `open_wind` is absent and `run()` results are unchanged. The
+  quick_building + RS model and results hashes are identical before and
+  after.

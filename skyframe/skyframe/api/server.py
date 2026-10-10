@@ -314,6 +314,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
+import warnings
 from typing import Any, Dict
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -330,6 +332,7 @@ from skyframe.core.stress_strain import curve_payload
 from skyframe.core.units import units_table
 from skyframe.core.sections_library import library_to_dict
 from skyframe.core import tables as _tables
+from skyframe.core import runlog as _rl      # model info / run log / report
 
 try:
     from skyframe.engine.opensees_engine import OpenSeesEngine
@@ -361,6 +364,20 @@ def _tables_remember(results: Dict[str, Any], engine) -> Dict[str, Any]:
     _tables_store.update(sig=_model_sig(_state["model"]), results=results,
                          context=ctx)
     return ctx
+
+
+def _rl_remember(model, d, engine, t0, started, caught) -> None:
+    """Store the audit record of the last /api/analyze run."""
+    try:
+        log = _rl.build_run_log(
+            model, d, getattr(engine, "case_times", {}) or {},
+            time.perf_counter() - t0,
+            [f"{w.category.__name__}: {w.message}" for w in caught],
+            started)
+        log["sig"] = _model_sig(model)
+        _state["run_log"] = log
+    except Exception:                                  # pragma: no cover
+        _state.pop("run_log", None)
 
 
 def _tables_lookup(model: BuildingModel):
@@ -1053,13 +1070,18 @@ def create_app() -> Flask:
     def analyze():
         if not _OPENSEES_OK:
             return jsonify({"error": "OpenSeesPy is not available"}), 400
+        _rl_t0 = time.perf_counter()                # run log (audit trail)
+        _rl_started = _rl.utc_now()
         try:
-            engine = OpenSeesEngine(_state["model"])
-            results = engine.run()
+            with warnings.catch_warnings(record=True) as _rl_w:
+                warnings.simplefilter("always")
+                engine = OpenSeesEngine(_state["model"])
+                results = engine.run()
         except Exception as exc:
             return jsonify({"error": str(exc)}), 400
         d = results.to_dict()
         _tables_remember(d, engine)
+        _rl_remember(_state["model"], d, engine, _rl_t0, _rl_started, _rl_w)
         return jsonify(d)
 
     # ------------------------- analysis-results tables (ETABS Show Tables)
@@ -2150,6 +2172,86 @@ def create_app() -> Flask:
             setattr(pat, attr, before)
             return jsonify({"error": str(exc)}), 400
         return jsonify(model.to_dict())
+
+    # ---------- open-structure wind + model info / run log / report data
+    @app.post("/api/pattern/open-wind")
+    def pattern_open_wind():
+        """Open-structure wind pattern (CONTRACT "Open structure wind")."""
+        from skyframe.core import openwind as _ow
+        try:
+            name, add_case, params = _ow.params_from_body(
+                request.get_json(silent=True))
+            model = BuildingModel.from_dict(_state["model"].to_dict())
+            _ow.generate(model, name, add_case, **params)
+            model.validate()
+        except (ValueError, TypeError, KeyError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        _state["model"] = model
+        return jsonify(model.to_dict())
+
+    @app.post("/api/pattern/open-wind/preview")
+    def pattern_open_wind_preview():
+        from skyframe.core import openwind as _ow
+        try:
+            _n, _a, params = _ow.params_from_body(
+                request.get_json(silent=True))
+            return jsonify(_ow.compute(_state["model"], **params))
+        except (ValueError, TypeError, KeyError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.post("/api/member/open-wind")
+    def member_open_wind():
+        """Body ``{uids: [...], params: {...} | null}`` (null clears)."""
+        from skyframe.core import openwind as _ow
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        try:
+            model = BuildingModel.from_dict(_state["model"].to_dict())
+            _ow.assign(model, body.get("uids"), body.get("params"))
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        _state["model"] = model
+        return jsonify(model.to_dict())
+
+    @app.get("/api/model/info")
+    def model_info_get():
+        info = _rl.model_info(_state["model"])
+        log = _state.get("run_log")
+        info["last_analysis"] = None if not log else {
+            "started": log["started"], "total_s": log["total_s"],
+            "n_warnings": len(log["warnings"]),
+            "current": log.get("sig") == _model_sig(_state["model"])}
+        return jsonify(info)
+
+    @app.get("/api/analyze/log")
+    def analyze_log():
+        log = _state.get("run_log")
+        if not log:
+            return jsonify({"available": False})
+        out = {k: v for k, v in log.items() if k != "sig"}
+        out["available"] = True
+        out["current"] = log.get("sig") == _model_sig(_state["model"])
+        return jsonify(out)
+
+    @app.post("/api/report/data")
+    def report_data():
+        """Body ``{tables?: [keys], cases?: [names]}``; stored results only
+        (never solves)."""
+        body = request.get_json(silent=True) or {}
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        tabs, cases = body.get("tables"), body.get("cases")
+        for lab, v in (("tables", tabs), ("cases", cases)):
+            if v is not None and (not isinstance(v, list) or not all(
+                    isinstance(x, str) for x in v)):
+                return jsonify({"error": f"{lab} must be a list of names"}), 400
+        model = _state["model"]
+        res, ctx = _tables_lookup(model)
+        log = _state.get("run_log")
+        log = None if not log else {k: v for k, v in log.items()
+                                    if k != "sig"}
+        return jsonify(_rl.report_data(model, res, ctx, log, tabs, cases))
 
     @app.post("/api/plotfn/spectrum")      # plot functions: floor spectra
     def plotfn_spectrum():

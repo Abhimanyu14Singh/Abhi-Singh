@@ -593,6 +593,11 @@ def _framemesh_model_to_dict(model) -> dict:
     return model_to_dict(model)
 
 
+def _ow_member_to_dict(m) -> dict:
+    from skyframe.core.openwind import member_to_dict
+    return member_to_dict(m)
+
+
 def _framemesh_member_to_dict(m) -> dict:
     from skyframe.core.framemesh import member_to_dict
     return member_to_dict(m)
@@ -708,6 +713,10 @@ class FrameMember:
     # + "plane_normal", "segments"?, "local2"?}; None = straight member.
     curve: Optional[dict] = None
 
+    # Open-structure wind parameters (skyframe.core.openwind; None = not
+    # assigned; emitted by to_dict only when set)
+    open_wind: Optional[dict] = None
+
     @property
     def length(self) -> float:
         return math.dist(self.pi, self.pj)
@@ -750,6 +759,8 @@ class FrameMember:
                 **_framemesh_member_to_dict(self),
                 **_uh.member_to_dict(self),        # B10 (only when set)
                 **_curved_member_to_dict(self),    # curved (only when set)
+
+                **_ow_member_to_dict(self),        # open-structure wind
                 "length": self.length}
 
 
@@ -3802,6 +3813,11 @@ class BuildingModel:
         from skyframe.core.framemesh import validate_model as _fm_validate
         _fm_validate(self)                  # frame auto mesh / stations
         _uh.validate_model(self)            # B10 user hinges
+        self._validate_open_wind()          # open-structure wind params
+
+    def _validate_open_wind(self) -> None:
+        from skyframe.core.openwind import validate_model as _ow_validate
+        _ow_validate(self)
 
     def _validate_nonlinear_static(self) -> None:
         """Nonlinear static cases / chains (see core.nonlinear_static)."""
@@ -4363,6 +4379,9 @@ class BuildingModel:
         _uh.model_from_dict(mdl, d)         # B10 hinge props / overwrites
         from skyframe.core.shellopts import model_from_dict as _so_from
         _so_from(mdl, d)                    # curves / mesh opts / load sets
+
+        from skyframe.core.openwind import model_from_dict as _ow_from
+        _ow_from(mdl, d)                    # open-structure wind params
         mdl.validate()
         return mdl
 

@@ -152,6 +152,7 @@ import logging
 import math
 import os
 import sys
+import time
 import warnings
 import weakref
 from dataclasses import dataclass, field
@@ -1728,7 +1729,10 @@ class OpenSeesEngine:
         def runs(name: str) -> bool:
             return status.get(name) in ("finished", "run_as_dependency")
 
+        self.case_times: Dict[str, float] = {}     # wall time per case (s)
+
         def attempt(name: str, fn):
+            t0 = time.perf_counter()
             try:
                 return fn()
             except (RuntimeError, ValueError, ArithmeticError) as exc:
@@ -1737,6 +1741,8 @@ class OpenSeesEngine:
                 _REUSE["owner"] = None
                 _REUSE["loaded"] = False
                 return None
+            finally:
+                self.case_times[name] = time.perf_counter() - t0
 
         cases: Dict[str, CaseResults] = {}
         for name in model.cases:

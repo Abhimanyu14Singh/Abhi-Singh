@@ -74,7 +74,11 @@ import { initPlotFn as pfInitPlotFn } from "./plotfn.js";
 import { pfMockValidate as pfMockValidateModel } from "./mock_plotfn.js";
 // ETABS Edit / Select menus + Undo/Redo history (aliased import; js/editmenu.js)
 import { initEditMenu as edInitEditMenu } from "./editmenu.js";
-import { initUx as uxInitUx } from "./ux.js";   // UX pass: palette · toolbar · shortcuts · dialog chrome · start screen
+import { initUx as uxInitUx } from "./ux.js";
+// Open-structure wind + Create Report / Model Info / analysis run log (aliased imports)
+import { initOpenWind as owInitOpenWind } from "./openwind.js";
+import { initReportX as rxInitReportX } from "./reportx.js";
+import { owMockValidate as owMockValidateModel } from "./mock_openwind.js";   // UX pass: palette · toolbar · shortcuts · dialog chrome · start screen
 
 /* ------------------------------------------------ state */
 const store = {
@@ -263,7 +267,8 @@ async function postModel(payload) {
       || npMockValidateNp(payload)   // nonprismatic sections + joint panel zones
       || uhMockValidate(payload)   // B10 user-defined hinges
       || ptMockValidate(payload)   // PT tendons / hyperstatic cases
-      || pfMockValidateModel(payload);   // plot functions: TH output_requests
+      || pfMockValidateModel(payload)   // plot functions: TH output_requests
+      || owMockValidateModel(payload);   // open-structure wind member params
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -8518,6 +8523,7 @@ async function boot() {
   try { ptInitTendons(window.__sky); } catch (err) { console.error("PT tendons init failed", err); }   // PT tendons + hyperstatic case
   try { pfInitPlotFn(window.__sky); } catch (err) { console.error("plot functions init failed", err); }   // Display > Plot Functions / Story Response / 3D force diagrams
   try { edInitEditMenu(window.__sky); } catch (err) { console.error("edit menu init failed", err); }   // Edit / Select menus + Undo/Redo
+  try { owInitOpenWind(window.__sky); rxInitReportX(window.__sky); } catch (err) { console.error("open wind / report init failed", err); }   // open-structure wind · Create Report · Model Info · run log
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
 }
 
