@@ -590,6 +590,21 @@ def _framemesh_member_to_dict(m) -> dict:
     return member_to_dict(m)
 
 
+def _curved_member_to_dict(m) -> dict:
+    from skyframe.core.curved import member_to_dict
+    return member_to_dict(m)
+
+
+def _shellopts_shell_to_dict(r) -> dict:
+    from skyframe.core.shellopts import shell_to_dict
+    return shell_to_dict(r)
+
+
+def _shellopts_model_to_dict(model) -> dict:
+    from skyframe.core.shellopts import model_to_dict
+    return model_to_dict(model)
+
+
 def _insertion_fields_from_dict(md: dict) -> dict:
     from skyframe.core.insertion import member_fields_from_dict
     return member_fields_from_dict(md)
@@ -681,6 +696,9 @@ class FrameMember:
     # {"property", "relative_distance"} (skyframe.core.user_hinges);
     # hinge_overwrites {"auto_subdivide", "relative_length"} (None = off).
     hinge_overwrites: Optional[dict] = None
+    # Curved frame (skyframe.core.curved): {"type": "arc", "via" | "center"
+    # + "plane_normal", "segments"?, "local2"?}; None = straight member.
+    curve: Optional[dict] = None
 
     @property
     def length(self) -> float:
@@ -723,6 +741,7 @@ class FrameMember:
 
                 **_framemesh_member_to_dict(self),
                 **_uh.member_to_dict(self),        # B10 (only when set)
+                **_curved_member_to_dict(self),    # curved (only when set)
                 "length": self.length}
 
 
@@ -797,6 +816,11 @@ class ShellRegion:
     #   along the region's corner-ordering normal.  None = not wind-loaded.
     diaphragm: str = ""                    # named diaphragm ("" = none)
     additional_mass: float = 0.0           # t/m^2 (ETABS shell add. mass)
+    # Wall / floor auto-mesh options + shell uniform load set
+    # (skyframe.core.shellopts; None / "" = the pre-existing behaviour)
+    mesh_divisions: Optional[dict] = None  # {"n1","n2"} | {"max_size"}
+    floor_mesh: Optional[dict] = None      # {"mode","max_size","at_*"}
+    load_set: str = ""                     # BuildingModel.shell_load_sets
 
     @property
     def area(self) -> float:
@@ -850,7 +874,8 @@ class ShellRegion:
                 "area_spring": (dict(self.area_spring)
                                 if self.area_spring else None),
                 "wind_cp": self.wind_cp,
-                **_dia.shell_extra_to_dict(self)}
+                **_dia.shell_extra_to_dict(self),
+                **_shellopts_shell_to_dict(self)}  # mesh opts / load set
 
 
 # --------------------------------------------------------------------------- #
@@ -921,7 +946,8 @@ class AreaLoad:
     q: float
     direction: str = "gravity"
     projected: bool = False
-    joint_pattern: Optional[dict] = None
+    # inline dict, or a NAME from BuildingModel.joint_patterns (shellopts)
+    joint_pattern: Optional[Union[dict, str]] = None
 
 
 @dataclass
@@ -1970,6 +1996,12 @@ class BuildingModel:
     # B10 user-defined hinge properties {name: property dict}
     # (skyframe.core.user_hinges; emitted by to_dict only when non-empty)
     hinge_properties: Dict[str, dict] = field(default_factory=dict)
+
+    # Joint-pattern library {name: {"type": "linear", a, b, c, d, ...}} and
+    # shell uniform load sets {name: {pattern: q}} (skyframe.core.shellopts;
+    # emitted by to_dict only when non-empty)
+    joint_patterns: Dict[str, dict] = field(default_factory=dict)
+    shell_load_sets: Dict[str, dict] = field(default_factory=dict)
 
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
@@ -3681,6 +3713,15 @@ class BuildingModel:
             self._validate_grid(g)
         self._validate_v113()
         self._validate_tendons()
+        self._validate_curved_mesh_sets()
+
+    def _validate_curved_mesh_sets(self) -> None:
+        """Curved frames + wall/floor mesh options + joint patterns /
+        shell load sets (core.curved, core.shellopts)."""
+        from skyframe.core.curved import validate_model as _cv_val
+        from skyframe.core.shellopts import validate_model as _so_val
+        _cv_val(self)
+        _so_val(self)
 
     def _validate_tendons(self) -> None:
         """PT tendons / hyperstatic cases (see core.tendons)."""
@@ -3884,6 +3925,7 @@ class BuildingModel:
                if self.hyperstatic_cases else {}),
 
             **_uh.model_to_dict(self),      # B10 hinge properties (if any)
+            **_shellopts_model_to_dict(self),   # joint patterns / load sets
         }
 
     @classmethod
@@ -4108,7 +4150,8 @@ class BuildingModel:
                     a["region_uid"], float(a["q"]),
                     direction=a.get("direction", "gravity"),
                     projected=bool(a.get("projected", False)),
-                    joint_pattern=dict(jp) if jp is not None else None))
+                    joint_pattern=(None if jp is None else jp
+                                   if isinstance(jp, str) else dict(jp))))
             for g in pd.get("ground_displacements") or []:
                 pat.ground_displacements.append(
                     GroundDisplacement.from_dict(g))
@@ -4302,6 +4345,8 @@ class BuildingModel:
                                      for e in jpz]
 
         _uh.model_from_dict(mdl, d)         # B10 hinge props / overwrites
+        from skyframe.core.shellopts import model_from_dict as _so_from
+        _so_from(mdl, d)                    # curves / mesh opts / load sets
         mdl.validate()
         return mdl
 

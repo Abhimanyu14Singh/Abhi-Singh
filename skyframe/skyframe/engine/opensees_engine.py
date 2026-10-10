@@ -1532,6 +1532,9 @@ class AnalysisResults:
     hyperstatic: Dict[str, dict] = field(default_factory=dict)
     #   PT tendons report / hyperstatic cases (engine/tendons.py; emitted
     #   only when non-empty)
+    curved_frames: Dict[str, dict] = field(default_factory=dict)
+    #   curved frames stitched per drawn member (engine/curved.py; emitted
+    #   only when the model has curved members)
 
     def to_dict(self) -> dict:
         d = {
@@ -1593,6 +1596,8 @@ class AnalysisResults:
             d["tendons"] = self.tendons
         if self.hyperstatic:             # hyperstatic cases (only when run)
             d["hyperstatic"] = self.hyperstatic
+        if self.curved_frames:           # curved frames (only when used)
+            d["curved_frames"] = self.curved_frames
         return d
 
 
@@ -1665,6 +1670,11 @@ class OpenSeesEngine:
     """
 
     def __init__(self, model: BuildingModel):
+        # curved frames / shell load sets / named joint patterns: analyse
+        # an expanded copy (the SAME object when none is used)
+        from skyframe.core.shellopts import expand_for_analysis
+        self.source_model = model
+        model = expand_for_analysis(model)
         self.model = model
         self._case_cache: Dict[str, CaseResults] = {}
         self._rs_cache: Dict[str, CaseResults] = {}
@@ -1957,7 +1967,7 @@ class OpenSeesEngine:
                 res = attempt(name, lambda n=name: self.run_psd(n))
                 if res is not None:
                     psd[name] = res
-        return AnalysisResults(
+        res = AnalysisResults(
             model_name=model.name,
             nodes=dict(asm.node_coords),
             members=members,
@@ -1994,6 +2004,9 @@ class OpenSeesEngine:
             tendons=(_tdn.report(self) if _tdn.has_tendons(model) else {}),
             hyperstatic=hyperstatic,
         )
+        from . import curved as _curved     # curved frames (no-op if none)
+        _curved.attach(self, res)
+        return res
 
     def _run_plan(self) -> dict:
         """v1.13 Set Load Cases to Run: initial per-case status + the
