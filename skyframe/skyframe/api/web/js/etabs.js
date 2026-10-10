@@ -132,6 +132,8 @@ export function initEtabs(sky) {
       { label: "Merge Joints…", act: "edit-merge", hint: "tolerance", fn: () => sky.edit && sky.edit.openMerge() },
       { label: "Align Points / Trim-Extend…", act: "edit-align", fn: () => sky.edit && sky.edit.openAlign() },
       { label: "Extrude…", act: "edit-extrude", hint: "points → frames · frames → shells", fn: () => sky.edit && sky.edit.openExtrude() },
+      { sep: true },   // Interactive Database Editing (js/dbedit.js) — model tables
+      { label: "Interactive Database Editing…", act: "edit-dbedit", hint: "model tables", fn: () => sky.openDbEdit && sky.openDbEdit() },
     ]],
     ["Define", [
       { label: "Materials…", act: "def-materials", fn: () => sky.openSectionMgr() },

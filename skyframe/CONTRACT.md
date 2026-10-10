@@ -7558,3 +7558,166 @@ the object's top z, or else the story whose height range contains it.
 * The input model is never mutated.
 * Defaults: no existing code path changed, so every pre-existing result
   is byte-identical.
+
+## Interactive database editing (model tables)
+
+ETABS "Edit > Interactive Database Editing": the MODEL definition (not
+results) shown as editable tables. Backend: `skyframe/core/modeltables.py`;
+endpoints: `skyframe/api/modeltables_api.py` (registered by `create_app`).
+The module is pure data transformation: no engine or model code changed,
+so every existing result is byte-identical.
+
+### Table catalogue (keys, in apply order)
+
+| Group | Keys |
+|---|---|
+| Model Definition > Properties | `materials`, `frame_sections`, `shell_sections`, `stories`, `grid_lines` |
+| Model Definition > Objects | `joints` (derived, read-only), `frame_objects`, `shell_objects`, `links` |
+| Model Definition > Assignments | `supports`, `point_springs`, `line_springs`, `diaphragm_definitions`, `story_diaphragms`, `joint_diaphragms`, `groups`, `group_assignments` |
+| Model Definition > Loads | `load_patterns`, `joint_loads`, `story_forces`, `frame_distributed_loads` (udl / trapezoid, including legacy `member_udls`), `frame_point_loads`, `area_loads` |
+| Model Definition > Load Cases & Combinations | `load_cases` (summary, read-only), `static_cases`, `static_case_loads`, `rs_cases`, `th_cases`, `pushover_cases`, `staged_cases`, `buckling_cases`, `load_combinations`, `combo_members` |
+| Model Definition > Properties | `mass_source`, `mass_source_options` (one row) |
+
+Fields that are not columns (for example layered shells, link params, TH
+records, function libraries, frame joint offsets) are never touched by an
+edit. They are kept on every row that keeps its `_id`.
+
+### Endpoints
+
+Every body may carry `model` (a `to_dict()` object). Without it, the
+server's current model is used. A successful apply or import REPLACES the
+server model unless `dry_run: true`.
+
+* `POST|GET /api/modeltables/list` ->
+  `{tables: [{key, title, group, editable, can_add, can_delete, key_column, rows}], quantities: {kind: SI unit}}`
+* `POST /api/modeltables/<key>` ->
+  `{key, title, group, editable, can_add, can_delete, key_column, columns, rows}`
+  * `columns[i]` is `{key, label, type, quantity, unit, editable, enum?, ref?, required?, optional?}`.
+  * `type` is one of `number | int | bool | enum | text | ref | points`.
+  * `quantity` is a js/units.js kind (`length`, `dim`, `area`, `inertia`, `force`, `moment`, `line_force`, `pressure`, `stress`, `modulus`, `unit_weight`, `mass_density`, `mass_per_length`, `mass_per_area`, `stiffness`, `rot_stiffness`, `line_spring`, `thermal_coeff`, `period`, `none`, plus `angle_deg` = degrees, not converted). Values are SI.
+  * `ref` is `members | shells | links`: an object uid is checked server-side, with no enum sent.
+  * `points` is `[[x, y, z], ...]`; text form `"x,y,z; x,y,z"`.
+  * Each row is `{<column key>: value, "_id": id}`. `_id` is the original name (dict tables), the list index (list tables), or `[pattern, list, index]` (load tables).
+  * Unknown key -> 404.
+* `POST /api/modeltables/<key>/apply {rows, model?, dry_run?}`, and
+  `POST /api/modeltables/apply {tables: {key: rows}, model?, dry_run?}`
+  (several tables at once, applied in catalogue order).
+  * 200 -> `{ok: true, model, summary: {key: {added, modified, deleted, renamed?} | {rows, ...}}}`.
+  * 400 -> `{error: "<n> errors: <first> [table row r, col]", errors: [{table, row, col, message}]}`.
+    `row` is the 0-based index into that table's posted rows, or null. `col` is a column key, or null.
+  * With `soft_errors: true` the same payload comes back as 200 with
+    `ok: false`. The UI uses this because browsers log every 4xx as a
+    console error.
+* `POST /api/modeltables/<key>/csv {model?, include_id?=true}` ->
+  `{filename, csv}`. The header is `_id` plus the column keys; values are
+  SI, using `repr()` floats (an exact round trip), `TRUE`/`FALSE`, and
+  `"x,y,z; ..."` for points.
+* `POST /api/modeltables/<key>/csv_import {csv, apply?, model?, dry_run?}`
+  * Without `apply` -> `{rows}`, parsed but not applied.
+  * With `apply` -> the same result as apply.
+  * Headers can be column keys or labels, optionally followed by
+    `[unit]`. The `_id` column is optional.
+* `POST /api/modeltables/export {model?, as_base64?}` -> `application/zip`
+  (or `{filename, zip_b64}`). The zip holds one `<key>.csv` per table,
+  plus `_index.csv` and `_meta.json` (`model_sha256`). openpyxl is not a
+  dependency, so the workbook is a zip of CSVs, not a real .xlsx.
+* `POST /api/modeltables/import`, with the zip as the body
+  (`application/zip`) or as `{zip_b64, model?, dry_run?}`.
+  * Applies every editable table in the zip, atomically.
+  * `_id`s are used only when `_meta.model_sha256` matches the base
+    model. Otherwise rows match by key (name / uid) or are added.
+
+### Apply semantics (atomic)
+
+1. Rows are parsed and checked, table by table in catalogue order, on a
+   deep copy of the base model. Checks:
+   * the type of each cell;
+   * that enum values exist (materials, sections, stories, patterns,
+     cases, groups, diaphragms);
+   * that object references exist (`member_uid`, `region_uid`, group
+     objects);
+   * that required columns are present on new rows;
+   * that keys are unique.
+   Every failing cell is reported. A cell whose value equals the stored
+   value is not rewritten or re-validated, so model -> rows -> apply is
+   byte-identical.
+2. Row identity:
+   * A row with `_id` edits that object. Changing its key renames it.
+   * A row without `_id` whose key matches an existing object edits that
+     object.
+   * Any other row is added. A blank frame / shell / link uid is
+     auto-numbered `F1` / `A1` / `L1`.
+   * An object with no row is deleted.
+3. Only if no row error exists is the edited dict rebuilt with
+   `BuildingModel.from_dict` (the normal validation). A failure there
+   becomes one error, attributed to the first posted row whose identifier
+   (name, uid, member_uid, …) appears in the message.
+4. On any error nothing is applied, and the base dict is never mutated.
+
+Cascades:
+
+* **Renames** propagate to references:
+  * material -> frame / shell sections and their layers;
+  * section -> frames;
+  * shell section -> shells;
+  * pattern -> static cases, P-Delta gravity, mass source,
+    TH / pushover / buckling gravity, staged cases;
+  * case / combo -> combos, `cases_not_run`, RS combos, buckling base
+    case, modal_from_case;
+  * story -> objects, story diaphragms, explicit masses, story forces;
+  * uid -> loads, groups, TH / pushover `My`;
+  * group -> section cuts;
+  * diaphragm -> shells and joints.
+
+  Later tables in the same apply that still use the old name are
+  translated.
+* **Deleting** a frame, shell or link also deletes its loads and its
+  group memberships.
+* **Deleting** a material, section, pattern or case that is still used is
+  an error.
+
+Edit rules:
+
+* **Frame sections:** editing `b`/`h` of a rectangular prismatic section
+  (A == b·h) while A/I33/I22/J stay unchanged recomputes A, I33, I22 and J
+  exactly as `FrameSection.rectangular`. Explicit property edits win. A
+  new section needs either A/I33/I22/J or b and h.
+* **Stories:** if any height or the story order changes, elevations are
+  recomputed as cumulative heights from the original base. Object
+  coordinates are not moved.
+* **Distributed loads:** a legacy `member_udls` entry (or a new row) that
+  is uniform gravity over the full span stays in `member_udls`. Anything
+  else is stored in `member_loads`. Loads of other kinds keep their list
+  positions.
+* **Grid lines:** lines are rebuilt for each system. A new system name
+  creates an orthogonal system at the origin. Systems are never deleted.
+* **Story diaphragm:** the option `default` means no per-story override.
+
+### Frontend
+
+Edit > Interactive Database Editing… (`js/dbedit.js`):
+
+* table tree;
+* editable virtual grid with in-cell editors by type (units.js numbers,
+  enum selects, checkboxes, text);
+* add / delete row;
+* Excel TSV paste into ranges;
+* per-cell error highlighting with messages;
+* CSV and whole-model zip export / import;
+* Apply / Cancel.
+
+Apply posts the edited tables to `/api/modeltables/apply`, adopts the
+echoed model and records ONE undo step ("Interactive database edit").
+`?mock=1` runs the same row logic client-side (`js/mock_dbedit.js`).
+
+### Validation (tests/test_modeltables.py)
+
+* Byte-identical round trip of every editable table, one by one and all
+  at once, also through CSV (per table) and the whole-model zip.
+* Rectangle recompute equals `FrameSection.rectangular`.
+* Cascades, deletes, paste of 10 member sections, adding a load case and
+  a combination in one apply.
+* Per-cell errors with exact `(table, row, col)`, and nothing applied.
+* A table section edit gives the closed-form cantilever deflection
+  P·L³ / (3·E·I).
+* The HTTP endpoints.

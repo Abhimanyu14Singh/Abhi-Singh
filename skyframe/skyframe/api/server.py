@@ -2162,6 +2162,10 @@ def create_app() -> Flask:
         except (ValueError, KeyError, TypeError, RuntimeError) as exc:
             return jsonify({"error": str(exc)}), 400
 
+    # Interactive Database Editing (model tables; skyframe.api.modeltables_api)
+    from skyframe.api.modeltables_api import register as _mt_register
+    _mt_register(app, _state)
+
     return app
 
 

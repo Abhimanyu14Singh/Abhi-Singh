@@ -74,6 +74,7 @@ import { initPlotFn as pfInitPlotFn } from "./plotfn.js";
 import { pfMockValidate as pfMockValidateModel } from "./mock_plotfn.js";
 // ETABS Edit / Select menus + Undo/Redo history (aliased import; js/editmenu.js)
 import { initEditMenu as edInitEditMenu } from "./editmenu.js";
+import { initDbEdit as dbeInitDbEdit } from "./dbedit.js";   // Edit > Interactive Database Editing (model tables)
 import { initUx as uxInitUx } from "./ux.js";   // UX pass: palette · toolbar · shortcuts · dialog chrome · start screen
 
 /* ------------------------------------------------ state */
@@ -8518,6 +8519,7 @@ async function boot() {
   try { ptInitTendons(window.__sky); } catch (err) { console.error("PT tendons init failed", err); }   // PT tendons + hyperstatic case
   try { pfInitPlotFn(window.__sky); } catch (err) { console.error("plot functions init failed", err); }   // Display > Plot Functions / Story Response / 3D force diagrams
   try { edInitEditMenu(window.__sky); } catch (err) { console.error("edit menu init failed", err); }   // Edit / Select menus + Undo/Redo
+  try { dbeInitDbEdit(window.__sky); } catch (err) { console.error("db edit init failed", err); }   // Interactive Database Editing (js/dbedit.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
 }
 

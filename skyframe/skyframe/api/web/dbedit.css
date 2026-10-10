@@ -1,0 +1,70 @@
+/* Edit > Interactive Database Editing (js/dbedit.js) — layout reuses the
+   Show Tables shell (.tbl-*); the editable grid is .dbe-*. */
+.dbe-modal { width: 1320px; }
+.dbe-tools .btn-small { padding: 3px 9px; font-size: 12px; }
+.dbe-tools .btn-small:disabled { opacity: .45; cursor: default; }
+#dbEditModal input.dbe-filter { width: 150px; flex: 0 0 150px; padding: 4px 8px; font-size: 12px; }
+.dbe-status { font-size: 11.5px; min-height: 15px; flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dbe-status.is-bad { color: var(--red); }
+.dbe-leaf { justify-content: flex-start; }
+.dbe-leaf .dbe-leaf-t { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.dbe-n { font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.dbe-mark { font-size: 10px; font-weight: 700; }
+.dbe-mark.is-dirty { color: var(--amber); }
+.dbe-mark.is-err { color: var(--red); }
+
+.dbe-grid {
+  flex: 1; position: relative; overflow: auto; min-height: 0; outline: none;
+  border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-1);
+  font-size: 12.5px; font-variant-numeric: tabular-nums;
+}
+.dbe-grid:focus-visible { border-color: rgba(53,181,229,.55); }
+.dbe-head {
+  position: sticky; top: 0; z-index: 3; display: grid; grid-template-columns: var(--dbe-cols);
+  background: var(--surface-3); border-bottom: 1px solid var(--border);
+}
+.dbe-h {
+  display: flex; flex-direction: column; justify-content: center; padding: 4px 8px; min-width: 0; user-select: none;
+  color: var(--text-2); font-size: 11px; font-weight: 650; letter-spacing: .2px; border-right: 1px solid var(--border-soft);
+}
+.dbe-h.ro { color: var(--text-3); font-style: italic; }
+.dbe-h.req .dbe-hl::after { content: " *"; color: var(--amber); }
+.dbe-hl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dbe-hu { font-size: 10px; font-weight: 500; color: var(--text-3); min-height: 13px; }
+.dbe-rh { text-align: right; color: var(--text-3); font-size: 11px; }
+.dbe-head .dbe-rh { align-items: flex-end; }
+.dbe-body { position: relative; }
+.dbe-win { position: absolute; left: 0; right: 0; top: 0; }
+.dbe-r { display: grid; grid-template-columns: var(--dbe-cols); height: 24px; border-bottom: 1px solid var(--border-soft); box-sizing: border-box; }
+.dbe-r.odd { background: var(--surface-2); }
+.dbe-r.is-new .dbe-rh { color: var(--green); }
+.dbe-c {
+  padding: 0 8px; line-height: 23px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--text-1); border-right: 1px solid var(--border-soft); cursor: cell; user-select: none;
+}
+.dbe-c.num { text-align: right; }
+.dbe-c.bool { text-align: center; color: var(--accent); }
+.dbe-c.ro { color: var(--text-3); background: rgba(125,140,160,.05); }
+.dbe-c.chg { background: var(--amber-ghost); }
+.dbe-c.sel { background: var(--accent-ghost); }
+.dbe-c.cur { box-shadow: inset 0 0 0 2px var(--accent); }
+.dbe-c.err { box-shadow: inset 0 0 0 1px var(--red); background: rgba(230,103,103,.14); color: var(--text-1); }
+.dbe-c.err.cur { box-shadow: inset 0 0 0 2px var(--red); }
+.dbe-c.dbe-rh.err { color: var(--red); font-weight: 700; }
+.dbe-empty { position: absolute; left: 0; right: 0; top: 64px; text-align: center; color: var(--text-3); font-size: 12px; }
+.dbe-editor {
+  position: absolute; z-index: 4; box-sizing: border-box; margin: 0; padding: 0 6px;
+  font: inherit; font-size: 12.5px; border: 2px solid var(--accent); border-radius: 0;
+  background: var(--surface-2); color: var(--text-1); outline: none;
+}
+select.dbe-editor { padding: 0 2px; }
+.dbe-errors {
+  flex: none; max-height: 130px; overflow: auto; display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid rgba(230,103,103,.45); border-radius: 8px; background: rgba(230,103,103,.07); padding: 6px 8px;
+}
+.dbe-err-h { font-size: 11.5px; font-weight: 650; color: var(--red); margin-bottom: 2px; }
+.dbe-err {
+  text-align: left; font: inherit; font-size: 11.5px; color: var(--text-1); background: none; border: none;
+  padding: 2px 4px; border-radius: 4px; cursor: pointer;
+}
+.dbe-err:hover { background: var(--surface-3); }
