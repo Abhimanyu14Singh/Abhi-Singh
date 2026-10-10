@@ -56,6 +56,7 @@ import { mockValidateGroups as grpMockValidateGroups } from "./mock_groups.js";
 // B9/B11 — frame auto mesh + output stations, named spring properties, link hysteresis types (aliased imports)
 import { initB9 as b9Init } from "./b9init.js";
 import { mockValidateB9 as b9MockValidate } from "./mock_b9.js";
+import { initUx as uxInitUx } from "./ux.js";   // UX pass: palette · toolbar · shortcuts · dialog chrome · start screen
 
 /* ------------------------------------------------ state */
 const store = {
@@ -8477,6 +8478,7 @@ async function boot() {
   try { grpInitStageData(window.__sky); } catch (err) { console.error("stage data init failed", err); }
 
   try { b9Init(window.__sky); } catch (err) { console.error("B9 init failed", err); }   // auto mesh / stations / springs / link hysteresis
+  try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
 }
 
 boot();

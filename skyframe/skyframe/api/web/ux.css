@@ -1,0 +1,198 @@
+/* SkyFrame UX pass (js/ux*.js) — quick-access toolbar, command palette,
+   shortcut overlay, dialog chrome, status-bar additions, start screen.
+   Uses the theme tokens of styles.css so dark/light both work. */
+
+/* ================= quick-access toolbar ================= */
+.ux-qat {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  height: 34px; padding: 0 8px; flex: none;
+  background: var(--surface-1); border-bottom: 1px solid var(--border);
+  position: relative; z-index: 55; min-width: 0;
+}
+.ux-qat-left, .ux-qat-right { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.ux-qat-left { overflow: hidden; }
+.ux-qat-grp { display: flex; align-items: center; gap: 2px; flex: none; }
+.ux-qat-sep { width: 1px; height: 18px; background: var(--border); margin: 0 5px; flex: none; }
+.ux-qat-btn {
+  height: 26px; min-width: 28px; padding: 0 6px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  font: inherit; font-size: 11.5px; font-weight: 650; color: var(--text-2);
+  background: none; border: 1px solid transparent; border-radius: 6px; cursor: pointer;
+}
+.ux-qat-btn:hover:not(:disabled) { background: var(--surface-3); color: var(--text-1); }
+.ux-qat-btn:focus-visible, .ux-qat-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ux-qat-btn.is-active { color: var(--accent); border-color: rgba(53,181,229,.45); background: var(--accent-ghost); }
+.ux-qat-btn.is-dim { opacity: .5; }
+.ux-qat-btn:disabled { opacity: .45; cursor: default; }
+.ux-qat-ico { width: 16px; height: 16px; flex: none; }
+.ux-qat-run { color: #041018; background: var(--accent-dim); padding: 0 10px 0 8px; }
+.ux-qat-run .ux-qat-ico { width: 12px; height: 12px; }
+.ux-qat-run:hover:not(:disabled) { background: var(--accent); color: #041018; }
+.ux-qat-unitswrap { display: inline-flex; align-items: center; gap: 4px; color: var(--text-3); flex: none; }
+.ux-qat-ico-wrap { display: inline-flex; }
+.ux-qat-units { height: 24px; padding: 0 6px; font-size: 11.5px; width: auto; min-width: 74px; }
+.ux-qat-search {
+  display: inline-flex; align-items: center; gap: 8px; height: 26px; min-width: 210px;
+  padding: 0 6px 0 9px; font: inherit; font-size: 12px; color: var(--text-3);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+}
+.ux-qat-search:hover { border-color: var(--accent-dim); color: var(--text-2); }
+.ux-qat-search-txt { flex: 1; text-align: left; }
+.ux-qat-search kbd, .ux-cmdk kbd, .ux-keys-dlg kbd, .ux-cmdk-foot kbd {
+  font: 600 10px var(--mono); color: var(--text-3);
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 5px; white-space: nowrap;
+}
+@media (max-width: 1240px) {
+  .ux-qat-search { min-width: 0; }
+  .ux-qat-search-txt { display: none; }
+}
+
+/* ================= command palette ================= */
+.ux-cmdk-back {
+  position: fixed; inset: 0; z-index: 140; background: rgba(5, 8, 12, .5);
+  display: flex; justify-content: center; align-items: flex-start; padding: 10vh 16px 16px;
+}
+:root[data-theme="light"] .ux-cmdk-back { background: rgba(20, 30, 40, .25); }
+.ux-cmdk {
+  width: 640px; max-width: 100%; max-height: 70vh; display: flex; flex-direction: column;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  box-shadow: 0 18px 48px rgba(0,0,0,.45);
+}
+.ux-cmdk-head { display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border); }
+.ux-cmdk-ico svg { width: 17px; height: 17px; color: var(--text-3); display: block; }
+.ux-cmdk-input {
+  flex: 1; height: 46px; border: none !important; background: transparent !important; box-shadow: none !important;
+  font: inherit; font-size: 15px; color: var(--text-1); outline: none; padding: 0;
+}
+.ux-cmdk-list { flex: 1; overflow-y: auto; padding: 6px; min-height: 60px; }
+.ux-cmdk-group { font-size: 10.5px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; color: var(--text-3); padding: 8px 8px 4px; }
+.ux-cmdk-item {
+  display: grid; grid-template-columns: 76px 1fr auto; align-items: center; gap: 10px;
+  padding: 7px 9px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--text-1);
+}
+.ux-cmdk-item.is-sel { background: var(--accent-ghost); box-shadow: inset 2px 0 0 var(--accent); }
+.ux-cmdk-item.is-disabled { opacity: .5; }
+.ux-cmdk-menu { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ux-cmdk-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ux-cmdk-hint { color: var(--text-3); font-size: 11.5px; }
+.ux-cmdk-empty { padding: 18px 12px; color: var(--text-3); font-size: 12.5px; }
+.ux-cmdk-foot { display: flex; gap: 14px; align-items: center; padding: 7px 12px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-3); }
+.ux-cmdk-foot span { display: inline-flex; gap: 4px; align-items: center; }
+.ux-cmdk-count { margin-left: auto; }
+
+/* ================= dialog chrome (applies to every .modal) ================= */
+.modal.ux-dlg { position: relative; max-height: calc(100vh - 32px); min-height: 0; }
+.modal-backdrop .modal.ux-dlg > .modal-body { min-height: 0; overflow: auto; }
+.modal.ux-dlg > .modal-foot, .modal.ux-dlg > footer { flex: none; position: sticky; bottom: 0; background: var(--surface-1); z-index: 2; }
+.modal.ux-dlg > .modal-head { flex: none; gap: 8px; }
+.modal.ux-dlg > .modal-head.ux-drag { cursor: move; user-select: none; }
+.modal.ux-dlg > .modal-head.ux-dragging { cursor: grabbing; }
+.modal.ux-dlg > .modal-head h2 { flex: 1; min-width: 0; }
+.modal.ux-dlg > .modal-head .icon-btn { flex: none; }
+.modal.ux-dlg > .modal-head > .ux-help-btn { order: 1; }
+.modal.ux-dlg > .modal-head > .icon-btn:not(.ux-help-btn) { order: 2; }
+.ux-help-btn {
+  font: 700 12px var(--font) !important; width: 22px; height: 22px; border-radius: 50% !important;
+  border: 1px solid var(--border) !important; color: var(--text-3) !important; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center; margin-left: auto;
+}
+.ux-help-btn:hover, .ux-help-btn[aria-expanded="true"] { color: var(--accent) !important; border-color: var(--accent-dim) !important; }
+.ux-help-pop {
+  flex: none; padding: 10px 18px 11px; font-size: 12.5px; line-height: 1.5;
+  background: var(--accent-ghost); border-bottom: 1px solid var(--border); color: var(--text-1);
+}
+.ux-help-meta { margin-top: 4px; font-size: 11px; color: var(--text-3); }
+.ux-grip {
+  position: absolute; right: 1px; bottom: 1px; width: 14px; height: 14px; z-index: 3; cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, var(--border) 50%, var(--border) 58%, transparent 58%, transparent 70%, var(--border) 70%, var(--border) 78%, transparent 78%);
+  opacity: .9;
+}
+.ux-grip:hover { filter: brightness(1.6); }
+
+/* ================= status bar additions ================= */
+.ux-sb-hint {
+  flex: 1 1 auto; min-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  display: block; color: var(--text-2); font-size: 11px;
+}
+.sb-spacer.ux-sb-spacer-min { flex: 0 0 4px; }
+.ux-sb-sel { color: var(--accent); border-color: rgba(53,181,229,.45); }
+.ux-sb-run { color: var(--text-3); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ux-sb-run.is-ok { color: var(--green); }
+.ux-sb-run.is-err { color: var(--red); }
+.ux-on .etabs-status { overflow-x: hidden; }
+/* solver/units text duplicates the units selector — give the room to the hint */
+.ux-on .footer-solver { display: none; }
+@media (max-width: 1560px) { .ux-on #footerInfo { display: none; } }
+@media (max-width: 1280px) {
+  /* the toolbar carries a units selector — drop the duplicate + labels so Run stays visible */
+  .ux-on .etabs-status .sb-units, .ux-on .etabs-status .sb-lbl { display: none; }
+  .ux-on .etabs-status .sb-coord { min-width: 60px; }
+  .ux-on .etabs-status .sb-seg-btn { padding: 2px 7px; }
+  .ux-on .etabs-status { gap: 7px; }
+}
+/* plan/elevation toolbar: never wrap the elevation readout into a column */
+.ux-on .draw-toolbar .story-elev { white-space: nowrap; }
+.ux-on .draw-toolbar #drawHint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 1280px) { .ux-on .draw-toolbar #drawHint { display: none; } }
+
+/* ================= keyboard shortcuts overlay ================= */
+.ux-keys-dlg .modal { width: 760px; }
+.ux-keys-filter { width: 100%; margin-bottom: 12px; }
+.ux-keys-grid { columns: 2 320px; column-gap: 26px; }
+.ux-keys-group { break-inside: avoid; margin-bottom: 14px; }
+.ux-keys-group h3 { font-size: 10.5px; text-transform: uppercase; letter-spacing: .8px; color: var(--text-3); margin-bottom: 5px; }
+.ux-keys-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--border-soft); font-size: 12.5px; }
+.ux-keys-k { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.ux-or { color: var(--text-3); font-size: 10px; }
+
+/* ================= start screen ================= */
+.ux-start-dlg .modal { width: 1060px; }
+.ux-start { display: grid; grid-template-columns: 1.45fr 1fr 0.95fr; gap: 20px; align-items: start; }
+.ux-h { font-size: 10.5px; text-transform: uppercase; letter-spacing: .8px; color: var(--text-3); margin-bottom: 8px; font-weight: 700; }
+.ux-tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
+.ux-tpl-card {
+  display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 8px;
+  font: inherit; text-align: left; color: var(--text-1); cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+}
+.ux-tpl-card:hover { border-color: var(--accent-dim); }
+.ux-tpl-card.is-sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; background: var(--accent-ghost); }
+.ux-tpl-thumb { width: 100%; height: 70px; display: block; }
+.ux-tpl-meta { display: flex; flex-direction: column; gap: 1px; font-size: 12.5px; }
+.ux-tpl-meta .muted { font-size: 11px; line-height: 1.35; }
+.ux-tpl-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+.ux-field { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--text-2); }
+.ux-field.is-off { opacity: .45; }
+.ux-field input { width: 100%; }
+.ux-field-wide { grid-column: 1 / -1; }
+.ux-tpl-note { font-size: 11.5px; line-height: 1.45; }
+.ux-recent { display: flex; flex-direction: column; gap: 5px; }
+.ux-recent-item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 7px 9px;
+  font: inherit; font-size: 12.5px; color: var(--text-1); text-align: left; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+}
+.ux-recent-item .muted { font-size: 11px; }
+.ux-recent-item:hover { border-color: var(--accent-dim); }
+.ux-recent-item.is-confirm { border-color: var(--amber); }
+.ux-recent-item.is-confirm .muted { color: var(--amber); }
+.ux-recent-empty { font-size: 12px; line-height: 1.5; }
+.ux-recent-more { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.ux-warn { color: var(--amber) !important; }
+@media (max-width: 1150px) {
+  .ux-start { grid-template-columns: 1fr 1fr; }
+  .ux-start-recent { grid-column: 1 / -1; }
+  .ux-tpl-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+}
+.ux-sb-hint.is-warn { color: var(--amber); }
+
+/* results tab bar: one line, scrolls horizontally, Case selector pinned right */
+.ux-on .tabbar { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.ux-on .tabbar::-webkit-scrollbar { height: 0; }
+.ux-on .tabbar .tab { white-space: nowrap; flex: none; padding: 0 10px; }
+.ux-on .tabbar .case-select-wrap { position: sticky; right: 0; flex: none; background: var(--surface-1); padding-left: 10px; height: 100%; box-shadow: -10px 0 10px -6px var(--surface-1); }
+
+/* keyboard focus in the menu bar (F10 / arrows) */
+.ux-on .etabs-menu-btn:focus-visible, .ux-on .etabs-menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ux-on .etabs-menu-item:focus-visible { background: var(--surface-3); }
