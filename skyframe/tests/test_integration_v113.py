@@ -371,3 +371,18 @@ def test_additional_mass_total_survives_auto_mesh_split(mode):
     whole, split = total_mass(False), total_mass(True)
     assert whole == pytest.approx(0.8 * 6.0, rel=1e-12)
     assert split == pytest.approx(whole, rel=1e-12)
+
+
+# --------------------------------------------------------------------------- #
+# A rectangle given only by b x h (e.g. a new Section Manager row) loads
+# with the exact rectangular properties instead of failing on missing "A".
+# --------------------------------------------------------------------------- #
+def test_section_with_only_b_h_derives_rectangular_properties():
+    d = quick_building(bays_x=1, bays_y=1, stories=1).to_dict()
+    mat = next(iter(d["materials"]))
+    d["sections"]["R"] = {"name": "R", "material": mat, "b": 0.3, "h": 0.6}
+    m = BuildingModel.from_dict(d)
+    ref = FrameSection.rectangular("R", mat, 0.3, 0.6)
+    s = m.sections["R"]
+    for k in ("A", "I33", "I22", "J", "b", "h"):
+        assert getattr(s, k) == pytest.approx(getattr(ref, k), rel=1e-15)

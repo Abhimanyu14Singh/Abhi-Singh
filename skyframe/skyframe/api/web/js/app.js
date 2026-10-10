@@ -2904,8 +2904,8 @@ function renderSectionMgr() {
     if (!isLibrary) {           // rectangular — b/h editable
       frameBox.appendChild(mgrRow([
         nameIn,
-        mgrNum(s.b, "0.05", v => s.b = v, "dim"),
-        mgrNum(s.h, "0.05", v => s.h = v, "dim"),
+        mgrNum(s.b, "0.05", v => { s.b = v; ME.rectSectionProps(s); }, "dim"),   // keep A / I / J in sync
+        mgrNum(s.h, "0.05", v => { s.h = v; ME.rectSectionProps(s); }, "dim"),
         mgrMatSelect(m, s.material, v => s.material = v),
         del,
       ]));

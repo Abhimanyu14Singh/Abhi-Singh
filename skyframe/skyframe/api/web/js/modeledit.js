@@ -1320,9 +1320,23 @@ function uniqueKey(dict, base) {
   while (dict[`${base}${i}`]) i++;
   return `${base}${i}`;
 }
+/** Rectangle b x h -> A, I33, I22, J (same formulas as the backend's
+ *  FrameSection.rectangular, Roark torsion constant).  Mutates and returns
+ *  the section, so editing b / h keeps the analysis properties in sync. */
+export function rectSectionProps(s) {
+  const b = +s.b, h = +s.h;
+  if (!(b > 0 && h > 0)) return s;
+  const a = Math.max(b, h) / 2, c = Math.min(b, h) / 2;
+  s.A = b * h;
+  s.I33 = b * h ** 3 / 12;
+  s.I22 = h * b ** 3 / 12;
+  s.J = a * c ** 3 * (16 / 3 - 3.36 * (c / a) * (1 - c ** 4 / (12 * a ** 4)));
+  return s;
+}
+
 export function addFrameSection(model) {
   const name = uniqueKey(model.sections, "FSEC");
-  model.sections[name] = { name, material: defaultMaterial(model), b: 0.3, h: 0.6 };
+  model.sections[name] = rectSectionProps({ name, material: defaultMaterial(model), b: 0.3, h: 0.6 });
   return name;
 }
 export function addShellSection(model) {

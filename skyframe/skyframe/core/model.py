@@ -3898,6 +3898,13 @@ class BuildingModel:
                 from skyframe.core.nonprismatic import section_from_dict
                 mdl.sections[name] = section_from_dict(name, sd)
                 continue
+            if ("A" not in sd and float(sd.get("b") or 0) > 0
+                    and float(sd.get("h") or 0) > 0):
+                # rectangle given by b x h only (e.g. a new UI section):
+                # derive A / I33 / I22 / J exactly as FrameSection.rectangular
+                sd = {**FrameSection.rectangular(
+                    name, sd["material"], float(sd["b"]),
+                    float(sd["h"])).to_dict(), **sd}
             mdl.sections[name] = FrameSection(
                 name=sd.get("name", name), material=sd["material"],
                 A=float(sd["A"]), I33=float(sd["I33"]), I22=float(sd["I22"]),
