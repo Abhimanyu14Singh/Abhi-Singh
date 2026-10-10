@@ -348,6 +348,13 @@ export function initEtabs(sky) {
       { label: "Theme · Dark", act: "opt-theme-dark", check: () => theme === "dark", fn: () => setTheme("dark") },
       { label: "Theme · Light", act: "opt-theme-light", check: () => theme === "light", fn: () => setTheme("light") },
     ]],
+    // UX pass — Help menu (js/ux.js: palette / shortcuts / start screen / toolbar)
+    ["Help", [
+      { label: "Search Commands…", act: "help-palette", key: "Ctrl+K", fn: () => sky.ux && sky.ux.palette && sky.ux.palette.open() },
+      { label: "Keyboard Shortcuts…", act: "help-shortcuts", key: "F1", fn: () => sky.ux && sky.ux.shortcuts && sky.ux.shortcuts.openOverlay() },
+      { label: "Start Screen / Templates…", act: "help-start", fn: () => sky.ux && sky.ux.start ? sky.ux.start.open() : sky.fileNew() },
+      { label: "Quick-Access Toolbar", act: "help-toolbar", check: () => !!(sky.ux && sky.ux.toolbar && sky.ux.toolbar.isVisible()), fn: () => sky.ux && sky.ux.toolbar && sky.ux.toolbar.toggle() },
+    ]],
   ];
 
   const menubar = $("etabsMenubar");
