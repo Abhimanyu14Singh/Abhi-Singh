@@ -71,6 +71,7 @@ import { initTendons as ptInitTendons } from "./tendons.js";
 import { mockValidateTendons as ptMockValidate } from "./mock_tendons.js";
 // Plot functions / story response plots / 3D force diagrams (Display menu)
 import { initPlotFn as pfInitPlotFn } from "./plotfn.js";
+import { initViewExt as vxInitViewExt } from "./viewext.js";   // View > Set Display Options + extruded 3D view
 import { pfMockValidate as pfMockValidateModel } from "./mock_plotfn.js";
 // ETABS Edit / Select menus + Undo/Redo history (aliased import; js/editmenu.js)
 import { initEditMenu as edInitEditMenu } from "./editmenu.js";
@@ -8517,6 +8518,7 @@ async function boot() {
   try { uhInitUserHinges(window.__sky); } catch (err) { console.error("user hinges init failed", err); }   // B10 user-defined hinges + hinge results
   try { ptInitTendons(window.__sky); } catch (err) { console.error("PT tendons init failed", err); }   // PT tendons + hyperstatic case
   try { pfInitPlotFn(window.__sky); } catch (err) { console.error("plot functions init failed", err); }   // Display > Plot Functions / Story Response / 3D force diagrams
+  try { vxInitViewExt(window.__sky); } catch (err) { console.error("display options / extrude init failed", err); }   // View > Set Display Options / Extrude (js/viewext.js)
   try { edInitEditMenu(window.__sky); } catch (err) { console.error("edit menu init failed", err); }   // Edit / Select menus + Undo/Redo
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
 }

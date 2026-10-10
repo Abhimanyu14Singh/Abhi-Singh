@@ -577,6 +577,9 @@ export class Viewer3D {
     if (!this.model) return;
 
     const P = this._makeProjector();
+    // VX hook — display options + extruded view (js/viewext.js); null = legacy drawing
+    let VX = null;
+    if (this.vxFrame) { try { VX = this.vxFrame(P, this); } catch (e) { VX = null; } }
     const maxDepth = this.dist + (this.radius || 10);
     const minDepth = Math.max(this.dist - (this.radius || 10), P.near);
     const depthAlpha = z => {
@@ -587,7 +590,7 @@ export class Viewer3D {
     // ---- ground grid (v0.14: multiple systems, batched by per-system colour)
     ctx.lineWidth = 1;
     let curColor = null;
-    for (const gl of this.gridLines) {
+    for (const gl of (VX && !VX.grid ? [] : this.gridLines)) {   // VX: grid toggle
       const color = gl.color || COLORS.grid;
       if (color !== curColor) {
         if (curColor !== null) ctx.stroke();
@@ -599,7 +602,7 @@ export class Viewer3D {
     if (curColor !== null) ctx.stroke();
     ctx.font = "600 11px -apple-system, 'Segoe UI', sans-serif";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    for (const gl of this.gridLabels) {
+    for (const gl of (VX && !VX.grid ? [] : this.gridLabels)) {   // VX: grid toggle
       const pc = P.toCam(gl.p);
       if (pc[2] > P.near) {
         const s = P.proj(pc);
@@ -612,7 +615,7 @@ export class Viewer3D {
     const overlayActive = this.overlay.deformed || this.overlay.modal || this.overlay.buckling;
     const contour = overlayActive ? null : this._contourData();   // v0.4
     const items = [];
-    for (const poly of this.slabs) {
+    for (const poly of (VX && VX.hideHulls ? [] : this.slabs)) {   // VX: slab toggle / filters
       if (contour) continue;               // declutter under contour fields
       const pts = [];
       let zsum = 0, ok = true;
@@ -623,7 +626,9 @@ export class Viewer3D {
       }
       if (ok) items.push({ type: "slab", pts, z: zsum / poly.length });
     }
-    for (const sh of (this.shellPolys || [])) {
+    for (const sh0 of (this.shellPolys || [])) {
+      const sh = VX ? VX.shell(sh0) : sh0;   // VX: hidden / clipped / extruded (null)
+      if (!sh) continue;
       if (contour && sh.behavior === "shell") continue;   // contour quads replace the fill
       const pts = [];
       let zsum = 0, ok = true;
@@ -649,6 +654,7 @@ export class Viewer3D {
     }
     // v0.5: links — green device glyphs, depth-sorted with everything else
     for (const lk of (this.linkSegs || [])) {
+      if (VX && !VX.link(lk)) continue;   // VX: link toggle / filters
       const s = this._projSeg(P, lk.p1, lk.p2);
       if (!s) continue;
       items.push({ type: "link", s, z: (s.a.z + s.b.z) / 2, lk });
@@ -687,11 +693,15 @@ export class Viewer3D {
     this._segsScreen = [];
     this._linkBadges = [];   // v0.15 — link device-type letters, drawn on top
     for (const seg of this.segs) {
-      const s = this._projSeg(P, seg.p1, seg.p2);
+      const vs = VX ? VX.seg(seg) : seg;   // VX: hidden (null) / clipped {p1, p2}
+      if (!vs) continue;
+      const s = this._projSeg(P, vs.p1, vs.p2);
       if (!s) continue;
       const z = (s.a.z + s.b.z) / 2;
-      items.push({ type: "seg", s, z, seg });
+      items.push({ type: "seg", s, z, seg, vx: !!(VX && VX.extrudeFrames) });
     }
+    // VX hook — extruded frame / shell solids join the same painter's sort (js/viewext.js)
+    if (VX && VX.items) { try { VX.items(items, P, { overlayActive, contour }); } catch (e) { /* never break the render */ } }
     items.sort((a, b) => b.z - a.z);
 
     for (const it of items) {
@@ -736,7 +746,9 @@ export class Viewer3D {
           ctx.fillStyle = wall ? COLORS.wallShell : COLORS.slabShell;
           ctx.strokeStyle = wall ? COLORS.wallShellEdge : COLORS.slabShellEdge;
           ctx.lineWidth = 1.2;
+          if (VX) ctx.globalAlpha = VX.shellAlpha;   // VX: shell transparency
           ctx.fill("evenodd"); ctx.stroke();
+          ctx.globalAlpha = 1;
         }
       } else if (it.type === "cut") {
         // v0.13: translucent cutting plane (amber) with a dashed border
@@ -765,8 +777,12 @@ export class Viewer3D {
         if (lk && lk.letter && !overlayActive)
           this._linkBadges.push({
             x: (s.a.x + s.b.x) / 2, y: (s.a.y + s.b.y) / 2 - 11, letter: lk.letter });
+      } else if (it.type === "vx") {
+        try { VX.draw(ctx, it); } catch (e) { ctx.globalAlpha = 1; }   // VX: extruded solid chunk / plate tile (js/viewext.js)
       } else {
         const { s, seg } = it;
+        // VX: extruded frames — keep the centerline for picking / overlays, draw no line
+        if (it.vx) { this._segsScreen.push({ x1: s.a.x, y1: s.a.y, x2: s.b.x, y2: s.b.y, seg }); continue; }
         const hovered = this._hover && this._hover.uid === seg.uid;
         const hl = this.highlight.uids && this.highlight.uids.has(seg.uid);
         // v0.18 — drift-optimizer per-member color override (below hover/highlight)
@@ -774,7 +790,7 @@ export class Viewer3D {
         const alpha = overlayActive ? COLORS.ghost : depthAlpha(it.z);
         ctx.globalAlpha = (hovered || hl) ? 1 : (mc && !overlayActive) ? Math.max(alpha, 0.95) : alpha;
         ctx.strokeStyle = hovered ? "#ffffff"
-          : hl ? this.highlight.color : (mc || COLORS[seg.kind] || COLORS.beam);
+          : hl ? this.highlight.color : (mc || (VX && VX.segColor ? VX.segColor(seg) : null) || COLORS[seg.kind] || COLORS.beam);
         ctx.lineWidth = (hovered || hl) ? 2.6 : mc ? 2.3 : (seg.kind === "column" ? 1.8 : 1.3);
         ctx.lineCap = "round";
         ctx.beginPath();
@@ -841,7 +857,7 @@ export class Viewer3D {
     // ---- supports
     const fixed = (this.model.base_fixity || "fixed") === "fixed";
     ctx.fillStyle = COLORS.support;
-    for (const p of this.supportPts) {
+    for (const p of (VX ? this.supportPts.filter(VX.supportPt) : this.supportPts)) {   // VX: supports toggle / filters
       const pc = P.toCam(p);
       if (pc[2] < P.near) continue;
       const sp = P.proj(pc);
@@ -853,7 +869,7 @@ export class Viewer3D {
     }
 
     // ---- v0.8 spring supports: grounded green coil + hatched ground symbol
-    for (const p of (this.springPts || [])) {
+    for (const p of (VX ? (this.springPts || []).filter(VX.springPt) : (this.springPts || []))) {   // VX: springs toggle / filters
       const pc = P.toCam(p);
       if (pc[2] < P.near) continue;
       const sp = P.proj(pc);
@@ -1056,6 +1072,9 @@ export class Viewer3D {
       }
     }
 
+    // VX hook — joints / local axes / labels / section names / loads / cut outline (js/viewext.js)
+    if (VX && VX.post) { try { VX.post(ctx, P); } catch (e) { /* never break the render */ } }
+
     // ---- overlays
     if (overlayActive && this.results) this._renderOverlay(P);
 
@@ -1128,6 +1147,8 @@ export class Viewer3D {
     if (!dispMap) return;
 
     this._renderDeformedShells(P, dispMap, factor);
+    // VX hook — extruded deformed / mode shape (js/viewext.js); true = members drawn
+    if (this.vxDeformed) { try { if (this.vxDeformed(P, dispMap, factor, this)) return; } catch (e) { /* fall back to lines */ } }
 
     const ctx = this.ctx;
     const nodes = r.nodes;
@@ -1136,6 +1157,7 @@ export class Viewer3D {
       const Pi = nodes[m.ni], Pj = nodes[m.nj];
       const di = dispMap[m.ni], dj = dispMap[m.nj];
       if (!Pi || !Pj || !di || !dj) continue;
+      if (this.vxMemberVisible && !this.vxMemberVisible(m)) continue;   // VX: visibility filters
       const pts = this._deformedPolyline(Pi, Pj, di, dj, factor);
       // project
       const sp = [];
