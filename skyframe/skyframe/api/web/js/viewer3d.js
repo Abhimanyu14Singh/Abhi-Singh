@@ -1065,6 +1065,8 @@ export class Viewer3D {
     if (this.g2Overlay && !overlayActive) { try { this.g2Overlay(ctx, P, this); } catch (e) { /* never break the render */ } }
     // Groups hook — Show Group highlight (js/groups.js)
     if (this.grpOverlay && !overlayActive) { try { this.grpOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
+    // B10 hook — user hinge dots / hinge-state display (js/uhdlg.js, js/uhresults.js)
+    if (this.uhOverlay) { try { this.uhOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
 
     // ---- axis triad
     this._renderTriad(ctx, w, h);

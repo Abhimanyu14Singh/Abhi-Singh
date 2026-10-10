@@ -56,6 +56,9 @@ import { mockValidateGroups as grpMockValidateGroups } from "./mock_groups.js";
 // B9/B11 — frame auto mesh + output stations, named spring properties, link hysteresis types (aliased imports)
 import { initB9 as b9Init } from "./b9init.js";
 import { mockValidateB9 as b9MockValidate } from "./mock_b9.js";
+// B10 — user-defined plastic hinges: properties / assign / overwrites / hinge results (aliased imports)
+import { initUserHinges as uhInitUserHinges } from "./uhdlg.js";
+import { mockValidateUserHinges as uhMockValidate } from "./mock_userhinge.js";
 
 /* ------------------------------------------------ state */
 const store = {
@@ -239,7 +242,8 @@ async function postModel(payload) {
     await new Promise(r => setTimeout(r, 300));
     const bad = mockValidateAssign(payload) || g2MockValidatePoly(payload) || g3MockNlsValidate(payload)   // assign / G2 polygon + insertion / G3 NLS + diaphragms
       || grpMockValidateGroups(payload)                                        // Groups / stage lists / cut groups
-      || b9MockValidate(payload);                                              // B9-B11 auto mesh / stations / springs / links
+      || b9MockValidate(payload)                                               // B9-B11 auto mesh / stations / springs / links
+      || uhMockValidate(payload);                                              // B10 user-defined hinges
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -1898,6 +1902,7 @@ function renderProps() {
   AS.decorateProps(box);                         // joint / concentrated / shell loads of the selection
   if (window.__sky && window.__sky.g2DecorateProps) window.__sky.g2DecorateProps(box);   // G2: polygon geometry + insertion point
   if (window.__sky && window.__sky.b9DecorateProps) window.__sky.b9DecorateProps(box, { members, links, springs });   // B9/B11: auto mesh · stations · springs · link hysteresis
+  if (window.__sky && window.__sky.uhDecorateProps) window.__sky.uhDecorateProps(box, { members });   // B10: user-defined hinges
 
   const on = (id, ev, fn) => { const n = $(id); if (n) n.addEventListener(ev, fn); };
 
@@ -8477,6 +8482,7 @@ async function boot() {
   try { grpInitStageData(window.__sky); } catch (err) { console.error("stage data init failed", err); }
 
   try { b9Init(window.__sky); } catch (err) { console.error("B9 init failed", err); }   // auto mesh / stations / springs / link hysteresis
+  try { uhInitUserHinges(window.__sky); } catch (err) { console.error("user hinges init failed", err); }   // B10 user-defined hinges + hinge results
 }
 
 boot();
