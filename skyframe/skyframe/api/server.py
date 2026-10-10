@@ -2125,6 +2125,17 @@ def create_app() -> Flask:
             return jsonify({"error": str(exc)}), 400
         return jsonify(model.to_dict())
 
+    @app.post("/api/plotfn/spectrum")      # plot functions: floor spectra
+    def plotfn_spectrum():
+        """Floor response spectrum (CONTRACT "Plot functions")."""
+        from skyframe.core import plotfn as _pfn
+        res, _ctx = _tables_lookup(_state["model"])
+        try:
+            return jsonify(_pfn.spectrum_request(
+                _state["model"], request.get_json(silent=True), res))
+        except (ValueError, KeyError, TypeError, RuntimeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
     return app
 
 

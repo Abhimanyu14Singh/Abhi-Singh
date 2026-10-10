@@ -69,6 +69,9 @@ import { mockValidateUserHinges as uhMockValidate } from "./mock_userhinge.js";
 // PT tendons + hyperstatic case — draw / profile / properties / results (aliased imports)
 import { initTendons as ptInitTendons } from "./tendons.js";
 import { mockValidateTendons as ptMockValidate } from "./mock_tendons.js";
+// Plot functions / story response plots / 3D force diagrams (Display menu)
+import { initPlotFn as pfInitPlotFn } from "./plotfn.js";
+import { pfMockValidate as pfMockValidateModel } from "./mock_plotfn.js";
 
 /* ------------------------------------------------ state */
 const store = {
@@ -256,7 +259,8 @@ async function postModel(payload) {
       || l116MockValidateLoads(payload)                                        // v1.16 temperature / projected loads
       || npMockValidateNp(payload)   // nonprismatic sections + joint panel zones
       || uhMockValidate(payload)   // B10 user-defined hinges
-      || ptMockValidate(payload);   // PT tendons / hyperstatic cases
+      || ptMockValidate(payload)   // PT tendons / hyperstatic cases
+      || pfMockValidateModel(payload);   // plot functions: TH output_requests
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -8506,6 +8510,7 @@ async function boot() {
   try { npInitNp(window.__sky); } catch (err) { console.error("nonprismatic / panel zone init failed", err); }   // NP sections + joint panel zones
   try { uhInitUserHinges(window.__sky); } catch (err) { console.error("user hinges init failed", err); }   // B10 user-defined hinges + hinge results
   try { ptInitTendons(window.__sky); } catch (err) { console.error("PT tendons init failed", err); }   // PT tendons + hyperstatic case
+  try { pfInitPlotFn(window.__sky); } catch (err) { console.error("plot functions init failed", err); }   // Display > Plot Functions / Story Response / 3D force diagrams
 }
 
 boot();

@@ -1071,6 +1071,8 @@ export class Viewer3D {
     if (this.uhOverlay) { try { this.uhOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
     // PT hook — dashed magenta tendon polylines (js/tendons.js)
     if (this.ptOverlay && !overlayActive) { try { this.ptOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
+    // Plot-functions hook — 3D force/stress diagrams + reaction arrows (js/plotfn.js)
+    if (this.pfOverlay) { try { this.pfOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
 
     // ---- axis triad
     this._renderTriad(ctx, w, h);

@@ -267,6 +267,11 @@ export function initEtabs(sky) {
       // Groups — highlight groups; per-stage staged results (js/groups.js, js/stagedata.js)
       { label: "Show Group…", act: "dis-group", hint: "highlight", fn: () => sky.openShowGroup && sky.openShowGroup() },
       { label: "Staged Construction Stages…", act: "dis-stages", hint: "per stage", fn: () => sky.openStageResults && sky.openStageResults() },
+      // Plot functions / story response plots / 3D force diagrams (js/plotfn.js)
+      { label: "Show Plot Functions…", act: "dis-pf-plotfn", hint: "TH · hysteresis · floor spectra", fn: () => sky.openPlotFunctions && sky.openPlotFunctions() },
+      { label: "Story Response Plots…", act: "dis-pf-story", hint: "disp · drift · shear · OTM", fn: () => sky.openStoryResponse && sky.openStoryResponse() },
+      { label: "Force/Stress Diagrams (3D)…", act: "dis-pf-forces3d", hint: "M3 · V2 · P · reactions", fn: () => sky.openForces3d && sky.openForces3d() },
+      { label: "Force Diagrams in 3D View", act: "dis-pf-forces3d-toggle", check: () => !!(sky.forces3d && sky.forces3d.on()), fn: () => sky.forces3d && sky.forces3d.toggle() },
       { sep: true },
       { label: "Story Drifts & Shears", act: "dis-story", fn: () => showResult("story") },
       { label: "Modal", act: "dis-modal", fn: () => showResult("modal") },
