@@ -328,6 +328,8 @@ export class ElevEditor {
     }
     // Groups hook — Show Group highlight (js/groups.js)
     if (this.grpOverlay) { try { this.grpOverlay(this); } catch (e) { console.error(e); } }
+    // B10 hook — user hinge dots / hinge states (js/uhdlg.js)
+    if (this.uhOverlay) { try { this.uhOverlay(this); } catch (e) { console.error(e); } }
   }
 
   /** Opening rectangle of a wall in (s, z) space (bilinear on corners). */

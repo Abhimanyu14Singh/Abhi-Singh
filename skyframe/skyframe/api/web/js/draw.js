@@ -465,6 +465,8 @@ export class PlanEditor {
     }
     // Groups hook — Show Group highlight (js/groups.js)
     if (this.grpOverlay) { try { this.grpOverlay(this); } catch (e) { console.error(e); } }
+    // B10 hook — user hinge dots / hinge states (js/uhdlg.js)
+    if (this.uhOverlay) { try { this.uhOverlay(this); } catch (e) { console.error(e); } }
   }
 
   /** Links visible on the current story plan (both endpoint z within span). */

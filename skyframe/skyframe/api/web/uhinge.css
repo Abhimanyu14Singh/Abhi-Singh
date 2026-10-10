@@ -1,0 +1,85 @@
+/* SkyFrame — user-defined hinges: Frame Hinge Properties, Assign Frame
+   Hinges / Overwrites, Hinge Results (loaded by js/uhdlg.js). App tokens
+   only, so dark / light themes follow automatically. */
+
+#uhPropsDlg .modal, #uhResultsDlg .modal { max-width: min(1080px, 96vw); }
+.uh-grid-2 { grid-template-columns: 200px minmax(0, 1fr); }
+.uh-top { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.uh-fld { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text-2); min-width: 0; }
+.uh-fld > span { font-size: 11px; color: var(--text-3); }
+.uh-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.uh-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.uh-col .dlg-group { margin: 0; }
+.uh-bbt { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+.uh-bbt-row { display: grid; grid-template-columns: 26px minmax(0, 1fr) minmax(0, 1fr); gap: 6px; align-items: center; }
+.uh-bbt-row.head { font-size: 11px; color: var(--text-3); }
+.uh-bbt-row input { min-width: 0; }
+.uh-sf-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 3px 0; font-size: 12px; }
+.uh-sf-row input[type="number"] { width: 110px; }
+.uh-sf-h { min-width: 74px; color: var(--text-2); font-weight: 600; font-size: 11.5px; }
+.uh-acc-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.uh-acc-row input { min-width: 0; width: 100%; }
+.uh-hp-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.uh-hp-row input { min-width: 0; width: 100%; }
+.uh-plot-box { min-height: 120px; }
+.uh-plot, .uh-shape { width: 100%; height: auto; display: block; }
+.uh-plot-bg { fill: var(--surface-2); stroke: var(--border); }
+.uh-grid { stroke: var(--border); stroke-width: .6; }
+.uh-axis { stroke: var(--text-3); stroke-width: 1; stroke-opacity: .7; }
+.uh-tick { fill: var(--text-3); font-size: 10px; font-variant-numeric: tabular-nums; }
+.uh-bb { fill: none; stroke: var(--amber); stroke-width: 2; stroke-linejoin: round; }
+.uh-bb-tail { fill: none; stroke: var(--amber); stroke-width: 1.4; stroke-dasharray: 4 3; opacity: .7; }
+.uh-bb-pt { fill: var(--amber); stroke: var(--surface-1); stroke-width: 1; }
+.uh-bb-pt.uh-neg { opacity: .7; }
+.uh-pt-lbl { fill: var(--text-2); font-weight: 600; }
+.uh-acc { stroke-width: 1.2; stroke-dasharray: 3 3; }
+.uh-acc-IO { stroke: #3b82f6; fill: #3b82f6; }
+.uh-acc-LS { stroke: #22c55e; fill: #22c55e; }
+.uh-acc-CP { stroke: #ef4444; fill: #ef4444; }
+.uh-acc-lbl { font-weight: 600; }
+.uh-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--text-3); align-items: center; }
+.uh-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.uh-sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+.uh-sw-bb { background: var(--amber); border-radius: 2px; height: 3px; width: 14px; }
+.uh-sw-tail { border-top: 2px dashed var(--amber); border-radius: 0; height: 0; width: 14px; }
+
+/* assign */
+.uh-asn-table { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 4px 22px; }
+.uh-asn-table.is-off { opacity: .55; }
+.uh-asn-row { display: grid; grid-template-columns: minmax(0, 1.4fr) 120px 90px 28px; gap: 8px; align-items: center; }
+.uh-asn-row.head { font-size: 11px; color: var(--text-3); }
+.uh-asn-row select, .uh-asn-row input { min-width: 0; }
+.uh-asn-btns { margin-left: 22px; }
+.uh-asn-dot circle { fill: #d946ef; stroke: var(--surface-1); stroke-width: 1.2; }
+.uh-ov-body { display: flex; flex-direction: column; gap: 6px; padding: 4px 0 0 22px; }
+
+/* results */
+.uh-res-top { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: flex-end; margin-bottom: 6px; }
+.uh-res-slider { flex: 1 1 220px; }
+.uh-res-top select { width: auto; max-width: 100%; }
+.uh-res-slider input { width: 100%; }
+.uh-stepnum { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; min-width: 140px; }
+.uh-res-legend { margin: 2px 0 8px; }
+.uh-chip { padding: 2px 6px; border: 1px solid var(--border); border-radius: 10px; }
+.uh-chip b { color: var(--text-1); font-variant-numeric: tabular-nums; }
+.uh-res-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.uh-res-shape { border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
+.uh-res-plot { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.uh-ghost { stroke: var(--text-3); stroke-width: 1; stroke-dasharray: 4 3; opacity: .55; }
+.uh-defl { fill: none; stroke: var(--accent); stroke-width: 2.2; stroke-linejoin: round; stroke-linecap: round; }
+.uh-sdot { stroke: var(--surface-1); stroke-width: 1.4; cursor: pointer; }
+.uh-sdot.is-sel { stroke: var(--text-1); stroke-width: 2.2; }
+.uh-hist { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-linejoin: round; }
+.uh-cur { stroke: var(--text-1); stroke-width: 1.6; }
+.uh-mk-pt circle { fill: var(--amber); }
+.uh-mk-acc circle { stroke: none; }
+.uh-res-tbl { max-height: 30vh; margin-top: 6px; }
+.uh-state-tbl tr[data-i] { cursor: pointer; }
+.uh-state-tbl tr.is-sel td { background: var(--accent-ghost); }
+.uh-state { display: inline-block; padding: 1px 7px; border-radius: 9px; color: #0b0f14; font-weight: 600; font-size: 11px; }
+.uh-state[data-state=">CP"], .uh-state[data-state="C-D"], .uh-state[data-state="D-E"], .uh-state[data-state=">E"], .uh-state[data-state="B-IO"] { color: #fff; }
+
+@media (max-width: 760px) {
+  .uh-cols, .uh-res-grid, .uh-grid-2 { grid-template-columns: minmax(0, 1fr); }
+  .uh-hp-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

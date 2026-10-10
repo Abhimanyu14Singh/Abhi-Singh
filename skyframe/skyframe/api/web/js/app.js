@@ -63,6 +63,9 @@ import { mockValidateLoads116 as l116MockValidateLoads } from "./mock_loads116.j
 // Nonprismatic sections + per-joint panel zones (js/npsect.js, js/mock_np.js)
 import { initNp as npInitNp } from "./npsect.js";
 import { mockValidateNp as npMockValidateNp } from "./mock_np.js";
+// B10 — user-defined plastic hinges: properties / assign / overwrites / hinge results (aliased imports)
+import { initUserHinges as uhInitUserHinges } from "./uhdlg.js";
+import { mockValidateUserHinges as uhMockValidate } from "./mock_userhinge.js";
 
 /* ------------------------------------------------ state */
 const store = {
@@ -248,7 +251,8 @@ async function postModel(payload) {
       || grpMockValidateGroups(payload)                                        // Groups / stage lists / cut groups
       || b9MockValidate(payload)                                               // B9-B11 auto mesh / stations / springs / links
       || l116MockValidateLoads(payload)                                        // v1.16 temperature / projected loads
-      || npMockValidateNp(payload);                                            // nonprismatic sections + joint panel zones
+      || npMockValidateNp(payload)   // nonprismatic sections + joint panel zones
+      || uhMockValidate(payload);   // B10 user-defined hinges
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -1908,6 +1912,7 @@ function renderProps() {
   if (window.__sky && window.__sky.g2DecorateProps) window.__sky.g2DecorateProps(box);   // G2: polygon geometry + insertion point
   if (window.__sky && window.__sky.b9DecorateProps) window.__sky.b9DecorateProps(box, { members, links, springs });   // B9/B11: auto mesh · stations · springs · link hysteresis
   if (window.__sky && window.__sky.npDecorateProps) window.__sky.npDecorateProps(box, { members });   // nonprismatic variation (js/npsect.js)
+  if (window.__sky && window.__sky.uhDecorateProps) window.__sky.uhDecorateProps(box, { members });   // B10: user-defined hinges
 
   const on = (id, ev, fn) => { const n = $(id); if (n) n.addEventListener(ev, fn); };
 
@@ -8494,6 +8499,7 @@ async function boot() {
   try { l116InitLoads(window.__sky); } catch (err) { console.error("v1.16 loads init failed", err); }
 
   try { npInitNp(window.__sky); } catch (err) { console.error("nonprismatic / panel zone init failed", err); }   // NP sections + joint panel zones
+  try { uhInitUserHinges(window.__sky); } catch (err) { console.error("user hinges init failed", err); }   // B10 user-defined hinges + hinge results
 }
 
 boot();

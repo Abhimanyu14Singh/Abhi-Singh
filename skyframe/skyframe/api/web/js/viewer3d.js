@@ -1067,6 +1067,8 @@ export class Viewer3D {
     if (this.grpOverlay && !overlayActive) { try { this.grpOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
     // Nonprismatic taper ribbons + badges, panel-zone markers (js/npsect.js)
     if (this.npOverlay && !overlayActive) { try { this.npOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
+    // B10 hook — user hinge dots / hinge-state display (js/uhdlg.js, js/uhresults.js)
+    if (this.uhOverlay) { try { this.uhOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
 
     // ---- axis triad
     this._renderTriad(ctx, w, h);

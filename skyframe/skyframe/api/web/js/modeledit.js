@@ -55,7 +55,8 @@ export function normalizeModel(m) {
   // v0.19 — ASCE 41 auto-hinge assignment (absent = "none");
   // v0.21 — "fiber_pmm" fiber P-M-M hinges (designer sections)
   for (const mm of m.members)
-    if (mm.hinges !== "auto_m3" && mm.hinges !== "fiber_pmm") mm.hinges = "none";
+    if (mm.hinges !== "auto_m3" && mm.hinges !== "fiber_pmm"
+        && !Array.isArray(mm.hinges)) mm.hinges = "none";   // B10: keep user hinge lists [{property, relative_distance}]
   for (const p of Object.values(m.patterns)) {
     p.member_loads = p.member_loads || [];
     p.area_loads = p.area_loads || [];

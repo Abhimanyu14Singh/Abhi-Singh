@@ -151,6 +151,7 @@ export function initEtabs(sky) {
 
       // B9 — named point-spring properties (js/springdlg.js)
       { label: "Spring Properties · Point Springs…", act: "def-b9-springprops", hint: "linear · multilinear · gap", fn: () => sky.openSpringProperties && sky.openSpringProperties() },
+      { label: "Frame Hinge Properties…", act: "def-uh-hingeprops", hint: "user backbones A–E", fn: () => sky.openHingeProperties && sky.openHingeProperties() },   // B10 (js/uhdlg.js)
       { sep: true },
       { label: "Code Tools (ASCE 7 · NBCC · EC)…", act: "def-codetools", fn: () => gotoLoads("ls-codetools") },
     ]],
@@ -192,6 +193,9 @@ export function initEtabs(sky) {
       // B9 — frame auto mesh + output stations (js/framemesh.js)
       { label: "Frame · Frame Auto Mesh Options…", act: "asn-b9-automesh", hint: "joints · intersections", fn: () => sky.openFrameAutoMesh && sky.openFrameAutoMesh() },
       { label: "Frame · Output Stations…", act: "asn-b9-stations", fn: () => sky.openOutputStations && sky.openOutputStations() },
+      // B10 — user-defined hinges (js/uhdlg.js)
+      { label: "Frame · Hinges (User-Defined)…", act: "asn-uh-hinges", hint: "property · rel. distance", fn: () => sky.openFrameHinges && sky.openFrameHinges("hinges") },
+      { label: "Frame · Hinge Overwrites…", act: "asn-uh-overwrites", fn: () => sky.openFrameHinges && sky.openFrameHinges("overwrites") },
       { sep: true },
       { label: "Shell · Section", act: "asn-ssec", fn: () => assignHint("shell section") },
       { label: "Shell · Area Spring", act: "asn-sspring", fn: () => assignHint("area spring") },
@@ -269,6 +273,7 @@ export function initEtabs(sky) {
       { label: "Time History", act: "dis-th", fn: () => showResult("th") },
       { label: "Pushover + Performance", act: "dis-pushover", fn: () => showResult("pushover") },
       { label: "Nonlinear Static Results…", act: "dis-nls", hint: "history · hinges", fn: () => sky.openNlsResults && sky.openNlsResults() },   // G3
+      { label: "Hinge Results…", act: "dis-uh-hinges", hint: "states · step slider", fn: () => sky.openHingeResults && sky.openHingeResults() },   // B10 (js/uhresults.js)
       { label: "Frequency Domain (Steady State · PSD)", act: "dis-freq", fn: () => { showResult("freq"); sky.freq && sky.freq.renderFreq(); } },
       { label: "Buckling", act: "dis-buckling", fn: () => showResult("buckling") },
       { label: "Load Takedown", act: "dis-takedown", fn: () => showResult("takedown") },
