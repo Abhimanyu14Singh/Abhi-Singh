@@ -935,6 +935,32 @@ def create_app() -> Flask:
             return jsonify({"error": str(exc)}), 400
         return jsonify(model.to_dict())
 
+    # ------------------------------- ETABS Edit utilities (core/edit.py)
+    @app.post("/api/edit/<op>")
+    def edit_model_op(op: str):
+        """Edit > Replicate / Divide / Merge / Align / Move / Extrude /
+        Join / Delete: ``{selection, params, model?, dry_run?}`` ->
+        ``{model, summary}`` (400 on bad input; the stored model is
+        replaced unless ``dry_run``)."""
+        from skyframe.core.edit import EDIT_OPS, apply_edit
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        if op not in EDIT_OPS:
+            return jsonify({"error": f"unknown edit op {op!r} (one of "
+                                     f"{list(EDIT_OPS)})"}), 400
+        try:
+            base = (BuildingModel.from_dict(body["model"])
+                    if body.get("model") is not None else _state["model"])
+            d, summary = apply_edit(base.to_dict(), op, body.get("selection"),
+                                    body.get("params"))
+            model = BuildingModel.from_dict(d)
+        except (ValueError, KeyError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        if not body.get("dry_run"):
+            _state["model"] = model
+        return jsonify({"model": model.to_dict(), "summary": summary})
+
     # ------------------------------------------ v0.14: grid system convenience
     @app.post("/api/grid")
     def add_grid():

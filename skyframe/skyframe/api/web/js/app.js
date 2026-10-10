@@ -72,6 +72,8 @@ import { mockValidateTendons as ptMockValidate } from "./mock_tendons.js";
 // Plot functions / story response plots / 3D force diagrams (Display menu)
 import { initPlotFn as pfInitPlotFn } from "./plotfn.js";
 import { pfMockValidate as pfMockValidateModel } from "./mock_plotfn.js";
+// ETABS Edit / Select menus + Undo/Redo history (aliased import; js/editmenu.js)
+import { initEditMenu as edInitEditMenu } from "./editmenu.js";
 
 /* ------------------------------------------------ state */
 const store = {
@@ -1199,6 +1201,7 @@ const openUnitsDialog = () => DLG.openUnitsDialog(dlgCtx());
 function clearDirty() {
   store.dirty = false;
   syncDirtyUI();
+  document.dispatchEvent(new CustomEvent("sky:model-synced"));     // Edit: record backend-echo adoptions in undo history (js/history.js)
 }
 
 /** File chip shows the saved-model name (+ amber dot when dirty). When no
@@ -3405,6 +3408,7 @@ async function discardModel() {
     if (store.mode === "loads") { loadsEditor.render(); syncLoadsNav(); }
     syncUnitsFromModel();                                          // v1.13
     document.dispatchEvent(new CustomEvent("sky:model-changed"));
+    document.dispatchEvent(new CustomEvent("sky:model-replaced"));   // Edit: discard → reset undo history (js/history.js)
     toast("Model reloaded", "Local edits discarded", "info", 4000);
   } catch (err) {
     toast("Reload failed", err.message, "error");
@@ -3458,6 +3462,7 @@ function adoptModel(modelDict, fileName) {
   syncUnitsFromModel();                                            // v1.13
   document.dispatchEvent(new CustomEvent("sky:model-changed"));
   document.dispatchEvent(new CustomEvent("sky:results-changed"));
+  document.dispatchEvent(new CustomEvent("sky:model-replaced"));   // Edit: new model → reset undo history (js/history.js)
 }
 
 /* ---- tiny promise-based confirm modal */
@@ -8511,6 +8516,7 @@ async function boot() {
   try { uhInitUserHinges(window.__sky); } catch (err) { console.error("user hinges init failed", err); }   // B10 user-defined hinges + hinge results
   try { ptInitTendons(window.__sky); } catch (err) { console.error("PT tendons init failed", err); }   // PT tendons + hyperstatic case
   try { pfInitPlotFn(window.__sky); } catch (err) { console.error("plot functions init failed", err); }   // Display > Plot Functions / Story Response / 3D force diagrams
+  try { edInitEditMenu(window.__sky); } catch (err) { console.error("edit menu init failed", err); }   // Edit / Select menus + Undo/Redo
 }
 
 boot();
