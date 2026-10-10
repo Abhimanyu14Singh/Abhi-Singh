@@ -481,15 +481,16 @@ def test_asce7_22_minimum_cs_with_large_s1():
 
 def test_asce7_22_multi_period_spectrum():
     """MPRS points (0, 0.4) (0.2, 1.0) (0.5, 1.0) (1.0, 0.6) (2.0, 0.3):
-    SDS = 0.9 max Sa = 0.9.  Ta = 0.37016: descending envelope max Sa = 1.0
-    -> Sa_ELF = min(0.9, 1.0) = 0.9 -> V = 0.9/8*2800 = 315 kN.  With
-    Ct = 0.1: Ta = 0.1*10^0.9 = 0.794328, Sa = 1.0 - 0.4*0.294328/0.5 =
-    0.764537 -> Cs = 0.0955672, V = 267.588 kN."""
+    SDS = 0.9 max Sa = 0.9 (§21.4).  Ta = 0.37016 >= period of max Sa
+    (0.2 s) -> ASCE 7-22 Method 1 Eq. 12.8-2 uses Sa(T) = 1.0 (no SDS
+    cap) -> V = 1.0/8*2800 = 350 kN.  With Ct = 0.1: Ta = 0.1*10^0.9 =
+    0.794328, Sa = 1.0 - 0.4*0.294328/0.5 = 0.764537 -> Cs = 0.0955672,
+    V = 267.588 kN."""
     pts = [[0, 0.4], [0.2, 1.0], [0.5, 1.0], [1.0, 0.6], [2.0, 0.3]]
     m = _bldg()
     s = al.compute(m, "asce7_22", SD1=0.6, R=8.0, mprs=pts)
     assert s["SDS"] == pytest.approx(0.9, rel=1e-12)
-    assert s["V"] == pytest.approx(315.0, rel=1e-12)
+    assert s["V"] == pytest.approx(350.0, rel=1e-12)
     s2 = al.compute(m, "asce7_22", SD1=0.6, R=8.0, mprs=pts, Ct=0.1)
     assert s2["T"] == pytest.approx(0.794328, rel=1e-5)
     assert s2["Sa"] == pytest.approx(0.764537, rel=1e-5)
