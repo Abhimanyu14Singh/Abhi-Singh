@@ -1281,6 +1281,8 @@ export function renameFrameSection(model, oldName, newName) {
   model.sections[newName] = { ...model.sections[oldName], name: newName };
   delete model.sections[oldName];
   for (const m of model.members) if (m.section === oldName) m.section = newName;
+  // nonprismatic sections: retarget segment references (js/npsect.js)
+  for (const s of Object.values(model.sections)) for (const g of (s && s.kind === "nonprismatic" && s.segments) || []) { if (g.start_section === oldName) g.start_section = newName; if (g.end_section === oldName) g.end_section = newName; }
   return true;
 }
 
@@ -1302,7 +1304,8 @@ export function renameMaterial(model, oldName, newName) {
 }
 
 export function sectionInUse(model, name) {
-  return model.members.some(m => m.section === name);
+  return model.members.some(m => m.section === name)
+    || Object.values(model.sections).some(s => s && s.kind === "nonprismatic" && (s.segments || []).some(g => g.start_section === name || g.end_section === name));   // referenced by a nonprismatic section (js/npsect.js)
 }
 export function shellSectionInUse(model, name) {
   return model.shells.some(s => s.section === name);

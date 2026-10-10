@@ -119,6 +119,7 @@ export function initEtabs(sky) {
     ["Define", [
       { label: "Materials…", act: "def-materials", fn: () => sky.openSectionMgr() },
       { label: "Frame Sections…", act: "def-frame", fn: () => sky.openSectionMgr() },
+      { label: "Frame Sections · Add Nonprismatic…", act: "def-np-section", hint: "tapered / haunched", fn: () => sky.openNonprismatic && sky.openNonprismatic() },   // js/npsect.js
       { label: "Shell Sections…", act: "def-shell", fn: () => sky.openSectionMgr() },
       { label: "Section Designer…", act: "def-designer", hint: "polygon + rebar", fn: () => sky.openSectionDesigner() },
       { sep: true },
@@ -199,6 +200,7 @@ export function initEtabs(sky) {
       { sep: true },
       { label: "Supports / Springs", act: "asn-support", fn: () => assignHint("supports & springs") },
       // B9/B11 — joint springs with named properties (js/springdlg.js) · link hysteresis (js/linkhyst.js)
+      { label: "Joint · Panel Zone…", act: "asn-np-jpanelzone", hint: "per-joint override", fn: () => sky.openPanelZone && sky.openPanelZone() },   // js/npsect.js
       { label: "Joint · Springs…", act: "asn-b9-jsprings", hint: "named property · angle", fn: () => sky.openJointSprings && sky.openJointSprings() },
       { label: "Link · Link Properties…", act: "asn-b9-linkprops", hint: "hysteresis types", fn: () => sky.openLinkProperties && sky.openLinkProperties() },
       { label: "Frame Loads", act: "asn-fload", fn: () => assignHint("member loads") },

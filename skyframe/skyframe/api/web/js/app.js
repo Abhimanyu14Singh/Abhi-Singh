@@ -60,6 +60,10 @@ import { mockValidateB9 as b9MockValidate } from "./mock_b9.js";
 import { initLoads116 as l116InitLoads } from "./loads116.js";
 import { mockValidateLoads116 as l116MockValidateLoads } from "./mock_loads116.js";
 
+// Nonprismatic sections + per-joint panel zones (js/npsect.js, js/mock_np.js)
+import { initNp as npInitNp } from "./npsect.js";
+import { mockValidateNp as npMockValidateNp } from "./mock_np.js";
+
 /* ------------------------------------------------ state */
 const store = {
   model: null,
@@ -243,7 +247,8 @@ async function postModel(payload) {
     const bad = mockValidateAssign(payload) || g2MockValidatePoly(payload) || g3MockNlsValidate(payload)   // assign / G2 polygon + insertion / G3 NLS + diaphragms
       || grpMockValidateGroups(payload)                                        // Groups / stage lists / cut groups
       || b9MockValidate(payload)                                               // B9-B11 auto mesh / stations / springs / links
-      || l116MockValidateLoads(payload);                                       // v1.16 temperature / projected loads
+      || l116MockValidateLoads(payload)                                        // v1.16 temperature / projected loads
+      || npMockValidateNp(payload);                                            // nonprismatic sections + joint panel zones
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -1902,6 +1907,7 @@ function renderProps() {
   AS.decorateProps(box);                         // joint / concentrated / shell loads of the selection
   if (window.__sky && window.__sky.g2DecorateProps) window.__sky.g2DecorateProps(box);   // G2: polygon geometry + insertion point
   if (window.__sky && window.__sky.b9DecorateProps) window.__sky.b9DecorateProps(box, { members, links, springs });   // B9/B11: auto mesh · stations · springs · link hysteresis
+  if (window.__sky && window.__sky.npDecorateProps) window.__sky.npDecorateProps(box, { members });   // nonprismatic variation (js/npsect.js)
 
   const on = (id, ev, fn) => { const n = $(id); if (n) n.addEventListener(ev, fn); };
 
@@ -2892,6 +2898,8 @@ function renderSectionMgr() {
     const del = mgrDel(used, used ? "In use by members" : "Delete section", () => {
       delete m.sections[name]; markDirty(); renderSectionMgr();
     });
+    // nonprismatic sections get their own row (js/npsect.js)
+    if (s.kind === "nonprismatic" && window.__sky && window.__sky.npSectionRow) { frameBox.appendChild(window.__sky.npSectionRow(name, s)); continue; }
     const isLibrary = s.shape === "W" || !(s.b > 0 && s.h > 0);
     if (!isLibrary) {           // rectangular — b/h editable
       frameBox.appendChild(mgrRow([
@@ -8484,6 +8492,8 @@ async function boot() {
   // v1.16 — temperature / distributed-projected frame loads + Auto Lateral Load dialogs (js/loads116.js)
   window.__sky.l116PostModel = postModel; window.__sky.l116CodeToolLive = codeToolLive;
   try { l116InitLoads(window.__sky); } catch (err) { console.error("v1.16 loads init failed", err); }
+
+  try { npInitNp(window.__sky); } catch (err) { console.error("nonprismatic / panel zone init failed", err); }   // NP sections + joint panel zones
 }
 
 boot();
