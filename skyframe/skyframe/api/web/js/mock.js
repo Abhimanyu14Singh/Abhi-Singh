@@ -23,6 +23,8 @@ import { mockAugmentB9 as b9MockAugment } from "./mock_b9.js";
 import { mockNpAdjustResults as npMockAdjustResults } from "./mock_np.js";   // nonprismatic deflections + joint panel zones
 // B10 — user-defined hinge result histories in mock results (js/mock_userhinge.js)
 import { mockAugmentUserHinges as uhMockAugment } from "./mock_userhinge.js";
+// PT tendons — results.tendons (P(x) after losses) + results.hyperstatic (js/mock_tendons.js)
+import { mockAugmentTendons as ptMockAugment } from "./mock_tendons.js";
 const G = 9.80665;
 
 function mulberry32(seed) {
@@ -3309,6 +3311,7 @@ export function mockResults(model) {
   b9MockAugment(model, r);                        // B9: variable output stations (js/mock_b9.js)
   npMockAdjustResults(model, r);                  // nonprismatic sections + joint panel zones (js/mock_np.js)
   uhMockAugment(model, r);                        // B10: user hinge histories (js/mock_userhinge.js)
+  ptMockAugment(model, r);                        // PT tendons + hyperstatic cases (js/mock_tendons.js)
   return r;
 }
 

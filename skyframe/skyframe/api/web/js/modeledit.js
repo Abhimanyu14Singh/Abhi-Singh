@@ -6,6 +6,9 @@ import * as CXR from "./combo_refs.js";        // extended combos / P-Delta / TH
 // Groups — keep groups / stage-op pattern refs consistent on erase & rename (aliased)
 import { onObjectErased as grpOnObjectErased, stagePatternRefs as grpStagePatternRefs,
   renamePatternInStages as grpRenamePatternInStages } from "./groups_model.js";
+// PT tendons — pattern / static-case refs + host erase (js/tendon_refs.js, aliased)
+import { ptPatternRefs as ptRefsPattern, ptRenamePattern as ptRefsRenamePattern, ptCaseRefs as ptRefsCase,
+  ptRenameCase as ptRefsRenameCase, ptOnObjectErased as ptRefsOnErased } from "./tendon_refs.js";
 
 const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
 const near = (a, b, tol = 1e-6) =>
@@ -354,6 +357,7 @@ export function allAnalysisCases(m) {
   push(m.staged_cases, "Staged Construction", "staged");
   push(m.steady_state_cases, "Steady State", "steady_state");       // frequency domain
   push(m.psd_cases, "Power Spectral Density", "psd");
+  push(m.hyperstatic_cases, "Hyperstatic", "hyperstatic");          // PT (js/tendons.js)
   return out;
 }
 
@@ -1219,6 +1223,7 @@ export function eraseElement(model, ref) {
       p.area_loads = (p.area_loads || []).filter(l => l.region_uid !== ref.uid);
   }
   if (removed) grpOnObjectErased(model, ref);   // Groups: drop the erased object from every group
+  if (removed) ptRefsOnErased(model, ref);      // PT: drop tendons hosted by the erased object
   return removed;
 }
 
@@ -1376,7 +1381,8 @@ export function patternRefs(model, name) {
     .filter(pc => pc.load_distribution === "pattern" && pc.pattern === name).map(pc => pc.name),
   ...CXR.patternRefsExtra(model, name),   // P-Delta options + TH pattern components
   ...Object.entries(model.nonlinear_static_cases || {}).filter(([, c]) => (c.loads || []).some(l => l.pattern === name)).map(([n]) => n),   // G3
-  ...grpStagePatternRefs(model, name)];     // Groups: staged "load" operations
+  ...grpStagePatternRefs(model, name),      // Groups: staged "load" operations
+  ...ptRefsPattern(model, name)];           // PT: tendons write into the pattern
 }
 
 export function addPattern(model, base = "PAT") {
@@ -1406,6 +1412,7 @@ export function renamePattern(model, oldName, newName) {
   for (const c of Object.values(model.nonlinear_static_cases || {})) for (const l of c.loads || []) if (l.pattern === oldName) l.pattern = newName;   // G3
 
   grpRenamePatternInStages(model, oldName, newName);   // Groups: staged "load" operations
+  ptRefsRenamePattern(model, oldName, newName);        // PT: tendon patterns follow
   return true;
 }
 
@@ -1430,6 +1437,7 @@ export function caseRefs(model, name) {
     ...Object.values(model.pushover_cases || {})
       .filter(pc => pc.start_from === name)
       .map(pc => `pushover ${pc.name}`),
+    ...ptRefsCase(model, name),   // PT: hyperstatic cases built on this static case
   ];
 }
 
@@ -1455,6 +1463,7 @@ export function renameCase(model, oldName, newName) {
   for (const pc of Object.values(model.pushover_cases || {}))
     if (pc.start_from === oldName) pc.start_from = newName;
   notRunRename(model, oldName, newName);   // v1.13 — cases_not_run follows
+  ptRefsRenameCase(model, oldName, newName);   // PT: hyperstatic cases follow
   return true;
 }
 

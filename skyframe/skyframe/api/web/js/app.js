@@ -66,6 +66,9 @@ import { mockValidateNp as npMockValidateNp } from "./mock_np.js";
 // B10 — user-defined plastic hinges: properties / assign / overwrites / hinge results (aliased imports)
 import { initUserHinges as uhInitUserHinges } from "./uhdlg.js";
 import { mockValidateUserHinges as uhMockValidate } from "./mock_userhinge.js";
+// PT tendons + hyperstatic case — draw / profile / properties / results (aliased imports)
+import { initTendons as ptInitTendons } from "./tendons.js";
+import { mockValidateTendons as ptMockValidate } from "./mock_tendons.js";
 
 /* ------------------------------------------------ state */
 const store = {
@@ -252,7 +255,8 @@ async function postModel(payload) {
       || b9MockValidate(payload)                                               // B9-B11 auto mesh / stations / springs / links
       || l116MockValidateLoads(payload)                                        // v1.16 temperature / projected loads
       || npMockValidateNp(payload)   // nonprismatic sections + joint panel zones
-      || uhMockValidate(payload);   // B10 user-defined hinges
+      || uhMockValidate(payload)   // B10 user-defined hinges
+      || ptMockValidate(payload);   // PT tendons / hyperstatic cases
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -1913,6 +1917,7 @@ function renderProps() {
   if (window.__sky && window.__sky.b9DecorateProps) window.__sky.b9DecorateProps(box, { members, links, springs });   // B9/B11: auto mesh · stations · springs · link hysteresis
   if (window.__sky && window.__sky.npDecorateProps) window.__sky.npDecorateProps(box, { members });   // nonprismatic variation (js/npsect.js)
   if (window.__sky && window.__sky.uhDecorateProps) window.__sky.uhDecorateProps(box, { members });   // B10: user-defined hinges
+  if (window.__sky && window.__sky.ptDecorateProps) window.__sky.ptDecorateProps(box, { members, shells });   // PT tendons hosted by the selection
 
   const on = (id, ev, fn) => { const n = $(id); if (n) n.addEventListener(ev, fn); };
 
@@ -8500,6 +8505,7 @@ async function boot() {
 
   try { npInitNp(window.__sky); } catch (err) { console.error("nonprismatic / panel zone init failed", err); }   // NP sections + joint panel zones
   try { uhInitUserHinges(window.__sky); } catch (err) { console.error("user hinges init failed", err); }   // B10 user-defined hinges + hinge results
+  try { ptInitTendons(window.__sky); } catch (err) { console.error("PT tendons init failed", err); }   // PT tendons + hyperstatic case
 }
 
 boot();

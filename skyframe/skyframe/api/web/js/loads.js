@@ -23,6 +23,7 @@ const accelText = arr => (arr || []).map(v => +(+U.toDisplay("accel", v)).toFixe
 
 const KIND_LABEL = { dead: "dead", live: "live", quake: "quake", other: "other",
   notional: "notional", wind: "wind" };
+KIND_LABEL.prestress = "PT";   // PT tendon patterns (js/tendons.js)
 
 export class LoadsEditor {
   /**
@@ -214,6 +215,7 @@ export class LoadsEditor {
         (nt ? ` · <b>${nt}</b> ΔT` : "");
       counts.title = `${nm} member load${nm === 1 ? "" : "s"}, ${na} area load${na === 1 ? "" : "s"}, ${ns} story force${ns === 1 ? "" : "s"}, ${nt} thermal load${nt === 1 ? "" : "s"}`;
       row.appendChild(counts);
+      if (window.__sky && window.__sky.ptDecoratePattern) window.__sky.ptDecoratePattern(row, m, name);   // PT: "PT · n tendons" badge
 
       const refs = ME.patternRefs(m, name);
       row.appendChild(this._delBtn(refs, `pattern ${name}`, () => {
