@@ -97,6 +97,8 @@ const KINDS = {
   temp:          s => [s.temp === "F" ? 1 / 1.8 : 1, s.temp === "F" ? "°F" : "°C"],
   temp_delta:    s => [s.temp === "F" ? 1 / 1.8 : 1, s.temp === "F" ? "°F" : "°C"],
   thermal_coeff: s => [s.temp === "F" ? 1.8 : 1, s.temp === "F" ? "1/°F" : "1/°C"],
+  // v1.16 — temperature gradient across a section (°C/m SI; °F/in in kip sets, per section-dimension unit)
+  temp_gradient: s => [(s.temp === "F" ? 1 / 1.8 : 1) / s.Ld, `${s.temp === "F" ? "°F" : "°C"}/${s.du}`],
   rotation:      () => [1, "rad"],
   frequency:     () => [1, "Hz"],
   period:        () => [1, "s"],

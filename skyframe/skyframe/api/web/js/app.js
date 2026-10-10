@@ -56,6 +56,9 @@ import { mockValidateGroups as grpMockValidateGroups } from "./mock_groups.js";
 // B9/B11 — frame auto mesh + output stations, named spring properties, link hysteresis types (aliased imports)
 import { initB9 as b9Init } from "./b9init.js";
 import { mockValidateB9 as b9MockValidate } from "./mock_b9.js";
+// v1.16 — temperature gradients / shell + joint temperatures / projected frame loads / auto lateral (aliased imports)
+import { initLoads116 as l116InitLoads } from "./loads116.js";
+import { mockValidateLoads116 as l116MockValidateLoads } from "./mock_loads116.js";
 
 /* ------------------------------------------------ state */
 const store = {
@@ -239,7 +242,8 @@ async function postModel(payload) {
     await new Promise(r => setTimeout(r, 300));
     const bad = mockValidateAssign(payload) || g2MockValidatePoly(payload) || g3MockNlsValidate(payload)   // assign / G2 polygon + insertion / G3 NLS + diaphragms
       || grpMockValidateGroups(payload)                                        // Groups / stage lists / cut groups
-      || b9MockValidate(payload);                                              // B9-B11 auto mesh / stations / springs / links
+      || b9MockValidate(payload)                                               // B9-B11 auto mesh / stations / springs / links
+      || l116MockValidateLoads(payload);                                       // v1.16 temperature / projected loads
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -8477,6 +8481,9 @@ async function boot() {
   try { grpInitStageData(window.__sky); } catch (err) { console.error("stage data init failed", err); }
 
   try { b9Init(window.__sky); } catch (err) { console.error("B9 init failed", err); }   // auto mesh / stations / springs / link hysteresis
+  // v1.16 — temperature / distributed-projected frame loads + Auto Lateral Load dialogs (js/loads116.js)
+  window.__sky.l116PostModel = postModel; window.__sky.l116CodeToolLive = codeToolLive;
+  try { l116InitLoads(window.__sky); } catch (err) { console.error("v1.16 loads init failed", err); }
 }
 
 boot();

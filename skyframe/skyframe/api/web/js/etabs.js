@@ -128,6 +128,7 @@ export function initEtabs(sky) {
       { label: "Groups…", act: "def-groups", hint: "staging · section cuts", fn: () => sky.openGroups && sky.openGroups() },
       { sep: true },
       { label: "Load Patterns…", act: "def-patterns", fn: () => gotoLoads("ls-patterns") },
+      { label: "Auto Lateral Loads…", act: "def-l116-autolat", hint: "ASCE 7-22 · EC8 · IS 1893 · user", fn: () => sky.openAutoLateral && sky.openAutoLateral() },   // v1.16 (js/loads116.js)
       { label: "Load Cases…", act: "def-loadcases", hint: "all types", fn: () => sky.openLoadCases() },
       { label: "Static Load Cases…", act: "def-cases", fn: () => gotoLoads("ls-cases") },
       { label: "Response-Spectrum Cases…", act: "def-rs", fn: () => gotoLoads("ls-rs") },
@@ -206,6 +207,11 @@ export function initEtabs(sky) {
       { label: "Joint Loads · Force / Moment…", act: "asn-jforce", fn: () => sky.openJointLoads && sky.openJointLoads("force") },
       { label: "Joint Loads · Ground Displacement…", act: "asn-jground", fn: () => sky.openJointLoads && sky.openJointLoads("ground") },
       { label: "Frame Loads · Concentrated…", act: "asn-fconc", hint: "force / moment", fn: () => sky.openFrameConcentrated && sky.openFrameConcentrated("moment") },
+      // v1.16 — distributed (projected) + temperature loads (js/loads116.js)
+      { label: "Frame Loads · Distributed…", act: "asn-l116-fdist", hint: "uniform / trapezoid · projected", fn: () => sky.openFrameDistributed && sky.openFrameDistributed() },
+      { label: "Frame Loads · Temperature…", act: "asn-l116-ftemp", hint: "ΔT · gradients", fn: () => sky.openFrameTemperature && sky.openFrameTemperature() },
+      { label: "Shell Loads · Temperature…", act: "asn-l116-stemp", hint: "ΔT · gradient", fn: () => sky.openShellTemperature && sky.openShellTemperature() },
+      { label: "Joint Loads · Temperature…", act: "asn-l116-jtemp", fn: () => sky.openJointTemperature && sky.openJointTemperature() },
       { label: "Shell Loads · Uniform…", act: "asn-suniform", hint: "direction · joint pattern", fn: () => sky.openShellUniform && sky.openShellUniform() },
       // G3 — named diaphragms + additional mass (js/diaphdlg.js)
       { sep: true },
