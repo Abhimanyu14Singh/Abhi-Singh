@@ -1,0 +1,54 @@
+/* SkyFrame — Plot Functions / Story Response Plots / 3D force diagrams
+   (js/plotfn.js). Loaded once by the module. */
+
+.pf-dlg .modal { width: min(1080px, 96vw); max-width: 96vw; }
+.pf-dlg .modal-body { max-height: 78vh; overflow: auto; }
+.pf-tabs { display: flex; gap: 4px; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
+.pf-tab { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--text-2);
+  padding: 6px 12px; cursor: pointer; font: inherit; }
+.pf-tab.is-active { color: var(--accent); border-bottom-color: var(--accent); }
+.pf-row { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin-bottom: 8px; }
+.pf-row label { display: inline-flex; gap: 6px; align-items: center; color: var(--text-2); white-space: nowrap; }
+.pf-row select, .pf-row input[type=text], .pf-row input[type=number] {
+  background: var(--surface-2); color: var(--text-1); border: 1px solid var(--border);
+  border-radius: 4px; padding: 3px 6px; font: inherit; }
+.pf-row input[type=number] { width: 90px; }
+.pf-grid { display: grid; grid-template-columns: 280px 1fr; gap: 12px; }
+.pf-side { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pf-side select[multiple] { width: 100%; min-height: 220px; background: var(--surface-2);
+  color: var(--text-1); border: 1px solid var(--border); border-radius: 4px; font: inherit; }
+.pf-side .pf-group { width: 100%; }
+.pf-sel-list { list-style: none; border: 1px solid var(--border); border-radius: 4px;
+  min-height: 60px; max-height: 160px; overflow: auto; background: var(--surface-2); }
+.pf-sel-list li { display: flex; align-items: center; gap: 6px; padding: 2px 6px; font-size: 12px; }
+.pf-sel-list li .pf-chip { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.pf-sel-list li span.pf-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-sel-list li button { background: none; border: 0; color: var(--text-3); cursor: pointer; }
+.pf-chart-host { position: relative; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 6px; min-height: 340px; user-select: none; }
+.pf-chart-host svg { display: block; width: 100%; height: 340px; cursor: grab; }
+.pf-chart-host svg.is-panning { cursor: grabbing; }
+.pf-chart-host .pf-axis text { fill: var(--text-3); font-size: 10px; }
+.pf-chart-host .pf-axis line, .pf-chart-host .pf-axis path { stroke: var(--border); }
+.pf-chart-host .pf-gridline { stroke: var(--border-soft); }
+.pf-chart-host .pf-zero { stroke: var(--text-3); stroke-dasharray: 3 3; opacity: .6; }
+.pf-chart-host .pf-axlabel { fill: var(--text-2); font-size: 11px; }
+.pf-chart-host .pf-readout { fill: var(--text-2); font-size: 10.5px; font-family: var(--mono); }
+.pf-chart-host .pf-limit { stroke: var(--amber); stroke-dasharray: 6 4; stroke-width: 1.4; }
+.pf-chart-host .pf-limit-label { fill: var(--amber); font-size: 10.5px; }
+.pf-chart-host .pf-story-label { fill: var(--text-2); font-size: 11px; }
+.pf-chart-host .pf-value { fill: var(--text-2); font-size: 10px; font-family: var(--mono); }
+.pf-chart-tools { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; }
+.pf-chart-tools button { background: var(--surface-3); border: 1px solid var(--border); color: var(--text-2);
+  border-radius: 4px; padding: 1px 7px; font-size: 11px; cursor: pointer; }
+.pf-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 6px 4px 0; font-size: 11.5px; color: var(--text-2); }
+.pf-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+.pf-empty { padding: 60px 20px; text-align: center; color: var(--text-3); }
+.pf-note { color: var(--text-3); font-size: 11.5px; }
+.pf-req textarea { width: 100%; min-height: 70px; background: var(--surface-2); color: var(--text-1);
+  border: 1px solid var(--border); border-radius: 4px; font-family: var(--mono); font-size: 12px; padding: 4px 6px; }
+.pf-req .pf-checks { display: flex; flex-wrap: wrap; gap: 4px 12px; max-height: 110px; overflow: auto;
+  border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; background: var(--surface-2); }
+.pf-req h4 { margin: 10px 0 4px; font-size: 12px; color: var(--text-2); font-weight: 600; }
+.pf-badge { display: inline-block; padding: 0 6px; border-radius: 8px; font-size: 10.5px;
+  background: var(--accent-ghost); color: var(--accent); }

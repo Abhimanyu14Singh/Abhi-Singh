@@ -35,6 +35,8 @@ from skyframe.core.nonlinear_static import (  # noqa: F401  (re-exported)
     validate_nonlinear_static)
 
 from skyframe.core import diaphragms as _dia  # multi-diaphragm / add. mass
+from skyframe.core.plotfn import (normalize as _plotfn_norm,  # plot fns
+                                  validate as _plotfn_validate)
 from skyframe.core.nonprismatic import member_area as _np_area
 
 from skyframe.core import thermal_ext as _thx  # v1.16 temperature / projected
@@ -1320,6 +1322,10 @@ class TimeHistoryCase:
     # (skyframe.core.th_components; None = legacy single record, key
     # omitted from to_dict)
     components: Optional[List[dict]] = None
+    # plot functions (skyframe.core.plotfn): optional full time-series
+    # output request {"joints", "links", "frames", "hinges"}; None = legacy
+    # (nothing extra recorded, key omitted from to_dict)
+    output_requests: Optional[dict] = None
 
     def to_dict(self) -> dict:
         d = {"name": self.name, "direction": self.direction,
@@ -1339,6 +1345,8 @@ class TimeHistoryCase:
             d["energy"] = True
         if self.components is not None:
             d["components"] = [dict(c) for c in self.components]
+        if self.output_requests is not None:              # plot functions
+            d["output_requests"] = _plotfn_norm(self.output_requests)
         return d
 
 
@@ -2375,7 +2383,8 @@ class BuildingModel:
                     di_damping: Optional[dict] = None,
                     solver: Optional[dict] = None,
                     energy: bool = False,
-                    components: Optional[List[dict]] = None
+                    components: Optional[List[dict]] = None,
+                    output_requests: Optional[dict] = None
                     ) -> TimeHistoryCase:
         th = TimeHistoryCase(
             name, direction, [float(a) for a in (accel or [])], float(dt),
@@ -2395,6 +2404,7 @@ class BuildingModel:
         if components is not None:
             from skyframe.core import th_components as _thc
             th.components = _thc.normalize(components)
+        th.output_requests = _plotfn_norm(output_requests)  # plot functions
         self._validate_th_case(th)
         self.th_cases[name] = th
         return th
@@ -2462,6 +2472,7 @@ class BuildingModel:
                 math.isfinite(th.default_My) and th.default_My > 0.0):
             raise ValueError(f"TH case {th.name}: default_My must be a "
                              "finite value > 0 (or None)")
+        _plotfn_validate(self, th)              # plot-function requests
 
     # ------------------------------------------- v0.13 function library
     def add_spectrum_function(self, name: str, points: List[List[float]],
@@ -4171,7 +4182,8 @@ class BuildingModel:
                 energy=bool(td.get("energy", False)),
                 components=(None if td.get("components") is None
                             else [dict(c) if isinstance(c, dict) else c
-                                  for c in td["components"]]))
+                                  for c in td["components"]]),
+                output_requests=_plotfn_norm(td.get("output_requests")))
         for name, pd in (d.get("pushover_cases") or {}).items():
             dmy = pd.get("default_My")
             mdl.pushover_cases[name] = PushoverCase(

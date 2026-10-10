@@ -7074,3 +7074,141 @@ base (Y push):
 * Round trip and validation errors (11 cases).
 * Defaults byte-identical: identical model and pushover JSON with an
   unused property, and an unchanged mesh.
+
+## Plot functions, floor response spectra and story response plots
+
+ETABS *Display > Show Plot Functions* / *Story Response Plots* /
+*Force-Stress Diagrams* (gap audit E1 + E3 + E2-lite).  Units SI (kN, m,
+s, rad); modules `skyframe/core/plotfn.py` (model side, Nigam-Jennings
+spectra) and `skyframe/engine/plotfn.py` (OpenSees recorder).
+
+### Model: `TimeHistoryCase.output_requests` (optional)
+
+```json
+"th_cases": {"TH1": {..., "output_requests": {
+    "joints": [[x, y, z], ...],   // FE node coordinates (1e-6 match)
+    "links":  ["I1", ...],        // link uids
+    "frames": ["C1", ...],        // frame member uids
+    "hinges": true}}}             // every zeroLength hinge spring
+```
+
+Every key is optional; the key is OMITTED from `to_dict` when absent
+(`null`), and an absent request is byte-identical to the pre-feature model
+and results (verified by hashing the model + full `/api/analyze` JSON of a
+3-story building with two TH cases before/after).  400 / ValueError on: a
+non-object request, an unknown key, a joint that is not `[x, y, z]`
+numbers, an unknown link / member uid, a non-boolean `hinges`.  A joint
+snaps to the FE node at that point (1e-6), else to the nearest structural
+node within 1 mm (display-unit round-off of a point typed in kip-in / ft);
+farther than that the run fails (`no FE node at point ... (nor within
+1 mm)`).  The reported `point` is always the requested one.
+Direct integration only (`/api/analyze`, `run_time_history`); FNA
+(`/api/analyze/fna`) ignores the request.
+
+### Results: `th_cases[name].plot_functions` (only when requested)
+
+All series have `len(t) + 1` samples: `plot_functions.t = [0, dt, ...,
+n dt]` — sample 0 is the state after the held gravity stage, before the
+transient (the legacy `t` starts at `dt`).
+
+```json
+"plot_functions": {
+  "t": [0.0, 0.01, ...],
+  "ground": {"acc":  {"UX": [...], "UY": [...], "UZ": [...]},   // m/s^2
+             "vel":  {...}, "disp": {...}},     // exact integration of the
+                                                // piecewise-linear record
+  "joints": [{"point": [x, y, z], "node": 12,
+              "disp": {"UX","UY","UZ","RX","RY","RZ": [...]},  // relative,
+              "vel":  {... 6 dofs}, "acc": {... 6 dofs},       // past gravity
+              "disp_abs": {"UX","UY","UZ"}, "vel_abs": {...},
+              "acc_abs": {...}}],              // = relative + ground
+  "links": {"I1": {"type": "isolator", "components": ["P", "V2", "V3"],
+                   "deformation": {"P": [...], "V2": [...], "V3": [...]},
+                   "force": {...},            // element basic quantities,
+                   "work": [...]}},           // TOTAL (gravity included)
+  "frames": {"C1": {"P_i", "V2_i", "V3_i", "T_i", "M2_i", "M3_i",
+                    "P_j", ..., "M3_j": [...]}},   // local end forces,
+                                                   // member_forces convention
+  "hinges": {"C1:i": {"rotation": {"R2": [...], "R3": [...]},
+                      "moment": {"M2": [...], "M3": [...]}}},  // if requested
+  "units": {"disp": "m", "rot": "rad", "vel": "m/s", "acc": "m/s^2",
+            "force": "kN", "moment": "kN*m", "work": "kN*m"}}
+```
+
+Link component labels (element dir order): elastic -> the non-zero
+`U1..R3` global dofs; damper / gap / hook -> `["P"]`; zero-length
+isolator / multilinear -> `["UX", "UY", "UZ"]`; finite-length (vertical
+twoNodeLink) -> `["P", "V2", "V3"]`; 6-component bearings ->
+`["P", "V2", "V3", "T", "M2", "M3"]`; otherwise `c1..cn`.  `work` is the
+cumulative basic work `sum 0.5 (F_k + F_k+1).(d_k+1 - d_k)` (the
+hysteresis-loop area); `work[-1] - sum F^2/(2 k0)` equals the energy
+tracker's hysteretic energy (1e-9).
+
+### `POST /api/plotfn/spectrum`
+
+Body: `{case, point: [x, y, z] | "ground", damping: z | [z, ...]
+(default [0.05]), direction?: "X"|"Y"|"Z" (default: the case
+direction), periods?: [T, ...] (default: 0 + 99 log-spaced points 0.02 ..
+5 s)}`, or a raw series `{accel: [...], dt, damping?, periods?}`.
+
+The joint's ABSOLUTE acceleration comes from the last stored
+`/api/analyze` results when that joint was recorded (`source:
+"recorded"`); otherwise the case is re-run on a COPY of the model with
+the joint added to its `output_requests` (`source: "rerun"`; the current
+model is never mutated).  Response:
+
+```json
+{"case": "TH1", "point": [0, 0, 9], "direction": "X", "dt": 0.01,
+ "source": "recorded", "pga": 3.1,
+ "periods": [0.0, 0.02, ...],
+ "spectra": [{"damping": 0.05, "Sa": [...], "Sv": [...], "Sd": [...],
+              "PSa": [...], "PSv": [...]}],
+ "method": "Nigam-Jennings exact piecewise-linear recurrence"}
+```
+
+`Sd = max|u|`, `Sv = max|v|` (relative), `Sa = max|2 z w v + w^2 u|`
+(absolute acceleration), `PSv = w Sd`, `PSa = w^2 Sd`; `T = 0` gives
+`Sa = PSa = pga`, `Sd = Sv = 0`.  Peaks over the sample instants; the
+recurrence (Chopra Table 5.2.1) is exact for piecewise-linear input.  400
+on an unknown case, a bad point / direction / damping (must be in
+[0, 1)) / periods, or a series shorter than 2 samples.
+
+### Frontend (no new backend data)
+
+* *Display > Show Plot Functions...* — case, function list (joint DOF
+  rel/abs, link force/deformation, frame force, hinge, base reaction,
+  story displacement/drift, energy, ground), vs time or X-vs-Y
+  (hysteresis), overlay, zoom/pan, CSV; floor-spectrum tab -> the
+  endpoint above.
+* *Display > Story Response Plots...* — max story displacement, drift
+  ratio, story shear, overturning moment, story stiffness per
+  case / combo / RS / TH and direction, from the existing `story`,
+  `story_stiffness`, TH `peaks` blocks; drift limit line.
+* *Display > Force/Stress Diagrams (3D)* — M3/V2/P diagrams from
+  `member_stations` drawn on the 3D members, reaction arrows from
+  `reactions`.
+
+### Validation (tests/test_plotfn.py)
+
+* Round trip / canonical form / 6 validation errors; joint snap within
+  1 mm (identical series) and the error beyond it; defaults
+  byte-identical model and TH results; recording never perturbs the
+  legacy keys (identical JSON minus `plot_functions`).
+* Series lengths `len(t) + 1`, uniform `dt`; tip joint == story
+  displacement (1e-15); base joint: zero relative motion, absolute
+  acceleration == the ground record; ground `v = a t`, `u = a t^2/2`
+  exactly.
+* Undamped SDOF: `|V_column| = m |a_abs|` at every sample; fixed-guided
+  column `V = k u` and `M_base = V L/2`.
+* Isolator block: trapezoidal loop area == `work`, `sum(work - F^2/2k0)`
+  == energy tracker hysteretic energy (1e-9), elastic slope == k1 (1e-6).
+* Nonlinear hinge series peak == `hinge_rotations` (1e-12); held gravity
+  axial force in `P_i[0]`.
+* Nigam-Jennings: step input (z = 0.05) and ramp (z = 0) == closed form
+  (1e-13); sampled harmonic (z = 0, 0.05, 0.2) converges O(dt^2) to the
+  closed-form transient + steady state; undamped step `Sd = 2 a0/w^2`;
+  `PSa = w^2 Sd`, `T = 0 -> pga`; the SDOF engine peak displacement ==
+  `Sd(T_sdof)` (2e-3, Newmark period elongation); floor spectrum of the
+  base joint == ground spectrum (identical lists).
+* API: model round trip, `/api/analyze` carries `plot_functions`,
+  spectrum recorded vs rerun vs ground, raw-series mode, 400s.

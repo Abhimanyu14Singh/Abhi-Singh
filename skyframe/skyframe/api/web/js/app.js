@@ -56,6 +56,9 @@ import { mockValidateGroups as grpMockValidateGroups } from "./mock_groups.js";
 // B9/B11 — frame auto mesh + output stations, named spring properties, link hysteresis types (aliased imports)
 import { initB9 as b9Init } from "./b9init.js";
 import { mockValidateB9 as b9MockValidate } from "./mock_b9.js";
+// Plot functions / story response plots / 3D force diagrams (Display menu)
+import { initPlotFn as pfInitPlotFn } from "./plotfn.js";
+import { pfMockValidate as pfMockValidateModel } from "./mock_plotfn.js";
 
 /* ------------------------------------------------ state */
 const store = {
@@ -239,7 +242,8 @@ async function postModel(payload) {
     await new Promise(r => setTimeout(r, 300));
     const bad = mockValidateAssign(payload) || g2MockValidatePoly(payload) || g3MockNlsValidate(payload)   // assign / G2 polygon + insertion / G3 NLS + diaphragms
       || grpMockValidateGroups(payload)                                        // Groups / stage lists / cut groups
-      || b9MockValidate(payload);                                              // B9-B11 auto mesh / stations / springs / links
+      || b9MockValidate(payload)                                               // B9-B11 auto mesh / stations / springs / links
+      || pfMockValidateModel(payload);                                         // plot functions: TH output_requests
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -8477,6 +8481,7 @@ async function boot() {
   try { grpInitStageData(window.__sky); } catch (err) { console.error("stage data init failed", err); }
 
   try { b9Init(window.__sky); } catch (err) { console.error("B9 init failed", err); }   // auto mesh / stations / springs / link hysteresis
+  try { pfInitPlotFn(window.__sky); } catch (err) { console.error("plot functions init failed", err); }   // Display > Plot Functions / Story Response / 3D force diagrams
 }
 
 boot();

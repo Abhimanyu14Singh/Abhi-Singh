@@ -7261,6 +7261,8 @@ class OpenSeesEngine:
             ext_y = {s.name: mc.ext_above(2, s.elevation, asm.node_coords)
                      for s in stories}
             mc.begin_base(base_tags)
+        from skyframe.engine import plotfn as _pfn        # plot functions
+        pfr = _pfn.make(self, th, asm, accel, dt, dof, mc)  # None = legacy
         for k in range(n):
             if tho is not None:
                 ok = tho.step(k)
@@ -7321,6 +7323,8 @@ class OpenSeesEngine:
                     yielded.add(uid)
             if asm.user_hinges:
                 uh_rec.record(hinge_rot, yielded)
+            if pfr is not None:
+                pfr.record(k)
 
         def peak(vals: Sequence[float]) -> float:
             return max(abs(v) for v in vals) if len(vals) else 0.0
@@ -7351,6 +7355,8 @@ class OpenSeesEngine:
             result.extra.update(mc.extra())
         if asm.user_hinges:                               # B10
             result.extra = dict(result.extra, hinges=uh_rec.detail())
+        if pfr is not None:                               # plot functions
+            result.extra = dict(result.extra, plot_functions=pfr.results())
         self._th_cache[name] = result
         return result
 

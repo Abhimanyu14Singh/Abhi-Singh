@@ -1065,6 +1065,8 @@ export class Viewer3D {
     if (this.g2Overlay && !overlayActive) { try { this.g2Overlay(ctx, P, this); } catch (e) { /* never break the render */ } }
     // Groups hook — Show Group highlight (js/groups.js)
     if (this.grpOverlay && !overlayActive) { try { this.grpOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
+    // Plot-functions hook — 3D force/stress diagrams + reaction arrows (js/plotfn.js)
+    if (this.pfOverlay) { try { this.pfOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
 
     // ---- axis triad
     this._renderTriad(ctx, w, h);
