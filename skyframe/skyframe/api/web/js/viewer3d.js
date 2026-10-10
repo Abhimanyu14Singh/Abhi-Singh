@@ -1065,6 +1065,8 @@ export class Viewer3D {
     if (this.g2Overlay && !overlayActive) { try { this.g2Overlay(ctx, P, this); } catch (e) { /* never break the render */ } }
     // Groups hook — Show Group highlight (js/groups.js)
     if (this.grpOverlay && !overlayActive) { try { this.grpOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
+    // PT hook — dashed magenta tendon polylines (js/tendons.js)
+    if (this.ptOverlay && !overlayActive) { try { this.ptOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
 
     // ---- axis triad
     this._renderTriad(ctx, w, h);

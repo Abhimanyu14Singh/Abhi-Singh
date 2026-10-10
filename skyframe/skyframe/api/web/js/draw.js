@@ -910,6 +910,8 @@ export class PlanEditor {
     }
     // G2 hook — polygon draw / vertex-edit overlay (js/polydraw.js)
     if (this.g2Overlay) { try { this.g2Overlay(g, this); } catch (e) { console.error(e); } }
+    // PT hook — dashed magenta tendon polylines (js/tendons.js)
+    if (this.ptOverlay) { try { this.ptOverlay(g, this); } catch (e) { console.error(e); } }
   }
 }
 

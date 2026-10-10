@@ -1268,6 +1268,7 @@ const ADD_TYPES = [
   ["static", "Linear Static"], ["rs", "Response Spectrum"], ["th", "Time History"],
   ["pushover", "Nonlinear Static (Pushover)"],
   ["nonlinear_static", "Nonlinear Static"],   // G3 — js/nlsdlg.js
+  ["hyperstatic", "Hyperstatic"],             // PT — js/tendons.js
 ];
 const KIND_ANCHOR = { static: "ls-cases", rs: "ls-rs", th: "ls-th", pushover: "ls-pushover",
   buckling: "ls-buckling", staged: "ls-staged", steady_state: "ls-freq", psd: "ls-freq" };
@@ -1330,6 +1331,7 @@ export function openLoadCases(ctx) {
   };
   function add() {
     if (addKind === "nonlinear_static") { window.__sky?.openNlsCase?.(null, { onChange: () => { refresh(); ctx.onChange && ctx.onChange("cases"); } }); return; }   // G3
+    if (addKind === "hyperstatic") { window.__sky?.openHyperstaticCase?.(null, { onChange: () => { refresh(); ctx.onChange && ctx.onChange("cases"); } }); return; }   // PT
     if (addKind === "steady_state" || addKind === "psd") {
       openFreqCase({ ...ctx, onChange: k => { ctx.onChange && ctx.onChange(k); refresh(); } }, addKind, null);
       return;
@@ -1352,6 +1354,7 @@ export function openLoadCases(ctx) {
     else if (k === "pushover") openPushoverOptions(sub, sel);
     else if (k === "nonlinear_static" && window.__sky?.openNlsCase) window.__sky.openNlsCase(sel, { onChange: () => refresh() });   // G3
     else if (k === "modal" && window.__sky?.openModalCase) window.__sky.openModalCase({ onChange: () => refresh() });   // G3
+    else if (k === "hyperstatic" && window.__sky?.openHyperstaticCase) window.__sky.openHyperstaticCase(sel, { onChange: () => refresh() });   // PT
     else gotoSection(k);
   }
   function del() {
@@ -1367,6 +1370,7 @@ export function openLoadCases(ctx) {
     else if (k === "th") ok = ME.deleteThCase(m, sel);
     else if (k === "pushover") ok = ME.deletePushoverCase(m, sel);
     else if (k === "nonlinear_static" && window.__sky?.deleteNlsCase) ok = window.__sky.deleteNlsCase(sel);   // G3
+    else if (k === "hyperstatic" && window.__sky?.deleteHyperstaticCase) ok = window.__sky.deleteHyperstaticCase(sel);   // PT
     else if (k === "buckling" && ME.deleteBucklingCase) ok = ME.deleteBucklingCase(m, sel);
     else if (k === "staged" && ME.deleteStagedCase) ok = ME.deleteStagedCase(m, sel);
     if (!ok) return;

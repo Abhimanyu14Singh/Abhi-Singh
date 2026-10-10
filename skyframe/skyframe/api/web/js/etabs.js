@@ -149,6 +149,9 @@ export function initEtabs(sky) {
 
       // B9 — named point-spring properties (js/springdlg.js)
       { label: "Spring Properties · Point Springs…", act: "def-b9-springprops", hint: "linear · multilinear · gap", fn: () => sky.openSpringProperties && sky.openSpringProperties() },
+      // PT — tendon properties + hyperstatic case (js/tendons.js)
+      { label: "Tendon Properties…", act: "def-pt-tendons", hint: "PT · losses", fn: () => sky.openTendonProperties && sky.openTendonProperties() },
+      { label: "Hyperstatic Load Case…", act: "def-pt-hyper", hint: "PT secondary", fn: () => sky.openHyperstaticCase && sky.openHyperstaticCase(null) },
       { sep: true },
       { label: "Code Tools (ASCE 7 · NBCC · EC)…", act: "def-codetools", fn: () => gotoLoads("ls-codetools") },
     ]],
@@ -169,6 +172,7 @@ export function initEtabs(sky) {
       { label: "Point Spring", act: "draw-spring", key: "G", fn: () => drawTool("spring") },
       { label: "Line Spring", act: "draw-linespring", key: "K", fn: () => drawTool("linespring") },
       { label: "Link / Device", act: "draw-link", key: "L", fn: () => drawTool("link") },
+      { label: "Draw Tendon…", act: "draw-pt-tendon", hint: "PT · beams / slab", fn: () => { sky.openDrawTendon && sky.openDrawTendon(); syncStatus(); } },   // PT (js/tendons.js)
       { sep: true },
       { label: "Section Cut…", act: "draw-cut", fn: () => gotoLoads("ls-cuts") },
       { label: "Grid…", act: "draw-grid", fn: () => sky.openGridEditor() },
@@ -267,6 +271,10 @@ export function initEtabs(sky) {
       { label: "Section Cuts", act: "dis-cuts", fn: () => showResult("cuts") },
       { label: "Wall Piers", act: "dis-piers", fn: () => showResult("piers") },
       { label: "Serviceability", act: "dis-svc", fn: () => showResult("svc") },
+      // PT — tendon force P(x) + hyperstatic results (js/tendons.js)
+      { sep: true },
+      { label: "Tendon Forces…", act: "dis-pt-forces", hint: "P(x) after losses", fn: () => sky.openTendonForces && sky.openTendonForces() },
+      { label: "Hyperstatic Results…", act: "dis-pt-hyper", hint: "secondary moments", fn: () => sky.openHyperstaticResults && sky.openHyperstaticResults() },
     ]],
     ["Design", [
       { label: "Steel", act: "des-steel", fn: () => showDesign("steel") },
@@ -474,6 +482,7 @@ export function initEtabs(sky) {
       leaf.addEventListener("click", () => {
         if ((c.kind === "steady_state" || c.kind === "psd") && sky.openFreqCase) return void sky.openFreqCase(c.kind, c.name);
         if (c.kind === "nonlinear_static" && sky.openNlsCase) return void sky.openNlsCase(c.name);   // G3
+        if (c.kind === "hyperstatic" && sky.openHyperstaticCase) return void sky.openHyperstaticCase(c.name);   // PT (js/tendons.js)
         const a = KIND_ANCHOR[c.kind];
         if (a) gotoLoads(a); else showResult("modal");
       });
