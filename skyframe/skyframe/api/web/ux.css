@@ -196,3 +196,108 @@
 /* keyboard focus in the menu bar (F10 / arrows) */
 .ux-on .etabs-menu-btn:focus-visible, .ux-on .etabs-menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .ux-on .etabs-menu-item:focus-visible { background: var(--surface-3); }
+
+/* ================================================================
+   UX pass 2 — footers, tabs, empty states, errors, quick form, a11y
+   ================================================================ */
+
+/* ---- contrast-fixed tokens (WCAG AA 4.5:1 for small text on every surface) */
+:root.ux-on:not([data-theme="light"]) {
+  --text-3: #808d9b;          /* was #66727f: 3.2–3.9:1 → ≥ 4.5:1 */
+  --ux-focus: #5cc8f0;
+}
+:root.ux-on[data-theme="light"] {
+  --text-3: #5b6878;          /* was #7d8b9c: 2.9–3.5:1 */
+  --accent: #0a6c9c;          /* was #35b5e5: 2.0–2.4:1 as text */
+  --accent-dim: #0b6593;
+  --amber: #855400;
+  --red: #b02e2e;
+  --green: #16714a;
+  --ux-focus: #0a6c9c;
+}
+/* light theme: accent-filled buttons carry white text on the darker accent */
+:root.ux-on[data-theme="light"] .btn-run,
+:root.ux-on[data-theme="light"] .sb-run,
+:root.ux-on[data-theme="light"] .ux-qat-run,
+:root.ux-on[data-theme="light"] .ux-btn-primary { color: #fff; }
+:root.ux-on[data-theme="light"] .btn-run .spinner { border-color: rgba(255,255,255,.35); border-top-color: #fff; }
+
+/* ---- visible focus rings everywhere (keyboard only) */
+.ux-on :focus-visible { outline: 2px solid var(--ux-focus, var(--accent)); outline-offset: 1px; }
+.ux-on input:focus-visible, .ux-on select:focus-visible, .ux-on textarea:focus-visible {
+  outline: 2px solid var(--ux-focus, var(--accent)); outline-offset: 0; border-color: var(--accent-dim);
+}
+.ux-on .ex-leaf:focus-visible, .ux-on .ex-group-head:focus-visible, .ux-on .etabs-tool:focus-visible { outline-offset: -2px; }
+
+/* ---- dialog footers: OK · Cancel · Apply, one style */
+.ux-dlg .modal-foot .ux-btn-primary, .ux-empty-actions .ux-btn-primary, .ux-empty-cta .ux-btn-primary, .ux-toast-actions .ux-btn-primary,
+.ux-dlg .modal-foot .ux-btn-secondary, .ux-empty-actions .ux-btn-secondary {
+  text-transform: none; letter-spacing: 0; font-size: 12.5px; font-weight: 650;
+  padding: 6px 14px; min-width: 76px;
+}
+.ux-dlg .modal-foot .ux-btn-primary, .ux-empty-actions .ux-btn-primary, .ux-empty-cta .ux-btn-primary, .ux-toast-actions .ux-btn-primary {
+  background: var(--accent-dim); border-color: transparent; color: #041018;
+}
+.ux-dlg .modal-foot .ux-btn-primary:hover:not(:disabled), .ux-empty-actions .ux-btn-primary:hover, .ux-empty-cta .ux-btn-primary:hover { background: var(--accent); }
+.ux-dlg .modal-foot .ux-btn-secondary { background: var(--surface-3); border-color: var(--border); color: var(--text-1); }
+.ux-empty-cta .ux-btn-primary, .ux-toast-actions .ux-btn-primary { min-width: 0; padding: 3px 10px; font-size: 12px; }
+:root.ux-on[data-theme="light"] .ux-empty-actions .ux-btn-primary,
+:root.ux-on[data-theme="light"] .ux-empty-cta .ux-btn-primary,
+:root.ux-on[data-theme="light"] .ux-toast-actions .ux-btn-primary,
+:root.ux-on[data-theme="light"] .ux-dlg .modal-foot .ux-btn-primary { color: #fff; }
+
+/* ---- tab strips (Section Manager / grid editor) */
+.ux-tabstrip {
+  display: flex; gap: 2px; padding: 6px 16px 0; flex: none;
+  border-bottom: 1px solid var(--border); background: var(--surface-1);
+  overflow-x: auto;
+}
+.ux-tab {
+  font: inherit; font-size: 12.5px; font-weight: 600; color: var(--text-2);
+  background: none; border: 1px solid transparent; border-bottom: none;
+  border-radius: 6px 6px 0 0; padding: 6px 12px; cursor: pointer; white-space: nowrap;
+  margin-bottom: -1px;
+}
+.ux-tab:hover { color: var(--text-1); background: var(--surface-3); }
+.ux-tab.is-active { color: var(--accent); background: var(--surface-2); border-color: var(--border); }
+.ux-tab-hide { display: none !important; }
+.grid-modal-body.ux-grid-one { grid-template-columns: 1fr; }
+
+/* ---- Analysis Options hub */
+.ux-hub { display: flex; flex-direction: column; gap: 6px; }
+.ux-hub-row {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
+  font: inherit; color: var(--text-1); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; cursor: pointer;
+}
+.ux-hub-row:hover { border-color: var(--accent-dim); background: var(--surface-3); }
+.ux-hub-row span { font-size: 12px; }
+.ux-hub-note { margin-top: 10px; font-size: 12px; }
+.ux-hub-dlg .modal { width: 520px; max-width: calc(100vw - 32px); }
+
+/* ---- empty states */
+.ux-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 4px; }
+.ux-empty-cta { display: flex; margin-top: 6px; }
+.ux-empty-list { font-size: 12px; padding: 8px 2px; }
+.ux-toast-actions { margin-top: 8px; display: flex; justify-content: flex-end; }
+
+/* ---- errors */
+.ux-field-err, input.ux-field-err, select.ux-field-err, textarea.ux-field-err {
+  border-color: var(--red) !important; box-shadow: 0 0 0 2px rgba(230, 103, 103, .35);
+}
+.ux-toast-field { margin-top: 4px; font-size: 11.5px; }
+
+/* ---- sidebar quick-model form */
+.ux-quick-note {
+  margin: 0 0 12px; padding: 9px 10px; font-size: 12px; color: var(--text-2);
+  background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--amber);
+  border-radius: 6px; display: flex; flex-direction: column; gap: 6px;
+}
+.ux-quick-note b { color: var(--text-1); }
+.ux-quick-src { color: var(--text-3); font-size: 11.5px; }
+.ux-quick-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.ux-quick-btns .btn { padding: 3px 9px; font-size: 11.5px; }
+
+/* ---- screen-reader-only live text (plan keyboard cursor) */
+.ux-sr-only { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.ux-on #planSvg:focus-visible { outline: 2px solid var(--ux-focus, var(--accent)); outline-offset: -2px; }

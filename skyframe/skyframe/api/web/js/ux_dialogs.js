@@ -12,6 +12,13 @@
        stray single-key app shortcuts (tool keys, R = run, Delete…) no longer
        leak to the workspace behind an open dialog; focus moves into a dialog
        when it opens.
+   UX pass 2:
+     · footer normalisation — ETABS order "OK · Cancel · Apply" and one
+       button style in every dialog (buttons are moved, never rebuilt; a
+       footer a module re-renders is normalised again)
+     · focus trap (Tab / Shift+Tab cycle inside the top-most dialog), focus
+       returns to the opener on close, role / aria-modal / aria-labelledby
+     · Enter commits the field being typed in (blur → "change") before OK
    Detection is by MutationObserver (childList of #app/body + the class
    attribute of each backdrop) — no polling. */
 
@@ -62,6 +69,52 @@ function cancelButton(modal) {
   return bs.find(b => /^cancel$/i.test(b.textContent.trim()))
     || modal.querySelector(".modal-head .icon-btn:not(.ux-help-btn)")
     || bs.find(b => CANCEL_RE.test(b.textContent.trim())) || null;
+}
+
+/* ---------------- footer normalisation (UX audit D2) ----------------
+   ETABS order everywhere: [note] [other actions…] OK · Cancel · Apply, with
+   one consistent style: the commit button (OK / Save / Import / Create…) is
+   the accent button, Cancel / Apply are neutral; a lone Done / Close is the
+   accent button. Buttons are MOVED (never re-created), so every module's
+   listeners and ids keep working. Only buttons that already share one parent
+   are reordered; a non-standard footer otherwise keeps its layout. */
+const COMMIT_RE = /^(ok|save|import|create|apply & close|apply and close|assign|open|check|generate|select|show)$/i;
+const btnText = b => (b.textContent || "").trim().replace(/\s+/g, " ").replace(/\s*\((enter|esc)\)$/i, "");
+export function normalizeFooter(modal) {
+  const foot = modal.querySelector(":scope > .modal-foot, :scope > footer") || modal.querySelector(".modal-foot");
+  if (!foot) return null;
+  const all = [...foot.querySelectorAll("button")].filter(b => !b.closest(".ux-empty-cta"));
+  const vis = all.filter(b => !b.classList.contains("hidden") && b.style.display !== "none");
+  const ok = vis.find(b => /^ok$/i.test(btnText(b))) || vis.find(b => COMMIT_RE.test(btnText(b)));
+  // "Close" next to an OK is that dialog's Cancel
+  const cancel = vis.find(b => /^cancel$/i.test(btnText(b))) || (ok ? vis.find(b => b !== ok && /^close$/i.test(btnText(b))) : null);
+  const apply = vis.find(b => /^apply$/i.test(btnText(b)));
+  const lone = vis.length === 1 && /^(done|close)$/i.test(btnText(vis[0])) ? vis[0] : null;
+  const order = [ok, cancel, apply].filter(Boolean);
+  if (order.length > 1) {
+    const parent = order[0].parentElement;
+    if (order.every(b => b.parentElement === parent)) {
+      // already in order at the end → no DOM writes (keeps observers quiet)
+      const kids = [...parent.children].filter(k => k.tagName === "BUTTON");
+      const tail = kids.slice(-order.length);
+      if (!order.every((b, i) => tail[i] === b)) {
+        const keep = document.activeElement;
+        order.forEach(b => parent.appendChild(b));
+        if (keep && keep !== document.activeElement && keep.isConnected) { try { keep.focus({ preventScroll: true }); } catch { /* ignore */ } }
+      }
+    }
+  }
+  const mark = (b, cls) => { if (b && !b.classList.contains(cls)) b.classList.add(cls); };
+  mark(ok || lone, "ux-btn-primary");
+  mark(cancel, "ux-btn-secondary");
+  mark(apply, "ux-btn-secondary");
+  foot.classList.add("ux-foot");
+  return { ok, cancel, apply, lone };
+}
+
+const FOCUSABLE = "button:not([disabled]), [href], input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+export function focusables(root) {
+  return [...root.querySelectorAll(FOCUSABLE)].filter(n => n.offsetParent !== null && !n.closest(".hidden, [hidden], .ux-grip") && getComputedStyle(n).visibility !== "hidden");
 }
 
 export function installDialogs(sky) {
@@ -195,6 +248,22 @@ export function installDialogs(sky) {
     const head = modal.querySelector(":scope > .modal-head, :scope > header");
     if (head) { wireDrag(back, modal, head); wireHelp(back, modal, head); }
     wireGrip(back, modal);
+    // a11y: every dialog is a labelled modal dialog
+    if (!modal.getAttribute("role")) modal.setAttribute("role", "dialog");
+    if (!modal.hasAttribute("aria-modal")) modal.setAttribute("aria-modal", "true");
+    if (!modal.getAttribute("aria-labelledby") && !modal.getAttribute("aria-label")) {
+      const h = head && head.querySelector("h2");
+      if (h) { if (!h.id) h.id = (back.id || "uxDlg" + Math.random().toString(36).slice(2, 7)) + "Lbl"; modal.setAttribute("aria-labelledby", h.id); }
+    }
+    // footers rebuilt by their module (re-render) are re-normalised
+    const foot = modal.querySelector(":scope > .modal-foot, :scope > footer") || modal.querySelector(".modal-foot");
+    if (foot) {
+      let q = 0;
+      new MutationObserver(() => {
+        if (q) return;
+        q = requestAnimationFrame(() => { q = 0; if (isShown(back)) normalizeFooter(modal); });
+      }).observe(foot, { childList: true, subtree: true });
+    }
     // keys typed inside a dialog stay inside it (no tool/run shortcuts behind)
     back.addEventListener("keydown", e => {
       if (e.key === "Escape" || e.key === "Enter" || e.key === "Tab" || e.key === "F1") return;
@@ -209,9 +278,14 @@ export function installDialogs(sky) {
     const pop = modal.querySelector(":scope > .ux-help-pop");
     if (pop) pop.remove();
     applyGeom(back, modal);
+    // remember the opener so focus returns to it when the dialog closes
+    const ae = document.activeElement;
+    if (ae && ae !== document.body && !back.contains(ae)) openers.set(back, ae);
+    try { normalizeFooter(modal); } catch (e) { console.warn("ux footer", e); }
     // keyboard titles on OK / Cancel
     requestAnimationFrame(() => {
       if (!isShown(back)) return;
+      try { normalizeFooter(modal); } catch { /* ignore */ }
       const ok = primaryButton(modal), cancel = cancelButton(modal);
       if (ok && !ok.title) ok.title = ok.textContent.trim() + " (Enter)";
       if (cancel && cancel.matches("button") && !cancel.title) cancel.title = cancel.textContent.trim() + " (Esc)";
@@ -224,12 +298,26 @@ export function installDialogs(sky) {
     });
   }
 
+  /* focus returns to the element that opened the dialog (a11y) */
+  const openers = new WeakMap();
+  function onClosed(back) {
+    const op = openers.get(back);
+    openers.delete(back);
+    setTimeout(() => {
+      if (topDialog()) return;   // another dialog took over
+      const ae = document.activeElement;
+      if (ae && ae !== document.body && ae.isConnected && ae.offsetParent !== null) return;
+      if (op && op.isConnected && op.offsetParent !== null) { try { op.focus({ preventScroll: true }); } catch { /* ignore */ } }
+    }, 0);
+  }
+
   const watched = new WeakSet();
   const attrObs = new MutationObserver(recs => {
     for (const r of recs) {
       const b = r.target;
       const was = r.oldValue == null ? false : !/\bhidden\b/.test(r.oldValue);
       if (isShown(b) && !was) onOpen(b);
+      else if (!isShown(b) && was) onClosed(b);
     }
   });
   function watch(back) {
@@ -240,8 +328,12 @@ export function installDialogs(sky) {
   }
   document.querySelectorAll(".modal-backdrop").forEach(watch);
   const addObs = new MutationObserver(recs => {
-    for (const r of recs) for (const n of r.addedNodes)
-      if (n.nodeType === 1 && n.classList.contains("modal-backdrop")) watch(n);
+    for (const r of recs) {
+      for (const n of r.addedNodes)
+        if (n.nodeType === 1 && n.classList.contains("modal-backdrop")) watch(n);
+      for (const n of r.removedNodes)
+        if (n.nodeType === 1 && n.classList && n.classList.contains("modal-backdrop") && openers.has(n)) onClosed(n);
+    }
   });
   const app = document.getElementById("app");
   if (app) addObs.observe(app, { childList: true });
@@ -285,8 +377,30 @@ export function installDialogs(sky) {
     // editor-style dialogs (Done / Close) never close on Enter — only OK-type actions
     if (/^(done|close)$/i.test(ok.textContent.trim())) return;
     e.preventDefault();
+    // commit the field being typed in first: most dialogs read their inputs
+    // on "change", which the browser fires only on blur — without this,
+    // Enter would press OK with the previous value (UX pass 2)
+    const typing = t && t.matches && t.matches("input, select") && back.contains(t) ? t : null;
+    if (typing) typing.blur();
     ok.click();
+    if (typing && typing.isConnected && isShown(back) && topDialog() === back) { try { typing.focus({ preventScroll: true }); } catch { /* ignore */ } }
   });
+  /* focus trap (a11y): Tab / Shift+Tab cycle inside the top-most dialog; a
+     Tab pressed while focus is outside it (e.g. on <body>) moves into it */
+  window.addEventListener("keydown", e => {
+    if (e.key !== "Tab" || e.ctrlKey || e.metaKey || e.altKey) return;
+    const back = topDialog();
+    if (!back) return;
+    if (e.target && e.target.closest && e.target.closest(".ux-cmdk-back, .ux-keys-back")) return;
+    const modal = back.querySelector(".modal") || back;
+    const f = focusables(modal);
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    const a = document.activeElement;
+    if (!modal.contains(a)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); return; }
+    if (!e.shiftKey && a === last) { e.preventDefault(); first.focus(); }
+    else if (e.shiftKey && a === first) { e.preventDefault(); last.focus(); }
+  }, true);
   // keys pressed with focus outside an open dialog (e.g. on <body>) must not
   // trigger single-key workspace shortcuts behind it
   window.addEventListener("keydown", e => {
@@ -302,7 +416,7 @@ export function installDialogs(sky) {
 
   sky.ux = sky.ux || {};
   Object.assign(sky.ux, {
-    dialogs: { visible: visibleDialogs, top: topDialog, primaryButton, enhance, onOpen,
+    dialogs: { visible: visibleDialogs, top: topDialog, primaryButton, enhance, onOpen, normalizeFooter, focusables,
       resetGeometry: id => lsDel(LS_PREFIX + id) },
   });
 }

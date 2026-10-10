@@ -87,7 +87,7 @@ export const HELP = {
   "an-check": { etabs: "Analyze › Check Model", text: "Check joints, frames, shells and loads for overlaps, zero-length objects, unsupported nodes and missing assignments, with a configurable tolerance." },
   "an-stability": { etabs: "Analyze › Check Stability", text: "Detect mechanisms / singular stiffness: unrestrained DOFs, floating stories and zero-stiffness joints, before you run." },
   "an-log": { etabs: "Analyze › Last Analysis Run Log", text: "Warnings and diagnostics of the last run: P-Delta iterations, skipped combinations, convergence notes." },
-  "an-opts": { etabs: "Analyze › Analysis Options / Advanced SAPFire Options", text: "P-Delta, modal count and damping are set per case in the Load Cases editor." },
+  "an-opts": { etabs: "Analyze › Analysis Options / Advanced SAPFire Options", text: "Opens the model-wide analysis settings: active degrees of freedom, P-Delta, mass source, the modal case and the cases to run. Damping and time steps are set per load case." },
 
   /* ---------------- Display */
   "dis-view3d": { etabs: "View › Set 3D View", text: "The 3D model view; orbit with drag, pan with Shift-drag, zoom with the wheel." },
@@ -119,6 +119,118 @@ export const HELP = {
   "ux-shortcuts": { etabs: "Help › Keyboard Shortcuts", text: "Every keyboard shortcut in one list." },
 };
 
+/* UX pass 2 — every remaining menu command gets a description (tooltip,
+   command palette and dialog "?" all read this map). */
+Object.assign(HELP, {
+  /* Edit */
+  "edit-undo": { etabs: "Edit › Undo (Ctrl+Z)", text: "Undo the last model edit (drawing, assignments, dialog OK)." },
+  "edit-redo": { etabs: "Edit › Redo (Ctrl+Y)", text: "Redo the last undone model edit." },
+  "edit-copy": { etabs: "Edit › Copy (Ctrl+C)", text: "Copy the selected objects to the clipboard for Paste." },
+  "edit-paste": { etabs: "Edit › Paste (Ctrl+V)", text: "Paste the copied objects with an X/Y/Z offset (or onto other stories)." },
+  "edit-delete": { etabs: "Edit › Delete", text: "Delete the selected objects together with the loads and assignments that depend on them." },
+  "edit-replicate": { etabs: "Edit › Replicate", text: "Copy the selection linearly, radially, mirrored or to other stories, with an increment and a count." },
+  "edit-move": { etabs: "Edit › Move Joints/Frames/Shells", text: "Move the selected objects by a ΔX / ΔY / ΔZ offset." },
+  "edit-divide": { etabs: "Edit › Edit Frames › Divide Frames", text: "Split the selected frames into N equal pieces or at their intersections with other frames." },
+  "edit-join": { etabs: "Edit › Edit Frames › Join Frames", text: "Join selected collinear frames that share a joint into one frame." },
+  "edit-merge": { etabs: "Edit › Merge Joints", text: "Merge joints closer than a tolerance into one joint." },
+  "edit-align": { etabs: "Edit › Align Joints/Frames/Edges", text: "Align selected points to a coordinate, or trim / extend frames to a line." },
+  "edit-extrude": { etabs: "Edit › Extrude", text: "Extrude points into frames, or frames into shells, along a direction." },
+
+  /* Define */
+  "def-np-section": { etabs: "Define › Section Properties › Frame Sections › Add Nonprismatic", text: "Tapered or haunched frame sections built from segments of existing sections with linear / parabolic / cubic EI variation." },
+  "def-l116-autolat": { etabs: "Define › Load Patterns › Auto Lateral Load", text: "Generate equivalent-static seismic loads (ASCE 7-22, EC8, IS 1893 or user coefficients) into a load pattern." },
+  "def-uh-hingeprops": { etabs: "Define › Section Properties › Frame/Wall Nonlinear Hinges", text: "User-defined hinge properties: backbone points A–E, acceptance criteria (IO/LS/CP) and hysteresis type." },
+  "def-pt-tendons": { etabs: "Define › Section Properties › Tendon Sections", text: "Post-tensioning tendon properties: strand area, material, jacking stress and losses (friction, anchorage set, long-term)." },
+  "def-pt-hyper": { etabs: "Define › Load Cases › Hyperstatic", text: "Hyperstatic (secondary) PT load case derived from a linear static case that applies tendon loads." },
+
+  /* Draw */
+  "draw-polywall": { etabs: "Draw › Draw Floor/Wall (Elevation)", text: "Click wall vertices in an elevation view; Enter or double-click closes the wall, Esc cancels." },
+  "draw-polyopen": { etabs: "Draw › Draw Openings", text: "Click polygon vertices inside the selected shell to cut an opening." },
+  "draw-erase": { etabs: "Edit › Delete (tool)", text: "Erase tool: click an object to delete it; on a wall or slab it adds an opening instead." },
+  "draw-linespring": { etabs: "Assign › Frame › Line Springs", text: "Click two points to add a line spring (per-length stiffness) along a frame or edge." },
+  "draw-pt-tendon": { etabs: "Draw › Draw Tendons", text: "Draw a post-tensioning tendon over beams or a slab strip and set its profile." },
+  "draw-cut": { etabs: "Draw › Draw Section Cut", text: "Define a section cut (plane or group) whose integrated forces are reported after a run." },
+  "draw-grid": { etabs: "Edit › Edit Stories and Grid Systems › Grid Data", text: "Edit grid lines of the orthogonal and radial grid systems." },
+  "draw-plan": { etabs: "View › Set Plan View", text: "Switch the drawing area to the plan view of the active story." },
+  "draw-elev": { etabs: "View › Set Elevation View", text: "Switch the drawing area to an elevation along a grid line." },
+
+  /* Assign */
+  "asn-forient": { etabs: "Assign › Frame › Local Axes", text: "Rotate the frame's local 2–3 axes (angle). Select frames, then set the angle in the Properties panel." },
+  "asn-foff": { etabs: "Assign › Frame › End Length Offsets", text: "Rigid end zones (length i / j and rigid-zone factor) in the Properties panel; the dialog version is Frame · End Length Offsets…." },
+  "asn-faxial": { etabs: "Assign › Frame › Tension/Compression Limits", text: "Make selected frames tension-only or compression-only (e.g. tension braces). Set it in the Properties panel." },
+  "asn-fhinge": { etabs: "Assign › Frame › Hinges", text: "Automatic plastic hinges (none / M3 / PMM / fiber) for pushover and nonlinear cases, set in the Properties panel." },
+  "asn-fpz": { etabs: "Assign › Joint › Panel Zone", text: "Panel-zone model for beam-column joints (centerline, rigid, flexible) — model-wide under Options, per frame in the Properties panel." },
+  "asn-uh-hinges": { etabs: "Assign › Frame › Hinges", text: "Assign user-defined hinge properties at relative distances along the selected frames." },
+  "asn-uh-overwrites": { etabs: "Assign › Frame › Hinge Overwrites", text: "Override automatic hinge assignments on the selected frames (relative length, auto-subdivide)." },
+  "asn-ssec": { etabs: "Assign › Shell › Slab Section / Wall Section", text: "Select walls or slabs, then pick the shell section in the Properties panel." },
+  "asn-sspring": { etabs: "Assign › Shell › Area Springs", text: "Per-area spring support (subgrade modulus) under the selected slabs, set in the Properties panel." },
+  "asn-scp": { etabs: "Assign › Shell › Wind Pressure Coefficients", text: "Wind pressure coefficient Cp on the selected walls, used by wind load patterns." },
+  "asn-slayer": { etabs: "Assign › Shell › Layered Section", text: "Use a layered (nonlinear) shell definition on the selected walls or slabs." },
+  "asn-support": { etabs: "Assign › Joint › Restraints / Springs", text: "Restraints (fixed / pinned / roller) and springs on the selected joints, set in the Properties panel." },
+  "asn-np-jpanelzone": { etabs: "Assign › Joint › Panel Zone", text: "Per-joint panel-zone override (properties from column / user, connectivity) for the selected joints." },
+  "asn-fload": { etabs: "Assign › Frame Loads › Distributed", text: "Member loads on the selected frames, edited in the Properties panel (see also Frame Loads · Distributed…)." },
+  "asn-aload": { etabs: "Assign › Shell Loads › Uniform", text: "Area loads on the selected slabs, edited in the Properties panel (see also Shell Loads · Uniform…)." },
+  "asn-l116-fdist": { etabs: "Assign › Frame Loads › Distributed", text: "Uniform or trapezoidal distributed loads on the selected frames, by absolute or relative distance, with the projected-load option." },
+  "asn-l116-ftemp": { etabs: "Assign › Frame Loads › Temperature", text: "Uniform temperature change and through-depth gradients on the selected frames for a load pattern." },
+  "asn-l116-stemp": { etabs: "Assign › Shell Loads › Temperature", text: "Uniform temperature change and through-thickness gradient on the selected shells." },
+  "asn-l116-jtemp": { etabs: "Assign › Joint Loads › Temperature", text: "Joint temperatures from which frame and shell temperature loads are interpolated." },
+
+  /* Select */
+  "sel-all": { etabs: "Select › All (Ctrl+A)", text: "Select every object in the model." },
+  "sel-invert": { etabs: "Select › Invert Selection", text: "Select everything that is not selected, and deselect the rest." },
+  "sel-prop": { etabs: "Select › Select › Properties", text: "Select objects by frame section, shell section or material." },
+  "sel-story": { etabs: "Select › Select › Story Levels", text: "Select every object on one or more stories." },
+  "sel-plane": { etabs: "Select › Select › On Plane (XY / XZ / YZ)", text: "Select objects lying in a plane through a picked point." },
+  "sel-prev": { etabs: "Select › Get Previous Selection", text: "Restore the previous selection set." },
+
+  /* Analyze */
+  "an-fna": { etabs: "Analyze › Run Analysis (FNA time-history case)", text: "Goes to the Time History results, where a nonlinear modal (FNA) run is started for the picked TH case." },
+  "an-ritz": { etabs: "Define › Load Cases › Modal (Ritz)", text: "Goes to the Modal results, where the Eigen / Ritz basis toggle reruns the modal analysis with Ritz vectors." },
+  "an-cracked": { etabs: "Analyze › Cracked Section Analysis", text: "Goes to the Story results card that runs the iterative cracked-slab analysis for a static case." },
+
+  /* Display */
+  "dis-drift": { etabs: "Display › Story Response Plots › Drift (optimizer)", text: "Virtual-work member contributions to the roof drift, to find the members that stiffen the building most." },
+  "dis-th": { etabs: "Display › Show Plot Functions (time history)", text: "Time-history traces (displacement, drift, base shear) per TH case and story." },
+  "dis-pushover": { etabs: "Display › Show Static Pushover Curve", text: "Capacity curve, performance point (ATC-40 / FEMA 440) and hinge states for pushover cases." },
+  "dis-freq": { etabs: "Display › Show Plot Functions (frequency domain)", text: "Steady-state and PSD response vs. frequency." },
+  "dis-buckling": { etabs: "Display › Show Tables › Buckling Factors", text: "Critical buckling load factors and buckled mode shapes." },
+  "dis-takedown": { etabs: "Display › Show Tables › Column Load Takedown", text: "Column axial loads accumulated story by story." },
+  "dis-cuts": { etabs: "Display › Show Tables › Section Cut Forces", text: "Integrated forces and moments at each section cut." },
+  "dis-piers": { etabs: "Display › Show Tables › Pier Forces", text: "Wall pier forces (P, V2, M3) per story for pier-labelled walls." },
+  "dis-svc": { etabs: "Display › Show Tables › Beam Deflections", text: "Serviceability checks: beam deflections against span limits." },
+  "dis-pf-plotfn": { etabs: "Display › Show Plot Functions", text: "Time-history plot functions: joint / link / frame series, hysteresis loops and floor response spectra." },
+  "dis-pf-story": { etabs: "Display › Story Response Plots", text: "Story displacement, drift, shear and overturning moment plots per case." },
+  "dis-pf-forces3d": { etabs: "Display › Force/Stress Diagrams › Frame/Pier/Spandrel Forces", text: "Choose the frame force component (M3, V2, P …) and reactions drawn in the 3D view." },
+  "dis-pf-forces3d-toggle": { etabs: "Display › Force/Stress Diagrams (on / off)", text: "Show or hide the force diagrams in the 3D view." },
+  "dis-uh-hinges": { etabs: "Display › Hinge Results", text: "Hinge states (B, IO, LS, CP, C …) per step of a nonlinear case, with a step slider." },
+  "dis-pt-forces": { etabs: "Display › Tendon Forces", text: "Tendon force P(x) along each tendon after friction, anchorage-set and long-term losses." },
+  "dis-pt-hyper": { etabs: "Display › Show Tables › Hyperstatic Results", text: "Secondary (hyperstatic) reactions and moments from post-tensioning." },
+
+  /* Design */
+  "des-punching": { etabs: "Design › Slab Design › Punching Shear", text: "Punching-shear checks of flat slabs at column supports." },
+  "des-composite": { etabs: "Design › Composite Beam Design", text: "Composite steel-concrete beam design: studs, deck and deflection." },
+  "des-slab": { etabs: "Design › Slab Design", text: "Two-way slab strip design: required reinforcement per strip." },
+  "des-s341": { etabs: "Design › Steel Frame Design (seismic AISC 341)", text: "Seismic provisions: strong-column/weak-beam and member ductility checks." },
+  "des-optimize": { etabs: "Design › Steel Frame Design › Auto Select", text: "Iteratively choose lighter sections that still pass the steel design checks." },
+
+  /* Options */
+  "opt-edge": { etabs: "Options › Auto Edge Constraints", text: "Tie mismatched shell meshes along shared edges automatically." },
+  "opt-diaph-rigid": { etabs: "Assign › Diaphragms (model-wide rigid)", text: "Make every story floor a rigid diaphragm." },
+  "opt-diaph-none": { etabs: "Assign › Diaphragms › Disconnect", text: "No model-wide diaphragm: slabs behave semi-rigidly through their own stiffness." },
+  "opt-pz-none": { etabs: "Assign › Joint › Panel Zone (none)", text: "Beam-column joints at the centerlines (no panel zone)." },
+  "opt-pz-rigid": { etabs: "Assign › Joint › Panel Zone (rigid)", text: "Rigid panel zones at every beam-column joint." },
+  "opt-pz-scissors": { etabs: "Assign › Joint › Panel Zone (from column)", text: "Flexible (scissors) panel zones from the column properties." },
+  "opt-theme-dark": { etabs: "Options › Colors (dark)", text: "Dark colour theme." },
+  "opt-theme-light": { etabs: "Options › Colors (light)", text: "Light colour theme." },
+
+  /* Help */
+  "help-palette": { etabs: "Help › Search for Command", text: "Type to fuzzy-search every menu command; Enter runs the highlighted one." },
+  "help-shortcuts": { etabs: "Help › Keyboard Shortcuts", text: "Every keyboard shortcut in one list (F1)." },
+  "help-start": { etabs: "File › New Model", text: "The start screen: parametric templates and recent models." },
+  "help-toolbar": { etabs: "View › Toolbars", text: "Show or hide the quick-access toolbar under the menu bar." },
+  "an-opts-hub": { etabs: "Analyze › Analysis Options", text: "Hub for the model-wide analysis settings: active DOF, P-Delta, mass source, modal case and cases to run." },
+});
+
 /** dialog backdrop id → HELP key */
 export const DIALOG_HELP = {
   galleryModal: "file-gallery", importModal: "file-import", openModal: "file-open", saveAsModal: "file-saveas",
@@ -130,6 +242,7 @@ export const DIALOG_HELP = {
   shellUniformModal: "asn-suniform", amModal: "asn-jmass", casesRunModal: "an-cases-run", dofModal: "an-dof",
   ckOptionsModal: "an-check", ckStabModal: "an-stability", cxLogDlg: "an-log", showTablesModal: "dis-tables",
   nlsResModal: "dis-nls", unitsModal: "opt-units", uxStartModal: "file-new",
+  uxAnalysisOptions: "an-opts-hub",   // UX pass 2
 };
 
 /** lower-case title prefix → HELP key (fallback for dialogs without a mapped id) */
