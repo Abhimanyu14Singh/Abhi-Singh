@@ -799,6 +799,7 @@ export function openAnalysisLog(ctx) {
     g4.appendChild(warns.length ? el("ul", "cx-warnlist", warns.map(w => `<li>${esc(w)}</li>`).join(""))
       : el("p", "muted cd-note", "None."));
     body.appendChild(g4);
+    try { window.__sky && window.__sky.analysisLogExtra && window.__sky.analysisLogExtra(body, r); } catch (e) { console.warn("analysis log extra", e); }   // js/reportx.js run times
   };
   const fb = footBar("Analyze → Analysis Log", [btn("Close", "btn-primary", () => dlg.close(), null, "cxLogClose")]);
   const dlg = dialog("cxLogDlg", { title: "Analysis Log", glyph: "log", wide: true, body, foot: fb.wrap, onUnits: draw });

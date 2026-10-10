@@ -115,6 +115,8 @@ export function initEtabs(sky) {
       { label: "Save As…", act: "file-saveas", fn: () => sky.openSaveAs() },
       { sep: true },
       { label: "Report…", act: "file-report", hint: "after a solve", fn: () => { const b = $("reportBtn"); if (b && !b.disabled) b.click(); else toast("Report", "Run an analysis first."); } },
+      { label: "Create Report…", act: "file-rx-create", hint: "print · PDF · HTML", fn: () => sky.openCreateReport && sky.openCreateReport() },   // js/reportx.js
+      { label: "Model Info…", act: "file-rx-info", hint: "counts · last analysis", fn: () => sky.openModelInfo && sky.openModelInfo() },   // js/reportx.js
     ]],
     // Edit utilities + Undo/Redo (js/editmenu.js, js/history.js) — delegates to sky.edit
     ["Edit", [
@@ -146,6 +148,7 @@ export function initEtabs(sky) {
       { label: "Groups…", act: "def-groups", hint: "staging · section cuts", fn: () => sky.openGroups && sky.openGroups() },
       { sep: true },
       { label: "Load Patterns…", act: "def-patterns", fn: () => gotoLoads("ls-patterns") },
+      { label: "Open Structure Wind Pattern…", act: "def-ow-pattern", hint: "ASCE 7 Ch. 29 · frames", fn: () => sky.openOpenWindPattern && sky.openOpenWindPattern() },   // js/openwind.js
       { label: "Auto Lateral Loads…", act: "def-l116-autolat", hint: "ASCE 7-22 · EC8 · IS 1893 · user", fn: () => sky.openAutoLateral && sky.openAutoLateral() },   // v1.16 (js/loads116.js)
       { label: "Load Cases…", act: "def-loadcases", hint: "all types", fn: () => sky.openLoadCases() },
       { label: "Static Load Cases…", act: "def-cases", fn: () => gotoLoads("ls-cases") },
@@ -236,6 +239,7 @@ export function initEtabs(sky) {
       { label: "Frame Loads · Concentrated…", act: "asn-fconc", hint: "force / moment", fn: () => sky.openFrameConcentrated && sky.openFrameConcentrated("moment") },
       // v1.16 — distributed (projected) + temperature loads (js/loads116.js)
       { label: "Frame Loads · Distributed…", act: "asn-l116-fdist", hint: "uniform / trapezoid · projected", fn: () => sky.openFrameDistributed && sky.openFrameDistributed() },
+      { label: "Frame Loads · Open Structure Wind Parameters…", act: "asn-ow-params", hint: "Cf · width · shielding", fn: () => sky.openOpenWindParams && sky.openOpenWindParams() },   // js/openwind.js
       { label: "Frame Loads · Temperature…", act: "asn-l116-ftemp", hint: "ΔT · gradients", fn: () => sky.openFrameTemperature && sky.openFrameTemperature() },
       { label: "Shell Loads · Temperature…", act: "asn-l116-stemp", hint: "ΔT · gradient", fn: () => sky.openShellTemperature && sky.openShellTemperature() },
       { label: "Joint Loads · Temperature…", act: "asn-l116-jtemp", fn: () => sky.openJointTemperature && sky.openJointTemperature() },
