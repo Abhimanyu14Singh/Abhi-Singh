@@ -224,6 +224,7 @@ export class LoadsEditor {
       // v0.8 — accidental torsion for lateral (quake / wind) patterns
       const isLateral = p.kind === "quake" || p.kind === "wind" || !!p.wind || !!p.elf;
       if (isLateral) wrap.appendChild(this._accidentalTorsion(m, p));
+      if (window.__sky && window.__sky.l116PatternRow) window.__sky.l116PatternRow(wrap, m, name);   // v1.16 Auto Lateral selector (js/loads116.js)
 
       list.appendChild(wrap);
     }
@@ -297,12 +298,12 @@ export class LoadsEditor {
     const es = document.createElement("span");
     es.innerHTML = `ecc <span class="unit">fraction of B</span>`;
     const eccIn = document.createElement("input");
-    eccIn.type = "number"; eccIn.step = "0.01"; eccIn.min = "0"; eccIn.max = "0.5";
+    eccIn.type = "number"; eccIn.step = "0.01"; eccIn.min = "-0.5"; eccIn.max = "0.5";   // v1.16: negative = "− eccentricity"
     eccIn.className = "acc-ecc-in";
     eccIn.value = String(p.ecc ?? 0.05);
     eccIn.addEventListener("change", () => {
       const v = parseFloat(eccIn.value);
-      if (isFinite(v) && v >= 0 && v <= 0.5) { p.ecc = v; this._mutated(false); }
+      if (isFinite(v) && v >= -0.5 && v <= 0.5) { p.ecc = v; this._mutated(false); }   // v1.16: ± eccentricity
       else eccIn.value = String(p.ecc ?? 0.05);
     });
     eccWrap.append(es, eccIn);

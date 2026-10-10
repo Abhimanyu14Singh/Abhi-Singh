@@ -1082,8 +1082,11 @@ export function getThermalLoad(model, pat, uid) {
 
 export function setThermalLoad(model, pat, uid, dT) {
   const p = ensurePattern(model, pat);
+  const old = (p.thermal_loads || []).find(t => t.member_uid === uid);   // v1.16: keep its gradients
+  const grads = {};
+  for (const k of ["grad2", "grad3"]) if (old && old[k]) grads[k] = old[k];
   p.thermal_loads = (p.thermal_loads || []).filter(t => t.member_uid !== uid);
-  if (isFinite(dT) && dT !== 0) p.thermal_loads.push({ member_uid: uid, dT });
+  if ((isFinite(dT) && dT !== 0) || Object.keys(grads).length) p.thermal_loads.push({ member_uid: uid, dT: isFinite(dT) ? dT : 0, ...grads });
 }
 
 /** Patterns carrying a thermal load on a given member. */
@@ -1246,10 +1249,12 @@ export function getMemberUdl(model, pat, uid) {
 
 export function setMemberUdl(model, pat, uid, w) {
   const p = ensurePattern(model, pat);
+  const old = p.member_loads.find(l => l.member_uid === uid && (l.kind || "udl") === "udl" && (l.direction || "gravity") === "gravity");
   p.member_loads = p.member_loads.filter(l =>
     !(l.member_uid === uid && (l.kind || "udl") === "udl" && (l.direction || "gravity") === "gravity"));
   if (isFinite(w) && w !== 0)
-    p.member_loads.push({ member_uid: uid, kind: "udl", w, w2: 0, a: 0, b: 1, direction: "gravity" });
+    p.member_loads.push({ member_uid: uid, kind: "udl", w, w2: 0, a: 0, b: 1, direction: "gravity",
+      ...(old && old.projected ? { projected: true } : {}) });   // v1.16: keep "projected"
 }
 
 /** Uniform gravity (pre-feature) area load: no direction / projected / joint pattern. */
