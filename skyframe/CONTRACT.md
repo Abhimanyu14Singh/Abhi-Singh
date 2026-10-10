@@ -7784,3 +7784,245 @@ Bending-only closed forms (A = 10, I = 1e-3, R = 10, E = 2e8):
   * JSON round trips and validation errors are covered.
 * **Defaults**: `expand_for_analysis(m) is m`, and no new JSON keys are
   emitted.
+
+## Shell element types, one-way slabs and shell benchmarks
+
+Modules: `skyframe/core/shell_types.py` (type table, validation,
+serialization), `skyframe/engine/shell_elements.py` (OpenSees wiring),
+`skyframe/core/oneway.py` (one-way distribution),
+`skyframe/engine/shell_benchmarks.py` (benchmark problems).
+Tests: `tests/test_shell_types_oneway.py`.
+
+### ShellSection.shell_type (ETABS Shell-Thin / Shell-Thick / Membrane / Plate)
+
+`ShellSection.shell_type: str = "shell"` (appended field). JSON: the key
+`"shell_type"` is emitted in `shell_sections[name]` ONLY when it is not
+`"shell"`, so existing model JSON is unchanged; absent = `"shell"`.
+
+| shell_type    | quad element | triangle element | stiffness carried |
+|---------------|--------------|------------------|-------------------|
+| `shell` (default) | ShellMITC4 | ShellDKGT | membrane + bending (legacy, byte-identical) |
+| `shell_thin`  | ShellDKGQ (Kirchhoff) | ShellDKGT (Kirchhoff) | membrane + bending |
+| `shell_thick` | ASDShellQ4 (Mindlin)  | ASDShellT3 (Mindlin)  | membrane + bending |
+| `membrane`    | ASDShellQ4 | ASDShellT3 | membrane only |
+| `plate_thin`  | ShellDKGQ  | ShellDKGT  | bending only |
+| `plate_thick` | ASDShellQ4 | ASDShellT3 | bending only |
+
+* `shell` reproduces the pre-feature model exactly: the same
+  `ElasticMembranePlateSection` / modifier calls and ShellMITC4 quads
+  with ShellDKGT polygon triangles. The SHA-256 of the results JSON and
+  the model JSON of a representative model (shell wall, modified shell
+  slab, polygon slab with triangles, two membrane slabs, 2 stories) is
+  identical before and after the change.
+* "Membrane only" and "bending only" use the existing exact shell-modifier
+  path (`engine/shell_modifiers.py`). The dropped group is multiplied by
+  `RESIDUAL = 1e-6`, never exactly 0, so the DOFs it would leave unstiffened
+  stay non-singular. This plays the role of the ETABS automatic restraint
+  of unstiffened DOFs.
+  * `membrane` multiplies m11, m22, m12, v13 and v23 by 1e-6.
+  * `plate_*` multiplies f11, f22 and f12 by 1e-6.
+  * User modifiers multiply on top. With uniform user factors, the
+    section stays a single `ElasticMembranePlateSection` with `Ep_mod`.
+* A layered (nonlinear) section must use `shell`, `shell_thin` or
+  `shell_thick`. The others raise `ValueError` at add or validate time,
+  as does an unknown type.
+* Drilling DOF:
+  * ASDShellQ4 and ASDShellT3 carry a proper drilling stiffness, which is
+    a membrane quantity and is kept by `membrane`.
+  * A frame member framed into a `membrane` wall is therefore never
+    singular. Out-of-plane, the junction behaves as a pin, as in ETABS.
+  * Test: a beam framed perpendicular into a membrane wall has end moment
+    below 1e-3 of PL/4 and midspan moment PL/4 (within 1e-3). The same
+    beam framed into a `shell_thick` wall gets a fixed-end moment.
+* Warping:
+  * ASDShellQ4 handles warped quads; ShellMITC4 and ShellDKGQ do not
+    (see the twisted-beam rows below).
+  * The region mesher only produces planar quads, because region
+    planarity is validated. Warping therefore appears only in curved or
+    imported geometry; use `shell_thick` there.
+* Result axes:
+  * ASDShellQ4 is created with `-local` set to the ShellMITC4 local x
+    axis (from the midpoint of side 1-4 to the midpoint of side 2-3).
+    Its `shell_forces` resultants are therefore in the same element
+    system and Gauss order as the legacy ShellMITC4 (verified to 1e-6).
+  * ShellDKGQ reports in its own local system, which for rectangles is
+    the ShellMITC4 system.
+  * `shell_forces` now also accepts the ASDShellT3 3-Gauss-point
+    response (24 values). Legacy elements return 32 values and give
+    identical averages.
+* Recommendation: `shell_types.RECOMMENDED_SHELL_TYPE = "shell_thick"`
+  for NEW models. It is exposed only; the dataclass default stays
+  `shell`, so existing models never change.
+  * On quads, ASDShellQ4 is never worse than ShellMITC4 at 16x16 (by
+    more than 0.01 percentage points).
+  * It gives identical results on flat plates, where its bending field
+    is MITC4.
+  * It is far better on warped geometry (twisted beam −0.06 % against
+    −20.8 %).
+  * On triangles it is mixed. ASDShellT3 is better on thick plates and
+    warped shells, but worse than ShellDKGT on thin flat plates at
+    coarse meshes. Use `shell_thin` for thin flat polygon slabs.
+
+### Shell benchmarks (convergence table)
+
+`shell_benchmarks.PROBLEMS[name](element, N)` returns computed / reference.
+
+**Common set-up**
+* Each problem is a stand-alone OpenSees model on refinement level N with
+  `ElasticMembranePlateSection` (kappa = 5/6).
+* Triangle rows split every quad along its 0-2 diagonal.
+* Pressure loads are lumped (cell area / 4 per node).
+
+**Problems**
+
+* **Scordelis-Lo roof**
+  * R 25, L 50, 40°, t 0.25, E 4.32e8, nu 0, 90 per unit area.
+  * Quarter model, N x N mesh.
+  * Measured: vertical displacement at the midside of the free edge.
+  * Reference: 0.3024.
+* **Pinched cylinder with diaphragms**
+  * R 300, L 600, t 3, E 3e6, nu 0.3, P 1.
+  * Octant model, N x N mesh.
+  * Reference: 1.8248e-5.
+* **MacNeal-Harder twisted beam**
+  * L 12, w 1.1, t 0.32, E 29e6, nu 0.22, 90° twist.
+  * (N/2) x 3N mesh; N = 4 is the standard 2 x 12.
+  * Unit tip load in-plane (reference 5.424e-3) and out-of-plane
+    (reference 1.754e-3).
+* **Thin plate**
+  * Hard simply supported square plate, a/t = 1000, N x N mesh.
+  * Measured: centre deflection.
+  * Reference: the Navier series, alpha = 0.0040624 (0.00406 q a^4/D).
+* **Thick plate**
+  * Same plate at a/t = 10.
+  * Reference: the Mindlin solution w = w_K + M_marcus/(kappa G t). The
+    Marcus moment at the centre is 0.0737 q a^2, which gives
+    w/w_K = 1.0519.
+* **Morley 30° skew plate**
+  * L 100, L/t = 1000, uniform q, w = 0 on all edges.
+  * The rotation about each edge's in-plane normal is held by a penalty
+    spring (hard simply supported).
+  * Reference: 0.000408 q L^4/D.
+  * The obtuse corners are singular, so every element converges slowly.
+    ShellDKGQ is at −13.5 % at 16x16 and ShellMITC4 at −11.9 % at 48x48.
+* **MacNeal-Harder straight cantilever, trapezoidal mesh**
+  * 6 x 0.2 x 0.1, E 1e7, nu 0.3.
+  * Mesh is 3N/2 x N/4; N = 4 is the standard 6 x 1. Interior lines are
+    alternately skewed ±45°.
+  * Unit tip shear in-plane (reference 0.1081) and out-of-plane
+    (reference 0.4321).
+
+Error in % at N = 4 / 8 / 16. The values are pinned in the tests to ±0.05
+percentage points.
+
+| problem | ShellMITC4 (`shell`) | ShellDKGQ (`shell_thin`) | ASDShellQ4 (`shell_thick`) | ShellDKGT | ASDShellT3 |
+|---|---|---|---|---|---|
+| Scordelis-Lo | −8.27 / −3.60 / −1.34 | +5.00 / +0.55 / −0.34 | +4.48 / +0.48 / −0.25 | −3.79 / −2.35 / −1.12 | +3.97 / +0.72 / −0.04 |
+| pinched cylinder | −65.0 / −27.2 / −7.49 | −36.1 / −4.96 / +1.55 | −61.3 / −24.7 / −6.81 | −39.8 / −7.15 / +1.60 | −48.1 / −17.6 / −4.38 |
+| twisted beam in-plane | −77.8 / −49.6 / −20.8 | −62.3 / −32.4 / +25.5 | −0.23 / −0.12 / −0.06 | −1.29 / −0.60 / −0.49 | −0.65 / −0.29 / −0.20 |
+| twisted beam out-of-plane | −68.6 / −43.7 / −18.4 | −48.3 / −17.5 / +79.3 | +0.20 / +0.00 / −0.01 | −4.66 / −1.59 / −0.61 | −0.23 / −0.15 / −0.12 |
+| SS thin plate | −2.30 / −0.51 / −0.13 | −0.41 / −0.06 / −0.01 | −2.30 / −0.51 / −0.13 | −4.61 / −1.05 / −0.25 | −16.2 / −4.17 / −1.03 |
+| SS thick plate (Mindlin) | −1.93 / −0.43 / −0.11 | −5.32 / −4.98 / −4.94 | −1.93 / −0.43 / −0.11 | −9.30 / −5.92 / −5.16 | −13.8 / −3.24 / −0.78 |
+| Morley skew | −39.6 / −27.2 / −19.6 | +44.7 / −4.98 / −13.5 | −39.6 / −27.2 / −19.6 | +31.3 / −10.4 / −20.1 | −26.7 / −30.2 / −26.1 |
+| cantilever trapezoid in-plane | −97.6 / −93.3 / −79.1 | −19.4 / −6.86 / −2.02 | −94.9 / −89.9 / −75.0 | −82.3 / −53.5 / −25.1 | −56.5 / −35.4 / −26.0 |
+| cantilever trapezoid out-of-plane | −3.67 / −1.43 / −0.58 | −1.27 / −0.72 / −0.48 | −3.69 / −1.44 / −0.58 | −2.26 / −1.26 / −0.76 | −3.96 / −1.73 / −0.82 |
+
+**Reading the table**
+
+* **Kirchhoff elements (DKGQ, DKGT)**
+  * They stall about 5 % low on the thick plate, which is exactly the
+    missing 5.2 % shear term. Use the `*_thick` types for a/t ≲ 20.
+  * The DKGQ GQ12 membrane with drilling is by far the best on distorted
+    in-plane bending (cantilever trapezoid in-plane).
+  * DKGQ is unreliable on warped quads: on the twisted beam it
+    overshoots and worsens with refinement (+25 % / +79 % at 16x16).
+* **Bilinear membranes (ShellMITC4, ASDShellQ4)**
+  * Both lock badly on distorted in-plane bending.
+  * For deep in-plane bending of walls, use a fine regular mesh.
+* **Pinched cylinder**
+  * Every four-node element needs 16x16 or finer.
+
+### One-way slabs (membrane slabs)
+
+`ShellRegion.distribution: str = "two_way"` and
+`ShellRegion.one_way_dir: int = 1` (appended fields). JSON keys
+`"distribution"` and `"one_way_dir"` are emitted only when they are not
+the default.
+
+**Validation**
+
+* `one_way` needs a convex 4-corner `kind="slab"`,
+  `behavior="membrane"` region with no polygon openings.
+* `one_way_dir` must be 1 or 2.
+* The distribution must be `two_way` or `one_way`.
+* Anything else raises `ValueError`.
+* `two_way` is the existing 45° rule (unchanged).
+
+**Rule** (`core/oneway.py`)
+
+1. **Span direction d.** Region local 1 = unit(c1 − c0), and local 2 =
+   n × local 1. `one_way_dir` selects d.
+2. **Support edges.** These are the opposite pair (0,2) or (1,3) that d
+   crosses most squarely: the larger Σ|t_k·p|, where p = n × d. On a
+   tie, local 1 picks (1,3) and local 2 picks (0,2).
+3. **Strips.** Strips run parallel to d.
+   * A strip whose both ends lie on support edges sends half of
+     q·ℓ·dη to each end.
+   * A strip with only one supported end sends all of it to that end.
+4. **Line load.** Support edge k gets w(s) = factor·ℓ(s)·|t_k·p| kN/m
+   per kPa. This is piecewise linear between the corner projections,
+   with a step where the factor changes.
+5. **Other edges.** Non-support edges (the beams parallel to the span)
+   receive nothing.
+6. **Exactness.**
+   * A parallelogram (or rectangle) is exact.
+   * For other quads, strips that miss every support edge are restored
+     by a uniform rescale, with a warning.
+7. **Openings.** The total is reduced uniformly by the opening-area
+   ratio, with a warning. This is the same approximation as the two-way
+   rule.
+8. **Beams and corners.**
+   * Beams are found as in two-way: members collinear with the edge.
+   * Any uncovered part of a support edge, including a support edge with
+     no beams at all, sends its load to that edge's two corner nodes,
+     with a warning.
+   * The total is asserted to 1e-8.
+
+**Hand checks (tests)**
+
+* **6 x 4 rectangle, edge 0 along X**
+  * dir 1: edges 1 and 3 (the Y-running edges) each get a uniform
+    3 kN/m/kPa = q·Lx/2.
+  * dir 2: edges 0 and 2 each get 2 = q·Ly/2.
+* **Parallelogram (0,0)(6,0)(8,4)(2,4)**
+  * dir 1: each slanted edge gets 3·4/√20 = 2.68328, 12 per edge.
+  * dir 2: edge 0 gets the profile (0,0)–(2,4) | step | (2,2)–(6,2),
+    total 12.
+* **Trapezoid (0,0)(6,0)(5,4)(1,4), dir 1**
+  * Edge 1 runs from 3·4/√17 down to 2·4/√17, total 10, which is
+    A/2 = 10.
+* **Engine: 8 x 4 m slab, q = 5 kPa**
+  * Set-up: four edge beams released at both ends (simply supported),
+    with fixed corner columns.
+  * **One-way along X (dir 1).** 100 % goes to YB1 and YB2, the two
+    beams that run in Y and that the X-span crosses.
+    * Each gets w = q·8/2 = 20 kN/m.
+    * Shear drop: 80 kN.
+    * M_mid = wL²/8 = 40 kN·m.
+    * XB1 and XB2 carry V = M = 0 (below 1e-6 relative).
+  * **dir 2.** XB1 and XB2 get 10 kN/m, so M_mid = 80; the YB beams get
+    nothing.
+  * **Both directions.** Every corner column reacts 40 kN, and base FZ =
+    160 = qA (to 1e-9).
+  * **Missing support beam.** With YB2 removed, its 16 m² (per kPa)
+    lands as 8 + 8 on its corner nodes.
+
+### JSON shapes
+
+```
+shell_sections[name]: {..., "shell_type": "shell_thick"}        # omitted if "shell"
+shells[i]: {..., "distribution": "one_way", "one_way_dir": 2}   # omitted if defaults
+```
+
+Results JSON is unchanged in shape. `cases[c].shell_forces` now also has
+entries for ASDShellT3 triangles.

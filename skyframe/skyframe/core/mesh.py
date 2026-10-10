@@ -853,6 +853,9 @@ def mesh_model(model: BuildingModel) -> MeshedModel:
             if is_polygon_region(region):
                 loads, nodal = _membrane_distribution_polygon(model, region,
                                                               pool)
+            elif getattr(region, "distribution", "two_way") == "one_way":
+                from .oneway import distribution as _one_way   # B3
+                loads, nodal = _one_way(model, region, pool)
             else:
                 loads, nodal = _membrane_distribution(model, region, pool)
             membrane_loads[region.uid] = loads
