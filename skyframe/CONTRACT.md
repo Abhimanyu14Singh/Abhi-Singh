@@ -7558,3 +7558,37 @@ the object's top z, or else the story whose height range contains it.
 * The input model is never mutated.
 * Defaults: no existing code path changed, so every pre-existing result
   is byte-identical.
+
+## Independent verification suite (`tests/verification/`, `docs/VERIFICATION.md`)
+
+CSI SAP2000 / ETABS *Software Verification*-style problems (plus NAFEMS /
+MacNeal-Harder / textbook benchmarks), one file per family:
+`test_verif_frames.py`, `test_verif_shells.py`, `test_verif_dynamics.py`,
+`test_verif_nonlinear.py`; shared helpers `_vhelp.py` (`check()` asserts
+AND records each comparison) and `_q8.py` (independent numpy Q8
+plane-stress solver used as the converged reference for the wall
+problems).  `python3 tests/verification/make_verification_md.py` (from the
+package root) re-runs the suite with `SKYFRAME_VERIF_JSON` set and renders
+`docs/VERIFICATION.md` (problem, source, quantity, reference, SkyFrame,
+% error, tolerance, status, note).  Ordinary pytest runs write nothing.
+
+Engine fixes made by the suite (defaults bit-identical; results-JSON hash
+of a representative model with pushovers at h = 0.02 / 0.05, a nonlinear
+TH at h = 0 and a linear TH unchanged):
+
+* `HINGE_MIN_STEEL01_B = 1e-9` (`engine/opensees_engine.py`): in a
+  DISPLACEMENT-controlled pushover the Steel01 post-yield ratio of the
+  stiff-hinge springs is floored at 1e-9, so an elastic-perfectly-plastic
+  case (`hardening = 0`) no longer goes singular when two yielded hinges
+  meet at a node / the mechanism forms; the push now reaches the plastic
+  collapse load (portal: 4Mp/h and 3Mp/h to < 2e-7).  Load-controlled
+  nonlinear static steps and TH are unchanged (no floor).
+* `engine/pdelta.py::_series_column_lines`: `non_iterative_mass`
+  column-string sharing treats members stacked end-to-end inside a story
+  as ONE series column line (weight `1/sum(L/EA)`, each piece gets the
+  line's full `N`); single-member lines keep `EA/L` exactly.
+
+Documented (unchanged) behaviour pinned by the suite: zeroLength hinge
+springs carry no Rayleigh term in nonlinear TH (stiffness-proportional
+damping acts on the elastic members only); Rayleigh a0/a1 are fitted to
+the initial hinge-free modes.

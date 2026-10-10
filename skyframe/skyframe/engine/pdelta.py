@@ -345,6 +345,52 @@ def _mass_plan(eng, asm) -> dict:
     return out
 
 
+def _series_column_lines(cols: List[tuple]) -> List[tuple]:
+    """Verification-suite fix: members STACKED end-to-end inside one story
+    (a column split at mid-height, e.g. for a brace connection) are one
+    column line in SERIES, not parallel columns.  Previously each piece
+    took its own ``EA/L`` share, so a column split into n pieces carried
+    only ~P/n of the story gravity in its string stiffness (a 10-piece
+    cantilever got 0.0775 m instead of 0.1414 m on the CSI P-Delta column).
+    Every member of a connected stack now gets the stack's series weight
+    ``1 / sum(L/EA)``, so each piece carries the full line axial force;
+    a single-member line keeps its ``EA/L`` weight unchanged and the
+    story sum keeps its order (bit-identical for the usual
+    one-member-per-story columns).  Returns ``(member, weight,
+    counts_in_story_sum)`` triples."""
+    if len(cols) < 2:
+        return [(m, w, True) for m, w in cols]
+    parent = list(range(len(cols)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    owner: Dict[Tuple[float, float, float], int] = {}
+    for i, (m, _w) in enumerate(cols):
+        for p in (m.pi, m.pj):
+            key = (round(p[0], 6), round(p[1], 6), round(p[2], 6))
+            if key in owner:
+                parent[find(i)] = find(owner[key])
+            else:
+                owner[key] = i
+    groups: Dict[int, List[int]] = {}
+    for i in range(len(cols)):
+        groups.setdefault(find(i), []).append(i)
+    out = [(m, w, True) for m, w in cols]
+    for g in groups.values():
+        if len(g) == 1:
+            continue
+        flex = sum(1.0 / cols[i][1] for i in g if cols[i][1] > 0.0)
+        w_line = 1.0 / flex if flex > 0.0 else 0.0
+        # the line enters the story weight sum ONCE (first piece); every
+        # piece then gets the same line axial force
+        for k, i in enumerate(g):
+            out[i] = (cols[i][0], w_line, k == 0)
+    return out
+
+
 def _column_strings(eng, asm, z_bot: float, z_top: float,
                     P: float, box=None) -> List[dict]:
     """``P`` shared over the story's vertical frame columns by ``EA/L``
@@ -371,11 +417,12 @@ def _column_strings(eng, asm, z_bot: float, z_top: float,
             cols.append((m, E / _npx.axial_flexibility(model, m)))
             continue
         cols.append((m, E * sec.A * sec.mod_A / L))
-    wsum = sum(w for _, w in cols)
+    lines = _series_column_lines(cols)
+    wsum = sum(w for _, w, first in lines if first)
     springs: List[dict] = []
     if wsum <= 0.0:
         return springs
-    for m, w in cols:
+    for m, w, _first in lines:
         N = -P * w / wsum                       # compression (tension +)
         idx = sorted(k[1] for k in asm.seg_ele if k[0] == m.uid)
         for j in idx:
