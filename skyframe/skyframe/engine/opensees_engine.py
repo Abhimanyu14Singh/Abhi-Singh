@@ -170,6 +170,7 @@ from skyframe.core import framemesh as _fm
 from skyframe.core import nonprismatic as _npx     # nonprismatic sections
 from skyframe.core import panelzones as _pzj      # per-joint panel zones
 from skyframe.engine.shell_modifiers import elastic_shell_section
+from skyframe.engine import shell_elements as _shel  # shell_type (B3)
 from skyframe.engine import pdelta as _pdelta      # model-wide P-Delta
 from skyframe.engine import diaphragms as _dgm     # named diaphragms/add. mass
 from skyframe.engine import tendons as _tdn        # PT tendons / hyperstatic
@@ -3090,7 +3091,7 @@ class OpenSeesEngine:
                     # f/m/v modifiers: exact uniform / layered paths
                     # (skyframe.engine.shell_modifiers; defaults = the
                     # legacy ElasticMembranePlateSection call)
-                    nd_tag, _ = elastic_shell_section(stag, ssec, mat, 1.0,
+                    nd_tag, _ = _shel.build_section(stag, ssec, mat, 1.0,
                                                       nd_tag)
                 sec_tags[name] = stag
             regions = {r.uid: r for r in model.shells}
@@ -3117,15 +3118,15 @@ class OpenSeesEngine:
                         ssec_q = model.shell_sections[region.section]
                         mat_q = model.materials[ssec_q.material]
                         stag += 1
-                        nd_tag, _ = elastic_shell_section(
+                        nd_tag, _ = _shel.build_section(
                             stag, ssec_q, mat_q, scale, nd_tag)
                         scaled_tags[key] = stag
                     stag_q = scaled_tags[key]
-                if len(node_tags) == 3:
-                    # polygon auto-mesh triangle (CONTRACT "Polygon shells")
-                    ops.element("ShellDKGT", etag, *node_tags, stag_q)
-                else:
-                    ops.element("ShellMITC4", etag, *node_tags, stag_q)
+                # shell_type element family (CONTRACT "Shell element
+                # types"): default "shell" = ShellMITC4 quads / ShellDKGT
+                # polygon triangles (legacy)
+                _shel.add_element(model.shell_sections[region.section],
+                                  etag, node_tags, stag_q)
                 asm.shell_quads.append({"region": quad.region,
                                         "nodes": node_tags})
                 asm.quad_ele.append(etag)
@@ -5174,9 +5175,9 @@ class OpenSeesEngine:
         for qi, etag in enumerate(asm.quad_ele):
             ops.eleResponse(etag, "forces")          # warm-up (see docstring)
             vals = ops.eleResponse(etag, "stresses")
-            if len(vals) != 32:                      # pragma: no cover
-                continue
-            avg = np.asarray(vals, dtype=float).reshape(4, 8).mean(axis=0)
+            if len(vals) not in (32, 24):            # pragma: no cover
+                continue                 # 24 = ASDShellT3 (3 gauss pts)
+            avg = np.asarray(vals, dtype=float).reshape(-1, 8).mean(axis=0)
             if baseline is not None and qi in baseline:
                 avg = avg - np.asarray(baseline[qi])
             out[qi] = [float(v) for v in avg]

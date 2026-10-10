@@ -35,6 +35,7 @@ from skyframe.core.nonlinear_static import (  # noqa: F401  (re-exported)
     validate_nonlinear_static)
 
 from skyframe.core import diaphragms as _dia  # multi-diaphragm / add. mass
+from skyframe.core import shell_types as _sht  # B3 shell types / one-way
 from skyframe.core.plotfn import (normalize as _plotfn_norm,  # plot fns
                                   validate as _plotfn_validate)
 from skyframe.core.nonprismatic import member_area as _np_area
@@ -393,6 +394,10 @@ class ShellSection:
     v23: float = 1.0
     mass: float = 1.0
     weight: float = 1.0
+    # B3 ETABS shell type (skyframe.core.shell_types): "shell" (legacy
+    # ShellMITC4/ShellDKGT) | shell_thin | shell_thick | membrane |
+    # plate_thin | plate_thick
+    shell_type: str = "shell"
 
     @property
     def total_thickness(self) -> float:
@@ -402,7 +407,10 @@ class ShellSection:
         return self.thickness
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d.pop("shell_type", None)            # emitted only when non-default
+        d.update(_sht.section_extra_to_dict(self))
+        return d
 
 
 # --------------------------------------------------------------------------- #
@@ -797,6 +805,8 @@ class ShellRegion:
     #   along the region's corner-ordering normal.  None = not wind-loaded.
     diaphragm: str = ""                    # named diaphragm ("" = none)
     additional_mass: float = 0.0           # t/m^2 (ETABS shell add. mass)
+    distribution: str = "two_way"          # B3 membrane slabs: two_way|one_way
+    one_way_dir: int = 1                   # B3 one-way span: region local 1|2
 
     @property
     def area(self) -> float:
@@ -850,7 +860,8 @@ class ShellRegion:
                 "area_spring": (dict(self.area_spring)
                                 if self.area_spring else None),
                 "wind_cp": self.wind_cp,
-                **_dia.shell_extra_to_dict(self)}
+                **_dia.shell_extra_to_dict(self),
+                **_sht.region_extra_to_dict(self)}
 
 
 # --------------------------------------------------------------------------- #
@@ -2051,6 +2062,7 @@ class BuildingModel:
     def _validate_shell_mods(sec: ShellSection) -> None:
         from skyframe.core.modifiers import validate_shell_mods
         validate_shell_mods(sec)
+        _sht.validate_shell_type(sec)
 
     def set_stories(self, heights: List[float], names: Optional[List[str]] = None) -> None:
         self.stories = []
@@ -2197,6 +2209,7 @@ class BuildingModel:
         if region.behavior == "membrane" and region.kind != "slab":
             raise ValueError(f"Shell {region.uid}: membrane behavior is only "
                              "supported for slabs")
+        _sht.validate_region_distribution(region)
         if len(region.corners) < 3:
             raise ValueError(f"Shell {region.uid}: needs at least 3 corners")
         if region.behavior == "shell":
@@ -3945,7 +3958,8 @@ class BuildingModel:
             mdl.shell_sections[name] = ShellSection(
                 name=sd.get("name", name), material=sd["material"],
                 thickness=float(sd["thickness"]),
-                mod=float(sd.get("mod", 1.0)), layered=lay)
+                mod=float(sd.get("mod", 1.0)), layered=lay,
+                **_sht.section_extra_from_dict(sd))
             _load_shell_mods(mdl.shell_sections[name], sd)
         # v0.14 grid systems: prefer the full `grid_systems` list; otherwise
         # wrap a legacy single `grid` as a one-element list.  Both `grid`
@@ -4002,7 +4016,8 @@ class BuildingModel:
                 area_spring=asp,
                 wind_cp=(None if rd.get("wind_cp") is None
                          else float(rd["wind_cp"])),
-                **_dia.shell_extra_from_dict(rd)))
+                **_dia.shell_extra_from_dict(rd),
+                **_sht.region_extra_from_dict(rd)))
         mdl.base_fixity = d.get("base_fixity", "fixed")
         if mdl.base_fixity not in ("fixed", "pinned"):
             raise ValueError(f"base_fixity must be fixed|pinned, got "
