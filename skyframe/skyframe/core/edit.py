@@ -392,6 +392,21 @@ def _remap_points(ctx: _Ctx, fn: Callable[[list], Optional[list]],
     for g in (d.get("groups") or {}).values():
         pts = g.get("points") or []
         g["points"] = [mp(p) or list(p) for p in pts]
+    # analysis-case settings that name joints by coordinates
+    for tc in (d.get("th_cases") or {}).values():
+        req = tc.get("output_requests") if isinstance(tc, dict) else None
+        if isinstance(req, dict) and isinstance(req.get("joints"), list):
+            req["joints"] = [mp(p) or list(p) for p in req["joints"]]
+    for key in ("steady_state_cases", "psd_cases"):
+        for fc in (d.get(key) or {}).values():
+            if isinstance(fc, dict) and isinstance(fc.get("output_points"), list):
+                fc["output_points"] = [mp(p) or list(p)
+                                       for p in fc["output_points"]]
+    for key in ("pushover_cases", "nonlinear_static_cases"):
+        for pc in (d.get(key) or {}).values():
+            if isinstance(pc, dict) and pc.get("control_point"):
+                pc["control_point"] = mp(pc["control_point"]) or list(
+                    pc["control_point"])
     if include_tendons:
         for td in d.get("tendons") or []:
             td["points"] = [mp(p) or list(p) for p in td.get("points") or []]

@@ -189,6 +189,17 @@ function remapPoints(ctx, fn, includeTendons = false) {
   for (const ls of d.line_springs || []) for (const e of ["p1", "p2"]) { const q = mp(ls[e]); if (q) ls[e] = q; }
   for (const [lst] of pointLists(d)) for (const r of lst) if (r && r.point) { const q = mp(r.point); if (q) r.point = q; }
   for (const g of Object.values(d.groups || {})) g.points = (g.points || []).map(p => mp(p) || [...p]);
+  // analysis-case settings that name joints by coordinates (mirrors edit.py)
+  for (const tc of Object.values(d.th_cases || {})) {
+    const req = tc && tc.output_requests;
+    if (req && Array.isArray(req.joints)) req.joints = req.joints.map(p => mp(p) || [...p]);
+  }
+  for (const key of ["steady_state_cases", "psd_cases"])
+    for (const fc of Object.values(d[key] || {}))
+      if (fc && Array.isArray(fc.output_points)) fc.output_points = fc.output_points.map(p => mp(p) || [...p]);
+  for (const key of ["pushover_cases", "nonlinear_static_cases"])
+    for (const pc of Object.values(d[key] || {}))
+      if (pc && pc.control_point) pc.control_point = mp(pc.control_point) || [...pc.control_point];
   if (includeTendons) for (const td of d.tendons || []) td.points = (td.points || []).map(p => mp(p) || [...p]);
   return touched;
 }

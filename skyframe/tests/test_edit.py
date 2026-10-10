@@ -648,3 +648,22 @@ def test_api_edit_endpoint(tmp_path, monkeypatch):
         "selection": {"members": ["NOPE"]}, "params": {"dx": 1}}
     ).status_code == 400
     assert c.post("/api/edit/move", data="x").status_code == 400
+
+
+def test_move_remaps_case_point_references():
+    """Case settings that name joints by coordinates follow the joint:
+    TH output_requests joints, pushover / nonlinear static control points
+    and steady-state / PSD output points."""
+    mdl = _bay(1, 1)
+    d = mdl.to_dict()
+    top = [0.0, 0.0, H]
+    d["th_cases"] = {"TH": {"output_requests": {"joints": [top, [9, 9, 9]]}}}
+    d["pushover_cases"] = {"PO": {"control_point": top}}
+    d["steady_state_cases"] = {"SS": {"output_points": [top]}}
+    new, _ = apply_edit(d, "move", _sel(members=["B00"]),
+                        {"dx": 0.0, "dy": 0.0, "dz": 0.5})
+    moved = [0.0, 0.0, H + 0.5]
+    assert new["th_cases"]["TH"]["output_requests"]["joints"] == [moved,
+                                                                  [9, 9, 9]]
+    assert new["pushover_cases"]["PO"]["control_point"] == moved
+    assert new["steady_state_cases"]["SS"]["output_points"] == [moved]
