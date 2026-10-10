@@ -8374,3 +8374,117 @@ Documented (unchanged) behaviour pinned by the suite: zeroLength hinge
 springs carry no Rayleigh term in nonlinear TH (stiffness-proportional
 damping acts on the elastic members only); Rayleigh a0/a1 are fitted to
 the initial hinge-free modes.
+
+## Story shear from all lateral load types
+
+Static-case story results `story[s].shear_x / shear_y` are exact for every
+lateral load type. This covers linear static, P-Delta and corotational
+(stage 2) cases, the nonlinear static final state, and through them combos,
+`story_stiffness`, irregularity and the `story_stiffness` table. Before
+this change, only pattern `story_forces` and `nodal_loads` were counted.
+Lateral member loads, open-structure wind, directional or joint-pattern
+area loads and tendon loads all read 0 shear, while their drifts were
+correct.
+
+### Definition (ETABS)
+
+The shear at a level is the sum of the global X / Y forces applied at and
+above that level. Equivalently, it is the horizontal cut force on a plane
+just below the level. A force at exactly the level elevation (within
+1e-6 m) counts.
+
+### How each load type is counted
+
+Implemented in `skyframe/engine/story_shear.py`.
+
+* **Story forces and pattern nodal loads:** the legacy
+  `_story_shears` sum is kept verbatim.
+* **Nodal forces from member, area and tendon loads:** these forces are
+  recorded from the loads actually put on the OpenSees domain.
+  * While a case's patterns are applied, `ops.load` is intercepted inside
+    `_apply_member_load`, `_apply_area_load` and
+    `tendons.apply_pattern_tendons`.
+  * This captures member point loads landing on a node, the consistent
+    nodal forces of directional / projected / joint-pattern area loads
+    (shell load sets included) and shell-hosted tendon forces.
+  * Each force counts at the levels at or below its node.
+* **Member span loads:** these are integrated exactly. Every span record
+  is used:
+  * `beamUniform` / `beamPoint` element loads;
+  * fixed-end-path partial UDL / trapezoid / point loads, from any
+    direction, from open wind, from frame-hosted tendons and from
+    self-weight.
+
+  Each record is converted to global and its horizontal part is integrated
+  over the part of the segment at or above the level. A segment from z_i
+  to z_j is cut at `x_e = L (e - z_i)/(z_j - z_i)`. A linear load
+  contributes its closed-form integral over the overlap. A point load
+  counts when its station is at or above the level.
+
+  This is exact for inclined and vertical members that pass through a
+  level without a node. The fixed-end nodal forces of span loads are not
+  used, so there is no end-node approximation.
+* **Excluded (zero shear):**
+  * Temperature loads: uniform, gradient, joint and shell. They are
+    self-equilibrated imposed strains.
+  * Ground displacements: imposed `sp`, which gives reactions only.
+  * Moment / curvature span records.
+* **Rounding noise:** a horizontal component of at most 1e-12 times the
+  load's own magnitude is dropped. This removes the noise from a gravity
+  load passed through the member axes, so gravity-only loads add exactly
+  nothing.
+* **Recording and replay:**
+  * Static cases record during the real application (`capture`).
+  * A caller without a recording, such as the nonlinear static final
+    state, replays the pattern application with `ops.load`, `eleLoad` and
+    `sp` stubbed out. The domain and span bookkeeping are untouched, and
+    the result is identical (tested).
+* **Combos:** combos stay linear in the case shears, because they combine
+  the case story rows.
+* **Per-diaphragm rows:** these carry no shear and are unchanged.
+* **Not changed:** dynamic (RS / TH) peak shears and the pushover
+  distribution's `_story_shears` are unchanged.
+
+### Validation
+
+`story_shear.cut_shear(eng, asm, z)` is an independent check. It sums
+three contributions on a plane just below z:
+
+* the global end forces at the upper node of every crossing frame segment
+  (`localForce` plus the fixed-end correction), plus the span load
+  between the plane and that node;
+* the shell `forces` at the upper nodes of crossing elements;
+* minus the reactions of supports above the plane.
+
+`tests/test_story_shear_all_loads.py` has 19 tests:
+
+* Cantilever with lateral UDL, single and stacked members:
+  V = w (H - e), exact.
+* Partial trapezoid plus point loads, with a point exactly at a level.
+* local_y load on a column.
+* Inclined brace straddling a level: w L/2 plus a point above.
+* Braced frame wind member loads. The legacy shear was 0.
+* Lattice open-wind pattern at 30 degrees, against a hand integration.
+* Hydrostatic wall pressure:
+  V(e) = B g (H-e)^2/2 + B h (q(e-h)/6 + q(e)/3), exact (consistent
+  bilinear loads).
+* Slab with global_x area load and a global_y shell load set.
+* Tendon in a column: V(e) = 4 P s |2e - L| / L^2 and base shear 0.
+* Thermal and ground displacement give 0.
+* Combos and a multi-pattern case are linear in the cases.
+* P-Delta and corotational cases.
+* Replay equals capture.
+* Story stiffness equals |shear/drift| in the engine and the table.
+* Cut-force equality, to 1e-6, on a 3-story braced frame plus wall plus
+  frame with mixed loads (member, area, nodal, story force, self-weight,
+  gravity).
+* The legacy-only model is bit-identical.
+* Gravity on skewed / rotated members adds exactly zero.
+
+Defaults are bit-identical. For models whose lateral loads are only story
+forces and nodal loads, run results hash identically before and after:
+
+* quick_building with a P-Delta case and a combo;
+* semi-rigid walls / slab with self-weight, area / member gravity,
+  thermal, nodal and story loads, and a combo;
+* corotational gravity on an inclined brace.

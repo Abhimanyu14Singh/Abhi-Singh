@@ -175,6 +175,7 @@ from skyframe.engine import shell_elements as _shel  # shell_type (B3)
 from skyframe.engine import pdelta as _pdelta      # model-wide P-Delta
 from skyframe.engine import diaphragms as _dgm     # named diaphragms/add. mass
 from skyframe.engine import tendons as _tdn        # PT tendons / hyperstatic
+from skyframe.engine import story_shear as _ssx    # story shear, all loads
 
 from skyframe.engine import thermal_ext as _thx    # v1.16 temperature loads
 from skyframe.core.thermal_ext import projected_factor as _proj_f  # v1.16
@@ -2324,8 +2325,9 @@ class OpenSeesEngine:
         ops.timeSeries("Linear", 1)
         ops.pattern("Plain", 1, 1)
         _REUSE["loaded"] = True
-        for pat_name, scale in case.patterns.items():
-            self._apply_pattern(asm, pat_name, scale)
+        with _ssx.capture(self, case.patterns):
+            for pat_name, scale in case.patterns.items():
+                self._apply_pattern(asm, pat_name, scale)
 
         # v0.12: a model with any tension/compression-only member is nonlinear
         # (the Truss materials switch stiffness by strain sign) -> Newton.
@@ -5743,9 +5745,9 @@ class OpenSeesEngine:
     def _story_shears(self, case: LoadCase) -> Dict[str, Tuple[float, float]]:
         """Cumulative applied lateral force at & above each story (kN).
 
-        Area loads and gravity member loads are vertical and do not enter;
-        lateral loads applied through shell nodes arrive as nodal loads or
-        story forces and are already counted.
+        Pattern story forces and nodal loads only; every other lateral
+        load (member / area / tendon loads) is added by
+        :mod:`skyframe.engine.story_shear` in :meth:`_story_results`.
         """
         model = self.model
         elevs = model.story_elevations()
@@ -5768,7 +5770,8 @@ class OpenSeesEngine:
     def _story_results(self, asm: _Assembly, case: LoadCase,
                        node_disp: Dict[int, List[float]]) -> Dict[str, Dict[str, float]]:
         """Per-story displacement, drift ratio, and applied story shear."""
-        shears = self._story_shears(case)
+        shears = _ssx.add_to(self._story_shears(case), _ssx.extra_shears(
+            self, asm, case.patterns))      # + every other lateral load
         story: Dict[str, Dict[str, float]] = {}
         prev_ux = prev_uy = 0.0
         for s in self.model.stories:  # bottom -> top
@@ -6297,8 +6300,9 @@ class OpenSeesEngine:
 
         ops.timeSeries("Linear", 2)
         ops.pattern("Plain", 2, 2)
-        for pat_name, scale in case.patterns.items():
-            self._apply_pattern(asm, pat_name, scale)
+        with _ssx.capture(self, case.patterns):
+            for pat_name, scale in case.patterns.items():
+                self._apply_pattern(asm, pat_name, scale)
         self._setup_nonlinear_analysis(asm)
         self._analyze_geom_stage(
             geometric,
