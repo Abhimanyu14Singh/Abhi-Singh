@@ -6717,16 +6717,42 @@ pattern, sets `fx` for direction X and `fy` for Y, and `ecc != 0` sets
 Codes:
 
 * `asce7_22`: `SDS, SD1, R, Ie=1, TL=8, S1=0, Ct=0.0466, x=0.9, T=None,
-  mprs=None`.
-  * Period: `Ta = Ct hn^x`.  A supplied T is capped at `Cu Ta`, with Cu
-    from Table 12.8-1, linear between rows.
-  * Two-period spectrum: `Sa = SDS` (T <= Ts), `SD1/T` (T <= TL),
-    `SD1 TL/T^2` beyond.
-  * Multi-period spectrum (`mprs = [[T, Sa], ...]`): the descending
-    envelope `min(SDS, max_{T'>=T} Sa(T'))` is used.  `SDS` defaults to
-    `0.9 max Sa` over 0.2 to 5 s.
-  * `Cs = Sa/(R/Ie)`, at least `max(0.044 SDS Ie, 0.01)`, and at least
-    `0.5 S1/(R/Ie)` when `S1 >= 0.6`.
+  mprs=None, vs30=None, method=None, short_period_cap=False`.
+  * Period (§12.8.2): `Ta = Ct hn^x`.  A supplied T is capped at `Cu Ta`,
+    with Cu from Table 12.8-1 (keyed on SD1), linear between rows.
+  * `method` 2 (default without `mprs`; §12.8.1.1 Method 2, two-period
+    spectrum §11.4.5.2): `Sa = SDS` (T <= Ts), `SD1/T` (T <= TL),
+    `SD1 TL/T^2` beyond; `Cs = Sa/(R/Ie)`.
+  * `method` 1 (default with `mprs = [[T, Sa], ...]`, the multi-period
+    DESIGN spectrum of §11.4.5.1, e.g. the 22-period USGS table):
+    Eq. 12.8-2 `Cs = Sa(T)/(R/Ie)`, Sa linearly interpolated between the
+    tabulated periods.  Where T is below the period of maximum Sa
+    (`T_peak`, the first period reaching it) the maximum Sa is used.
+    No SDS cap and no SD1/T cap apply.
+  * Beyond the last tabulated period Te (10 s for USGS), per §11.4.5.1
+    as revised by Supplement 3: `Sa(Te) Te/T` (T <= TL) and
+    `Sa(Te) Te TL/T^2` (T > TL) when TL >= Te, else `Sa(Te) (Te/T)^2`.
+    A table ending before 10 s is extended from its own last point
+    (documented generalisation).
+  * SDS / SD1 with `mprs`: given values win (the USGS-reported SDS/SD1,
+    which ETABS also takes as input).  Otherwise §21.4:
+    * `SDS = 0.9 max Sa` over 0.2 to 5 s (`mprs_sds`).
+    * `SD1 = 0.9 max T Sa(T)` over 1 to 2 s when `vs30 > 1450 ft/s`
+      (441.96 m/s), else over 1 to 5 s, and at least `Sa(1 s)`
+      (`mprs_sd1`; `vs30` in m/s is required when SD1 is not given).
+    * The maximum is exact on the interpolated spectrum, including each
+      segment's parabola vertex.
+  * `method=2` with `mprs` uses the two-period form with those SDS/SD1;
+    ICC/SKGA read §12.8.1.1 as permitting either method.
+  * Lower bounds (both methods): `Cs >= max(0.044 SDS Ie, 0.01)`, and
+    `Cs >= 0.5 S1/(R/Ie)` when `S1 >= 0.6`.
+  * `short_period_cap` (§12.8.1.3, Method 2 only): Cs is computed with
+    `max(min(SDS, 1.0), 0.7 SDS)` in place of SDS.  It requires T <= 0.5 s
+    and at most 5 stories; the remaining §12.8.1.3 conditions are the
+    user's responsibility.
+  * Summary keys (only with `mprs`): `method`, `SD1`,
+    `SDS_from_mprs`/`SD1_from_mprs` (when derived), and for Method 1
+    `Sa_T`, `Sa_max`, `T_peak`.  With the cap: `SDS_cs`.
   * Vertical distribution uses `w h^k`, with k = 1 / 2 and linear between.
 * `ec8` (EN 1998-1 §4.3.3.2): `ag` (in g, times `gamma_I`), `q`,
   `ground_type A-E`, `spectrum_type 1|2` (Tables 3.2/3.3; `S/TB/TC/TD`
@@ -6747,15 +6773,121 @@ Codes:
     extent along the load.
 * `user_coefficient`: `V = C W`, distributed by `w h^k`.
 * `user_loads`: `loads = [{story, fx, fy}]`, applied verbatim.
-* `asce7_22_wind` (optional 7-22 directional MWFRS): `V` (m/s),
-  `exposure B|C|D`, `Kzt=1`, `Kd=0.85`, `ze=0`, `cp_total=1.3`.
-  * `qz = 0.613 Kz Kzt Ke V^2`.
-  * `Kz = 2.41 (z/zg)^(2/alpha)`, using the 7-22 Table 26.10-1 alpha/zg,
-    with z floored at 15 ft for every exposure (the same documented floor
-    as the 7-16 helper).
-  * `Ke = exp(-0.000119 ze)`.
-  * `p = qz Kd cp_total` (Kd moves from qz to p).
+* `asce7_22_wind` (optional 7-22 directional MWFRS, Ch. 27): `V` (m/s),
+  `exposure B|C|D`, `Kzt=1`, `Kd=0.85`, `ze=0`, `cp_total=1.3`,
+  `Ke=None`, `G=1.0`, `cp_windward=None`, `cp_leeward=None`.
+  * `qz = 0.613 Kz Kzt Ke V^2` (Pa; Eq. 26.10-1.SI).  Kd is not in qz.
+  * `Kz = 2.41 (z/zg)^(2/alpha)` (Table 26.10-1), with alpha/zg from
+    7-22 Table 26.11-1: B 7.5 / 3280 ft, C 9.8 / 2460 ft, D 11.5 /
+    1935 ft.  For z < 15 ft, z = 15 ft is used (every exposure); above
+    zg the value stays 2.41.
+  * `Ke = exp(-0.000119 ze)` (Table 26.9-1, ze in m), or the given `Ke`
+    (e.g. 1.0).
+  * Combined form (default): `p = qz Kd G cp_total`.  With the defaults
+    `G = 1` and `cp_total = 1.3` the gust factor is folded in, as in
+    `make_wind_pattern`, and the leeward suction is taken with qz.
+  * Split form (`cp_windward` and `cp_leeward` both given): `p_z = Kd G
+    (qz Cp_w + qh |Cp_l|)`, the Eq. 27.3-1 net windward + leeward
+    pressure; internal pressure cancels.  qh is taken at the top-story
+    elevation.  Use `G = 0.85` (§26.11.1, rigid).
   * Each story's tributary facade area is as in `make_wind_pattern`.
+  * Summary adds `qh` and `G` when the split form or `G != 1` is used.
+
+#### ASCE 7-22 research note (v1.16 follow-up)
+
+The full ASCE 7-22 text was not reachable (paywalled; ASCE Amplify, CSI,
+Bentley, USGS and ICC pages all failed to download).  Each statement
+below was checked against quoted search-result text from the sources
+named.
+
+Verified:
+
+* Seismic, §11.4.5.1 multi-period design response spectrum:
+  * Sa = 2/3 of the USGS multi-period MCER spectrum at 22 periods (0 to
+    10 s).
+  * Linear interpolation is used between the tabulated periods.
+  * The beyond-10 s extension follows Supplement 3 (TL >= 10: `10/T`,
+    then `10 TL/T^2`; TL < 10: `(10/T)^2`).
+  * Sources: ASCE Amplify §11.4.5.1 and Supplement 3 snippets, the
+    Oregon BCD SAM 24-03, and the QuakeManager ASCE 7-22 page.
+* Seismic, §11.4.5.2 two-period spectrum:
+  * Permitted where the USGS multi-period spectrum is unavailable, and
+    for ELF Method 2.
+  * Sources: ICC Building Safety Journal and S. K. Ghosh Associates,
+    "Is continued use of the two-period design spectrum ...".
+* Seismic, §21.4 SDS / SD1 definitions:
+  * SDS = 90 % of max Sa over 0.2 to 5 s.
+  * SD1 = 90 % of max T Sa over 1 to 2 s (vs > 1,450 ft/s = 442 m/s) or
+    over 1 to 5 s (vs <= 1,450 ft/s), and at least Sa(1 s).
+  * SMS = 1.5 SDS and SM1 = 1.5 SD1.  Because every operation is linear,
+    applying the rule to the design spectrum gives SDS/SD1 directly.
+  * Sources: the ICC/SKGA article and an ASCE 7-22 text excerpt.  These
+    secondary sources disagree on whether the 90 % rule is labelled on
+    SM1 or SD1; the numeric result is the same.
+* Seismic, §12.8.1.1 Method 1 vs Method 2:
+  * Method 1: Eq. 12.8-2 `Cs = Sa/(R/Ie)`, with Sa at T from §11.4.5.1.
+    "Where T is less than the period at which Sa is maximum, the maximum
+    value of Sa shall be used."
+  * Method 2: the two-period form, with the SD1/T and SD1 TL/T^2 caps.
+  * Lower bounds: `0.044 SDS Ie >= 0.01`, and `0.5 S1/(R/Ie)` for
+    S1 >= 0.6 g.
+  * Sources: the ICC "Method 2 versus Method 1" evaluation, a 7-22 text
+    excerpt, the Simpson Strong-Tie SE blog (2026) ("lower bounds remain
+    the same"), and RAM Elements / open-analysis notes.
+* Seismic, §12.8.1.3: SDS = 1.0, but not less than 70 % of SDS (7-22
+  wording; 7-16 used Ss = 1.5).  Source: 7-22 text excerpt.
+* Seismic, ETABS:
+  * v21.0.0 implemented ASCE 7-22 auto seismic and the response-spectrum
+    function.
+  * Method 1 references a response-spectrum function (the multi-period
+    spectrum).
+  * v22.1.0 exposed an SDS input for Method 1 (before that, SDS was
+    input for Method 2 only).
+  * v23.0.0 fixed Method 1 with T > Tmax (= Cu Ta).
+  * SkyFrame mirrors these inputs: `mprs` is the function, SDS/SD1 may
+    be given, and T is capped at Cu Ta.
+  * Source: CSI release notes v21.0.0 / v22.1.0 / v23.0.0 / v23.1.0.
+* Wind:
+  * `Kz = 2.41 (z/zg)^(2/alpha)` for 15 ft <= z <= zg, with the z < 15 ft
+    branch at 15 ft.  alpha/zg come from Table 26.11-1, which 7-22 changed
+    (ASCE Amplify §26.10.1 snippet; Meca "ASCE 7-22 wind load changes").
+  * Exposure B 7.5/3280 ft and D 11.5/1935 ft are confirmed by
+    secondary sources.
+  * Exposure C 9.8/2460 ft is confirmed indirectly: it reproduces the
+    7-22 example value Kz(30 ft, C) = 0.98 and the 0-15 ft table row
+    0.57 / 0.85 / 1.03.
+  * Kd is removed from qz and applied in the pressure equations
+    (Eq. 27.3-1 `p = q Kd G Cp - qi Kd (GCpi)`); Kd = 0.85 for MWFRS.
+    Source: ICC "Demystifying Loads" (2024 IBC / ASCE 7-22).
+  * Ke (Table 26.9-1) = `exp(-0.0000362 zg[ft])`, the same as 7-16;
+    "permitted to take Ke = 1".
+  * G = 0.85 for rigid buildings (§26.11.1).
+
+Corrections made:
+
+* The old Method 1 used `min(SDS, descending envelope)`.  It is now
+  `Sa(T)`, with the max-Sa rule below the peak period.  This changes V
+  whenever Sa(T) > 0.9 max Sa; in the 3-story MPRS test, 315 -> 350 kN.
+* SDS from `mprs` is now the exact maximum, not a 0.01 s grid.  SD1 can
+  now be derived (it was required before).
+* The long-period tail now follows Supplement 3.  It was `1/T` beyond
+  the last point.  Both rules give the same Sa up to TL when TL >= the
+  last period.
+* Kz is capped at zg.
+* Optional additions: `Ke` override, `G`, and the split windward qz /
+  leeward qh form.
+
+Still caveated (not verified against primary text):
+
+* Whether 7-22 kept the 0.5 S1 floor unchanged for Method 1.  Only
+  secondary sources confirm it.
+* The exact list of §12.8.1.3 eligibility conditions, beyond <= 5 stories
+  and T <= 0.5 s.
+* The full numeric 7-22 Table 26.10-1 above 30 ft.  The tests compare
+  equation values rounded to two decimals.
+* The 7-22 §27.1.5 minimum MWFRS load (16 psf) is not applied.
+* The leeward Cp in the default combined `cp_total` (1.3) is a
+  convention, not the L/B-dependent Fig. 27.3-1 value.
 
 API:
 
@@ -6789,8 +6921,21 @@ Validation (`tests/test_loads_v116.py`, 31 tests):
 * 3-story example (elevations 4/7/10 m; W = 1000/1000/800 kN):
   * ASCE 7-22: V = 350 kN, F = 73.684 / 128.947 / 147.368 kN.  Also
     checked: the capped-period k = 1.009112 case (V = 202.615 kN), the TL
-    branch, the 0.5 S1 floor (V = 140 kN) and the MPRS (V = 315 /
-    267.588 kN).
+    branch, the 0.5 S1 floor (V = 140 kN) and the MPRS Method 1 (V =
+    350 / 267.588 kN).
+  * `tests/test_autolateral_asce22.py` (25 tests) uses a 22-period
+    USGS-style table:
+    * SDS = 0.945.
+    * SD1 = 0.671011 (1-2 s, vertex at 1.840909 s) and 0.686942 (1-5 s).
+    * Method 1 V = 360.1335 kN (Sa(T) = 1.028953 > SDS).
+    * Max-Sa rule below the peak: V = 367.5 kN.
+    * Floors: 0.066 / 0.075.
+    * Method 2 from the spectrum: V = 330.75 kN.
+    * §12.8.1.3 cap: 367.5 / 350 kN.
+    * Long-period tail: 0.0277778 / 0.0363636 / 0.01875.
+    * Kz is checked against Table 26.10-1 rounding (0.57, 0.85, 0.98,
+      1.13, ...) and Ke against Table 26.9-1 (1.00 ... 0.80).
+    * Split windward/leeward forces are checked by hand.
   * EC8: Fb = 446.25 kN, F = 93.947 / 164.408 / 187.895 kN.  Mode shape:
     74.375 / 173.542 / 198.333 kN.  The beta floor (140 kN) and the TB
     branch are also checked.

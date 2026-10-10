@@ -21,15 +21,17 @@ NEGATIVE value is the "- eccentricity" variant: story torque
 Codes:
 
 * ``asce7_22`` — ASCE 7-22 §12.8 ELF.  Ta = Ct hn^x; a supplied (program)
-  period is capped at Cu*Ta (Table 12.8-1).  Two-period spectrum (default):
-  ``Sa = SDS`` (T <= Ts), ``SD1/T`` (Ts < T <= TL), ``SD1 TL/T^2`` (T > TL);
-  multi-period option (``mprs`` = [[T, Sa], ...], §11.4.5.1): the ELF uses
-  the descending envelope ``Sa_ELF(T) = min(SDS, max_{T' >= T} Sa(T'))``
-  (the ascending branch never lowers the base shear; ``SDS`` defaults to
-  0.9 max Sa on 0.2..5 s) — the ETABS-style simplification.  ``Cs =
-  Sa_ELF/(R/Ie)`` floored at ``max(0.044 SDS Ie, 0.01)`` and, for S1 >=
-  0.6, ``0.5 S1/(R/Ie)``.  ``F_x = V w_x h_x^k / sum w h^k``, k = 1 (T <=
-  0.5 s), 2 (T >= 2.5 s), linear between.
+  period is capped at Cu*Ta (§12.8.2, Table 12.8-1).  §12.8.1.1 Method 2
+  (default, two-period spectrum §11.4.5.2): ``Sa = SDS`` (T <= Ts),
+  ``SD1/T`` (Ts < T <= TL), ``SD1 TL/T^2`` (T > TL).  Method 1 (default
+  when ``mprs`` = [[T, Sa], ...] is given; multi-period design spectrum
+  §11.4.5.1, linear interpolation): Eq. 12.8-2 ``Cs = Sa(T)/(R/Ie)``,
+  with the maximum Sa used where T is below the period of maximum Sa.
+  SDS/SD1 not given are derived per §21.4 (90 % max Sa over 0.2-5 s; 90 %
+  max T Sa over 1-2 s or 1-5 s by vs30, >= Sa(1 s)).  Both methods:
+  ``Cs >= max(0.044 SDS Ie, 0.01)`` and, for S1 >= 0.6, ``0.5
+  S1/(R/Ie)``; optional §12.8.1.3 cap (Method 2).  ``F_x = V w_x h_x^k /
+  sum w h^k``, k = 1 (T <= 0.5 s), 2 (T >= 2.5 s), linear between.
 * ``ec8`` — EN 1998-1 §4.3.3.2 lateral force method: ``Fb = Sd(T1) W
   lambda`` with the §3.2.2.5 design spectrum (Type 1/2, ground A-E, Tables
   3.2/3.3, beta = 0.2), ``ag = gamma_I agR`` (in g), ``lambda = 0.85`` when
@@ -48,14 +50,15 @@ Codes:
 * ``user_coefficient`` — ``V = C W``, ``F_x = V w h^k / sum w h^k``.
 * ``user_loads`` — the given story-force table ``[{story, fx, fy}]``.
 * ``asce7_22_wind`` — ASCE 7-22 directional procedure (MWFRS): ``qz =
-  0.613 Kz Kzt Ke V^2`` (Pa) with ``Kz = 2.41 (z/zg)^(2/alpha)`` (7-22
-  Table 26.10-1: B 7.5 / 3280 ft, C 9.8 / 2460 ft, D 11.5 / 1935 ft; z
-  floored at 15 ft for every exposure — the same documented floor as the
-  7-16 helper), ``Ke = exp(-0.000119 ze)`` (ze = ground elevation, m) and
-  ``Kd`` moved from qz to the pressure ``p = qz Kd cp_total`` (cp_total =
-  combined G Cp windward + leeward, default 1.3).  Story force = p x the
-  same tributary facade area as :func:`skyframe.core.builder.
-  make_wind_pattern`.
+  0.613 Kz Kzt Ke V^2`` (Pa; Eq. 26.10-1.SI) with ``Kz = 2.41
+  (z/zg)^(2/alpha)`` (Table 26.10-1; alpha/zg from 7-22 Table 26.11-1:
+  B 7.5 / 3280 ft, C 9.8 / 2460 ft, D 11.5 / 1935 ft; z floored at 15 ft
+  per the Table 26.10-1 z < 15 ft branch), ``Ke = exp(-0.000119 ze)``
+  (Table 26.9-1, ze = ground elevation, m) and ``Kd`` moved from qz to
+  the pressure (Eq. 27.3-1): ``p = qz Kd G cp_total`` (G = 1, cp_total
+  1.3 default) or, with ``cp_windward``/``cp_leeward``, ``Kd G (qz Cp_w
+  + qh |Cp_l|)``.  Story force = p x the same tributary facade area as
+  :func:`skyframe.core.builder.make_wind_pattern`.
 """
 from __future__ import annotations
 
@@ -189,12 +192,29 @@ def asce22_cu(SD1: float) -> float:
     return ASCE22_CU[-1][1]  # pragma: no cover
 
 
-def _mprs_sa(points: Sequence[Sequence[float]], T: float) -> float:
+def _mprs_sa(points: Sequence[Sequence[float]], T: float,
+             TL: float = 8.0) -> float:
+    """Multi-period design spectrum Sa(T), ASCE 7-22 §11.4.5.1.
+
+    * Item 2: Sa between the tabulated periods by LINEAR interpolation;
+      below the first period, the first ordinate.
+    * Item 3 (as revised by Supplement 3): beyond the last tabulated
+      period ``Te`` (10 s in the USGS 22-period table):
+      ``Sa(Te) Te/T`` for T <= TL and ``Sa(Te) Te TL/T^2`` for T > TL
+      when TL >= Te; ``Sa(Te) (Te/T)^2`` when TL < Te.  The code states
+      this with Te = 10 s; a table that ends earlier is extended from its
+      own last point by the same rule (documented generalisation).
+    """
     pts = sorted((float(t), float(s)) for t, s in points)
     if T <= pts[0][0]:
         return pts[0][1]
-    if T >= pts[-1][0]:
-        return pts[-1][1] * pts[-1][0] / T if T > 0 else pts[-1][1]
+    te, se = pts[-1]
+    if T >= te:
+        if T <= 0.0:                         # pragma: no cover
+            return se
+        if TL >= te:
+            return se * te / T if T <= TL else se * te * TL / T ** 2
+        return se * (te / T) ** 2
     for (t0, s0), (t1, s1) in zip(pts, pts[1:]):
         if t0 <= T <= t1:
             return s0 + (s1 - s0) * (T - t0) / (t1 - t0) if t1 > t0 else s1
@@ -212,31 +232,116 @@ def _check_mprs(mprs) -> List[List[float]]:
     return out
 
 
+# 1,450 ft/s (= 442 m/s), the ASCE 7-22 §21.4 SD1 period-window threshold
+ASCE22_VS30_SPLIT = 1450 * 0.3048
+
+
+def mprs_sds(points, TL: float = 8.0) -> float:
+    """ASCE 7-22 §21.4 (the definition the USGS geodatabase applies to the
+    multi-period spectrum, §11.4.4/11.4.5): SDS = 90 % of the maximum Sa
+    at any period from 0.2 s to 5 s inclusive.  The interpolated spectrum
+    is piecewise linear, so the exact maximum sits at a tabulated period
+    inside the window or at a window end."""
+    cand = [0.2, 5.0] + [t for t, _ in points if 0.2 <= t <= 5.0]
+    return 0.9 * max(_mprs_sa(points, t, TL) for t in cand)
+
+
+def mprs_sd1(points, vs30: float, TL: float = 8.0) -> float:
+    """ASCE 7-22 §21.4: SD1 = 90 % of the maximum of T Sa(T) over 1 to 2 s
+    (vs30 > 1,450 ft/s = 442 m/s) or 1 to 5 s (vs30 <= 1,450 ft/s), but not
+    less than Sa(1 s).  ``vs30`` in m/s.  The maximum is taken EXACTLY on
+    the linearly interpolated spectrum: on each segment T (a + b T) is a
+    parabola, so the candidates are the window ends, the tabulated periods
+    and each segment's vertex ``-a/(2b)`` when it falls inside."""
+    t_hi = 2.0 if vs30 > ASCE22_VS30_SPLIT else 5.0
+    pts = sorted((float(t), float(s)) for t, s in points)
+    cand = [1.0, t_hi] + [t for t, _ in pts if 1.0 <= t <= t_hi]
+    for (t0, s0), (t1, s1) in zip(pts, pts[1:]):
+        if t1 > t0 and s1 != s0:
+            b = (s1 - s0) / (t1 - t0)
+            a = s0 - b * t0
+            tv = -a / (2.0 * b)
+            if max(t0, 1.0) < tv < min(t1, t_hi):
+                cand.append(tv)
+    tsa = max(t * _mprs_sa(pts, t, TL) for t in cand)
+    return max(0.9 * tsa, _mprs_sa(pts, 1.0, TL))
+
+
 def compute_asce7_22(model: BuildingModel, SDS: Optional[float] = None,
                      SD1: Optional[float] = None, R: Optional[float] = None,
                      Ie: float = 1.0, TL: float = 8.0, S1: float = 0.0,
                      Ct: float = 0.0466, x: float = 0.9,
                      T: Optional[float] = None, mprs=None,
-                     weights=None, direction: str = "X") -> dict:
+                     weights=None, direction: str = "X",
+                     vs30: Optional[float] = None,
+                     method: Optional[int] = None,
+                     short_period_cap: bool = False) -> dict:
+    """ASCE 7-22 §12.8 ELF.
+
+    * ``method`` 1 (default when ``mprs`` is given): §12.8.1.1 Method 1,
+      Eq. 12.8-2 ``Cs = Sa(T)/(R/Ie)`` with Sa from the multi-period
+      design spectrum (§11.4.5.1, linear interpolation); "where T is less
+      than the period at which Sa is maximum, the maximum value of Sa
+      shall be used".  No SDS cap and no SD1/T cap apply (Sa(T) itself).
+    * ``method`` 2 (default without ``mprs``): §12.8.1.1 Method 2, the
+      two-period form ``Cs = SDS/(R/Ie)`` but not more than
+      ``SD1/(T R/Ie)`` (T <= TL) or ``SD1 TL/(T^2 R/Ie)`` (T > TL)
+      (§11.4.5.2 two-period spectrum).  With ``mprs`` given, Method 2 uses
+      SDS/SD1 derived from it (or given).
+    * SDS / SD1 not given with ``mprs``: §21.4 definitions (:func:
+      `mprs_sds`, :func:`mprs_sd1`; SD1 needs ``vs30`` in m/s).  Given
+      values (the USGS-reported SDS/SD1, as ETABS takes them) win.
+    * Lower bounds (§12.8.1.1, both methods): ``Cs >= max(0.044 SDS Ie,
+      0.01)`` and, where S1 >= 0.6 g, ``Cs >= 0.5 S1/(R/Ie)``.
+    * ``short_period_cap`` (§12.8.1.3, Method 2 only): Cs from SDS = 1.0
+      but not less than 0.7 SDS; requires T <= 0.5 s and <= 5 stories (the
+      other §12.8.1.3 conditions - no irregularity, rho = 1, site class,
+      risk category - are the user's responsibility).
+    * Period (§12.8.2): Ta = Ct hn^x; a supplied T is capped at Cu Ta
+      (Table 12.8-1, Cu from SD1, linear between rows).
+    """
     hn = _check_common(model, direction)
-    for lab, v in (("SD1", SD1), ("R", R), ("Ie", Ie), ("TL", TL),
-                   ("Ct", Ct), ("x", x)):
+    for lab, v in (("R", R), ("Ie", Ie), ("TL", TL), ("Ct", Ct), ("x", x)):
         _pos(lab, v)
     S1 = _pos("S1", S1, allow_zero=True)
-    Ta = Ct * hn ** x
-    Cu = asce22_cu(SD1)
-    T_used = Ta if T is None else min(_pos("T", T), Cu * Ta)
+    if method is None:
+        method = 1 if mprs is not None else 2
+    if method not in (1, 2) or isinstance(method, bool):
+        raise ValueError("method must be 1 (multi-period) or 2 (two-period)")
+    if method == 1 and mprs is None:
+        raise ValueError("method 1 needs the multi-period spectrum 'mprs'")
+    pts = None
+    sd_extra = {}
     if mprs is not None:
         pts = _check_mprs(mprs)
         if SDS is None:
-            grid = [0.2 + i * 0.01 for i in range(481)]
-            SDS = 0.9 * max(_mprs_sa(pts, t) for t in grid)
-        _pos("SDS", SDS)
-        tail = [T_used] + [t for t, _ in pts if t > T_used]
-        Sa = min(SDS, max(_mprs_sa(pts, t) for t in tail))
+            SDS = mprs_sds(pts, TL)
+            sd_extra["SDS_from_mprs"] = True
+        if SD1 is None:
+            if vs30 is None:
+                raise ValueError("with mprs give SD1 or vs30 (m/s) so SD1 "
+                                 "can be derived (ASCE 7-22 §21.4)")
+            SD1 = mprs_sd1(pts, _pos("vs30", vs30), TL)
+            sd_extra["SD1_from_mprs"] = True
+    _pos("SD1", SD1)
+    _pos("SDS", SDS)
+    Ta = Ct * hn ** x
+    Cu = asce22_cu(SD1)
+    T_used = Ta if T is None else min(_pos("T", T), Cu * Ta)
+    if short_period_cap:
+        if method != 2:
+            raise ValueError("short_period_cap (§12.8.1.3) applies to "
+                             "Method 2 (two-period) only")
+        if T_used > 0.5 or len(model.stories) > 5:
+            raise ValueError("short_period_cap (§12.8.1.3) needs T <= 0.5 s "
+                             "and at most 5 stories")
+    if method == 1:
+        Sa_T = _mprs_sa(pts, T_used, TL)
+        Sa_max, T_peak = max(((s, -t) for t, s in sorted(pts)))
+        T_peak = -T_peak                    # first period reaching max Sa
+        Sa = Sa_max if T_used < T_peak else Sa_T
         spectrum = "multi_period"
     else:
-        _pos("SDS", SDS)
         Ts = SD1 / SDS
         if T_used <= Ts:
             Sa = SDS
@@ -244,6 +349,9 @@ def compute_asce7_22(model: BuildingModel, SDS: Optional[float] = None,
             Sa = SD1 / T_used
         else:
             Sa = SD1 * TL / T_used ** 2
+        if short_period_cap:
+            sds_cs = max(min(SDS, 1.0), 0.7 * SDS)
+            Sa = min(Sa, sds_cs)
         spectrum = "two_period"
     RoIe = R / Ie
     Cs = Sa / RoIe
@@ -256,9 +364,16 @@ def compute_asce7_22(model: BuildingModel, SDS: Optional[float] = None,
     V = Cs * W
     k = _k_exponent(T_used)
     shape = {s.name: s.elevation ** k for s in model.stories}
+    extra = {}
+    if mprs is not None:
+        extra = {"method": method, "SD1": SD1, **sd_extra}
+        if method == 1:
+            extra.update(Sa_T=Sa_T, Sa_max=Sa_max, T_peak=T_peak)
+    if short_period_cap:
+        extra["SDS_cs"] = sds_cs
     return _summary("asce7_22", direction, T_used, W, V,
                     _distribute(model, V, w, shape), k=k, Ta=Ta, Cu=Cu,
-                    Sa=Sa, Cs=Cs, SDS=SDS, spectrum=spectrum)
+                    Sa=Sa, Cs=Cs, SDS=SDS, spectrum=spectrum, **extra)
 
 
 # -------------------------------------------------------------------- EC8
@@ -428,43 +543,94 @@ def compute_user_loads(model: BuildingModel, loads,
 
 # ------------------------------------------------------- ASCE 7-22 wind
 def asce22_kz(z: float, exposure: str) -> float:
+    """ASCE 7-22 Table 26.10-1 equation (§26.10.1): ``Kz = 2.41
+    (z/zg)^(2/alpha)`` for 15 ft <= z <= zg, ``2.41 (15/zg)^(2/alpha)``
+    for z < 15 ft (every exposure, MWFRS directional procedure), with the
+    Table 26.11-1 (7-22) constants; above zg the profile is capped at
+    2.41 (z = zg; only reached above ~590 m)."""
     if exposure not in ASCE22_WIND_EXPOSURES:
         raise ValueError(f"exposure must be one of "
                          f"{sorted(ASCE22_WIND_EXPOSURES)}")
     alpha, zg = ASCE22_WIND_EXPOSURES[exposure]
-    return 2.41 * (max(float(z), ASCE22_WIND_ZMIN) / zg) ** (2.0 / alpha)
+    zz = min(max(float(z), ASCE22_WIND_ZMIN), zg)
+    return 2.41 * (zz / zg) ** (2.0 / alpha)
+
+
+def asce22_ke(ze: float) -> float:
+    """ASCE 7-22 Table 26.9-1 note: ``Ke = exp(-0.0000362 ze[ft])`` =
+    ``exp(-0.000119 ze[m])`` (ze = ground elevation above sea level)."""
+    return math.exp(-0.000119 * ze)
 
 
 def compute_asce7_22_wind(model: BuildingModel, V: float,
                           exposure: str = "C", Kzt: float = 1.0,
                           Kd: float = 0.85, ze: float = 0.0,
                           cp_total: float = 1.3,
-                          direction: str = "X") -> dict:
+                          direction: str = "X",
+                          Ke: Optional[float] = None, G: float = 1.0,
+                          cp_windward: Optional[float] = None,
+                          cp_leeward: Optional[float] = None) -> dict:
+    """ASCE 7-22 Ch. 27 directional MWFRS story forces.
+
+    ``qz = 0.613 Kz Kzt Ke V^2`` (N/m^2, V m/s; Eq. 26.10-1.SI - in 7-22
+    Kd is no longer in qz) and Eq. 27.3-1 ``p = q Kd G Cp - qi Kd (GCpi)``
+    (internal pressure cancels in the net windward + leeward story force).
+
+    * Default (combined): ``p_z = qz Kd G cp_total`` with ``G = 1`` and
+      ``cp_total = 1.3`` (= Cp 0.8 + 0.5, gust factor folded in - the
+      same convention as the 7-16 helper ``make_wind_pattern``); the
+      leeward suction is then evaluated with qz instead of qh.
+    * Split (``cp_windward`` and ``cp_leeward`` both given): the exact
+      Eq. 27.3-1 form ``p_z = Kd G (qz Cp_w + qh |Cp_l|)`` with qh at the
+      mean roof height h (= top-story elevation).  Use ``G = 0.85``
+      (§26.11.1, rigid building) and Cp_l from Fig. 27.3-1 (-0.5 for L/B
+      <= 1, -0.3 at 2, -0.2 >= 4).
+    * ``Ke``: given value, else Table 26.9-1 from ``ze`` (m).
+    """
     _check_common(model, direction)
     _pos("V", V)
     _pos("Kzt", Kzt)
     _pos("Kd", Kd)
     _pos("cp_total", cp_total)
+    _pos("G", G)
     if (isinstance(ze, bool) or not isinstance(ze, (int, float))
             or not math.isfinite(ze)):
         raise ValueError("ze must be a finite number (m)")
-    Ke = math.exp(-0.000119 * ze)
+    split = cp_windward is not None or cp_leeward is not None
+    if split:
+        if cp_windward is None or cp_leeward is None:
+            raise ValueError("give both cp_windward and cp_leeward")
+        for lab, v in (("cp_windward", cp_windward),
+                       ("cp_leeward", cp_leeward)):
+            if (isinstance(v, bool) or not isinstance(v, (int, float))
+                    or not math.isfinite(v)):
+                raise ValueError(f"{lab} must be a finite number")
+    Ke = asce22_ke(ze) if Ke is None else _pos("Ke", Ke)
     lx, ly = model.plan_extents()
     width = ly if direction == "X" else lx
     if width <= 0.0:
         raise ValueError("plan width perpendicular to the wind is zero")
     heights = [s.height for s in model.stories]
+    h_roof = max(s.elevation for s in model.stories)
+    qh = 0.613 * asce22_kz(h_roof, exposure) * Kzt * Ke * V ** 2 / 1000.0
     rows = []
     for i, s in enumerate(model.stories):
         trib = heights[i] / 2.0 + (heights[i + 1] / 2.0
                                    if i + 1 < len(heights) else 0.0)
         qz = 0.613 * asce22_kz(s.elevation, exposure) * Kzt * Ke * V ** 2 \
             / 1000.0                                           # kPa
-        p = qz * Kd * cp_total
+        if split:
+            p = Kd * G * (qz * cp_windward + qh * abs(cp_leeward))
+        elif G == 1.0:
+            p = qz * Kd * cp_total
+        else:
+            p = qz * Kd * G * cp_total
         rows.append({"story": s.name, "h": s.elevation, "w": None,
                      "F": p * trib * width, "qz": qz})
+    extra = {"qh": qh, "G": G} if (split or G != 1.0) else {}
     return _summary("asce7_22_wind", direction, None, None,
-                    sum(r["F"] for r in rows), rows, Ke=Ke, width=width)
+                    sum(r["F"] for r in rows), rows, Ke=Ke, width=width,
+                    **extra)
 
 
 # ---------------------------------------------------------------- dispatch
