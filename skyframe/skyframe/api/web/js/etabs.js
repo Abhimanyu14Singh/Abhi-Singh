@@ -278,10 +278,7 @@ export function initEtabs(sky) {
       { label: "Run FNA (Time History)…", act: "an-fna", fn: () => { showResult("th"); toast("FNA", "Pick a TH case, then click Run FNA."); } },
       { label: "Run Ritz Vectors…", act: "an-ritz", fn: () => { showResult("modal"); toast("Ritz", "Use the Eigen / Ritz basis toggle on the Modal tab."); } },
       { label: "Run Cracked Analysis…", act: "an-cracked", fn: () => { showResult("story"); requestAnimationFrame(() => { const c = $("crackedCard"); if (c) c.scrollIntoView({ block: "start", behavior: "smooth" }); }); } },
-      { label: "Buckling Cases…", act: "an-buck", fn: () => gotoLoads("ls-buckling") },
-      { label: "Pushover Cases…", act: "an-po", fn: () => gotoLoads("ls-pushover") },
-      { label: "Staged Construction…", act: "an-staged", fn: () => gotoLoads("ls-staged") },
-      { label: "Frequency-Domain Cases (SS / PSD)…", act: "an-freq", fn: () => gotoLoads("ls-freq") },
+      // case definitions live under Define only (ETABS layout; UX audit N3)
     ]],
     ["Display", [
       { label: "3D / Deformed View", act: "dis-view3d", fn: () => showResult("view3d") },
