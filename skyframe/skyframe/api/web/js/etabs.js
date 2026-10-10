@@ -116,6 +116,23 @@ export function initEtabs(sky) {
       { sep: true },
       { label: "Report…", act: "file-report", hint: "after a solve", fn: () => { const b = $("reportBtn"); if (b && !b.disabled) b.click(); else toast("Report", "Run an analysis first."); } },
     ]],
+    // Edit utilities + Undo/Redo (js/editmenu.js, js/history.js) — delegates to sky.edit
+    ["Edit", [
+      { label: "Undo", act: "edit-undo", hint: () => (sky.edit ? sky.edit.undoHint() : "Ctrl+Z"), fn: () => sky.edit && sky.edit.undo() },
+      { label: "Redo", act: "edit-redo", hint: () => (sky.edit ? sky.edit.redoHint() : "Ctrl+Y"), fn: () => sky.edit && sky.edit.redo() },
+      { sep: true },
+      { label: "Copy", act: "edit-copy", hint: "Ctrl+C", fn: () => sky.edit && sky.edit.copy() },
+      { label: "Paste…", act: "edit-paste", hint: "Ctrl+V · offset", fn: () => sky.edit && sky.edit.paste() },
+      { label: "Delete", act: "edit-delete", hint: "with dependents", fn: () => sky.edit && sky.edit.deleteSelection() },
+      { sep: true },
+      { label: "Replicate…", act: "edit-replicate", hint: "linear · radial · mirror · story", fn: () => sky.edit && sky.edit.openReplicate() },
+      { label: "Move…", act: "edit-move", fn: () => sky.edit && sky.edit.openMove() },
+      { label: "Divide Frames…", act: "edit-divide", fn: () => sky.edit && sky.edit.openDivide() },
+      { label: "Join Frames", act: "edit-join", hint: "collinear", fn: () => sky.edit && sky.edit.join() },
+      { label: "Merge Joints…", act: "edit-merge", hint: "tolerance", fn: () => sky.edit && sky.edit.openMerge() },
+      { label: "Align Points / Trim-Extend…", act: "edit-align", fn: () => sky.edit && sky.edit.openAlign() },
+      { label: "Extrude…", act: "edit-extrude", hint: "points → frames · frames → shells", fn: () => sky.edit && sky.edit.openExtrude() },
+    ]],
     ["Define", [
       { label: "Materials…", act: "def-materials", fn: () => sky.openSectionMgr() },
       { label: "Frame Sections…", act: "def-frame", fn: () => sky.openSectionMgr() },
@@ -221,6 +238,14 @@ export function initEtabs(sky) {
     ]],
     // Groups — ETABS Select menu (js/groups.js)
     ["Select", [
+      // Select utilities (js/editmenu.js) — delegates to sky.selectx
+      { label: "Select All", act: "sel-all", hint: "Ctrl+A", fn: () => sky.selectx && sky.selectx.all() },
+      { label: "Invert Selection", act: "sel-invert", fn: () => sky.selectx && sky.selectx.invert() },
+      { label: "Select by Property…", act: "sel-prop", hint: "section · material", fn: () => sky.selectx && sky.selectx.openByProperty() },
+      { label: "Select by Story…", act: "sel-story", fn: () => sky.selectx && sky.selectx.openByStory() },
+      { label: "Select by Plane…", act: "sel-plane", hint: "XY · XZ · YZ", fn: () => sky.selectx && sky.selectx.openByPlane() },
+      { label: "Previous Selection", act: "sel-prev", fn: () => sky.selectx && sky.selectx.previous() },
+      { sep: true },
       { label: "Select by Group…", act: "sel-group", fn: () => sky.openSelectByGroup && sky.openSelectByGroup() },
       { label: "Clear Selection", act: "sel-clear", fn: () => sky.handleSelect && sky.handleSelect([], false) },
     ]],

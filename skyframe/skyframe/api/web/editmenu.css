@@ -1,0 +1,33 @@
+/* SkyFrame — Edit / Select menu dialogs, ghost preview, history chip (js/editmenu.js) */
+.ed-body { display: flex; flex-direction: column; gap: 0; min-width: 380px; }
+.ed-group { margin-bottom: 10px; }
+.ed-group.hidden { display: none; }
+.ed-field { display: grid; grid-template-columns: 150px 1fr 48px; align-items: center; gap: 8px;
+  font-size: 12.5px; color: var(--text-1); }
+.ed-field.hidden { display: none; }
+.ed-field input, .ed-field select { width: 100%; }
+.ed-field-col { grid-template-columns: 1fr; }
+.ed-lbl { color: var(--text-2); }
+.ed-unit { color: var(--text-3); font-size: 11.5px; }
+.ed-points { width: 100%; font-family: var(--mono, ui-monospace, monospace); font-size: 12px; resize: vertical; }
+.ed-tabs { display: flex; gap: 4px; margin: 0 0 10px; flex-wrap: wrap; }
+.ed-tab { border: 1px solid var(--border); background: transparent; color: var(--text-2);
+  padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+.ed-tab.is-on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.ed-list { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow: auto; }
+.ed-list-tall { max-height: 46vh; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+.ed-preview-note { font-size: 11.5px; margin: 4px 0 0; min-height: 1em; }
+.sky-dlg.ed-picking { pointer-events: none; opacity: 0.25; }
+
+/* ghost preview (dashed, world-space inside the plan / elevation editors) */
+.edit-ghost { pointer-events: none; }
+.edit-ghost-line { stroke: var(--amber, #e5a50a); stroke-width: 2.5; stroke-dasharray: 6 4; fill: none; }
+.edit-ghost-poly { stroke: var(--amber, #e5a50a); stroke-width: 1.5; stroke-dasharray: 5 4;
+  fill: color-mix(in srgb, var(--amber, #e5a50a) 16%, transparent); }
+.edit-ghost-pt { fill: var(--amber, #e5a50a); stroke: #000; stroke-width: 1; }
+
+/* status bar: undo / redo + last action */
+.ed-hist { display: inline-flex; align-items: center; gap: 4px; }
+.ed-hist-btn { min-width: 24px; padding: 0 6px; font-size: 13px; }
+.ed-hist-btn:disabled { opacity: .35; cursor: default; }
+.ed-hist-txt { font-size: 11.5px; color: var(--text-2); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

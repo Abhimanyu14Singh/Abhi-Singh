@@ -7074,3 +7074,204 @@ base (Y push):
 * Round trip and validation errors (11 cases).
 * Defaults byte-identical: identical model and pushover JSON with an
   unused property, and an unchanged mesh.
+
+## Edit and Select utilities (Replicate, Divide, Merge, Align, Move, Extrude, Join, Delete)
+
+These are ETABS **Edit** menu operations. They only edit the model; no
+analysis code changes. Each one is a pure function of the model JSON
+(`skyframe.core.edit.apply_edit(model_dict, op, selection, params)` returns
+`(new_model_dict, summary)`; `apply_edit_model(model, ...)` returns a
+validated `BuildingModel`). The SPA mirrors the algorithms in
+`js/edit_geom.js` for `?mock=1`.
+
+### Endpoint
+
+`POST /api/edit/<op>` with `op` one of `replicate | divide | merge_joints |
+align | move | extrude | join | delete`.
+
+```json
+{"selection": {"members": ["B1"], "shells": [], "links": [],
+               "points": [[x, y, z]]},
+ "params": {...},
+ "model": {...},          // optional: edit this model instead of the stored one
+ "dry_run": false}        // true: return the result, keep the stored model
+```
+
+Response `200`: `{"model": <BuildingModel.to_dict()>, "summary": {...}}`.
+The stored model is replaced unless `dry_run` is set. Response `400`
+(`{"error"}`): unknown op, unknown selection uid, bad params, or an edited
+model that fails `BuildingModel.from_dict` validation.
+
+`summary` shape:
+
+```json
+{"op": "divide",
+ "created":  {"members": [...], "shells": [...], "links": [...], "points": [[...]]},
+ "deleted":  {"members": [...], "shells": [...], "links": [...], "points": [[...]]},
+ "modified": {"members": [...], "shells": [...], "links": [...]},
+ "warnings": ["..."],
+ "new_selection": {"members": [...], "shells": [...], "links": [...], "points": [...]},
+ ...op extras...}
+```
+
+Op extras:
+
+* `replicate`: `count`.
+* `divide`: `divided: {uid: [piece uids]}`. The first piece keeps the
+  original uid.
+* `merge_joints`: `merged: [{"to": [x,y,z], "from": [[...]]}]` and
+  `merged_count`.
+* `align`: `moved_points`, or `trimmed: [uids]` for `trim_extend`.
+* `move`: `moved_points`.
+* `join`: `joined: [{"kept", "removed", "joint"}]` and
+  `skipped: [{"joint", "reason"}]`.
+* `delete`: `point_records_deleted`.
+
+New uids use the source uid's leading letters plus the next free integer
+(`C1-A1` -> `C1`, `C2`, ...), unique across members, shells and links.
+
+### Params
+
+* **replicate**
+  * `mode: "linear"`: `{dx, dy, dz, n}`. Copy k is translated by k·d.
+  * `mode: "radial"`: `{center: [x,y,z], axis: "x"|"y"|"z", angle (deg), n}`.
+    Copy k is rotated by k·angle.
+  * `mode: "mirror"`: one of `{plane: "x"|"y"|"z", coord}`,
+    `{p1: [x,y], p2: [x,y]}` (a vertical plane through a plan line), or
+    `{point, normal}`.
+  * `mode: "story"`: `{stories: [names]}`. Each object is copied from its
+    own story to every target story, translated by the difference in
+    story elevation, and gets the target story's name.
+  * Options:
+    * `assignments` (default true). False keeps only kind, section and
+      geometry. True also copies group membership, pushover `My` and
+      point assignments (supports, springs, masses, joint diaphragms,
+      panel zones, group points) at selected points.
+    * `loads` (default true). Copies member, area and thermal loads on
+      copied objects, nodal / ground / temperature loads on selected
+      points, and tendons whose hosts are all copied.
+  * An object identical to an existing one (same joints) is skipped, with
+    a warning.
+  * Rotations and mirrors transform global-direction loads: a force is a
+    polar vector, R·F; a moment is a pseudo-vector, det(R)·R·M. A
+    direction that ends up oblique is split into per-axis entries.
+  * Radial copies about Z add the angle to vertical frames' `angle`.
+  * Mirror negates `angle`. It also reverses shell corners (c0 kept
+    first) so they stay counter-clockwise, and swaps the opening u and v.
+* **divide** (selected frames)
+  * `mode: "n"`: `{n >= 2}`.
+  * `mode: "distance"`: `{distance, from: "i"|"j"}`.
+  * `mode: "intersections"`: `{tol = 1e-3}`. Splits at other objects'
+    joints lying on the frame and at crossings with other frames.
+  * What happens to each part of the frame:
+    * Member loads are remapped exactly to the pieces: UDL span clipping,
+      trapezoid interpolation, point and moment loads go to the piece
+      that contains them.
+    * Legacy `member_udls`, thermal loads, groups, tendon `host`
+      (expanded in order) and pushover `My` are copied to every piece.
+    * Hinge lists move to the piece that contains each
+      `relative_distance`.
+    * `Mi`, `rigid_i` and joint offset `i` stay on the first piece; `Mj`,
+      `rigid_j` and joint offset `j` stay on the last piece.
+* **merge_joints**
+  * Params: `{tolerance = 0.005 m, <= 10}`.
+  * Scope: the joints of the selection, or every joint when nothing is
+    selected.
+  * Clustering is transitive within the tolerance.
+  * The joint kept is, in priority order: a joint with a support or
+    spring, then the joint with the most connections, then the
+    lexicographically smallest.
+  * Everything at the merged joints follows: object ends and corners,
+    supports, springs, masses, nodal / ground / temperature loads, joint
+    diaphragms, panel zones and group points.
+  * Clean-up after the merge:
+    * zero-length and duplicate frames are deleted, with their
+      references;
+    * duplicate shell corners are removed, and shells left with fewer
+      than 3 corners are deleted;
+    * per-joint records are deduplicated (first wins).
+* **align**
+  * Point modes move the selected points, or the selection's joints when
+    no points are selected:
+    * `mode: "coordinate"`: `{axis, value}`;
+    * `mode: "line"`: `{p1, p2}` (orthogonal projection);
+    * `mode: "plane"`: `{point, normal}`.
+  * `mode: "trim_extend"`: `{p1, p2, tol = 1e-3}`. Moves the end of each
+    selected frame that is nearer the line to the frame's intersection
+    with the line.
+* **move**: `{dx, dy, dz}`.
+  * The joints of the selection move. Unselected objects that share them
+    stretch, as in ETABS.
+  * Point records at those joints follow.
+  * Tendons whose hosts are all selected translate.
+  * Moved objects get their story recomputed.
+* **extrude**
+  * `mode: "points_to_frames"`: `{dx, dy, dz, n, kind?, section?}`.
+    * Each point becomes a chain of n frames.
+    * `kind` is automatic when omitted: vertical means column,
+      horizontal means beam, anything else is a brace.
+    * The default section is the first one whose name contains COL or
+      BEAM.
+  * `mode: "frames_to_shells"`: `{dx, dy, dz, n, section?, kind?,
+    behavior = "shell", mesh_size = 1, delete_source = false}`.
+    * Each frame becomes n quads `[pi, pj, pj+d, pi+d]`.
+    * The result is a slab (corners counter-clockwise from +Z) when both
+      the frame and d are horizontal, and a wall otherwise.
+* **join** (selected frames). Two frames are joined when all of these
+  hold:
+  * they are collinear, meet end-to-end at a joint used by nothing else,
+    and that joint carries no point record;
+  * they have the same kind, section and assignments;
+  * there is no moment release at the shared joint, and their
+    temperature loads are equal.
+  * The first frame keeps its uid. The loads of the second frame are
+    remapped, and loads on a reversed piece are flipped. Equal legacy
+    UDLs are kept once, and contiguous identical UDL pieces are
+    coalesced, so divide followed by join is byte-identical.
+* **delete**
+  * Removes the selected objects and every reference to them: member,
+    area and thermal loads, groups, pushover `My`, and tendon hosts.
+    Tendons left without a host are dropped.
+  * Removes point records at joints the deletion orphaned.
+  * Selected points delete only the point records there.
+
+### Joints
+
+A joint is identified by its coordinates rounded to 1e-6 m. New
+coordinates are rounded to 1e-9 m, so replicated grids stay exact.
+
+Object stories are recomputed by geometry: the story whose level equals
+the object's top z, or else the story whose height range contains it.
+
+### Frontend (Edit / Select menus, Undo / Redo)
+
+* **Edit menu**
+  * Undo (Ctrl+Z), Redo (Ctrl+Y / Ctrl+Shift+Z).
+  * Copy (Ctrl+C), and Paste (Ctrl+V) with an offset dialog. Paste is a
+    linear replicate of the copied objects.
+  * Replicate…, Divide Frames…, Merge Joints…, Align Points / Trim-Extend…,
+    Move…, Extrude…, Join Frames, Delete.
+* **Select menu**
+  * Select All, Invert Selection, Select by Property, by Story, by Plane,
+    Previous Selection, Clear Selection.
+* **Undo history**
+  * The history is client-side: snapshots of the model JSON, kept per
+    top-level key so an edit stores only the keys it changed. It is
+    capped at 50 steps.
+  * Every model mutation (markDirty / clearDirty / sky:model-changed) is
+    recorded, labelled with the last action name.
+* Live mode posts the working model, then this endpoint. Mock mode runs
+  the same algorithms client-side (`js/edit_geom.js`).
+
+### Validation (tests/test_edit.py, 30 tests)
+
+* Geometry is checked for every mode against closed-form coordinates.
+* A bay replicated twice along X gives node displacements and reactions
+  equal (1e-9) to the 3-bay frame built directly.
+* A beam divided into 4 gives joint results equal (1e-7) to the undivided
+  beam.
+* Divide followed by join, and replicate followed by deleting the copies,
+  are byte-identical round trips.
+* The input model is never mutated.
+* Defaults: no existing code path changed, so every pre-existing result
+  is byte-identical.

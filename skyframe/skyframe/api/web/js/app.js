@@ -56,6 +56,8 @@ import { mockValidateGroups as grpMockValidateGroups } from "./mock_groups.js";
 // B9/B11 — frame auto mesh + output stations, named spring properties, link hysteresis types (aliased imports)
 import { initB9 as b9Init } from "./b9init.js";
 import { mockValidateB9 as b9MockValidate } from "./mock_b9.js";
+// ETABS Edit / Select menus + Undo/Redo history (aliased import; js/editmenu.js)
+import { initEditMenu as edInitEditMenu } from "./editmenu.js";
 
 /* ------------------------------------------------ state */
 const store = {
@@ -1178,6 +1180,7 @@ const openUnitsDialog = () => DLG.openUnitsDialog(dlgCtx());
 function clearDirty() {
   store.dirty = false;
   syncDirtyUI();
+  document.dispatchEvent(new CustomEvent("sky:model-synced"));     // Edit: record backend-echo adoptions in undo history (js/history.js)
 }
 
 /** File chip shows the saved-model name (+ amber dot when dirty). When no
@@ -3379,6 +3382,7 @@ async function discardModel() {
     if (store.mode === "loads") { loadsEditor.render(); syncLoadsNav(); }
     syncUnitsFromModel();                                          // v1.13
     document.dispatchEvent(new CustomEvent("sky:model-changed"));
+    document.dispatchEvent(new CustomEvent("sky:model-replaced"));   // Edit: discard → reset undo history (js/history.js)
     toast("Model reloaded", "Local edits discarded", "info", 4000);
   } catch (err) {
     toast("Reload failed", err.message, "error");
@@ -3432,6 +3436,7 @@ function adoptModel(modelDict, fileName) {
   syncUnitsFromModel();                                            // v1.13
   document.dispatchEvent(new CustomEvent("sky:model-changed"));
   document.dispatchEvent(new CustomEvent("sky:results-changed"));
+  document.dispatchEvent(new CustomEvent("sky:model-replaced"));   // Edit: new model → reset undo history (js/history.js)
 }
 
 /* ---- tiny promise-based confirm modal */
@@ -8477,6 +8482,7 @@ async function boot() {
   try { grpInitStageData(window.__sky); } catch (err) { console.error("stage data init failed", err); }
 
   try { b9Init(window.__sky); } catch (err) { console.error("B9 init failed", err); }   // auto mesh / stations / springs / link hysteresis
+  try { edInitEditMenu(window.__sky); } catch (err) { console.error("edit menu init failed", err); }   // Edit / Select menus + Undo/Redo
 }
 
 boot();
