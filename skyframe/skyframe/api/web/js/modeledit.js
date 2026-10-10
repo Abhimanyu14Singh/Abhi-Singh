@@ -121,8 +121,13 @@ export function normalizeModel(m) {
   for (const s of Object.values(m.shell_sections))
     s.layered = normalizeLayeredDef(s.layered, defaultMaterial(m));
   if (!m.mass_source || typeof m.mass_source !== "object" ||
-      !Object.keys(m.mass_source).length)
-    m.mass_source = { DEAD: 1.0 };
+      !Object.keys(m.mass_source).length) {
+    // an empty mass_source means "use the legacy mass_from_patterns" on the
+    // backend (BuildingModel.effective_mass_source) — keep that meaning
+    const legacy = m.mass_from_patterns && typeof m.mass_from_patterns === "object"
+      ? m.mass_from_patterns : null;
+    m.mass_source = legacy && Object.keys(legacy).length ? { ...legacy } : { DEAD: 1.0 };
+  }
   m.th_cases = m.th_cases || {};
   for (const [n, tc] of Object.entries(m.th_cases)) {
     tc.name = tc.name || n;
@@ -1787,7 +1792,10 @@ export function normalizeGridSystem(s, i = 0) {
       s.x_labels = xs.map((_, k) => alphaLabel(k));
     if (!(Array.isArray(s.y_labels) && s.y_labels.length === ys.length))
       s.y_labels = ys.map((_, k) => String(k + 1));
-    delete s.radii; delete s.theta_deg;
+    // the backend echoes empty radial lists on cartesian systems: keep them
+    // empty (not deleted) so a save -> load -> save round trip is stable
+    if (Array.isArray(s.radii)) s.radii = []; else delete s.radii;
+    if (Array.isArray(s.theta_deg)) s.theta_deg = []; else delete s.theta_deg;
   } else {
     let rr = Array.isArray(s.radii) ? s.radii.filter(v => isFinite(v) && v > 0) : [];
     if (!rr.length) rr = [4, 8];
