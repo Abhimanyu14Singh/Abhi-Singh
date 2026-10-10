@@ -386,3 +386,29 @@ def test_section_with_only_b_h_derives_rectangular_properties():
     s = m.sections["R"]
     for k in ("A", "I33", "I22", "J", "b", "h"):
         assert getattr(s, k) == pytest.approx(getattr(ref, k), rel=1e-15)
+
+
+# --------------------------------------------------------------------------- #
+# Interactive database editing x features merged after it was written:
+# re-applying every table must keep curved frames, shell types / one-way
+# slabs, mesh options, load sets and open-structure wind parameters.
+# --------------------------------------------------------------------------- #
+def test_model_tables_round_trip_keeps_newer_object_fields():
+    from skyframe.core import modeltables as MT
+    mdl = quick_building(bays_x=1, bays_y=1, stories=1)
+    d = mdl.to_dict()
+    beam = next(m for m in d["members"] if m["kind"] == "beam")
+    beam["curve"] = {"type": "arc", "via": [
+        (beam["pi"][0] + beam["pj"][0]) / 2,
+        (beam["pi"][1] + beam["pj"][1]) / 2 + 0.5,
+        beam["pi"][2]], "segments": 6, "local2": "in_plane"}
+    col = next(m for m in d["members"] if m["kind"] == "column")
+    col["open_wind"] = {"cf": 2.0, "include": True, "shielding": 1.0,
+                        "width": "auto"}
+    d = BuildingModel.from_dict(d).to_dict()          # canonical form
+    rows = {t["key"]: MT.get_table(d, t["key"])["rows"]
+            for t in MT.list_tables(d) if t.get("editable")}
+    m, errs, _ = MT.apply_tables(d, rows)
+    assert errs == []
+    assert json.dumps(m.to_dict(), sort_keys=True) == \
+        json.dumps(d, sort_keys=True)
