@@ -142,8 +142,8 @@ def area_load_to_dict(al) -> dict:
     if getattr(al, "projected", False):
         d["projected"] = True
     jp = getattr(al, "joint_pattern", None)
-    if jp is not None:
-        d["joint_pattern"] = dict(jp)
+    if jp is not None:     # inline dict, or a library name (shellopts)
+        d["joint_pattern"] = jp if isinstance(jp, str) else dict(jp)
     return d
 
 
@@ -231,7 +231,7 @@ def validate_area_load(al, region, pat_name: str) -> None:
         raise ValueError(f"Pattern {pat_name}: projected area loads need a "
                          "gravity/global direction")
     jp = getattr(al, "joint_pattern", None)
-    if jp is not None:
+    if jp is not None and not isinstance(jp, str):   # str: library name
         if not isinstance(jp, dict) or jp.get("type", "linear") != "linear":
             raise ValueError(f"Pattern {pat_name}: joint_pattern must be "
                              "{type: 'linear', a, b, c, d}")

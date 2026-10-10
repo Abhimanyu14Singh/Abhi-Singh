@@ -7558,3 +7558,229 @@ the object's top z, or else the story whose height range contains it.
 * The input model is never mutated.
 * Defaults: no existing code path changed, so every pre-existing result
   is byte-identical.
+
+## Curved frames, wall/floor mesh options, joint patterns and shell load sets
+
+ETABS Draw > Draw Curved Beams, Assign > Shell > Wall Auto Mesh Options /
+Floor Auto Mesh Options, Define > Joint Patterns and Define > Shell
+Uniform Load Sets.  Logic: `skyframe/core/curved.py` (arc geometry,
+validation, chord expansion), `skyframe/core/shellopts.py` (mesh options,
+joint-pattern library, load sets, and `expand_for_analysis`, the
+analysis-time model expansion) and `skyframe/engine/curved.py` (results
+stitching).  Hooks into existing code are one line each:
+`OpenSeesEngine.__init__` analyses `expand_for_analysis(model)`,
+`core/mesh.py` takes the structured divisions from
+`shellopts.structured_divisions`, and `core/polymesh.py` reads the floor
+flags and steps.  Every default reproduces the previous results
+byte-identically.  `expand_for_analysis` returns the SAME model object when
+nothing in this section is used, every new JSON key is emitted only when
+set, and with no options the meshers compute exactly the previous
+`round(edge / mesh_size)` and `mesh_size` values.  A frame building and a
+shell building (structured slab, polygon slab with an inline joint
+pattern, wall with an opening) hash identically before and after, for
+both `to_dict()` and `run().to_dict()`.
+
+### Curved frames
+
+```json
+"members": [{"uid": "ARC", "kind": "beam", "section": "B",
+             "pi": [-10, 0, 0], "pj": [10, 0, 0],
+             "curve": {"type": "arc", "via": [0, 0, 10],
+                       "segments": null, "local2": "in_plane"}},
+            {"uid": "C", "...": "...",
+             "curve": {"type": "arc", "center": [0, 0, 5],
+                       "plane_normal": [0, 0, 1], "segments": 9,
+                       "local2": "normal"}}]
+```
+
+* **Three-point form** (`via`): the circle through `pi`, `via` and `pj`.
+  The arc runs from `pi` through `via` to `pj`.
+* **Center form** (`center` + `plane_normal`):
+  * `|pi - c| = |pj - c|` within 1e-6 relative;
+  * both ends lie in the plane through `c` normal to `plane_normal`;
+  * the arc runs counter-clockwise about `plane_normal`, so the sweep is
+    in (0, 360) deg and flipping the normal gives the complementary arc.
+* **`segments`**: the number of equal-angle chords.  `null` = automatic,
+  `ceil(sweep / 10 deg)`, so a semicircle gets 18.
+* **Analysis.** The drawn member is replaced by the straight chords
+  `<uid>~0 .. <uid>~(n-1)` in the analysed copy. The user model is never
+  mutated.
+* **Chord local axes** (consistent along the arc):
+  * local 1 runs along the chord;
+  * `local2 = "in_plane"` (default): local 2 is radial, in the plane of
+    curvature.  Its sign is chosen once per member to agree with the
+    straight-member default, so a vertical-plane arch keeps local 2 "up"
+    (the chord `angle` is exactly 0).  When the in-plane direction is
+    horizontal (a plan-curved member), local 2 points to the centre;
+  * `local2 = "normal"`: local 2 runs along the plane normal (a
+    plan-curved beam then bends about local 3 under gravity, like a
+    straight beam);
+  * the member `angle` rotates on top of either convention.
+* **What each chord inherits:**
+  * the `Mi` / `Mj` releases and `rigid_i` / `rigid_j` go to the first /
+    last chord only;
+  * the section, foundation, additional mass, cardinal point, auto-mesh
+    options and output stations are copied to every chord;
+  * thermal loads and group membership are copied too.  Groups list the
+    chords in the analysed copy.
+* **Not supported** (ValueError):
+  * `axial_limit` other than `"both"`;
+  * `hinges` / `hinge_overwrites`;
+  * `joint_offsets`, or `end_offsets = "auto"`;
+  * a nonprismatic section;
+  * tendons hosted on the member;
+  * a uid that contains `~`, or an existing member uid that collides with
+    a chord name.
+* **Member loads** are expressed along the ARC:
+  * `a` / `b` are fractions of the arc length, and `w` is per unit arc
+    length;
+  * each chord takes the part of the load on its arc interval, scaled by
+    `(S / n) / chord_length`, so the totals are exact;
+  * `projected` loads are not scaled, because the chord polygon has the
+    arc's projection;
+  * `point` / `moment` loads go to the chord that holds their arc
+    fraction, at the same chord fraction;
+  * legacy `member_udls` become chord `udl` loads.
+* **Self weight and mass** act on the chord polygon.  The shortfall is
+  `1 - sin(x)/x`, with x the half chord angle (0.13 % at 10 deg).
+
+### Curved-frame results
+
+`run().to_dict()["curved_frames"]` is emitted only when the model has
+curved members:
+
+```json
+"curved_frames": {"ARC": {
+  "chords": ["ARC~0", "..."], "points": [[-10, 0, 0], "..."],
+  "s_nodes": [0.0, 1.745, "..."], "arc_length": 31.416, "radius": 10.0,
+  "sweep_deg": 180.0, "center": [0, 0, 0], "plane_normal": [0, 1, 0],
+  "segments": 18, "local2": "in_plane", "story": "", "section": "B",
+  "kind": "beam",
+  "cases":   {"W":  {"s": [], "N": [], "V2": [], "V3": [], "T": [],
+                     "M2": [], "M3": [], "chord": [],
+                     "nodes": {"s": [], "disp": [[0, 0, 0, 0, 0, 0]]}}},
+  "combos":  {"C2": {"...": "same shape; envelopes add \"min\""}},
+  "rs_cases": {}}}
+```
+
+* Station values are the chord stations, in chord local axes.  A chord
+  station at chord distance `x` maps to `s = s_k + x (S/n) / c`.
+* At each chord joint, `s` appears twice: the left and right values at
+  the kink.
+* `nodes.disp` holds the global displacements at the n+1 arc points.
+* Chord rows of `results["members"]` carry `"curved_parent": uid`.  The
+  per-chord `member_stations` / `member_forces` stay as they are.
+
+### Wall / floor auto-mesh options (ShellRegion)
+
+```json
+"shells": [{"uid": "W1", "...": "...", "mesh_divisions": {"n1": 4, "n2": 5}},
+           {"uid": "W2", "...": "...", "mesh_divisions": {"max_size": 0.7}},
+           {"uid": "S1", "kind": "slab", "behavior": "shell", "...": "...",
+            "floor_mesh": {"mode": "cookie_cut", "max_size": 1.5,
+                           "at_beams": true, "at_walls": true,
+                           "at_grids": false}}]
+```
+
+* **`mesh_divisions`** (walls and slabs, shell behavior):
+  * Structured 4-corner mesher: `n1` cells along corner 0->1 and `n2`
+    along 0->3.  `max_size` gives `ceil(edge / max_size)` per direction
+    (the legacy rule is `round(edge / mesh_size)`).
+  * Polygon mesher: the u / v interval steps are `bbox_u / n1` and
+    `bbox_v / n2`.  Each interval between mandatory lines is still split
+    into `ceil(len / step)` parts, so the mesh has at least n1 x n2
+    cells.  `max_size` is the step in both directions.
+  * Check Model's shell aspect-ratio test uses the same divisions.
+* **`floor_mesh`** (slabs with shell behavior only; walls and membranes
+  raise ValueError).  A slab with `floor_mesh` set takes the polygon
+  mesher even with 4 corners.  Missing keys default to `"default"`,
+  `null`, `true`, `true`, `true`.  The options map onto the polygon
+  mesher's line sets:
+  * `at_beams: false`: in-plane frame members are neither constraint
+    segments nor forced lines.  Their ends on element edges still join
+    through the conformity pass;
+  * `at_walls: false`: traces of non-coplanar shells are dropped.  Edges
+    of coplanar neighbours are always kept;
+  * `at_grids: false`: no optional grid lines;
+  * `mode "default"`: constraint segments cut the cells and force mesh
+    lines through their ends (the existing polygon behaviour);
+  * `mode "cookie_cut"`: the segments cut the cells but force no lines;
+  * `mode "rectangular"`: the segments force lines through their ends
+    but never cut cells, giving axis-aligned rectangles clipped only by
+    the outline and openings;
+  * `max_size` replaces `mesh_size` as the maximum element size.
+    `mesh_divisions` takes priority over it.
+
+### Joint patterns and shell uniform load sets
+
+```json
+"joint_patterns": {"HYDRO": {"type": "linear", "a": 0, "b": 0, "c": -9.81,
+                             "d": 29.43, "zero_negative": true}},
+"patterns": {"WP": {"area_loads": [{"region_uid": "W1", "q": 1.0,
+                                    "joint_pattern": "HYDRO"}]}},
+"shell_load_sets": {"OFFICE": {"SDL": 1.5, "LIVE": {"q": 2.4},
+                               "WIND": {"q": 0.5, "direction": "local_3"}}},
+"shells": [{"uid": "S1", "...": "...", "load_set": "OFFICE"}]
+```
+
+* **`AreaLoad.joint_pattern`** is either the inline dict (unchanged) or a
+  NAME from `joint_patterns`.  The engine resolves the name to the
+  library dict, so the results are identical to the inline form.  An
+  unknown name raises ValueError.
+* **Library entries** are normalised: a, b, c, d become floats, and the
+  zero flags are kept only when true.
+* **`ShellRegion.load_set`**: at analysis time each entry
+  `{pattern: q | {"q", "direction"?, "projected"?}}` adds one `AreaLoad`
+  to that pattern.  The added loads come after the pattern's own area
+  loads, in shell order.
+* **Load-set validation**:
+  * every pattern must exist;
+  * every entry must pass the AreaLoad rules (directions, projected, and
+    membrane regions take uniform gravity only);
+  * the set must exist.
+* The user model keeps its `load_set` and joint-pattern names.  Only the
+  analysed copy is expanded, so `OpenSeesEngine.source_model` is the user
+  model and `.model` is the expanded copy.
+* Model-level outputs computed from the user model, such as `to_dict()`
+  story masses, do not include load-set loads.
+
+### Validation (tests/test_curved_mesh_sets.py, 36 tests)
+
+Bending-only closed forms (A = 10, I = 1e-3, R = 10, E = 2e8):
+
+* **Two-hinged semicircular arch** under uniform projected load:
+  H = 4wR/(3 pi) = 21.2207.
+  * 6 chords: 21.199; 18 chords (auto): 21.328, +0.51 %; 72 chords:
+    21.227, +0.03 %.  The error decreases monotonically.
+  * Fixed supports with `Mi,Mj` releases reproduce it to 1e-6.
+* **Fixed semicircular arch**: H = (wR/6)/(pi/2 - 4/pi) = 28.006 and end
+  moment M = 2RH/pi - wR^2/4 = 53.28.  72 chords give 28.001 (0.02 %) and
+  53.19 (0.17 %).
+* **Ring under diametral load**:
+  * shortening P R^3/EI (pi/4 - 2/pi) = 7.4389e-3; 3 / 9 / 18 chords per
+    quarter give 7.048e-3 / 7.392e-3 / 7.427e-3 (0.16 %);
+  * transverse growth P R^3/EI (2/pi - 1/2) = 6.831e-3; 18 chords give
+    6.820e-3.
+* **Quarter-circle plan cantilever**, tip load P out of plane:
+  * delta = PR^3/EI pi/4 + PR^3/GJ (3pi/4 - 2) = 0.062423; 3 / 9 / 18 /
+    36 chords give 0.05963 / 0.06210 / 0.06234 / 0.06240;
+  * support reactions MX = MY = P R exactly;
+  * stitched |M| at s = 0 equals P R sqrt(2) to 1e-9;
+  * `local2 = "normal"` gives the same deflection, with the out-of-plane
+    moment moved from M2 to M3.
+* **Arc loads**: a udl, a partial trapezoid, a point load and a partial
+  global-X udl give base totals equal to the arc integrals (1e-8).
+* **Mesh options**:
+  * wall `n1 x n2` = 4 x 5 gives the exact node lines; `max_size` 0.7 on
+    6 x 3 gives 9 x 5;
+  * the polygon `n1/n2` steps work and areas are conserved;
+  * floor `at_beams`, `cookie_cut`, `rectangular`, `max_size` and
+    `at_grids` are pinned by node-set tests;
+  * a cookie-cut slab conserves q x A.
+* **Joint patterns and load sets**:
+  * a named joint pattern equals the inline one bit-for-bit;
+  * a load set equals the explicit area loads, and on a membrane slab it
+    goes to the beams;
+  * JSON round trips and validation errors are covered.
+* **Defaults**: `expand_for_analysis(m) is m`, and no new JSON keys are
+  emitted.

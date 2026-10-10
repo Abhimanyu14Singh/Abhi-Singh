@@ -560,6 +560,8 @@ class _Constraints:
 def _collect_constraints(model, region, fr: PlaneFrame) -> _Constraints:
     cons = _Constraints()
     tol = PLANAR_TOL
+    from .shellopts import floor_flags        # floor auto-mesh options
+    flg = floor_flags(region)
 
     def in_plane(p) -> bool:
         return abs(fr.offset(p)) <= tol
@@ -582,7 +584,8 @@ def _collect_constraints(model, region, fr: PlaneFrame) -> _Constraints:
         da, db = fr.offset(a), fr.offset(b)
         ia, ib = abs(da) <= tol, abs(db) <= tol
         if ia and ib:
-            add_seg(a, b)
+            if flg["at_beams"]:     # floor_mesh at_beams False: in-plane
+                add_seg(a, b)       # members force no lines / cuts
         elif ia:
             add_point(a)
         elif ib:
@@ -628,7 +631,7 @@ def _collect_constraints(model, region, fr: PlaneFrame) -> _Constraints:
                 t = d2[i] / (d2[i] - d2[j])
                 pts.append(tuple(c2[i][k] + t * (c2[j][k] - c2[i][k])
                                  for k in range(3)))
-        if len(pts) >= 2:
+        if len(pts) >= 2 and flg["at_walls"]:
             try:
                 nn = _unit(newell_normal(c2))
                 L = _unit(_cross(fr.e3, nn))
@@ -638,7 +641,7 @@ def _collect_constraints(model, region, fr: PlaneFrame) -> _Constraints:
             for i in range(0, len(pts) - 1, 2):
                 add_seg(pts[i], pts[i + 1])
     # optional lines: grid lines (vertical planes) and story levels
-    for q, d in _grid_plan_lines(model):
+    for q, d in (_grid_plan_lines(model) if flg["at_grids"] else ()):
         nrm = (-d[1], d[0], 0.0)
         tr = _plane_trace(fr, nrm, nrm[0] * q[0] + nrm[1] * q[1])
         if tr is not None:
@@ -807,6 +810,8 @@ def _region_pieces2(region, fr: PlaneFrame, cons: _Constraints
         if in_region(p2):
             mand_u.append(p2[0])
             mand_v.append(p2[1])
+    from .shellopts import floor_flags, polygon_steps
+    mode = floor_flags(region)["mode"]
     segs: List[Tuple[Vec2, Vec2]] = []
     for a, b in cons.segments:
         if (max(a[0], b[0]) < ulo - btol or min(a[0], b[0]) > uhi + btol
@@ -823,14 +828,17 @@ def _region_pieces2(region, fr: PlaneFrame, cons: _Constraints
                           for i in range(n))
         if not touches:
             continue
-        segs.append(_canon(a, b))
+        if mode != "rectangular":       # rectangular: lines, no cuts
+            segs.append(_canon(a, b))
+        if mode == "cookie_cut":        # cookie cut: cuts, no lines
+            continue
         for p in (a, b):
             if in_region(p):
                 mand_u.append(p[0])
                 mand_v.append(p[1])
-    h = float(region.mesh_size)
-    ul = _mesh_lines(mand_u, cons.opt_u, h, ulo, uhi)
-    vl = _mesh_lines(mand_v, cons.opt_v, h, vlo, vhi)
+    hu, hv = polygon_steps(region, ulo, uhi, vlo, vhi)
+    ul = _mesh_lines(mand_u, cons.opt_u, hu, ulo, uhi)
+    vl = _mesh_lines(mand_v, cons.opt_v, hv, vlo, vhi)
     nx, ny = len(ul) - 1, len(vl) - 1
 
     # chords: polygon edges, hole edges, constraint segments

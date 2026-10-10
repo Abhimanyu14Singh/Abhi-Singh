@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from .model import BuildingModel, FrameMember, ShellRegion, _polygon_area3d
+from .shellopts import uses_polygon_mesher       # floor auto-mesh options
 from .polymesh import (finalize_pieces, is_polygon_region,
                        membrane_edge_profiles, mesh_polygon_pieces)
 
@@ -226,8 +227,8 @@ def _mesh_region(region: ShellRegion, pool: _PointPool,
     c = [tuple(map(float, p)) for p in region.corners]
     lx = 0.5 * (_norm(_sub(c[1], c[0])) + _norm(_sub(c[2], c[3])))
     ly = 0.5 * (_norm(_sub(c[3], c[0])) + _norm(_sub(c[2], c[1])))
-    nx = max(1, round(lx / region.mesh_size))
-    ny = max(1, round(ly / region.mesh_size))
+    from .shellopts import structured_divisions   # wall auto-mesh options
+    nx, ny = structured_divisions(region, lx, ly)
     omitted = _omitted_cells(region, nx, ny)
 
     def bilinear(u: float, v: float) -> Vec3:
@@ -827,7 +828,7 @@ def mesh_model(model: BuildingModel) -> MeshedModel:
     poly_pieces: Dict[str, List[List[int]]] = {}
     for region in model.shells:
         if region.behavior == "shell":
-            if is_polygon_region(region):
+            if is_polygon_region(region) or uses_polygon_mesher(region):
                 # polygon auto mesh: pieces now, elements after every
                 # region has added its nodes (conformity pass)
                 poly_pieces[region.uid] = mesh_polygon_pieces(model, region,

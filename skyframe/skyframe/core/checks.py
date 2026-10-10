@@ -610,8 +610,8 @@ def _check_shells(ctx: _Ctx, juf: _UF) -> Dict[str, dict]:
         lx = 0.5 * (edges[0] + edges[2])
         ly = 0.5 * (edges[1] + edges[3])
         if r.behavior == "shell" and r.mesh_size > 0:
-            nx = max(1, round(lx / r.mesh_size))
-            ny = max(1, round(ly / r.mesh_size))
+            from .shellopts import structured_divisions  # mesh options
+            nx, ny = structured_divisions(r, lx, ly)
             ex, ey = lx / nx, ly / ny
             ar = max(ex, ey) / max(min(ex, ey), 1e-12)
             what = f"mesh elements ({ex:.3g} x {ey:.3g} m)"
