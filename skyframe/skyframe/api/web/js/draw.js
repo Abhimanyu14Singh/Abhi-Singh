@@ -556,6 +556,8 @@ export class PlanEditor {
       t.textContent = letter;
       this.gLabels.appendChild(t);
     }
+    // Nonprismatic badges + panel-zone markers (js/npsect.js)
+    if (this.npOverlay) { try { this.npOverlay(this); } catch (e) { console.error(e); } }
   }
 
   /* ------------------------------------------------ snapping */

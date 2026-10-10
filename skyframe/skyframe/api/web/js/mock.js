@@ -20,6 +20,7 @@ import { mockUserStages as grpMockUserStages, mockCutAllows as grpMockCutAllows 
 
 // B9 — output stations / auto-mesh station lists in mock results (js/mock_b9.js)
 import { mockAugmentB9 as b9MockAugment } from "./mock_b9.js";
+import { mockNpAdjustResults as npMockAdjustResults } from "./mock_np.js";   // nonprismatic deflections + joint panel zones
 const G = 9.80665;
 
 function mulberry32(seed) {
@@ -3304,6 +3305,7 @@ export function mockResults(model) {
   r.active_dof = [...dofs];
   augmentTableResults(model, r);                  // fills only missing blocks (tables / energy / pushover views)
   b9MockAugment(model, r);                        // B9: variable output stations (js/mock_b9.js)
+  npMockAdjustResults(model, r);                  // nonprismatic sections + joint panel zones (js/mock_np.js)
   return r;
 }
 
