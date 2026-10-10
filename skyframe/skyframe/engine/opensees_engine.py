@@ -339,6 +339,10 @@ def aci209_modulus_growth(t: float) -> float:
 # b = h / (n + 1 - h*n) makes the member-end SERIES post-yield/elastic
 # stiffness ratio exactly the case's ``hardening`` h.
 HINGE_STIFFNESS_FACTOR = 10.0
+# Floor on the Steel01 post-yield ratio of the stiff-hinge springs, so an
+# elastic-perfectly-plastic case (hardening = 0) keeps a regular tangent
+# after yield (see the hinge build).  Affects only b < 1e-9 (h < ~1.1e-8).
+HINGE_MIN_STEEL01_B = 1.0e-9
 
 # v0.19 asce41 hinges: post-capping hardening slope of the trilinear
 # backbone as a fraction of the member-end rotational stiffness 6EI/L
@@ -3011,6 +3015,20 @@ class OpenSeesEngine:
                            mat.G * J_eff) / L
             h = hinge_case.hardening
             b = h / (n_f + 1.0 - h * n_f)
+            # verification-suite fix: an exactly elastic-perfectly-plastic
+            # hinge (h = 0 -> b = 0) has ZERO tangent once yielded, so a
+            # joint whose only rotational stiffness comes from yielded
+            # hinges (two hinged member ends meeting at a node) or a full
+            # collapse mechanism makes K singular and a DISPLACEMENT-
+            # controlled push stopped BEFORE the plastic collapse load.  A
+            # 1e-9 floor keeps K regular there (collapse load exact to
+            # ~1e-8).  Only displacement-controlled pushovers get it: a
+            # load-controlled step past collapse must still fail (it has
+            # no EPP solution) and a TH is regularised by its mass.  Every
+            # b >= 1e-9 (all practical h, incl. 0.02) is unchanged.
+            if (getattr(hinge_case, "control_mode", None)
+                    == "displacement_control"):
+                b = max(b, HINGE_MIN_STEEL01_B)
             xax, yax, _, _, _ = _local_axes(m)
             mtag += 1
             ops.uniaxialMaterial("Elastic", mtag, kt)
