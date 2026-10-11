@@ -324,6 +324,10 @@ class FrameSection:
     kind: str = "prismatic"
     segments: Optional[List[dict]] = None
     subdivisions: int = 16
+    # Shape tag set by the UI ("W" library shape, "designer", ...) so a
+    # reloaded section keeps its editor / preview; None = untagged
+    # (omitted from to_dict, old files byte-identical).
+    shape: Optional[str] = None
 
     @staticmethod
     def rectangular(name: str, material: str, b: float, h: float) -> "FrameSection":
@@ -348,7 +352,10 @@ class FrameSection:
 
     def to_dict(self) -> dict:
         from skyframe.core.nonprismatic import section_to_dict
-        return section_to_dict(self, asdict(self))
+        d = section_to_dict(self, asdict(self))
+        if d.get("shape") is None:
+            d.pop("shape", None)
+        return d
 
 
 SHELL_LAYER_KINDS = ("concrete", "steel")
@@ -4088,6 +4095,8 @@ class BuildingModel:
                 mod_I22=float(sd.get("mod_I22", 1.0)),
                 mod_J=float(sd.get("mod_J", 1.0)))
             _load_frame_shear_mods(mdl.sections[name], sd)
+            if isinstance(sd.get("shape"), str) and sd["shape"]:
+                mdl.sections[name].shape = sd["shape"]
         if d.get("designer_sections"):
             from skyframe.core.sections_designer import DesignerSection
             for name, dd in d["designer_sections"].items():

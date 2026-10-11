@@ -77,3 +77,14 @@ def test_mesh_study_and_advisor_on_tower_model():
     adv = accuracy_advice(m)
     assert "advice" in adv
     assert json.dumps(m.to_dict(), sort_keys=True) == before
+
+
+def test_section_shape_tag_round_trips():
+    from skyframe.core.builder import quick_building
+    d = quick_building().to_dict()
+    assert all("shape" not in s for s in d["sections"].values())
+    name = next(iter(d["sections"]))
+    d["sections"][name]["shape"] = "W"
+    d2 = BuildingModel.from_dict(json.loads(json.dumps(d))).to_dict()
+    assert d2["sections"][name]["shape"] == "W"
+    assert d2 == d

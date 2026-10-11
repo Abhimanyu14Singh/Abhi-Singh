@@ -474,6 +474,8 @@ def section_from_dict(name: str, sd: dict):
     sec.segments = ([dict(s) if isinstance(s, dict) else s for s in segs]
                     if isinstance(segs, list) else segs)
     sec.subdivisions = sd.get("subdivisions", DEFAULT_SUBDIVISIONS)
+    if isinstance(sd.get("shape"), str) and sd["shape"]:
+        sec.shape = sd["shape"]
     return sec
 
 
