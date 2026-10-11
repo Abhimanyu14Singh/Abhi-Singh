@@ -89,6 +89,7 @@ import { installTowers as c9InstallTowers, syncTowerSelect as c9SyncTowerSelect,
 import { mockValidateTowers as c9MockValidateTowers } from "./mock_towers.js";
 
 import { initRepair as rpInitRepair } from "./repairdlg.js";   // Analyze › Check Model › Fix… (model repair)
+import { initDlgStd as dsInitDlgStd } from "./dlgstd.js";   // dialog standard (dlgkit) + Model Workflow checklist + canvas context menus
 
 /* ------------------------------------------------ state */
 const store = {
@@ -8546,6 +8547,7 @@ async function boot() {
 
   try { accInitAccuracy(window.__sky); } catch (err) { console.error("accuracy tools init failed", err); }   // Analyze > Mesh Sensitivity Study · Model > Accuracy Advisor (js/accuracy.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
+  try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
 }
 
 boot();

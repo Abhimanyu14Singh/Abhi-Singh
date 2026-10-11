@@ -1,0 +1,142 @@
+/* SkyFrame — dlgkit standard dialog layout (js/dlgkit.js, docs/DIALOG_STANDARD.md).
+   Dialog-scoped only: every rule is under .dk-dlg so nothing outside the
+   migrated dialogs changes. Uses the shared theme tokens (dark + light). */
+
+.dk-dlg .dk-modal { display: flex; flex-direction: column; max-height: 88vh; }
+.dk-dlg .dk-sm { width: 420px; }
+.dk-dlg .dk-md { width: 560px; }
+.dk-dlg .dk-lg { width: 760px; }
+.dk-dlg .dk-xl { width: 900px; }
+.dk-dlg .dk-body { padding: 14px 18px 10px; display: flex; flex-direction: column; gap: 10px; }
+.dk-dlg .dk-intro { font-size: 12px; line-height: 1.5; margin: 0; }
+.dk-dlg .dk-note { font-size: 11.5px; line-height: 1.45; margin: 2px 0 4px; }
+.dk-dlg .dk-msg { font-size: 13px; line-height: 1.5; }
+
+/* ---- footer: [note · extras]  OK · Cancel · Apply */
+.dk-dlg .dk-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dk-dlg .dk-foot-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.dk-dlg .dk-foot-note { font-size: 11.5px; }
+.dk-dlg .dk-btns { display: flex; gap: 8px; flex: none; }
+.dk-dlg .dk-btns .btn { min-width: 76px; justify-content: center; }
+.dk-dlg .dk-form-err { display: none; font-size: 12px; color: var(--red); background: rgba(230, 103, 103, .08);
+  border: 1px solid rgba(230, 103, 103, .35); border-radius: 6px; padding: 6px 10px; }
+.dk-dlg .dk-form-err.is-on { display: block; }
+
+/* ---- groups */
+.dk-dlg .dk-group { border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px 10px; margin: 0;
+  display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.dk-dlg .dk-group legend { font-size: 11.5px; font-weight: 650; color: var(--text-2); padding: 0 6px; }
+.dk-dlg .dk-group.dk-cols { display: grid; grid-template-columns: 1fr 1fr; column-gap: 18px; }
+.dk-dlg .dk-group.dk-cols > legend, .dk-dlg .dk-group.dk-cols > .dk-note, .dk-dlg .dk-group.dk-cols > .dk-row-wide,
+.dk-dlg .dk-group.dk-cols > .dk-table-wrap { grid-column: 1 / -1; }
+.dk-dlg .dk-group.dk-disabled { opacity: .55; }
+.dk-dlg .dk-group.dk-disabled input, .dk-dlg .dk-group.dk-disabled select { pointer-events: none; }
+
+/* ---- rows: label · control · unit */
+.dk-dlg .dk-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(110px, 170px) 58px;
+  align-items: center; column-gap: 8px; min-height: 30px; }
+.dk-dlg .dk-cols .dk-row { grid-template-columns: minmax(96px, 1fr) minmax(80px, 120px) 46px; }
+.dk-dlg .dk-row-wide { grid-template-columns: minmax(120px, 1fr) minmax(160px, 2.2fr) 58px; }
+.dk-dlg .dk-label { font-size: 12.5px; color: var(--text-2); min-width: 0; }
+.dk-dlg .dk-ctl { min-width: 0; }
+.dk-dlg .dk-ctl > input, .dk-dlg .dk-ctl > select, .dk-dlg .dk-ctl > output { width: 100%; }
+.dk-dlg .dk-num { text-align: right; font-variant-numeric: tabular-nums; }
+.dk-dlg .dk-unit { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dk-dlg .dk-readout { display: block; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-1);
+  padding: 5px 9px; border: 1px dashed var(--border); border-radius: 6px; font-size: 12.5px; }
+.dk-dlg .dk-hint { grid-column: 1 / -1; font-size: 11px; line-height: 1.35; padding: 0 0 2px; }
+.dk-dlg .dk-row > .dk-hint { grid-column: 2 / -1; }
+.dk-dlg .dk-err { grid-column: 2 / -1; font-size: 11.5px; color: var(--red); line-height: 1.35; }
+.dk-dlg .dk-err:empty { display: none; }
+.dk-dlg .dk-row.is-invalid input, .dk-dlg .dk-row.is-invalid select { border-color: var(--red); }
+.dk-dlg input.is-invalid { border-color: var(--red); }
+.dk-dlg .dk-row-check { grid-template-columns: 1fr; min-height: 26px; }
+.dk-dlg .dk-row-check > .dk-hint, .dk-dlg .dk-row-check > .dk-err { grid-column: 1; padding-left: 24px; }
+.dk-dlg .dk-indent { padding-left: 22px; }
+.dk-dlg .dk-check { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-1); cursor: pointer; }
+.dk-dlg .dk-check input { width: auto; flex: none; margin: 0; }
+.dk-dlg .dk-row-radio { grid-template-columns: 1fr; }
+.dk-dlg .dk-radios { display: flex; flex-direction: column; gap: 4px; }
+.dk-dlg .dk-radio-hint { font-size: 11px; margin-left: 4px; }
+
+/* ---- Advanced */
+.dk-dlg .dk-adv { border: 1px dashed var(--border); border-radius: 8px; padding: 0 12px; }
+.dk-dlg .dk-adv > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; font-size: 12px; font-weight: 650; color: var(--text-2); user-select: none; }
+.dk-dlg .dk-adv > summary::-webkit-details-marker { display: none; }
+.dk-dlg .dk-adv > summary::before { content: "▸"; font-size: 10px; color: var(--text-3); transition: transform .12s; }
+.dk-dlg .dk-adv[open] > summary::before { transform: rotate(90deg); }
+.dk-dlg .dk-adv > summary:hover { color: var(--text-1); }
+.dk-dlg .dk-adv-badge { font-weight: 400; font-size: 11px; color: var(--text-3); }
+.dk-dlg .dk-adv-badge.is-changed { color: var(--amber); }
+.dk-dlg .dk-adv-body { display: flex; flex-direction: column; gap: 8px; padding: 0 0 10px; }
+
+/* ---- tabs */
+.dk-dlg .dk-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin: -4px 0 4px; flex-wrap: wrap; }
+.dk-dlg .dk-tab { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--text-2);
+  font: inherit; font-size: 12.5px; padding: 7px 12px; cursor: pointer; }
+.dk-dlg .dk-tab:hover { color: var(--text-1); }
+.dk-dlg .dk-tab.is-active { color: var(--accent); border-bottom-color: var(--accent); }
+.dk-dlg .dk-tab.has-error::after { content: " ●"; color: var(--red); font-size: 9px; vertical-align: 2px; }
+.dk-dlg .dk-tab:focus-visible { outline: 2px solid var(--accent-dim); outline-offset: -2px; }
+.dk-dlg .dk-panel { display: flex; flex-direction: column; gap: 10px; padding-top: 6px; }
+.dk-dlg .dk-panel[hidden] { display: none !important; }
+
+/* ---- editable tables */
+.dk-dlg .dk-table-wrap { display: flex; flex-direction: column; gap: 6px; }
+.dk-dlg .dk-table-scroll { max-height: 240px; overflow: auto; border: 1px solid var(--border-soft); border-radius: 6px; }
+.dk-dlg .dk-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.dk-dlg .dk-table th { position: sticky; top: 0; background: var(--surface-2); color: var(--text-3); font-weight: 650;
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px; padding: 5px 6px; text-align: left; }
+.dk-dlg .dk-table th.num { text-align: right; }
+.dk-dlg .dk-table td { padding: 2px 4px; border-top: 1px solid var(--border-soft); }
+.dk-dlg .dk-table td input, .dk-dlg .dk-table td select { width: 100%; padding: 3px 6px; font-size: 12px; }
+.dk-dlg .dk-x-col { width: 28px; text-align: center; }
+.dk-dlg .dk-x { background: none; border: 0; color: var(--text-3); cursor: pointer; font-size: 15px; line-height: 1; padding: 2px 6px; border-radius: 4px; }
+.dk-dlg .dk-x:hover:not(:disabled) { color: var(--red); background: rgba(230, 103, 103, .1); }
+.dk-dlg .dk-x:disabled { opacity: .3; cursor: default; }
+.dk-dlg .dk-table-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dk-dlg .dk-table-wrap > .dk-err { grid-column: auto; }
+.dk-dlg .dk-cell-ro { font-size: 12px; color: var(--text-2); padding: 0 4px; }
+.dk-dlg .dk-empty { font-size: 12px; padding: 10px; text-align: center; }
+
+/* ---- list dialogs: table + "Click to:" */
+.dk-dlg .dk-list { display: grid; grid-template-columns: 1fr 180px; gap: 12px; align-items: start; }
+.dk-dlg .dk-list-table { max-height: 52vh; overflow: auto; border: 1px solid var(--border-soft); border-radius: 6px; min-height: 120px; }
+.dk-dlg .dk-list-tbl { width: 100%; }
+.dk-dlg .dk-list-tbl tbody tr { cursor: pointer; user-select: none; }
+.dk-dlg .dk-list-tbl tbody tr:hover td { background: var(--surface-3); }
+.dk-dlg .dk-list-tbl tbody tr.is-sel td { background: var(--accent-ghost); }
+.dk-dlg .dk-list-tbl tbody tr.is-sel td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+.dk-dlg .dk-list-tbl tbody tr:focus { outline: none; }
+.dk-dlg .dk-list-tbl tbody tr:focus-visible td { outline: none; box-shadow: inset 0 1px 0 var(--accent-dim), inset 0 -1px 0 var(--accent-dim); }
+.dk-dlg .dk-list-tbl tbody tr td { outline: none; }
+.dk-dlg .dk-list-tbl tr.is-muted td { color: var(--text-3); }
+.dk-dlg .dk-list-side { display: flex; flex-direction: column; gap: 6px; }
+.dk-dlg .dk-side-title { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--text-3); margin: 4px 0 0; }
+.dk-dlg .dk-side-btn { width: 100%; justify-content: center; white-space: nowrap; }
+.dk-dlg .dk-list-side select { width: 100%; }
+
+/* ---- info grid */
+.dk-dlg .dk-info { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.dk-dlg .dk-info th { text-align: left; font-weight: 500; color: var(--text-2); padding: 4px 8px 4px 0; width: 46%; }
+.dk-dlg .dk-info td { padding: 4px 0; color: var(--text-1); font-variant-numeric: tabular-nums; }
+.dk-dlg .dk-info tr + tr th, .dk-dlg .dk-info tr + tr td { border-top: 1px solid var(--border-soft); }
+
+/* ---- misc */
+.dk-dlg .dk-two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+.dk-dlg .dk-two .dk-table-scroll { max-height: 280px; }
+.dk-dlg .dk-mono { font-family: var(--mono); font-size: 11.5px; }
+.dk-dlg .dk-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dk-dlg .dk-swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; vertical-align: -1px; margin-right: 6px; border: 1px solid var(--border); }
+.dk-dlg .dk-chart { border: 1px solid var(--border-soft); border-radius: 6px; background: var(--surface-2); padding: 6px; }
+.dk-dlg .dk-chart svg { display: block; width: 100%; height: 150px; }
+.dk-dlg .dk-legacy { font-size: 11.5px; }
+.dk-dlg .dk-search { width: 100%; }
+.dk-dlg .dk-lib-list { max-height: 300px; }
+
+@media (max-width: 720px) {
+  .dk-dlg .dk-list { grid-template-columns: 1fr; }
+  .dk-dlg .dk-group.dk-cols, .dk-dlg .dk-two { grid-template-columns: 1fr; }
+  .dk-dlg .dk-row, .dk-dlg .dk-cols .dk-row { grid-template-columns: minmax(100px, 1fr) minmax(90px, 140px) 46px; }
+}

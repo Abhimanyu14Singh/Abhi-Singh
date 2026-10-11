@@ -1,0 +1,63 @@
+/* SkyFrame — Model Workflow checklist + canvas context menu (js/workflow.js).
+   Scoped to .wf-* classes; shared theme tokens (dark + light). */
+
+.wf-panel {
+  position: fixed; right: 14px; bottom: 44px; z-index: 40; width: 220px;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .28); font-size: 12px; color: var(--text-1);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.wf-panel[hidden] { display: none !important; }
+.wf-head { display: flex; align-items: center; gap: 4px; padding: 6px 6px 4px 10px; }
+.wf-title { flex: 1; display: flex; align-items: center; gap: 6px; background: none; border: 0; color: inherit;
+  font: inherit; font-weight: 650; cursor: pointer; padding: 2px 0; text-align: left; min-width: 0; }
+.wf-title:focus-visible, .wf-x:focus-visible, .wf-btn:focus-visible { outline: 2px solid var(--accent-dim); outline-offset: 1px; border-radius: 4px; }
+.wf-caret { font-size: 10px; color: var(--text-3); transition: transform .12s; }
+.wf-panel.is-collapsed .wf-caret { transform: rotate(-90deg); }
+.wf-name { white-space: nowrap; }
+.wf-count { margin-left: auto; font-weight: 600; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.wf-pill-next { display: none; }
+.wf-x { background: none; border: 0; color: var(--text-3); font-size: 16px; line-height: 1; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+.wf-x:hover { color: var(--text-1); background: var(--surface-3); }
+.wf-bar { height: 3px; background: var(--surface-3); margin: 0 10px 6px; border-radius: 3px; overflow: hidden; }
+.wf-bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .25s; }
+.wf-steps { list-style: none; margin: 0; padding: 0 6px 4px; display: flex; flex-direction: column; gap: 1px; max-height: 48vh; overflow-y: auto; }
+.wf-btn { width: 100%; display: flex; align-items: center; gap: 8px; background: none; border: 0; color: var(--text-2);
+  font: inherit; text-align: left; padding: 3px 6px; border-radius: 6px; cursor: pointer; }
+.wf-btn:hover { background: var(--surface-3); color: var(--text-1); }
+.wf-mark { flex: none; width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; border: 1px solid var(--border); color: var(--text-3); }
+.wf-lbl { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wf-state { font-size: 10.5px; color: var(--text-3); }
+.wf-step.is-done .wf-mark { background: rgba(52, 195, 132, .16); border-color: rgba(52, 195, 132, .55); color: var(--green); }
+.wf-step.is-done .wf-lbl { color: var(--text-2); }
+.wf-step.is-next .wf-btn { background: var(--accent-ghost); color: var(--text-1); }
+.wf-step.is-next .wf-mark { border-color: var(--accent); color: var(--accent); }
+.wf-step.is-next .wf-state { color: var(--accent); font-weight: 650; }
+.wf-step.is-stale .wf-mark { border-color: var(--amber); color: var(--amber); }
+.wf-step.is-stale .wf-state { color: var(--amber); }
+.wf-next { display: flex; flex-direction: column; gap: 6px; padding: 6px 10px 10px; border-top: 1px solid var(--border-soft); }
+.wf-hint { font-size: 11px; color: var(--text-3); line-height: 1.35; }
+.wf-all { color: var(--green); }
+.wf-go { align-self: stretch; justify-content: center; background: var(--accent-dim); border-color: transparent; color: #fff; }
+.wf-go:hover:not(:disabled) { background: var(--accent); }
+.wf-panel.is-collapsed { width: auto; max-width: 320px; }
+.wf-panel.is-collapsed .wf-steps, .wf-panel.is-collapsed .wf-next, .wf-panel.is-collapsed .wf-bar { display: none; }
+.wf-panel.is-collapsed .wf-pill-next { display: inline; font-weight: 500; font-size: 11px; color: var(--accent); white-space: nowrap; }
+.wf-panel.is-collapsed .wf-count { margin-left: 4px; }
+
+/* ---- context menu */
+.wf-ctx {
+  position: fixed; z-index: 120; min-width: 210px; max-width: 280px; padding: 4px;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .35); font-size: 12.5px;
+}
+.wf-ctx-head { padding: 5px 10px 4px; font-size: 10.5px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--text-3); }
+.wf-ctx-sep { height: 1px; background: var(--border-soft); margin: 4px 2px; }
+.wf-ctx-item { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 16px; background: none; border: 0;
+  color: var(--text-1); font: inherit; text-align: left; padding: 5px 10px; border-radius: 5px; cursor: pointer; }
+.wf-ctx-item:hover, .wf-ctx-item:focus { background: var(--accent-ghost); outline: none; }
+.wf-ctx-item kbd { font-family: var(--mono); font-size: 10.5px; color: var(--text-3); }
+.wf-ctx-item.is-danger { color: var(--red); }
+
+@media (max-width: 720px) { .wf-panel { width: 200px; } }
