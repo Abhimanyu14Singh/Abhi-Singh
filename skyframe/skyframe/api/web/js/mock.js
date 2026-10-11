@@ -3321,9 +3321,8 @@ export function mockResults(model) {
   uhMockAugment(model, r);                        // B10: user hinge histories (js/mock_userhinge.js)
   ptMockAugment(model, r);                        // PT tendons + hyperstatic cases (js/mock_tendons.js)
   pfMockExtendResults(model, r);                  // plot functions: th_cases[*].plot_functions (js/mock_plotfn.js)
-  rnaMockRatioNaApply(model, r);                  // n/a (negligible drift) story ratios (js/mock_ratio_na.js)
-
   c9fMockAugment(model, r);                       // C9 follow-ups: per-tower TH story shear + control_tower (js/mock_towers_fu.js)
+  rnaMockRatioNaApply(model, r);                  // n/a (negligible drift) story ratios (js/mock_ratio_na.js)
   return r;
 }
 
