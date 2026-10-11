@@ -14,6 +14,8 @@
      ux_quick.js    sidebar quick-model form mirrors the model    (pass 2)
      ux_a11y.js     aria labels, tablist, live regions            (pass 2)
      ux_kbddraw.js  keyboard cursor: draw / select in the Plan view (pass 2)
+     ux_chrome.js   layout: title bar, one toolbar row, collapsible explorer +
+                    properties panels, slim status bar, design tokens (chrome.css)
    plus "Run saves first": with unsaved edits the live backend would otherwise
    analyse the last POSTed model, so __sky.beforeRun now saves first.
    Disable everything with ?ux=off (used by the before/after audit). */
@@ -33,6 +35,7 @@ import { installErrors as uxInstallErrors } from "./ux_errors.js";
 import { installQuick as uxInstallQuick } from "./ux_quick.js";
 import { installA11y as uxInstallA11y } from "./ux_a11y.js";
 import { installKbdDraw as uxInstallKbdDraw } from "./ux_kbddraw.js";
+import { installChrome as uxInstallChrome } from "./ux_chrome.js";   // layout pass: title bar · toolbar · panels · status (chrome.css)
 
 export function initUx(sky) {
   let off = false;
@@ -66,6 +69,7 @@ export function initUx(sky) {
     const ws = document.querySelector(".workspace");
     if (window.innerWidth < 1200 && ws && !ws.classList.contains("explorer-collapsed") && s.etabs) s.etabs.toggleExplorer();
   });
+  step("chrome", uxInstallChrome);   // layout pass (js/ux_chrome.js) — after toolbar/status/narrow
   document.documentElement.classList.add("ux-on");
   sky.ux.initMs = Math.round((performance.now() - t0) * 10) / 10;
 }
