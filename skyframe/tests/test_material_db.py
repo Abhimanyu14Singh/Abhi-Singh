@@ -1,3 +1,4 @@
+import re
 """v1.21 built-in material libraries (skyframe.core.material_db).
 
 Pinned by the code formulas themselves (re-derived here, not read back):
@@ -364,7 +365,7 @@ def test_api_import(client):
 # --------------------------------------------------------------------------- #
 def test_package_data_declared():
     root = Path(mdb.__file__).resolve().parents[2]
-    assert '"skyframe" = ["data/materials/*.json"]' in (root / "pyproject.toml").read_text()
+    assert re.search(r'"skyframe" = \[[^\]]*"data/(\*|materials)/\*\.json"', (root / "pyproject.toml").read_text())
     for s in mdb.STANDARD_IDS:
         assert (mdb.DATA_DIR / f"{s}.json").is_file()
 

@@ -1,3 +1,4 @@
+import re
 """v1.21 steel section database (AISC Shapes Database v16.0), loader API,
 HTTP endpoints, FrameSection dims / db_ref / principal round trip, the
 byte-identical legacy W-shape library and the principal-axis analysis of
@@ -525,7 +526,7 @@ def test_database_ships_as_package_data():
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
     txt = (root / "pyproject.toml").read_text()
-    assert '"skyframe" = ["data/steel/*.json"]' in txt
+    assert re.search(r'"skyframe" = \[[^\]]*"data/(\*|steel)/\*\.json"', txt)
     assert sdb.DATA_DIR == root / "skyframe" / "data" / "steel"
     assert (sdb.DATA_DIR / "aisc.json").is_file()
 
