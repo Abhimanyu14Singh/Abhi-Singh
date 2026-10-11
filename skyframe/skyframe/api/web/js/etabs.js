@@ -170,6 +170,7 @@ export function initEtabs(sky) {
       { label: "Mass Source…", act: "def-mass", fn: () => sky.openMassSource() },
       { label: "P-Delta Options…", act: "def-pdelta", hint: "model-wide", fn: () => sky.openPDeltaOptions && sky.openPDeltaOptions() },
       { label: "Diaphragms…", act: "def-diaphragms", hint: "named · rigid / semi-rigid", fn: () => sky.openDiaphragms && sky.openDiaphragms() },   // G3
+      { label: "Towers…", act: "def-c9-towers", hint: "multi-tower · podium", fn: () => sky.openTowers && sky.openTowers() },   // C9 (js/towers.js)
 
       // B9 — named point-spring properties (js/springdlg.js)
       { label: "Spring Properties · Point Springs…", act: "def-b9-springprops", hint: "linear · multilinear · gap", fn: () => sky.openSpringProperties && sky.openSpringProperties() },

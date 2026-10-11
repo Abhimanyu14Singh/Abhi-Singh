@@ -381,6 +381,10 @@ def asce7_elf(model: BuildingModel, SDS: float, SD1: float, R: float,
             raise ValueError(f"{label} must be a finite value > 0")
     if not model.stories:
         raise ValueError("model has no stories to load")
+    if getattr(model, "towers", None):     # C9: one ELF per tower
+        from .towers import per_tower_pattern
+        return per_tower_pattern(model, name, lambda v: asce7_elf(
+            v, SDS, SD1, R, Ie, Ct, x, direction, name))
 
     hn = max(s.elevation for s in model.stories)
     if hn <= 0.0:

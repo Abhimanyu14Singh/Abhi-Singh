@@ -42,6 +42,7 @@ from skyframe.core.nonprismatic import member_area as _np_area
 
 from skyframe.core import thermal_ext as _thx  # v1.16 temperature / projected
 from skyframe.core import damping_options as _dmpo
+from skyframe.core import towers as _towers  # C9 multiple towers
 from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
     PDELTA_INCLUDE_IN, PDELTA_METHODS, pdelta_defaults, pdelta_from_dict,
     pdelta_to_dict, validate_pdelta_options)
@@ -579,9 +580,13 @@ class Story:
     name: str
     height: float           # m (story height below this level's floor? no: height of this story)
     elevation: float = 0.0  # m, computed = top-of-story elevation
+    tower: str = ""         # C9 owning tower ("" = default; core.towers)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        if not self.tower:                  # C9: emitted only when tagged
+            d.pop("tower")
+        return d
 
 
 def _insertion_fields_to_dict(m) -> dict:
@@ -718,6 +723,8 @@ class FrameMember:
     # assigned; emitted by to_dict only when set)
     open_wind: Optional[dict] = None
 
+    tower: str = ""     # C9 owning tower ("" = from story; core.towers)
+
     @property
     def length(self) -> float:
         return math.dist(self.pi, self.pj)
@@ -762,6 +769,7 @@ class FrameMember:
                 **_curved_member_to_dict(self),    # curved (only when set)
 
                 **_ow_member_to_dict(self),        # open-structure wind
+                **_towers.tag_to_dict(self),       # C9 tower (when set)
                 "length": self.length}
 
 
@@ -844,6 +852,7 @@ class ShellRegion:
 
     distribution: str = "two_way"          # B3 membrane slabs: two_way|one_way
     one_way_dir: int = 1                   # B3 one-way span: region local 1|2
+    tower: str = ""                        # C9 owning tower (core.towers)
 
     @property
     def area(self) -> float:
@@ -899,7 +908,8 @@ class ShellRegion:
                 "wind_cp": self.wind_cp,
                 **_dia.shell_extra_to_dict(self),
                 **_shellopts_shell_to_dict(self),  # mesh opts / load set
-                **_sht.region_extra_to_dict(self)}
+                **_sht.region_extra_to_dict(self),
+                **_towers.tag_to_dict(self)}       # C9 tower (when set)
 
 
 # --------------------------------------------------------------------------- #
@@ -1713,6 +1723,7 @@ class LinkMember:
     stiffness: List[float]                      # 6 entries, >= 0
     link_type: str = "elastic"                  # v0.15, one of LINK_TYPES
     params: Dict[str, object] = field(default_factory=dict)  # v0.15/v0.21
+    tower: str = ""                             # C9 owning tower
 
     @property
     def length(self) -> float:
@@ -1733,7 +1744,8 @@ class LinkMember:
         return {"uid": self.uid, "pi": list(self.pi), "pj": list(self.pj),
                 "stiffness": [float(k) for k in self.stiffness],
                 "link_type": self.link_type,
-                "params": self.coerce_params(self.params)}
+                "params": self.coerce_params(self.params),
+                **_towers.tag_to_dict(self)}       # C9 tower (when set)
 
 
 DIAPHRAGM_OPTIONS = ("rigid", "none")
@@ -2033,6 +2045,13 @@ class BuildingModel:
     # when not the defaults.
     damping_options: Dict[str, object] = field(
         default_factory=_dmpo.damping_defaults)
+
+    # C9 multiple towers (skyframe.core.towers): [{"name", "grid_system",
+    # "base_elevation"}] + joint tags [{"point", "tower"}].  Empty
+    # (default) = one implicit tower, the exact legacy behaviour.  Emitted
+    # by to_dict only when defined.
+    towers: List[dict] = field(default_factory=list)
+    joint_towers: List[dict] = field(default_factory=list)
 
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
@@ -3426,6 +3445,8 @@ class BuildingModel:
         ``self_mass`` / ``patterns`` (or the explicit arguments) switch each
         part off independently.  With both on (the defaults) the summation
         order is unchanged -> bit-identical to pre-v1.13."""
+        if self.towers:                     # C9: tower by tower
+            return _towers.story_masses(self, self_mass, patterns)
         inc_self = (self.mass_option("self_mass") if self_mass is None
                     else bool(self_mass))
         inc_pat = (self.mass_option("patterns") if patterns is None
@@ -3747,6 +3768,11 @@ class BuildingModel:
         self._validate_v113()
         self._validate_tendons()
         self._validate_curved_mesh_sets()
+        self._validate_towers()
+
+    def _validate_towers(self) -> None:
+        """C9 multiple towers (see core.towers)."""
+        _towers.validate(self)
 
     def _validate_curved_mesh_sets(self) -> None:
         """Curved frames + wall/floor mesh options + joint patterns /
@@ -3966,6 +3992,7 @@ class BuildingModel:
             **_uh.model_to_dict(self),      # B10 hinge properties (if any)
             **_shellopts_model_to_dict(self),   # joint patterns / load sets
             **_dmpo.damping_to_dict(self),  # Rayleigh on links (if set)
+            **_towers.model_to_dict(self),  # C9 towers (if defined)
         }
 
     @classmethod
@@ -4393,6 +4420,7 @@ class BuildingModel:
         from skyframe.core.openwind import model_from_dict as _ow_from
         _ow_from(mdl, d)                    # open-structure wind params
         _dmpo.damping_from_dict(mdl, d)     # Rayleigh on links (absent=none)
+        _towers.model_from_dict(mdl, d)     # C9 towers (absent = none)
         mdl.validate()
         return mdl
 
@@ -4413,6 +4441,9 @@ def story_gravity_loads(model: "BuildingModel",
     are excluded, matching the member-UDL rule), but for a SINGLE pattern at
     unit factor and returned in kN (not converted to mass).
     """
+    if getattr(model, "towers", None):     # C9: tower by tower
+        return _towers.per_tower_dict(model, story_gravity_loads,
+                                      pattern_name)
     out: Dict[str, float] = {s.name: 0.0 for s in model.stories}
     pat = model.patterns.get(pattern_name)
     if pat is None:

@@ -2,6 +2,8 @@
    (same shape as BuildingModel.to_dict(), see CONTRACT.md v0.2). */
 
 import { normalizeUnits } from "./units.js";   // v1.13 — model.display_units
+import { recomputeTowerElevations as c9RecomputeTowers, inheritTower as c9InheritTower,
+  renameTowerStory as c9RenameTowerStory } from "./towers.js";   // C9 multiple towers
 import * as CXR from "./combo_refs.js";        // extended combos / P-Delta / TH components refs
 // Groups — keep groups / stage-op pattern refs consistent on erase & rename (aliased)
 import { onObjectErased as grpOnObjectErased, stagePatternRefs as grpStagePatternRefs,
@@ -2058,6 +2060,7 @@ function storySpans(model) {
 }
 
 function recomputeElevations(model) {
+  if (c9RecomputeTowers(model)) return;            // C9: per-tower base + heights
   let z = 0;
   for (const s of model.stories) { z += s.height; s.elevation = +z.toFixed(6); }
 }
@@ -2115,6 +2118,7 @@ export function renameStory(model, oldName, newName) {
   for (const p of Object.values(model.patterns || {}))
     for (const f of (p.story_forces || []))
       if (f.story === oldName) f.story = newName;
+  c9RenameTowerStory(model);                       // C9: tower story lists
   return true;
 }
 
@@ -2137,6 +2141,7 @@ export function insertStory(model, refName, where = "above") {
   const snap = storySpans(model);
   const ref = model.stories[i];
   const st = { name: uniqueStoryName(model), height: ref.height, elevation: 0 };
+  c9InheritTower(model, ref, st);                  // C9: joins ref's tower
   model.stories.splice(where === "above" ? i + 1 : i, 0, st);
   recomputeElevations(model);
   remapStoryZ(model, snap);

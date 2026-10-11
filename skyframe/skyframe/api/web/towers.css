@@ -1,0 +1,15 @@
+/* SkyFrame — Define → Towers dialog + tower column (js/towers.js) */
+.tw-def .tw-table input[type="text"] { width: 8em; }
+.tw-def .tw-table .cd-num { width: 6.5em; }
+.tw-def .tw-table tr { cursor: pointer; }
+.tw-def .tw-table tr.is-sel td { background: var(--amber-ghost, rgba(224, 160, 32, .12)); }
+.tw-def .tw-def-badge {
+  margin-left: .4em; padding: 0 .35em; border-radius: 3px; font-size: .78em;
+  color: var(--accent, #35b5e5); border: 1px solid currentColor; opacity: .8;
+}
+.tw-def .tw-add { flex-wrap: wrap; gap: .4em; align-items: center; margin-top: .5em; }
+.tw-def .tw-add .cd-num { width: 5.5em; }
+.tw-def .tw-lab { opacity: .75; font-size: .9em; }
+.tw-def .tw-st-scroll { max-height: 220px; overflow: auto; }
+.tw-def tr.tw-new td { color: var(--accent, #35b5e5); }
+.tw-col { white-space: nowrap; }

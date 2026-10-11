@@ -648,6 +648,9 @@ def compute(model: BuildingModel, code: str, **params) -> dict:
     """Hand-calculation summary of one generator (no model change)."""
     if code not in _COMPUTE:
         raise ValueError(f"code must be one of {CODES}")
+    if getattr(model, "towers", None):     # C9: distributed per tower
+        from .towers import autolateral_compute
+        return autolateral_compute(model, _COMPUTE[code], code, params)
     return _COMPUTE[code](model, **params)
 
 

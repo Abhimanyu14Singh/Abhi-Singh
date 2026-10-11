@@ -50,6 +50,8 @@ import re
 import zipfile
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from .towers import story_post_dict as _tw_story_post   # C9 towers
+
 # quantity (js/units.js kind) -> SI unit of the stored value
 QUANTITIES: Dict[str, str] = {
     "none": "",
@@ -1014,6 +1016,8 @@ def _story_post(d, pairs, orig):
     """Recompute elevations (cumulative heights from the original base)
     when any height / order changed; otherwise keep the stored values."""
     stories = d.get("stories") or []
+    if _tw_story_post(d):                   # C9: per-tower elevations
+        return
     old = [orig[k] for k in sorted(orig)]
     same = (len(old) == len(stories) and all(
         _same(a.get("height"), b.get("height")) for a, b in

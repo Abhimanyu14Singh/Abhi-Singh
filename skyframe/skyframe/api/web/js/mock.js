@@ -11,6 +11,7 @@ import { mockFrequencyResults, augmentMockResults as augmentCaseResults } from "
 export { mockCheckModel, mockCheckStability } from "./mock_check.js";
 import { mockExtendResults } from "./mock_combo.js";   // extended combos / P-Delta / TH components
 import { owAugmentMockResults } from "./mock_openwind.js";   // open-structure wind mock case results
+import { mockTowersAugment as c9MockTowersAugment } from "./mock_towers.js";   // C9 towers
 import { mockNlsExtendResults as g3MockNlsExtend } from "./mock_nls.js";   // G3 nonlinear static + named diaphragms
 
 import { augmentMockModel, augmentMockResults as augmentTableResults } from "./mock_tables.js";   // tables / frequency / energy mock blocks
@@ -3289,6 +3290,7 @@ export function mockResults(model) {
   r.case_status = case_status;
   r.combo_status = combo_status;
   g3MockNlsExtend(model, r);                      // G3 — results.nonlinear_static / diaphragms + chained case_status
+  c9MockTowersAugment(model, r);                  // C9 — per-tower drifts + results.towers / story_tower
 
   // active DOF — zero the inactive translations in the mock displacements
   const dofs = new Set(normalizeActiveDof(model.active_dof));
