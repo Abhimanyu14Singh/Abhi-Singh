@@ -310,7 +310,7 @@ class _Ctx:
 def _point_lists(d: dict):
     """Yield (list, kind) of every model list whose entries carry ``point``."""
     for k in ("supports", "spring_supports", "nodal_masses",
-              "joint_diaphragms", "joint_panel_zones"):
+              "joint_diaphragms", "joint_panel_zones", "joint_towers"):
         lst = d.get(k)
         if isinstance(lst, list):
             yield lst, k
@@ -417,7 +417,7 @@ def _dedupe_point_records(d: dict) -> None:
     """After merging: one support / spring / joint diaphragm / panel zone
     per joint (first wins), unique group points."""
     for k in ("supports", "spring_supports", "joint_diaphragms",
-              "joint_panel_zones"):
+              "joint_panel_zones", "joint_towers"):
         lst = d.get(k)
         if not isinstance(lst, list):
             continue

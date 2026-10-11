@@ -148,7 +148,7 @@ class Ctx {
 
 /* ------------------------------------------------ point-keyed records */
 function* pointLists(d) {
-  for (const k of ["supports", "spring_supports", "nodal_masses", "joint_diaphragms", "joint_panel_zones"])
+  for (const k of ["supports", "spring_supports", "nodal_masses", "joint_diaphragms", "joint_panel_zones", "joint_towers"])
     if (Array.isArray(d[k])) yield [d[k], k];
   for (const pat of Object.values(d.patterns || {}))
     for (const k of ["nodal_loads", "ground_displacements", "joint_temperatures"])
@@ -205,7 +205,7 @@ function remapPoints(ctx, fn, includeTendons = false) {
 }
 
 function dedupePointRecords(d) {
-  for (const k of ["supports", "spring_supports", "joint_diaphragms", "joint_panel_zones"]) {
+  for (const k of ["supports", "spring_supports", "joint_diaphragms", "joint_panel_zones", "joint_towers"]) {
     if (!Array.isArray(d[k])) continue;
     const seen = new Set();
     d[k] = d[k].filter(r => { const kk = pkey(r.point); if (seen.has(kk)) return false; seen.add(kk); return true; });
