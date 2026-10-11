@@ -1741,6 +1741,8 @@ class OpenSeesEngine:
         _fa_sync(model)     # frame local-axis convention stamps (etabs)
         self.source_model = model
         model = expand_for_analysis(model)
+        from skyframe.core.section_ext import principal_model as _sx_pm
+        model = _sx_pm(model)   # v1.21 principal-axis sections (else same)
         self.model = model
         self._case_cache: Dict[str, CaseResults] = {}
         self._rs_cache: Dict[str, CaseResults] = {}

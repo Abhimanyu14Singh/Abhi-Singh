@@ -27,6 +27,7 @@
 
 import spvU from "./units.js";
 import { rectSectionProps as spvRectProps } from "./modeledit.js";
+import { ssPreview as spvSsPreview } from "./secshapes.js";   // v1.21 parametric / database shapes (shape + dims)
 
 const NS = "http://www.w3.org/2000/svg";
 const isNum = v => typeof v === "number" && isFinite(v);
@@ -141,6 +142,15 @@ const SHAPE_LABEL = {
 export function spvGeometry(sec, model = {}, name = "") {
   sec = sec || {};
   name = name || sec.name || "";
+  /* v1.21: a section with shape + dims (js/secshapes.js) is drawn from its dimensions */
+  const ssx = spvSsPreview(sec);
+  if (ssx && ssx.poly) {
+    const o = { shape: ssx.shape, label: ssx.label, polys: [{ pts: ccw(ssx.poly), hole: false }], rebar: [], sc: ssx.sc, notes: [], approx: {}, invalid: "",
+      dims: ssx.dims.map(x => ({ ...x, label: dimTxt(x.sym, x.v) })), J: isNum(sec.J) ? sec.J : null };
+    o.geo = spvPolyProps(o.polys); o.bbox = bboxOf(o.polys);
+    return o;
+  }
+  if (ssx) sec = ssx.sec;
   const g = (...ks) => { for (const k of ks) { const v = pos(sec[k]); if (v) return v; } return 0; };
   const shape0 = SHAPE_ALIASES[String(sec.shape || "").toLowerCase()] || "";
   const out = { shape: shape0 || "rect", polys: [], rebar: [], dims: [], sc: null, notes: [], approx: {}, invalid: "" };

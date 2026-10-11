@@ -9827,3 +9827,286 @@ Malformed input returns 400.
 * **Test hook.** `__sky.frameAxes` exposes `{convention, convert,
   openConvert, toggleExtrude, toggleAxes, axesOf}`.
   `__sky.vx.meshOf(uid)` returns the extruded vertices of each part.
+
+## Steel section database and parametric shapes
+
+Version 1.21. Analysis only, with no design checks. Sources are listed in
+`docs/SECTION_SOURCES.md`.
+
+### Database files
+
+`skyframe/data/steel/<id>.json` ships as package data
+(`[tool.setuptools.package-data] "skyframe" = ["data/steel/*.json"]`;
+PyInstaller `collect_all("skyframe")` picks it up). The loader discovers
+**every** `*.json` file in that folder at runtime, so the eurocode / is808
+/ bs / as_nzs files are found without a code change. Listing order:
+aisc, eurocode, is808, bs, as_nzs, then any other id alphabetically.
+
+```
+{"standard": "AISC", "edition": "AISC Shapes Database v16.0",
+ "source": "<citation>", "units": "SI (m, m^2, m^4, m^6, kg/m)",
+ "shapes": [{"name", "family", "type", "dims": {...}, "props": {...},
+             "edi"?: <alternate designation>, "computed": [keys],
+             "aisc"?: {<published US values, verbatim>}}]}
+```
+
+* `type` is one of `I`, `I_mono`, `channel`, `angle`, `double_angle`,
+  `tee`, `rect_tube`, `round_tube`, `rect_solid`, `round_solid`, `plate`,
+  plus the concrete-only types `tee_concrete` and `L_concrete`.
+* `props` (SI): `A I33 I22 J Cw? S33 S22 Z33 Z22 As2 As3 r33 r22 x0 y0
+  mass`.
+  * Angles add `I_major I_minor alpha`.
+  * AISC extras: `C` (HSS torsional modulus), `eo`, `rts`, `ho`, and
+    `cx`/`cy` (the centroid in the standard placement).
+* `x0`/`y0` give the shear centre relative to the centroid, along local
+  3 / local 2.
+* `computed` names every derived key. A key prefixed `dims.` is a derived
+  dimension.
+
+**`aisc.json`** holds the complete AISC Shapes Database v16.0: **2,299
+shapes** in the families W 289, M 16, S 28, HP 22, C 32, MC 40, L 137,
+2L 639, WT 289, MT 14, ST 28, HSS Rect 399, HSS Square 126, HSS Round
+189, Pipe 51.
+
+**Column mapping.**
+* Ix→I33, Iy→I22, J, Cw, Sx/Sy→S33/S22, Zx/Zy→Z33/Z22, rx/ry→r33/r22.
+* Iw/Iz→I_major/I_minor, and alpha = atan(tan α).
+* Mass: W × 0.45359237/0.3048 kg/m.
+
+**Dimensions.**
+* I-shapes, C/MC and tees: `d bf tf tw`, plus `r = kdes − tf`.
+* Angles: `d` is the vertical (AISC long) leg `b`; `b` is the AISC `d`.
+* 2L: `d b t s orientation`, where `s` is the gap decoded from the name
+  and `orientation` is LLBB, SLBB or EQUAL.
+* HSS rect: `d=Ht, b=B, t=tdes, t_nom, r_out = 2·tdes`. This is the AISC
+  basis for its tabulated values.
+* HSS round and Pipe: `D=OD, t=tdes, t_nom`.
+
+**Derived values.**
+* As2/As3 per the rules below.
+* 2L `J` = 2 × J of the single angle, because v16.0 tabulates no 2L J.
+* Channel `x0 = −(x + eo)`.
+* Angle `x0 = t/2 − x`, `y0 = t/2 − y`.
+* Tee and 2L `y0 = y − tf/2`, with `cy = d − y`.
+
+The legacy library `skyframe.core.sections_library` keeps its 22-name
+API, but now reads the database's `aisc` block. Its results are
+byte-identical, with one pinned legacy value: W10x49 keeps `d = 9.98 in`,
+where v15/v16 publish 10.0.
+
+### Loader `skyframe/core/steel_db.py`
+
+```
+standards() -> [{id, standard, edition, count, source}]
+families(standard) -> [family, ...]                (file order)
+shapes(standard, family=None, query=None) -> [record]
+shape(standard, name) -> record                     (KeyError if unknown)
+section_from_db(standard, name, material, section_name=None) -> FrameSection
+import_sections(model, standard, names, material) -> [added names]
+clear_cache()
+```
+
+* `standard` may be given as the id or as the standard name, in any case.
+* `query` terms are ANDed and matched as substrings of the name or EDI
+  alias, ignoring case and spaces.
+* `shape()` also accepts `w14x90` and EDI names.
+* `section_from_db` returns tabulated A/I33/I22/J and As2/As3. Setting As2
+  and As3 turns on Timoshenko shear deformation for that section.
+  * `b`/`h` are the outline width/depth.
+  * It also sets `shape = type`, `dims` and `db_ref =
+    {"standard": <id>, "name"}`.
+  * Angles also carry `principal`.
+
+### HTTP
+
+* `GET /api/steel_db/standards` →
+  `[{id, standard, edition, count, source, families}]`.
+* `GET /api/steel_db/shapes?standard=&family=&q=&limit=&raw=` →
+  `{standard, family, q, total, count, shapes}`.
+  * Records omit the verbatim `aisc` block unless `raw=1` is passed.
+  * Errors: 404 for an unknown standard, 400 for a bad limit.
+* `POST /api/steel_db/import {standard, names[], material, apply?=true}`
+  → `{added, skipped, sections: {name: section dict}, model?}`.
+  * `apply: false` only builds the dicts. The UI merges them into its
+    draft.
+  * `apply: true` adds them to the current model. Names that already
+    exist are listed in `skipped`, and the response includes `model`.
+  * Errors: 400 for a missing or unknown material or empty names, 404 for
+    an unknown shape.
+* `POST /api/steel_db/shape_props {type, dims}` →
+  `{type, props, shear_area_formula}`. Invalid dims return 400.
+
+### FrameSection fields (appended; each is serialised only when set)
+
+| field | meaning |
+|---|---|
+| `dims` | parametric dimensions (SI; per type below; string values allowed, e.g. `orientation`) |
+| `db_ref` | `{"standard", "name"}` of a database shape |
+| `principal` | `{"I_major", "I_minor", "alpha"}` of an unsymmetric section (rad) |
+| `use_principal` | `true` = principal-axis analysis (emitted only when true) |
+
+**Building a section from dims.** A section object with `shape` +
+`dims` and no `A` (`POST /api/model`) gets A, I33, I22, J, b and h
+computed from the dimensions. Shear areas stay explicit.
+
+**Validation** (`_validate_section_ext`, run by add_section and
+validate):
+* dims must be finite and ≥ 0;
+* the type's geometry rules apply, e.g. "the flanges are thicker than the
+  depth";
+* `db_ref` must hold two non-empty strings;
+* `principal` must satisfy I_major ≥ I_minor > 0;
+* `use_principal` requires `principal`.
+
+**Byte-identity.** A model without these fields, or with a
+legacy-library W-shape, has the same model and results SHA-256 as before
+v1.21.
+
+### Parametric shapes `skyframe/core/shape_props.py`
+
+`shape_properties(type, dims)` → `{A, I33, I22, I23, J, Cw, S33, S22,
+Z33, Z22, As2, As3, r33, r22, x0, y0, cx, cy, b, h}`. Angle and L_concrete
+add `I_major, I_minor, alpha`. The JS mirror is `js/secshapes.js`; its
+results agree with the backend at relative difference 0.
+
+**Dims per type.**
+* `I`: d bf tf tw [r]
+* `I_mono`: d bf_top tf_top bf_bot tf_bot tw
+* `channel`: d bf tf tw
+* `angle`: d b t
+* `double_angle`: d b t [s]
+* `tee`: d bf tf tw
+* `rect_tube`: d b t [r_out]
+* `round_tube`: D t
+* `rect_solid` / `plate`: d b
+* `round_solid`: D
+* `tee_concrete` / `L_concrete`: bf hf bw h
+
+**Standard placements.** Coordinates are x = local 3, y = local 2.
+* Channel: web on the left, flanges toward +3.
+* Angle: heel at the origin, leg d along +2, leg b along +3.
+* Tee, 2L, T-beam: flange at the top.
+* L-beam: web flush with the left edge of the flange.
+
+**Formulas.**
+* **A, I, I23, centroid and Z** are exact integrals of the sharp-cornered
+  outline. Rounded tube corners and circles use closed forms. Fillets are
+  not integrated.
+* **J:**
+  * open sections use the AISC DG9 plate sums: I `(2bf·tf³ + (d−tf)tw³)/3`,
+    channel `(2(bf−tw/2)tf³ + (d−tf)tw³)/3`, tee `(bf·tf³ + (d−tf/2)tw³)/3`,
+    angle `(d−t/2 + b−t/2)t³/3`, 2L twice the angle;
+  * rect tube: Bredt `4Am²t/pm` on the mid-line;
+  * round: π(D⁴−d⁴)/32;
+  * rect solid: Roark (same as `FrameSection.rectangular`);
+  * concrete T/L: the larger of the two rectangle splits (ACI practice).
+* **Shear areas:**
+  * I, channel: `d·tw`, `5/3·bf·tf`;
+  * I_mono: `d·tw`, `5/6·Σbf·tf`;
+  * tee: `d·tw`, `5/6·bf·tf`;
+  * angle: `5/6·d·t`, `5/6·b·t`;
+  * 2L: `5/3·d·t`, `5/3·b·t`;
+  * rect tube: `2·d·t`, `2·b·t`;
+  * round tube: `A/2`;
+  * rect solid: `5/6·A`;
+  * round solid: `0.9·A`;
+  * concrete T/L: `5/6·bw·h`, `5/6·bf·hf`.
+* **Channel shear centre:** `e = 3b²tf/(6b·tf + h·tw)` from the web
+  mid-line, with b = bf − tw/2 and h = d − tf.
+
+**Validation** (`tests/test_shape_props.py`):
+* Closed forms are exact: rectangle; circle; pipe `I = π(D⁴−d⁴)/64`,
+  `J = 2I`; sharp tube; I; thin-walled J; channel e; principal
+  invariants.
+* sectionproperties 3.10 (finite elements, test-only) agrees with A, I,
+  I23, centroid and Z to 1e-6. Thin-walled J agrees within 3%, the tube
+  within 1%, and concrete T/L J is 5–10% low (conservative).
+* Against all 2,299 tabulated shapes, the maximum |error| is:
+  * W: A 3%, I33 4.5%, I22 1.5%;
+  * HP: 5 / 5.5 / 1.5%;
+  * WT: 3 / 2 / 2%;
+  * L: 1.5 / 2.5 / 2.5%;
+  * 2L: 1.5 / 3 / 3.5%;
+  * HSS rect: 0.5 / 1 / 1%; HSS round: 1 / 2 / 2%; Pipe: 3.5%;
+  * M: 9.5%;
+  * W14X90 alone: within 1.8%.
+* Sloped-flange shapes (S, C, MC, ST) are compared on A and I33 only:
+  I22 comes out 5–35% high because the outline uses the AISC average
+  flange thickness.
+* J matches within 20% for W, WT and L (fillet bulbs), and within 0.6%
+  for HSS.
+
+### Unsymmetric sections (angles, concrete L): I23 and principal axes
+
+* **Default (ETABS / SAP2000 geometric axes).** The member bends about its
+  leg-parallel local axes with the stored I33/I22, and the product of
+  inertia I23 is **ignored**.
+* **`use_principal: true`.** The engine analyses the section about its
+  principal axes:
+  * `section_ext.principal_model` returns a deep copy of the model, or
+    the model itself when no section uses principal axes, so the default
+    path stays bit-identical;
+  * in that copy I33 = I_major and I22 = I_minor;
+  * every member using the section is stamped
+    `FrameMember.section_axis_offset = −degrees(alpha)`. This field is
+    never serialised. `frame_axes.member_local_axes` adds it to `angle`,
+    so local 3 lies on the major principal axis.
+  * Member forces are then reported about the principal axes. Curved
+    members are not rotated.
+* **Tests.** In leg-axes mode a cantilever deflects `PL³/(3E·I33)` with
+  zero cross deflection. In principal mode the tip deflection equals the
+  full unsymmetric-bending solution `u = L³/(3E)·K⁻¹F` with
+  `K = [[I33, I23], [I23, I22]]`, to 1e-8 in both load directions.
+
+### UI
+
+**Define › Frame Sections › Frame Properties.**
+* A new action, **Import from Database…** (`#dsSecDb`), opens
+  `#dsSteelDb` (`js/steeldb.js`).
+* Inside it:
+  * the standard select is `#sdbStd`;
+  * family tabs are `#sdbFam-<family>`;
+  * the search box is `#sdbSearch`;
+  * the table `#sdbTable` shows d, b, t, A, I33, I22, J, S33, Z33 and
+    weight in display units;
+  * rows are multi-select (tick boxes, plus `#sdbAll` to select all
+    shown);
+  * clicking a row, or ↑/↓, highlights it, and the preview panel shows
+    it;
+  * the material select is `#sdbMat`.
+* OK builds the sections on the server (`apply:false`) and merges them
+  into the draft. Shapes that are already defined are disabled.
+
+**Frame Section Property Data.**
+* The Shape select (`#dsSecShape`) offers:
+  * Steel: I, I unequal flanges, channel, angle, double angle, tee, rect
+    tube, round tube/pipe, solid rectangle, solid circle;
+  * Concrete: rectangular b×h (legacy), circle, T-beam, L-beam;
+  * General (A/I/J entry).
+* Dimension fields are `#ssDim_<key>`, shown in display units. Typing
+  recomputes the readouts and the live preview on every keystroke. Each
+  committed edit writes the exact properties plus `shape`, `dims` and
+  `principal`.
+* Readouts: A, I33, I22, J, As2, As3, S, Z, Cw and the shear centre.
+* Angles and L-beams add a Principal Axes group with the
+  `#ssPrincipal` checkbox, which sets `use_principal`.
+* Database sections are read-only. They show their source (`#ssDbNote`),
+  and **Edit as Parametric** (`#ssDbEdit`) detaches them.
+* OK with defaults is byte-identical.
+
+**Preview (`js/secpreview.js`).** It draws every type from `shape` +
+`dims`, through the hook `ssPreview`.
+
+**Mock (`?mock=1`).** `js/mock_steeldb.js` serves the same JSON from an
+embedded, verbatim 42-shape subset covering all 15 families
+(`js/mock_steeldb_data.js`, generated by `tools/gen_mock_steeldb.py`).
+
+**Playwright.** Mock 38/38, live 42/42:
+* import W14X90, HSS20X12X5/8 and L4X3X1/4;
+* create a parametric channel and a concrete T-beam;
+* check that every type draws;
+* round-trip through POST /api/model; the second echo is identical;
+* analysis runs;
+* kip-in: 0.25 m reads 9.84252 in, 12 in stores 0.3048 m, and the table
+  headers read in²/in⁴;
+* zero console errors.

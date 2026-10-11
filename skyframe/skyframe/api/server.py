@@ -2316,6 +2316,9 @@ def create_app() -> Flask:
     # Mesh sensitivity study + accuracy advisor (skyframe.api.accuracy_api)
     from skyframe.api.accuracy_api import register as _acc_register
     _acc_register(app, _state)
+    # Steel section databases + parametric shapes (skyframe.api.steel_db_api)
+    from skyframe.api.steel_db_api import register as _sdb_register
+    _sdb_register(app, _state)
 
     return app
 

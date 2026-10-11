@@ -1,0 +1,21 @@
+/* SkyFrame — Import Sections from Database (js/steeldb.js) and the
+   parametric shape form (js/secshape_ui.js). Scoped to their dialogs. */
+.dk-dlg .sdb-modal.dk-lg { width: min(1100px, 96vw); }
+.dk-dlg .sdb-fams { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 8px; }
+.dk-dlg .sdb-fam {
+  padding: 2px 9px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2, transparent);
+  color: inherit; font: inherit; font-size: 12px; cursor: pointer;
+}
+.dk-dlg .sdb-fam:hover { border-color: var(--accent-dim); }
+.dk-dlg .sdb-fam.is-on { background: var(--accent-ghost); border-color: var(--accent); color: var(--accent); }
+.dk-dlg .sdb-table { max-height: 340px; overflow: auto; margin-top: 6px; outline: none; }
+.dk-dlg .sdb-tbl { font-size: 12px; width: 100%; }
+.dk-dlg .sdb-tbl th { position: sticky; top: 0; z-index: 1; white-space: nowrap; }
+.dk-dlg .sdb-tbl td.num, .dk-dlg .sdb-tbl th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dk-dlg .sdb-tbl tbody tr { cursor: pointer; }
+.dk-dlg .sdb-tbl tbody tr.is-sel td { background: var(--accent-ghost); }
+.dk-dlg .sdb-tbl tbody tr.is-sel td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+.dk-dlg .sdb-status, .dk-dlg .sdb-edition { margin: 4px 0 0; font-size: 12px; }
+/* parametric shape form */
+.dk-dlg .ss-props .dk-readout { font-variant-numeric: tabular-nums; }
+.dk-dlg .ss-db-note { margin: 2px 0 6px; font-size: 12px; }

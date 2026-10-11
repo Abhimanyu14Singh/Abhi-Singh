@@ -25,3 +25,4 @@ include = ["skyframe*"]
 
 [tool.setuptools.package-data]
 "skyframe.api" = ["web/*", "web/js/*"]
+"skyframe" = ["data/steel/*.json"]

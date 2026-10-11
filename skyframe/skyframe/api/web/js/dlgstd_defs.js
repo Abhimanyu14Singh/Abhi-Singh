@@ -23,6 +23,8 @@ import {
   dkDraft, dkCommit, showNum, unitLabel, uniqueName,
 } from "./dlgkit.js";
 import { spvFramePanel as dsSpvFrame, spvShellPanel as dsSpvShell, spvSplit as dsSpvSplit } from "./secpreview.js";   // live member / property preview (js/secpreview.js)
+import { ssShapeEditor as dsSsEditor, ssShapeLabel as dsSsLabel } from "./secshape_ui.js";   // v1.21 Shape selector + parametric forms
+import { openSteelDb as dsOpenSteelDb } from "./steeldb.js";   // v1.21 Import from Database…
 
 const G = 9.80665;
 const eff = (o, k, d = 1) => (o && o[k] != null && isFinite(o[k])) ? +o[k] : d;
@@ -192,7 +194,7 @@ export function editMaterial(sky, D, name, { copyOf, type = "concrete", done } =
 /* ================================================================
    Frame sections
    ================================================================ */
-const secShape = s => s.kind === "nonprismatic" ? "Nonprismatic" : s.shape === "W" ? "Steel W-shape" : s.shape === "designer" ? "Section Designer"
+const secShape = s => s.kind === "nonprismatic" ? "Nonprismatic" : dsSsLabel(s) ? dsSsLabel(s) : s.shape === "W" ? "Steel W-shape" : s.shape === "designer" ? "Section Designer"
   : (s.b > 0 && s.h > 0) ? "Rectangular" : "General";
 
 export function openFrameSections(sky, { select } = {}) {
@@ -218,6 +220,7 @@ export function openFrameSections(sky, { select } = {}) {
       { label: "Add New Section…", id: "dsSecAdd", fn: () => edit(null) },
       { label: "Add Copy of Section…", id: "dsSecCopy", needsSel: true, fn: k => edit(null, { copyOf: k }), disabled: k => k && D.sections[k] && D.sections[k].kind === "nonprismatic" },
       { label: "Import from Library…", id: "dsSecLib", fn: () => openSectionLibrary(sky, D, { done: nm => { list.select(nm); sync(); } }) },
+      { label: "Import from Database…", id: "dsSecDb", fn: () => dsOpenSteelDb(sky, D, { done: nm => { list.select(nm); sync(); } }) },   // v1.21 (js/steeldb.js)
       { sep: "Selected" },
       { label: "Modify/Show Section…", id: "dsSecModify", needsSel: true, fn: k => modify(k) },
       { label: "Delete Section", id: "dsSecDelete", needsSel: true, fn: k => del(k) },
@@ -261,20 +264,10 @@ export function editFrameSection(sky, D, name, { copyOf, done } = {}) {
   const s = src ? clone(src) : dsME.rectSectionProps({ name: nm0, material: dsME.defaultMaterial(D), b: 0.3, h: 0.6 });
   s.name = nm0;
   const draftName = { v: nm0 };
-  const rect = !(s.shape === "W" || s.shape === "designer") && s.b > 0 && s.h > 0;
-  const general = !rect && s.shape !== "W" && s.shape !== "designer";
   const F = dkForm();
   const mats = () => Object.keys(D.materials || {}).map(n => [n, n]);
-  const props = [["A", "Cross-section Area", "area"], ["I33", "Moment of Inertia about 3 axis", "inertia"], ["I22", "Moment of Inertia about 2 axis", "inertia"], ["J", "Torsional Constant", "inertia"]];
-  const dims = rect
-    ? dkGroup("Dimensions", [
-      F.num(s, "h", { label: "Depth (t3)", kind: "dim", gt: 0, id: "dsSecH", write: v => { s.h = v; dsME.rectSectionProps(s); }, onChange: () => F.refresh() }),
-      F.num(s, "b", { label: "Width (t2)", kind: "dim", gt: 0, id: "dsSecB", write: v => { s.b = v; dsME.rectSectionProps(s); }, onChange: () => F.refresh() }),
-    ])
-    : null;
-  const propsGroup = dkGroup("Section Properties", props.map(([k, lbl, kind]) => general
-    ? F.num(s, k, { label: lbl, kind, gt: 0, id: "dsSec" + k })
-    : F.readout(lbl, () => s[k] != null ? s[k] : (rect ? dsME.rectSectionProps({ ...s })[k] : null), { kind, sci: true })), { note: rect ? "Computed from b × h (Roark torsion constant)." : s.shape === "W" ? "From the steel shape library (read-only)." : s.shape === "designer" ? "From the Section Designer polygon (read-only)." : null });
+  // v1.21: Shape selector + dimensions + properties for every shape (js/secshape_ui.js)
+  const ssEd = dsSsEditor(F, s, { model: D, onChange: () => pv && pv.update() });
   const advMods = dsFRAME_MODS.map(([k, lbl, isMass]) => F.num(s, k, { label: lbl, read: () => eff(s, k), def: 1, id: "dsSecMod_" + k, ...(isMass ? { min: 0 } : { gt: 0 }) }));
   const shear = [
     F.check(s, "shear_deformation", { label: "Include shear deformation (auto-fill unset shear areas)", id: "dsSecShear" }),
@@ -291,11 +284,11 @@ export function editFrameSection(sky, D, name, { copyOf, done } = {}) {
     dkGroup("General", [
       F.text(draftName, "v", { label: "Section Name", id: "dsSecName", validate: nameCheck(() => new Set(Object.keys(D.sections)), name) }),
       F.select(s, "material", mats, { label: "Material", id: "dsSecMat" }),
-      F.readout("Shape", () => secShape(s)),
+      ssEd.select,
     ]),
-    dims, propsGroup, adv,
+    ssEd.node, adv,
   ];
-  const pv = dsSpvFrame({ model: D, name: nm0, title: () => draftName.v, section: () => s, recompute: rect ? x => dsME.rectSectionProps(x) : null,   // live preview (read-only)
+  const pv = dsSpvFrame({ model: D, name: nm0, title: () => draftName.v, section: () => ssEd.current(), recompute: x => ssEd.key() === "rect" ? dsME.rectSectionProps(x) : x,   // live preview (read-only)
     live: [["dsSecH", "h", "dim", "Depth h"], ["dsSecB", "b", "dim", "Width b"], ["dsSecA", "A", "area", "A"], ["dsSecI33", "I33", "inertia", "I33"], ["dsSecI22", "I22", "inertia", "I22"], ["dsSecJ", "J", "inertia", "J"]].map(([id, key, kind, label]) => ({ id, key, kind, label })) });
   return dkDialog({
     id: "dsFrameSectionData", title: "Frame Section Property Data", iconId: "exleaf-frames", size: "md", form: F, body: dsSpvSplit(body, pv),

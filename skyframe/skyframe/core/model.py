@@ -328,6 +328,15 @@ class FrameSection:
     # reloaded section keeps its editor / preview; None = untagged
     # (omitted from to_dict, old files byte-identical).
     shape: Optional[str] = None
+    # v1.21 steel database / parametric shapes (skyframe.core.section_ext;
+    # each emitted by to_dict only when set): dims = parametric dimensions
+    # (SI, keys per skyframe.core.shape_props), db_ref = {"standard",
+    # "name"} of a database shape, principal = {I_major, I_minor, alpha}
+    # of an unsymmetric section, use_principal = principal-axis analysis.
+    dims: Optional[dict] = None
+    db_ref: Optional[dict] = None
+    principal: Optional[dict] = None
+    use_principal: bool = False
 
     @staticmethod
     def rectangular(name: str, material: str, b: float, h: float) -> "FrameSection":
@@ -355,7 +364,8 @@ class FrameSection:
         d = section_to_dict(self, asdict(self))
         if d.get("shape") is None:
             d.pop("shape", None)
-        return d
+        from skyframe.core.section_ext import to_dict as _sx_to_dict
+        return _sx_to_dict(d)               # v1.21 dims/db_ref (when set)
 
 
 SHELL_LAYER_KINDS = ("concrete", "steel")
@@ -739,6 +749,10 @@ class FrameMember:
     # the engine; never serialised per member.
     axis_convention: str = field(default="legacy", repr=False,
                                  compare=False)
+    # v1.21 principal-axis section STAMP (deg about local 1, added to
+    # ``angle``; skyframe.core.section_ext.stamp); never serialised.
+    section_axis_offset: float = field(default=0.0, repr=False,
+                                       compare=False)
 
     @property
     def length(self) -> float:
@@ -2151,6 +2165,12 @@ class BuildingModel:
                 raise ValueError(f"Section {sec.name}: {key} must be a "
                                  f"finite value > 0 (got {v!r})")
         BuildingModel._validate_frame_shear_mods(sec)
+        BuildingModel._validate_section_ext(sec)
+
+    @staticmethod
+    def _validate_section_ext(sec: FrameSection) -> None:
+        from skyframe.core.section_ext import validate   # v1.21
+        validate(sec)
 
     @staticmethod
     def _validate_frame_shear_mods(sec: FrameSection) -> None:
@@ -4078,6 +4098,8 @@ class BuildingModel:
                 from skyframe.core.nonprismatic import section_from_dict
                 mdl.sections[name] = section_from_dict(name, sd)
                 continue
+            from skyframe.core import section_ext as _sx    # v1.21
+            sd = _sx.fill_from_dims(name, sd)   # shape + dims only -> A/I/J
             if ("A" not in sd and float(sd.get("b") or 0) > 0
                     and float(sd.get("h") or 0) > 0):
                 # rectangle given by b x h only (e.g. a new UI section):
@@ -4097,6 +4119,7 @@ class BuildingModel:
             _load_frame_shear_mods(mdl.sections[name], sd)
             if isinstance(sd.get("shape"), str) and sd["shape"]:
                 mdl.sections[name].shape = sd["shape"]
+            _sx.load(mdl.sections[name], sd)        # v1.21 (absent = unset)
         if d.get("designer_sections"):
             from skyframe.core.sections_designer import DesignerSection
             for name, dd in d["designer_sections"].items():
@@ -4684,3 +4707,5 @@ def _frame_axes_from_dict(mdl: "BuildingModel", d: dict) -> None:
     mdl.frame_axis_convention = normalize_convention(
         d.get("frame_axis_convention"))
     sync_members(mdl)
+    from skyframe.core.section_ext import stamp as _sx_stamp
+    _sx_stamp(mdl)          # v1.21 principal-axis sections (no-op default)

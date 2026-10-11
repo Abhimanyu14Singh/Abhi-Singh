@@ -122,8 +122,11 @@ def member_convention(member) -> str:
 
 def member_local_axes(member) -> Tuple[Vec3, Vec3, Vec3, Vec3, bool]:
     """:func:`frame_local_axes` of a :class:`FrameMember` (its stamp)."""
-    return frame_local_axes(member.pi, member.pj,
-                            getattr(member, "angle", 0.0) or 0.0,
+    ang = getattr(member, "angle", 0.0) or 0.0
+    off = getattr(member, "section_axis_offset", 0.0)   # v1.21 principal
+    if off:                                             # axes (section_ext)
+        ang = ang + off
+    return frame_local_axes(member.pi, member.pj, ang,
                             member_convention(member))
 
 
