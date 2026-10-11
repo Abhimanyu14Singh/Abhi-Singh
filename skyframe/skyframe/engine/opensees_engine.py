@@ -188,6 +188,8 @@ from skyframe.engine import link_rayleigh as _lrl  # Rayleigh on links/springs
 from skyframe.engine import solver_policy as _slv   # solver per problem size
 from skyframe.core import mesh_cache as _mesh_cache  # cross-run mesh cache
 from skyframe.engine import convergence as _cvg     # nonlinear fallback ladder
+
+from skyframe.engine import towers as _tw          # C9 multiple towers
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
                                  FP_DEFAULT_KINIT, G_ACCEL,
                                  ISOLATOR_DEFAULT_KV, TFP_DEFAULT_MINFV,
@@ -1591,6 +1593,9 @@ class AnalysisResults:
     curved_frames: Dict[str, dict] = field(default_factory=dict)
     #   curved frames stitched per drawn member (engine/curved.py; emitted
     #   only when the model has curved members)
+    towers: Dict[str, dict] = field(default_factory=dict)
+    story_tower: Dict[str, str] = field(default_factory=dict)
+    #   C9 multiple towers (engine/towers.py; emitted only with towers)
 
     convergence: Dict[str, dict] = field(default_factory=dict)
     #   nonlinear convergence-strategy reports per case (engine/
@@ -1667,6 +1672,10 @@ class AnalysisResults:
                                 self.convergence.items()}
         if self.model_size:              # only when a size warning fired
             d["model_size"] = dict(self.model_size)
+
+        if self.towers:                  # C9 towers (only when defined)
+            d["towers"] = self.towers
+            d["story_tower"] = dict(self.story_tower)
         return d
 
 
@@ -1771,6 +1780,7 @@ class OpenSeesEngine:
         # case in the station/deflection recovery.
         self._axes_cache: Dict[str, tuple] = {}
         self._effp_cache: Dict[str, Tuple[float, float, float, float]] = {}
+        _tw.install(self)           # C9 per-tower overrides (no-op if none)
 
     # ------------------------------------------------ uid lookups (memo)
     def _uid_lookups(self):
@@ -2129,6 +2139,7 @@ class OpenSeesEngine:
         )
         from . import curved as _curved     # curved frames (no-op if none)
         _curved.attach(self, res)
+        _tw.attach(self, res)               # C9 towers summary (if any)
         return res
 
     def _run_plan(self) -> dict:
@@ -3767,6 +3778,7 @@ class OpenSeesEngine:
             asm.story_nodes[s.name] = [t for t, c in asm.struct_coords.items()
                                        if abs(c[2] - s.elevation) < _TOL
                                        and t not in asm.anchor_tags]
+        _tw.filter_story_nodes(self, asm)   # C9: own tower's nodes only
 
         # --- rigid diaphragms (v0.5: per-story "rigid" | "none") ------------
         cx, cy = model.plan_center()
@@ -3782,14 +3794,15 @@ class OpenSeesEngine:
             # round z exactly like node keys so OpenSees sees the master
             # in the same horizontal plane as its slaves
             elev = round(s.elevation, 6)
+            mx, my = _tw.master_xy(self, s.name, cx, cy)   # C9 tower centre
             tag += 1
-            ops.node(tag, cx, cy, elev)
+            ops.node(tag, mx, my, elev)
             ops.fix(tag, 0, 0, 1, 1, 1, 0)
             ops.rigidDiaphragm(3, tag, *slaves)
             asm.masters[s.name] = tag
             for sl in slaves:
                 dia_slave_master[sl] = tag
-            asm.node_coords[tag] = (cx, cy, elev)
+            asm.node_coords[tag] = (mx, my, elev)
             asm.node_restraints[tag] = (0, 0, 1, 1, 1, 0)
         tag = _dgm.build(self, asm, tag, dia_slave_master)   # named stories
 
@@ -3970,7 +3983,8 @@ class OpenSeesEngine:
                         master = asm.masters[s.name]
                         add(master, 1, m)
                         add(master, 2, m)
-                        add(master, 6, m * (lx * lx + ly * ly) / 12.0)
+                        sx, sy = _tw.story_extents(self, s.name, lx, ly)  # C9
+                        add(master, 6, m * (sx * sx + sy * sy) / 12.0)
                     else:
                         nodes = asm.story_nodes[s.name]
                         if not nodes:
@@ -4685,8 +4699,9 @@ class OpenSeesEngine:
 
         acc_tors = getattr(pat, "accidental_torsion", False)
         ecc = getattr(pat, "ecc", 0.05)
-        lx, ly = model.plan_extents()
+        lx0, ly0 = model.plan_extents()
         for sf in pat.story_forces:
+            lx, ly = _tw.story_extents(self, sf.story, lx0, ly0)  # C9 tower
             fx, fy = sf.fx * scale, sf.fy * scale
             if _dgm.apply_story_force(self, asm, sf, fx, fy, acc_tors, ecc):
                 continue                              # named diaphragms

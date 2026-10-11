@@ -12,6 +12,8 @@
                                 series and pushover capacity_curve/distribution
    All values SI (kN, m, t, s); the frontend converts through units.js. */
 
+import { mockTowersTable as c9MockTowersTable } from "./mock_towers.js";   // C9 tower column
+
 const C = (key, label, quantity) => ({ key, label, quantity });
 const G = 9.80665;
 
@@ -278,8 +280,8 @@ export function mockTable(model, results, key, body = {}) {
   let rows = [];
   if (T[key]) rows = T[key](model, results, f, warnings);
   else warnings.push("offline mock: this table is computed by the live backend only");
-  return { key, title: meta.title, group: meta.group,
-    columns: JSON.parse(JSON.stringify(meta.columns)), rows, warnings };
+  return c9MockTowersTable(model, { key, title: meta.title, group: meta.group,   // C9 tower column
+    columns: JSON.parse(JSON.stringify(meta.columns)), rows, warnings });
 }
 
 /* ---------------------------------------------------------------- load participation */

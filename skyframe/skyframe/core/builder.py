@@ -206,6 +206,11 @@ def make_wind_pattern(model: BuildingModel, name: str, direction: str,
         raise ValueError("importance must be > 0")
     if not model.stories:
         raise ValueError("model has no stories to load")
+    if getattr(model, "towers", None):     # C9: one wind load per tower
+        from .towers import per_tower_pattern
+        return per_tower_pattern(model, name, lambda v: make_wind_pattern(
+            v, name, direction, basic_wind_speed, exposure, cp_total,
+            importance))
     lx, ly = model.plan_extents()
     width = ly if direction == "X" else lx
     if width <= 0.0:

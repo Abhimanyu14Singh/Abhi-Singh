@@ -31,6 +31,8 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from .loads_ext import area_load_is_default, area_load_resultant
 from .modifiers import frame_weight_mod, shell_weight_mod
+from .towers import (chain_break as _tw_chain_break,  # C9 towers
+                     decorate_table as _tw_decorate)
 
 TOL = 1e-6
 
@@ -131,6 +133,9 @@ def context_from_results(model, results: dict) -> dict:
     for s in model.stories:
         if model.effective_diaphragm(s.name) != "rigid":
             continue
+        if getattr(model, "towers", None):     # C9: master at tower centre
+            from skyframe.core.towers import master_center
+            cx, cy = master_center(model, s)
         z = round(s.elevation, 6)
         cands = [t for t, c in nodes.items()
                  if t not in struct and abs(c[0] - cx) < TOL
@@ -446,10 +451,14 @@ def _t_story_stiffness(c: _Ctx) -> List[dict]:
             continue
         prev_ux = prev_uy = 0.0
         out = []
+        prev_s = None
         for s in c.stories:
             e = st.get(s.name)
             if e is None:
                 continue
+            if _tw_chain_break(c.model, prev_s, s):   # C9 tower base
+                prev_ux = prev_uy = 0.0
+            prev_s = s
             dx, dy = e["ux"] - prev_ux, e["uy"] - prev_uy
             vx, vy = e["shear_x"], e["shear_y"]
             kx = abs(vx / dx) if abs(dx) > 1e-15 and abs(vx) > 1e-15 else 0.0
@@ -1248,6 +1257,7 @@ def compute_table(key: str, results: dict, model, context: Optional[dict] = None
     title, group, cols, fn = TABLES[key]
     c = _Ctx(results, model, context, cases)
     rows = fn(c)
+    cols, rows = _tw_decorate(model, cols, rows)    # C9 tower column
     return {"key": key, "title": title, "group": group,
             "columns": [dict(col) for col in cols], "rows": rows,
             "warnings": list(dict.fromkeys(c.warnings))}

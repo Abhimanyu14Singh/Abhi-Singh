@@ -8820,3 +8820,227 @@ and 4 combos.
 | 10s 5x5 meshed slabs + core walls | >52 min (aborted, ~4.6 GB RSS) | 18.5 – 26.8 | >115x |
 | 20s 5x5 meshed (9 082 nodes, 8 320 quads) | crash (SIGSEGV, 12 s) | 68.4 – 83.5 | runs |
 | 20s 8x6 meshed (16 789 nodes, 15 680 quads) | not run (crashes) | 127 – 185 | runs |
+
+## Multiple towers (Define > Towers)
+
+ETABS "Define > Towers" / "Allow multiple towers" (gap audit item C9).
+A model may hold several towers, each with its own story list, grid
+system and base elevation, optionally sharing a podium and joined by link
+beams. Story-based quantities are then computed per tower. With no towers
+defined (the default) there is one implicit tower and every model dict,
+results dict, table and auto-lateral pattern is byte-identical to before
+(sha256 of the representative models' model JSON, full `run()` results
+JSON, centre of mass / rigidity and ELF summary unchanged).
+
+Code: `skyframe/core/towers.py` (data, membership, per-tower model
+views, per-tower load generators, table helpers) and
+`skyframe/engine/towers.py` (FE node membership, per-tower story
+results, cut shears, results summary). Shared files only carry one-line
+hooks.
+
+### Model JSON
+
+```
+"towers": [                                  // optional; absent = none
+  {"name": "T1", "grid_system": "G1" | null, "base_elevation": 0.0,
+   "stories": ["S1", "S2"]},                 // OUTPUT: names, model order
+  ...],
+"joint_towers": [{"point": [x, y, z], "tower": "T2"}],   // optional
+"stories": [{"name", "height", "elevation", "tower"?}],  // "tower" only
+                                                          // when tagged
+"members" / "shells" / "links": [{..., "tower"?}]        // only when set
+```
+
+* On INPUT a tower's `stories` may be
+  * story **names** — references to `stories` entries. They tag the
+    story with the tower, except for the first (default) tower, whose
+    stories stay untagged so that the round trip is exact;
+  * story **definitions** `[{"name", "height"}]`; or
+  * a story-**height table** `[h1, h2, ...]`, with names `<tower>-S<i>`.
+
+  Definitions and height tables are appended to `stories`, tagged with the
+  tower, at `elevation = base_elevation + cumulative height`.
+  `from_dict(to_dict(m))` is exact.
+* `towers` and `joint_towers` are emitted only when defined.
+  `Story.tower`, `FrameMember.tower`, `ShellRegion.tower` and
+  `LinkMember.tower` are emitted only when non-empty.
+* Story names stay unique across the whole model. An untagged story
+  belongs to the first tower (the default tower).
+* Python API: `skyframe.core.towers.define_towers(model, entries)` (same
+  input forms); `towers.summary(model)`.
+
+### Validation (`model.validate()` → ValueError)
+
+* Tower names must be non-empty (60 characters at most) and unique.
+* `grid_system` must be null or an existing grid system name.
+* `base_elevation` must be finite.
+* Every tower must have at least one story. Story elevations must
+  strictly increase, bottom to top, within each tower.
+* Story names must be unique.
+* Tags must name existing towers. Tags of any kind without `towers` are
+  rejected.
+* An object's `tower` tag must not contradict the tower of its `story`.
+* Story heights in a definition or height table must be > 0. A story
+  name in a definition must not already exist.
+
+### Tower membership
+
+The rules are deterministic.
+
+* **Story:** its `tower` tag, else the default tower.
+* **Object** (member, shell or link):
+  1. its `tower` tag;
+  2. else the tower of its `story`;
+  3. else by geometry. Take the towers having a story at the object's
+     top elevation, and pick the first whose plan footprint contains the
+     plan centroid of the object's top points. If none does, take the
+     first such tower, else the default tower.
+* **Joint / FE node:**
+  1. its `joint_towers` tag;
+  2. else a majority vote of the towers of the frame segments, shell
+     quads and links meeting at the node. Only towers that have a story
+     at the node's elevation take part, and ties go to tower order;
+  3. else the footprint;
+  4. else the default tower.
+
+  So a link beam tagged T1 that lands on a T2 joint leaves that joint
+  in T2. A podium-roof joint, where the podium tower has a story and the
+  towers above only have their base, belongs to the podium.
+* **Footprint:** the bounding box of the tower's grid system. With no
+  grid reference it is the bounding box of the members tied to the tower
+  by tag or story.
+
+### Analysis per tower
+
+* **Diaphragms.** Each (tower, story) gets its own rigid diaphragm, over
+  only that tower's story-level nodes.
+  * The master sits at the tower's plan centre: the centre of its grid
+    system, else of its members.
+  * Its rotational mass inertia is `m (Lx² + Ly²)/12`, using the tower's
+    plan extents.
+  * Accidental torsion `Mz = F · ecc · B⊥` also uses the tower's
+    extents.
+* **Story masses** (`compute_story_masses`, and therefore `story_masses`
+  in the model JSON), the engine's centre of mass, tributary masses,
+  `story_gravity_loads` and notional loads are all computed on per-tower
+  model views.
+  * A view holds only the tower's stories, objects, nodal loads, nodal
+    masses and story forces, with the tower's own grid as its only grid.
+  * As a result, a nodal load at an elevation shared by two towers
+    counts once.
+* **Story results** (`cases` / `combos` / `rs_cases` `story[s]`):
+  * `ux` / `uy`: displacement of the tower-story master (else the average
+    of its nodes).
+  * `drift_*`: chained bottom to top WITHIN the tower. The first story is
+    measured from the tower base:
+    * 0 when no story of any tower lies at the base elevation (tower on
+      the ground);
+    * otherwise the mean displacement of the lower ends of the tower's
+      elements at its base, for example the podium roof.
+  * `shear_*`: the horizontal free-body cut force on the plane just below
+    the level (z = elevation − 1e-9). It is taken through the tower's OWN
+    frame segments (with their span loads above the plane), shell quads
+    and links crossing the plane, minus the reactions of the tower's
+    supports above the plane.
+
+  This is ETABS "story forces" from element forces, so load that link
+  beams or a podium carry between towers is attributed where it actually
+  flows. For a disconnected tower it equals the legacy applied-load story
+  shear by equilibrium. Response spectrum cases use the same cut on every
+  per-mode static solve before the CQC/SRSS combination.
+* **Centres of mass and rigidity** (`story_props`): one entry per
+  tower-story. The unit-load CR method is applied at each tower-story
+  master.
+* **Irregularities and stiffness** (`story_stiffness`, `irregularity`):
+  evaluated per tower. The soft-story comparison looks at the stories
+  above within the same tower. Torsion ratios use the tower's plan
+  extents.
+* **Time history / FNA:** story `ux` / `uy` series come from the
+  tower-story masters. Peak drifts are re-chained within each tower.
+* **Auto lateral loads, per tower.**
+  * `autolateral.compute` / `generate` (all codes, ELF and ASCE 7-22
+    wind), the legacy `codes.asce7_elf` and `builder.make_wind_pattern`
+    each run once per tower view. Each tower uses its own weights
+    `W_T`, its own height `hn` (and so its own period `Ta`), its own
+    elevations `h_x` (absolute, above the global base) and its own plan
+    width for wind.
+  * The resulting story forces are merged into ONE pattern.
+  * Story-keyed parameters (`weights`, `loads`, mode shapes) are split per
+    tower. Every other parameter applies to all towers.
+  * The merged summary keeps the single-tower keys: `V` and `W` are sums,
+    `T` is common or null, and `stories` holds all rows, each carrying
+    `"tower"`. It adds `"towers": {name: per-tower summary}`.
+
+### Results JSON (only with towers)
+
+```
+"towers": {"T1": {"stories": ["S1", ...], "base_elevation": 0.0,
+                  "grid_system": "G1" | null,
+                  "base_shear": {case|combo|rs case: {"FX", "FY"}}}},
+"story_tower": {"S1": "T1", ...}
+```
+
+`base_shear` is the shear of the tower's lowest story.
+
+* `POST /api/tables` results tables: every story-keyed table (story
+  drifts, forces, stiffness, centres, diaphragm tables) gets a `tower`
+  column right after `story`. The story-stiffness drift chain restarts at
+  each tower. The model-free context places the masters at the tower
+  centres.
+* Model tables: Story Definitions edits recompute elevations tower by
+  tower (`base_elevation` + cumulative heights).
+
+### Validation (`tests/test_towers.py`)
+
+* **Two identical, fully disconnected towers** (3 stories, 1×1 bay, 40 m
+  apart) against the same tower analysed alone:
+  * 12 modes = the single tower's 6 periods, each twice (0.523727,
+    0.500728, 0.271750 … s; rel 1e-8);
+  * every per-tower story row (ux, uy, drift, shear) for DEAD and EQX
+    equal to rel 1e-8;
+  * CM / CR shifted by exactly 40 m;
+  * torsion ratios, flags and story stiffness equal;
+  * RS (CQC) story rows equal (rel 1e-6);
+  * accidental-torsion master rotations equal;
+  * TH (modal damping) peak ux / drift equal (rel 1e-6).
+
+  Control: the same geometry without `towers` couples the towers (A1
+  shear 120 kN instead of 60 kN).
+* **Rigid podium.** Podium P has 2 stories over x 0–46 m. Tower T1 (3
+  stories) and tower T2 (2 stories) stand on the podium roof, with
+  `base_elevation` 6 m. Applied loads: T1 10/20/30 kN, T2 15/30 kN, P
+  25/50 kN.
+  * V(P1) = 180 kN = total base shear = −ΣRx.
+  * V(P2) = 155 = 50 + 60 + 45.
+  * V(A1) = 60 and V(B1) = 45, so V(A1) + V(B1) + 50 = V(P2).
+  * Drift of A1 is measured from the podium roof, whose base nodes move
+    with the P2 master.
+* **Link beams.** Two identical towers on the ground are joined by link
+  beams, and only tower A is loaded (20/40 kN).
+  * V(A1) = 30.147 kN and V(B1) = 29.853 kN. They sum to 60 kN = the
+    base shear.
+  * V(A1) equals the reactions under tower A.
+  * The link-beam end joints stay in T2.
+* **ELF per tower, checked by hand.** T1 is 3 × 3 m on 6 × 5 m and T2 is
+  2 × 3 m on 8 × 4 m.
+  * User coefficient C = 0.12, k = 1:
+    * W_T1 = 390 + 450 + 510 = 1350 kN, so V = 162 kN and
+      F = 22.404 / 51.702 / 87.894 kN;
+    * W_T2 = 680 + 760 = 1440 kN, so V = 172.8 kN and
+      F = 53.411 / 119.389 kN.
+    * After analysis, each tower's base shear equals its own V.
+  * ASCE 7-22 (SDS 1.0, SD1 0.4, R 8):
+    * Ta = 0.337 s and 0.234 s;
+    * Cs = 0.125, so V = 168.75 kN and 180 kN.
+  * The legacy ASCE 7-16 ELF, wind (tower width 4 m vs 5 m) and notional
+    loads are checked per tower in the same way.
+
+### Limits
+
+* TH / FNA story SHEAR peaks keep the whole-model inertia sum at the
+  level elevation. This is correct for a single tower, but it mixes towers
+  that share an elevation; drifts and displacements are per tower.
+* Named diaphragms (`diaphragms` / `joint_diaphragms`) keep their own
+  story-based rules.
+* Staged construction stages by elevation, across towers.
+* Pushover control uses the last story of `stories`.

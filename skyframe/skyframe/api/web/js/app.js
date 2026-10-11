@@ -80,7 +80,11 @@ import { initOpenWind as owInitOpenWind } from "./openwind.js";
 import { initReportX as rxInitReportX } from "./reportx.js";
 import { owMockValidate as owMockValidateModel } from "./mock_openwind.js";   // UX pass: palette · toolbar · shortcuts · dialog chrome · start screen
 import { initDbEdit as dbeInitDbEdit } from "./dbedit.js";   // Edit > Interactive Database Editing (model tables)
-import { initUx as uxInitUx } from "./ux.js";   // UX pass: palette · toolbar · shortcuts · dialog chrome · start screen
+// (merge fix: a second `import { initUx as uxInitUx }` here duplicated line 78 — a SyntaxError that blanked the app)
+// C9 — Define > Towers, tower story combo, tower column (aliased imports; js/towers.js, js/mock_towers.js)
+import { installTowers as c9InstallTowers, syncTowerSelect as c9SyncTowerSelect, towerStepNames as c9TowerStepNames,
+  decorateStoryTable as c9DecorateStoryTable, decorateStoryRows as c9DecorateStoryRows } from "./towers.js";
+import { mockValidateTowers as c9MockValidateTowers } from "./mock_towers.js";
 
 /* ------------------------------------------------ state */
 const store = {
@@ -270,7 +274,8 @@ async function postModel(payload) {
       || uhMockValidate(payload)   // B10 user-defined hinges
       || ptMockValidate(payload)   // PT tendons / hyperstatic cases
       || pfMockValidateModel(payload)   // plot functions: TH output_requests
-      || owMockValidateModel(payload);   // open-structure wind member params
+      || owMockValidateModel(payload)   // open-structure wind member params
+      || c9MockValidateTowers(payload);   // C9 towers
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -1337,6 +1342,7 @@ function rebuildStorySelect() {
     sel.appendChild(o);
   }
   sel.value = store.story;
+  c9SyncTowerSelect(sel, store);                 // C9 — Tower combo filters the story list
   syncStoryBadges();
 }
 
@@ -1357,7 +1363,7 @@ function setElevLine(value) {
 }
 
 function stepStory(dir) {
-  const names = store.model.stories.map(s => s.name);
+  const names = c9TowerStepNames(store.model, store) || store.model.stories.map(s => s.name);   // C9 tower filter
   const i = names.indexOf(store.story) + dir;
   if (i >= 0 && i < names.length) setStory(names[i]);
 }
@@ -3363,6 +3369,7 @@ function renderStoryRows() {
     row.append(nameIn, hIn, elev, dsel, ins, del);
     box.appendChild(row);
   }
+  c9DecorateStoryRows(box, m);                    // C9 — tower of each story
 }
 
 /* ---- save / discard */
@@ -4070,6 +4077,7 @@ function renderStoryTab() {
       `</tr>`;
   }).join("");
   $("storyTable").innerHTML = head + `<tbody>${rows}</tbody>`;
+  c9DecorateStoryTable($("storyTable"), r);       // C9 — Tower column (results.story_tower)
 
   renderDiagBlock();
   renderCmCrBlock();
@@ -8528,6 +8536,7 @@ async function boot() {
   try { edInitEditMenu(window.__sky); } catch (err) { console.error("edit menu init failed", err); }   // Edit / Select menus + Undo/Redo
   try { owInitOpenWind(window.__sky); rxInitReportX(window.__sky); } catch (err) { console.error("open wind / report init failed", err); }   // open-structure wind · Create Report · Model Info · run log
   try { dbeInitDbEdit(window.__sky); } catch (err) { console.error("db edit init failed", err); }   // Interactive Database Editing (js/dbedit.js)
+  try { c9InstallTowers(window.__sky); } catch (err) { console.error("towers init failed", err); }   // C9 Define > Towers (js/towers.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
 }
 
