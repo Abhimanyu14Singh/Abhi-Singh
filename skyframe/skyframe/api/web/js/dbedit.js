@@ -25,6 +25,7 @@ import { ICONS as dbeICONS, MENUITEM_ICON as dbeMENUITEM_ICON, icon as dbeIcon }
 import { downloadText as dbeDownloadText, copyText as dbeCopyText } from "./tables.js";
 import { normalizeModel as dbeNormalizeModel } from "./modeledit.js";
 import { mockDbEdit as dbeMockDbEdit } from "./mock_dbedit.js";
+import { fuMockDbEdit as c9fMockDbEdit } from "./mock_towers_fu.js";   // C9 follow-ups: Story Definitions tower column (mock)
 
 dbeICONS["db-edit"] = '<rect x="3" y="4" width="14" height="12" rx="1.2"/><path d="M3 8 H17 M8 4 V16"/><path d="M11.5 14.5 L15.5 10.5 L17 12 L13 16 H11.5 Z"/>';
 dbeMENUITEM_ICON["edit-dbedit"] = "db-edit";
@@ -475,7 +476,7 @@ export function initDbEdit(sky) {
 
   const modelPayload = () => { const m = clone(S.model); delete m._mock_params; return m; };
   async function api(path, body = {}) {
-    if (S.mock) { await new Promise(r => setTimeout(r, 30)); return dbeMockDbEdit(ST.base || S.model, path, body); }
+    if (S.mock) { await new Promise(r => setTimeout(r, 30)); return c9fMockDbEdit(ST.base || S.model, path, body, dbeMockDbEdit); }   // C9 follow-ups wrapper
     const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     let data = null;
     try { data = await res.json(); } catch { /* non-JSON */ }

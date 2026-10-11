@@ -87,6 +87,9 @@ import { initDbEdit as dbeInitDbEdit } from "./dbedit.js";   // Edit > Interacti
 import { installTowers as c9InstallTowers, syncTowerSelect as c9SyncTowerSelect, towerStepNames as c9TowerStepNames,
   decorateStoryTable as c9DecorateStoryTable, decorateStoryRows as c9DecorateStoryRows } from "./towers.js";
 import { mockValidateTowers as c9MockValidateTowers } from "./mock_towers.js";
+// C9 follow-ups — per-tower TH story shear, control tower, DB-edit tower column (js/towers_fu.js, js/mock_towers_fu.js)
+import { installTowersFu as c9fInstallTowersFu } from "./towers_fu.js";
+import { fuMockValidate as c9fMockValidate } from "./mock_towers_fu.js";
 
 import { initRepair as rpInitRepair } from "./repairdlg.js";   // Analyze › Check Model › Fix… (model repair)
 // n/a (negligible drift) story ratios — CONTRACT "Ratio-based story checks" (js/ratio_na.js)
@@ -281,7 +284,8 @@ async function postModel(payload) {
       || ptMockValidate(payload)   // PT tendons / hyperstatic cases
       || pfMockValidateModel(payload)   // plot functions: TH output_requests
       || owMockValidateModel(payload)   // open-structure wind member params
-      || c9MockValidateTowers(payload);   // C9 towers
+      || c9MockValidateTowers(payload)   // C9 towers
+      || c9fMockValidate(payload);   // C9 follow-ups: control_tower
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -4745,6 +4749,7 @@ function renderThTab() {
     // clear a stale amber highlight when the active case is linear
     if (viewer.highlight.uids) viewer.setHighlight(null);
   }
+  if (window.__sky && window.__sky.c9fRenderTh) window.__sky.c9fRenderTh(td);   // C9 follow-ups: per-tower story shear (js/towers_fu.js)
 }
 
 /* ---- v0.24: Fast Nonlinear Analysis of the selected TH case. The response
@@ -8544,6 +8549,7 @@ async function boot() {
   try { owInitOpenWind(window.__sky); rxInitReportX(window.__sky); } catch (err) { console.error("open wind / report init failed", err); }   // open-structure wind · Create Report · Model Info · run log
   try { dbeInitDbEdit(window.__sky); } catch (err) { console.error("db edit init failed", err); }   // Interactive Database Editing (js/dbedit.js)
   try { c9InstallTowers(window.__sky); } catch (err) { console.error("towers init failed", err); }   // C9 Define > Towers (js/towers.js)
+  try { c9fInstallTowersFu(window.__sky); } catch (err) { console.error("towers follow-ups init failed", err); }   // C9 follow-ups (js/towers_fu.js)
 
   try { rpInitRepair(window.__sky); } catch (err) { console.error("model repair init failed", err); }   // Check Model › Fix… (js/repairdlg.js)
 

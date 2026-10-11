@@ -9476,3 +9476,242 @@ models: parallel solve families". The tests are in
 * `core/mesh.mesh_model` filters shell nodes by each member's bounding box
   before the unchanged on-axis test. The resulting mesh is identical.
 * Meshing a 20-story 8x6-bay meshed building drops from 14.1 s to 1.6 s.
+
+## Multiple towers — follow-ups
+
+Follow-ups to "Multiple towers (Define > Towers)" (C9). They lift the
+limits listed there. Everything is inert without `towers` (and without
+the new optional keys): legacy models, results, tables and pushover /
+nonlinear static / staged / TH / FNA runs are byte-identical (sha256 of
+the model JSON, full `run()` JSON, TH, TH with gravity + plot-function
+requests, FNA, pushover, staged and the Story Definitions table / CSV of
+a representative 3-story model before and after).
+
+Code: `skyframe/core/towers_ext.py` (model side) and
+`skyframe/engine/towers_ext.py` (engine side). Shared files carry
+one-line hooks only.
+
+### 1. Time-history and FNA story shear per tower
+
+With towers, the story shear of a direct-integration time history is the
+same element cut that static cases use (section "Analysis per tower"):
+the horizontal free-body force on the plane just below each level, through
+the tower's own frame segments, shell quads and links, minus the reactions
+of its supports above the plane. It is evaluated on the converged state
+of every step.
+
+* Series are the increment past the held gravity state; sample k is
+  t = (k+1) dt, like every TH series.
+* Element forces are restoring (resisting) forces. Rayleigh / modal
+  viscous damping forces are not element forces, so they are not in the
+  cut (ETABS story forces from element forces). The legacy
+  inertia-equilibrium rule (`-Σ m a_total` above the level) includes
+  them; for an undamped run the two coincide to solver precision.
+* FNA: the linear structure's element forces are linear in the modal
+  coordinates, so `V(t) = Σ_i q_i(t) V_i`, where `V_i` is the per-tower
+  cut of the static solve `K u = ω_i² M φ_i` (solution `φ_i`; the same
+  per-mode solve response spectrum uses). Nonlinear device links (damper,
+  gap, hook, isolator) crossing a plane of their own tower add their
+  force not carried by the linear basis, `F_dev − k_lin d`, at the upper
+  end.
+
+Results (TH / FNA, only with towers):
+
+```
+"peaks": {"story": {S: {..., "shear_x": peak |V_x| (element cut),
+                         "shear_y": ...}}, "base": {...}},   // unchanged
+"towers": {"T1": {"stories": ["S1", ...],
+                  "base_shear": {"FX": peak |V| of the lowest story,
+                                 "FY": ...}}},
+"story_shear_method": "element_cut"
+```
+
+History on request: `TimeHistoryCase.output_requests.story_shears = true`
+(new optional key, boolean; `false` / absent = not recorded). The TH and
+FNA results then carry
+
+```
+"story_shear_history": {"method": "element_cut" | "inertia",
+                        "VX": {story: [len(t) values]},
+                        "VY": {story: [...]},
+                        "story_tower": {story: tower}}   // only with towers
+```
+
+Without towers the requested history is the legacy inertia series
+(`method: "inertia"`); peaks are unchanged. A request holding only
+`story_shears` records no `plot_functions` block. FNA honours
+`story_shears` (it still ignores the other request keys).
+
+Validation (`tests/test_towers_followups.py`):
+
+* **Two identical disconnected towers** against the same tower alone
+  (a one-tower model; modal damping, because the Rayleigh fit is anchored
+  on modes 1 and 3, which differ between the two models): every sample
+  of every per-tower story-shear history equal to 1e-8 (observed: exact),
+  peaks and `towers.base_shear` equal. Same for FNA (9 / 18 modes).
+* **Cut against the legacy rule.** Single tower, damping 1e-9:
+  * the lowest story's cut equals `−base_FX` at every step (1e-9);
+  * every story's cut history equals the legacy inertia history
+    (1e-6 of the peak).
+* **FNA against direct integration.** All modes kept, Rayleigh 5 %:
+  FNA cut histories equal the direct-integration cut histories (1e-6 of
+  the peak).
+* **Coupled towers.** Link beams: `V(A1) + V(B1) = −base_FX` at every
+  step. Podium: `V(P1) = −base_FX` at every step, and its peak equals the
+  peak base shear.
+* **Gravity stage.** A held `gravity` stage leaves the cut history
+  unchanged (the series is the increment).
+* **Response spectrum against static** (link-beam towers, no rigid
+  diaphragm, 4 modes, SRSS, flat Sa = 0.6 g): each per-tower RS story
+  shear equals the SRSS of the per-tower static cut shears of
+  independent static load cases. Each case applies `f_i = m φ_i Γ_i Sa g`
+  as ordinary nodal loads (1e-6).
+
+Note: the legacy inertia rule evaluates the ground acceleration of the
+last record sample at `accel[n-1]`, while the OpenSees `Path` series
+returns 0 there (round-off past its end), so the legacy peak can be
+inflated by `M·accel[n-1]`. The element cut does not have this artefact.
+Records ending in 0 are unaffected. The legacy rule is left unchanged.
+
+### 2. Model tables: Story Definitions tower column
+
+With towers, the Story Definitions table (`POST /api/modeltables/stories`,
+CSV, zip) has a fourth column:
+
+```
+{"key": "tower", "label": "Tower", "type": "enum", "quantity": "none",
+ "enum": [tower names], "editable": true}
+```
+
+* A row's `tower` is the story's tower. Untagged stories show the
+  default (first) tower.
+* Writing the default tower removes the tag (the canonical form).
+  Writing another tower sets `Story.tower`.
+* After an edit, elevations are recomputed tower by tower (as before).
+  Every tower's `stories` list is rebuilt from the tags, so renamed,
+  added and moved stories keep `towers` consistent.
+* An unknown tower is a cell error (`col: "tower"`).
+* Unchanged rows, the CSV round trip and the zip round trip return the
+  identical model.
+* Without towers the column is absent from `columns`, the rows and the
+  CSV (legacy output). A stray `tower` cell is ignored.
+
+### 3. Pushover / nonlinear static control tower
+
+There is a new optional field on `PushoverCase` and `NonlinearStaticCase`:
+
+| field | default | meaning |
+|---|---|---|
+| `control_tower` | `null` | the tower whose top story controls the case |
+
+With `control_tower` set:
+
+* the monitored joint is the tower's top-story diaphragm master, else
+  its lowest-tag node at that level;
+* for the default `roof_point` pushover distribution, the unit push acts
+  there too (`distribution.story_forces = {top story: 1}`);
+* `H_ctrl` is that story's elevation (the target is
+  `target_drift × H_ctrl`).
+
+`control_tower` is emitted by `to_dict` only when set. The default
+(`null`) keeps today's rule: the last story of `stories`.
+
+Validation (ValueError):
+
+* an unknown tower;
+* `control_tower` without `towers`;
+* `control_tower` together with `control_story` or `control_point`.
+
+Tests:
+
+* Podium, `control_tower = "T1"`: the control node is the A3 master and
+  `H = 15 m`. Every step's `V/u` equals `1/f`, where `f` is the A3
+  displacement of a linear static unit story force at A3 (1e-6). The
+  final displacement is `0.001 × 15` m.
+* The default still monitors the B2 master (the last story) at 12 m.
+* NLS with `control_tower = "T2"` monitors the B3 master. Its final
+  displacement equals the linear static `ux` of B3 (1e-8).
+* Round trips and errors are checked.
+
+### 4. Named diaphragms × towers: split per tower
+
+A named diaphragm is split per tower. It never ties two towers together.
+
+* With towers, a story is *named* only when a joint or shell diaphragm
+  assignment at its elevation belongs to its OWN tower (joint:
+  `point_tower`; shell: `object_tower`). An assignment in tower T1 no
+  longer strips the legacy diaphragm off tower T2's story at the same
+  elevation.
+* Each named story is partitioned over its own tower's nodes only. So one
+  name used in several towers gives one diaphragm (own master, mass,
+  constraint) per (tower, story), reported under each tower's story in
+  `results.diaphragms.stories`.
+* `towers_ext.diaphragm_towers(model)` lists, for each name, the towers
+  it is split over.
+
+Fix found on the way: the engine's per-model uid lookup memo could be
+built inside a per-tower view, and other towers' members were then
+missing (named-diaphragm tributary masses of the non-first towers read
+0). `_as_view` now isolates the memo.
+
+Tests:
+
+* Twin towers with `DA` assigned on both towers' first-floor joints:
+  two groups `(A1, DA)` and `(B1, DA)`, each over its own tower's nodes,
+  with different masters.
+* The periods equal the legacy per-tower diaphragms (1e-8). EQX shears
+  are 60 kN in each tower.
+* `DA` on tower T1 only: B1 keeps its rigid diaphragm, and the EQX
+  story results equal the model without `DA` (1e-8).
+
+### 5. Staged construction across towers
+
+**`per_story` stages.** The stages follow the tower-stories in ascending
+elevation, ties broken by tower order, then model order
+(`towers_ext.stage_order`). For the podium example the order is P1, P2,
+A1, B1, A2, B2, A3.
+
+* A member, shell or link goes to its `story` when set. Otherwise it goes
+  to the story of its OWN tower that owns its top elevation. Nodal loads
+  use the joint's tower the same way.
+* Every stage sub-model carries the towers that already have a story.
+  Each (tower, story) therefore keeps its own diaphragm, and supports,
+  springs and panel zones are kept only at joints of built objects.
+* The `time_dependent` (AAEM) option follows the same stage order.
+* Results keep the model story order.
+
+**User-defined stages** (groups). Each stage sub-model carries the
+towers. A story is active when an active point at its elevation belongs
+to its tower.
+
+Tests:
+
+* Twin towers per_story: every member force of both towers equals the
+  single-tower staged run (1e-8). `FZ` is doubled, and the column axial
+  sequence difference is equal.
+* Podium per_story:
+  * staged `FZ` = one-shot `FZ` = the total gravity load (1e-9);
+  * ground-column axial sum equals the one-shot sum;
+  * the sequence effect is non-zero.
+* User stages "add + load tower A" then "add + load tower B" on
+  disconnected towers equal the one-shot static case (1e-7).
+
+Before this follow-up, both modes of a tower model gave singular stage
+solves.
+
+### UI
+
+* **TH results tab.** With towers, a "Story shear per tower" block lists
+  each tower's stories, their peak |Vx| and |Vy|, and the tower's base
+  shear row.
+  * When `story_shear_history` is present, it charts Vx / Vy of the
+    selected story.
+  * A "Record story-shear history" check sets
+    `output_requests.story_shears` on the case. It takes effect on the
+    next run.
+* **Edit > Interactive Database Editing > Story Definitions.** The Tower
+  enum column is shown only with towers.
+* **Pushover "Load Application" and Nonlinear Static case dialogs.** The
+  "Monitored displacement" control offers a "Tower" choice (only with
+  towers) with a tower selector, which writes `control_tower`.
+* `?mock=1` supports all of the above (`js/mock_towers_fu.js`).

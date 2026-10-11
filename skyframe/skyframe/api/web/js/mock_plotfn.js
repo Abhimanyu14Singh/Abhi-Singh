@@ -13,7 +13,7 @@
                                           same JSON as the backend)
    Pure functions: never mutate the model. Everything SI. */
 
-const KEYS = ["joints", "links", "frames", "hinges"];
+const KEYS = ["joints", "links", "frames", "hinges", "story_shears"];   // story_shears: C9 follow-ups
 const DOF6 = ["UX", "UY", "UZ", "RX", "RY", "RZ"];
 const FRAME_KEYS = ["P_i", "V2_i", "V3_i", "T_i", "M2_i", "M3_i",
   "P_j", "V2_j", "V3_j", "T_j", "M2_j", "M3_j"];
@@ -46,6 +46,8 @@ export function pfMockValidate(model) {
     }
     if (req.hinges !== undefined && typeof req.hinges !== "boolean")
       return pre + "output_requests.hinges must be true/false";
+    if (req.story_shears !== undefined && typeof req.story_shears !== "boolean")   // C9 follow-ups
+      return pre + "output_requests.story_shears must be true/false";
   }
   return null;
 }
@@ -158,6 +160,7 @@ export function pfMockExtend(model, r) {
     const th = (model.th_cases || {})[name];
     const req = th && th.output_requests;
     if (!req || typeof req !== "object") continue;
+    if (!Object.keys(req).some(k => k !== "story_shears")) continue;   // C9 follow-ups: history only, no plot functions
     const dt = res.t && res.t.length > 1 ? res.t[1] - res.t[0] : (th.dt || 0.02);
     const n = (res.t || []).length;
     const t = Array.from({ length: n + 1 }, (_, i) => +(i * dt).toFixed(6));

@@ -65,6 +65,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import openseespy.opensees as ops
 
+from skyframe.core import towers_ext as _twx     # C9 towers
 from skyframe.core.groups import (GROUP_KINDS, normalize_group,
                                   normalize_stages)
 from skyframe.core.model import (AreaLoad, BuildingModel, LoadCase,
@@ -132,6 +133,7 @@ def _submodel(model: BuildingModel, active: Dict[str, set], keys: set,
     sub.num_modes = 0
     sub.analysis_options = copy.deepcopy(               # solver/convergence
         getattr(model, "analysis_options", None) or {})
+    _twx.carry(model, sub, keys)            # C9: towers (no-op without)
     return sub
 
 
@@ -322,6 +324,7 @@ def run_user_staged(engine: OpenSeesEngine, name: str) -> StagedResults:
     full = _submodel(model, every, full_keys, model.supports,
                      model.spring_supports, model.line_springs, "full")
     full.stories = list(model.stories)
+    _twx.carry(model, full)                 # C9: towers (no-op without)
     full.story_diaphragm = dict(model.story_diaphragm)
     oneshot_pat = LoadPattern("__oneshot__", "other")
     for st in stages:

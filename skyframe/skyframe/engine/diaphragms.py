@@ -125,6 +125,9 @@ def _bbox(pts) -> Tuple[float, float, float, float]:
 def named_stories(model) -> List[str]:
     if not _cd.has_named(model):
         return []
+    if getattr(model, "towers", None):        # C9: named per own tower
+        from skyframe.core.towers_ext import named_story_names
+        return named_story_names(model)
     out = []
     for s in model.stories:
         hit = any(abs(float(e["point"][2]) - s.elevation) < _TOL
@@ -184,12 +187,15 @@ def prospective(eng, asm, slaves: set) -> set:
     if not names:
         return slaves
     out = set(slaves)
+    from skyframe.engine.towers_ext import tower_coords   # C9 towers
     for s in model.stories:
         if s.name not in names:
             continue
-        out -= {t for t, c in asm.struct_coords.items()
+        coords = tower_coords(eng, asm, s)
+        coords = asm.struct_coords if coords is None else coords
+        out -= {t for t, c in coords.items()
                 if abs(c[2] - s.elevation) < _TOL}
-        for d, tags in partition(eng, asm.struct_coords, s).items():
+        for d, tags in partition(eng, coords, s).items():
             if _dtype(model, d) == "rigid" and len(tags) >= 2:
                 out.update(tags)
     return out
