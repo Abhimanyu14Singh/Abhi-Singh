@@ -1,0 +1,115 @@
+/* SkyFrame — member / property preview panel (js/secpreview.js).
+   Scoped to .spv-* classes; uses the shared theme tokens (dark + light).
+   Axis colours follow ETABS: 1 red, 2 green, 3 blue. */
+
+:root {
+  --spv-ax1: #e35d5d;
+  --spv-ax2: #34c384;
+  --spv-ax3: #4f9cf0;
+  --spv-conc-h: 210; --spv-conc-s: 8%;
+  --spv-steel-h: 205; --spv-steel-s: 38%;
+  --spv-other-h: 190; --spv-other-s: 22%;
+  --spv-fill-l: 34%;
+  --spv-sc: #e5a50a;
+}
+:root[data-theme="light"] {
+  --spv-ax1: #c8312f;
+  --spv-ax2: #13854f;
+  --spv-ax3: #1f63c6;
+  --spv-fill-l: 62%;
+  --spv-sc: #b07a00;
+}
+
+/* ---- split layout: fields | preview; the preview drops under the fields
+        when the dialog is narrow (container query on the dialog body) */
+.spv-host { container-type: inline-size; min-width: 0; }
+.spv-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+.spv-fields { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+@container (min-width: 700px) {
+  .spv-split { grid-template-columns: minmax(0, 1fr) 312px; }
+  .spv-split > .spv-panel { position: sticky; top: 0; }
+}
+/* a standard md dialog that carries a preview widens to fit both columns */
+.dk-dlg .dk-md:has(.spv-host) { width: min(900px, 96vw); }
+.dk-dlg .dk-lg:has(.spv-host) { width: min(1100px, 96vw); }
+
+/* ---- panel */
+.spv-panel { border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); padding: 8px 6px 6px;
+  display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 100%; }
+.spv-panel[hidden] { display: none; }
+.spv-head { display: flex; align-items: center; gap: 8px; padding: 0 4px; min-width: 0; }
+.spv-title { font-size: 12.5px; font-weight: 650; color: var(--text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spv-chip { margin-left: auto; font-size: 10.5px; color: var(--text-2); border: 1px solid var(--border); border-radius: 10px; padding: 1px 8px; white-space: nowrap; }
+.spv-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.spv-svg { display: block; width: 100%; height: auto; max-width: 300px; flex: none; margin: 0 auto; overflow: visible; }
+.spv-cap-note { font-size: 10.5px; text-align: center; color: var(--text-3); }
+.spv-msg { font-size: 11.5px; line-height: 1.4; color: var(--text-2); margin: 0 4px; }
+.spv-msg.is-bad { color: var(--red); font-weight: 600; }
+.spv-props { width: 100%; border-collapse: collapse; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.spv-props th { text-align: left; font-weight: 600; color: var(--text-2); padding: 1px 6px; width: 64px; white-space: nowrap; }
+.spv-props td { text-align: right; color: var(--text-1); padding: 1px 6px; overflow-wrap: anywhere; }
+.spv-props tr + tr th, .spv-props tr + tr td { border-top: 1px solid var(--border-soft); }
+.spv-props tr.is-off td, .spv-props tr.is-off th { color: var(--text-3); }
+
+/* ---- drawing */
+.spv-outline { stroke: var(--text-1); stroke-width: 1.4; stroke-linejoin: round; }
+.spv-outline.is-conc { fill: hsl(var(--spv-conc-h) var(--spv-conc-s) var(--spv-fill-l)); }
+.spv-outline.is-steel { fill: hsl(var(--spv-steel-h) var(--spv-steel-s) var(--spv-fill-l)); }
+.spv-outline.is-other { fill: hsl(var(--spv-other-h) var(--spv-other-s) var(--spv-fill-l)); }
+.spv-outline.spv-ghost { stroke-dasharray: 5 3; fill-opacity: .55; }
+.spv-invalid, .spv-outline.spv-invalid, .spv-face.spv-invalid { stroke: var(--red) !important; stroke-width: 2; stroke-dasharray: 6 3; fill: rgba(230, 103, 103, .12) !important; }
+.spv-bar { fill: var(--text-1); stroke: var(--surface-2); stroke-width: .8; }
+.spv-dim, .spv-tick { stroke: var(--text-2); stroke-width: 1; }
+.spv-ext { stroke: var(--text-3); stroke-width: .7; }
+.spv-dimtxt { fill: var(--text-2); font-size: 10.5px; font-family: var(--font); paint-order: stroke; stroke: var(--surface-2); stroke-width: 3px; stroke-linejoin: round; }
+.spv-laytxt { fill: var(--text-1); font-size: 10px; font-family: var(--font); }
+.spv-axl { font-size: 11px; font-weight: 700; font-family: var(--font); paint-order: stroke; stroke: var(--surface-2); stroke-width: 3px; stroke-linejoin: round; }
+.spv-ax1l, .spv-ax1 path, .spv-ax1 circle { stroke: var(--spv-ax1); stroke-width: 1.6; fill: none; }
+.spv-ax2, .spv-ax2l { stroke: var(--spv-ax2); stroke-width: 1.8; fill: none; }
+.spv-ax3, .spv-ax3l { stroke: var(--spv-ax3); stroke-width: 1.8; fill: none; }
+.spv-iso > .spv-ax1l { stroke-dasharray: 4 3; }
+.spv-ax1f { fill: var(--spv-ax1); } .spv-ax2f { fill: var(--spv-ax2); } .spv-ax3f { fill: var(--spv-ax3); }
+.spv-axl2, .spv-ax2t { fill: var(--spv-ax2); } .spv-axl3, .spv-ax3t { fill: var(--spv-ax3); } .spv-ax1t, .spv-ax1 text { fill: var(--spv-ax1); stroke: none; font-size: 11px; font-weight: 700; }
+.spv-cg circle { fill: var(--surface-2); stroke: var(--text-1); stroke-width: 1.2; }
+.spv-cg-q { fill: var(--text-1); }
+.spv-sc path { fill: var(--spv-sc); stroke: var(--surface-2); stroke-width: .8; }
+.spv-sc text { fill: var(--spv-sc); font-size: 10px; font-weight: 700; font-family: var(--font); }
+
+/* isometric faces: lightness from the face normal (--spv-l) */
+.spv-face { stroke-width: .6; stroke-linejoin: round; }
+.spv-face.is-conc { fill: hsl(var(--spv-conc-h) var(--spv-conc-s) calc(var(--spv-fill-l) * var(--spv-l) * 1.25)); stroke: hsl(var(--spv-conc-h) var(--spv-conc-s) calc(var(--spv-fill-l) * var(--spv-l) * 1.25)); }
+.spv-face.is-steel { fill: hsl(var(--spv-steel-h) var(--spv-steel-s) calc(var(--spv-fill-l) * var(--spv-l) * 1.25)); stroke: hsl(var(--spv-steel-h) var(--spv-steel-s) calc(var(--spv-fill-l) * var(--spv-l) * 1.25)); }
+.spv-face.is-other { fill: hsl(var(--spv-other-h) var(--spv-other-s) calc(var(--spv-fill-l) * var(--spv-l) * 1.25)); stroke: hsl(var(--spv-other-h) var(--spv-other-s) calc(var(--spv-fill-l) * var(--spv-l) * 1.25)); }
+.spv-face.spv-cap { stroke: var(--text-1); stroke-width: 1; }
+.spv-hatch { stroke: var(--text-1); stroke-width: .7; opacity: .55; }
+.spv-oneway { stroke: var(--amber); stroke-width: 2.4; }
+.spv-owf { fill: var(--amber); }
+.spv-stype path { stroke: var(--accent); stroke-width: 1.6; fill: none; }
+.spv-stype text { fill: var(--text-1); font-size: 10.5px; font-family: var(--font); }
+.spv-stype.is-off path { stroke: var(--text-3); stroke-dasharray: 2 2; }
+.spv-stype.is-off text { fill: var(--text-3); text-decoration: line-through; }
+
+/* spring / link glyph */
+.spv-dof { display: flex; flex-direction: column; gap: 4px; }
+.spv-node { fill: var(--text-1); }
+.spv-link { stroke: var(--text-2); stroke-width: 2; }
+.spv-ground { stroke: var(--text-2); stroke-width: 1.2; fill: none; }
+.spv-dofg path { fill: none; stroke-linejoin: round; }
+.spv-dofg.is-off path { stroke: var(--text-3); stroke-dasharray: 2 3; stroke-width: 1.2; }
+.spv-dofg.is-off text { fill: var(--text-3); }
+.spv-rot { stroke-width: 1.4; }
+
+/* nonprismatic */
+.spv-np { display: flex; flex-direction: column; gap: 4px; }
+
+/* ---- legacy editors: their modal body becomes [content | preview] */
+.spv-legacy { display: flex; flex-direction: column; gap: 8px; }
+.modal-body.spv-legacy-split { display: grid; grid-template-columns: minmax(0, 1fr) 312px; column-gap: 14px; row-gap: 0; align-items: start; }
+.modal-body.spv-legacy-split > :not(.spv-side) { grid-column: 1; min-width: 0; }
+.modal-body.spv-legacy-split > .spv-side { grid-column: 2; grid-row: 1 / span 40; position: sticky; top: 0; }
+@media (max-width: 980px) {
+  .modal-body.spv-legacy-split { grid-template-columns: minmax(0, 1fr); }
+  .modal-body.spv-legacy-split > .spv-side { grid-column: 1; grid-row: auto; position: static; margin-top: 10px; }
+}
+/* legacy dialogs that gained a preview column widen by that column */
+.modal-backdrop .modal:has(> .modal-body.spv-legacy-split) { width: min(1220px, 97vw); max-width: none; }
