@@ -2324,6 +2324,10 @@ def create_app() -> Flask:
     from skyframe.api.builtup_api import register as _bu_register
     _bu_register(app, _state)
 
+    # Steel section databases + parametric shapes (skyframe.api.steel_db_api)
+    from skyframe.api.steel_db_api import register as _sdb_register
+    _sdb_register(app, _state)
+
     return app
 
 

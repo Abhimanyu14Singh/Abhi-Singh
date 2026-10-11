@@ -1,7 +1,9 @@
 """Built-in steel frame-section library (v0.3): common AISC W-shapes.
 
-Source values: AISC Steel Construction Manual (15th ed.) Table 1-1,
-W-shape dimensions and properties, IMPERIAL units:
+Since v1.21 the values come from the AISC Shapes Database v16.0 file of
+:mod:`skyframe.core.steel_db` (``skyframe/data/steel/aisc.json``), which
+keeps the PUBLISHED US-customary values of every shape in its ``aisc``
+block.  This module keeps its historical API and its 22-shape list:
 
   * A  ... in^2      (gross area)
   * Ix ... in^4      (strong-axis moment of inertia -> I33)
@@ -10,14 +12,18 @@ W-shape dimensions and properties, IMPERIAL units:
   * d  ... in        (overall depth  -> drawing ``h``)
   * bf ... in        (flange width   -> drawing ``b``)
 
-Converted here to the SkyFrame SI unit system (m-based) with exact factors:
+converted to SI with the same exact factors as before:
 
   1 in           = 0.0254 m                (exact, by definition)
   1 in^2         = 0.0254^2  = 6.4516e-4          m^2   (exact)
   1 in^4         = 0.0254^4  = 4.162314256e-7     m^4   (exact)
 
-The library stores IMPERIAL values (as published) and converts on access so
-the conversion is auditable and exact.
+so every result is byte-identical to the pre-v1.21 table (Manual 15th ed.
+Table 1-1, whose values for these 22 shapes equal v16.0) with ONE pinned
+legacy value: the old table carried W10x49 d = 9.98 in where both v15.0
+and v16.0 publish 10.0 in.  ``d`` only sets the drawing / panel-zone depth
+``h``; it is pinned in :data:`_LEGACY_D_IN` so saved models and results do
+not change (use the database import for the published depth).
 """
 
 from __future__ import annotations
@@ -30,46 +36,52 @@ _IN = 0.0254                # m per inch (exact)
 _IN2 = _IN ** 2             # m^2 per in^2
 _IN4 = _IN ** 4             # m^4 per in^4
 
-# label: (A [in^2], Ix [in^4], Iy [in^4], J [in^4], d [in], bf [in])
-# AISC Manual 15th ed., Table 1-1.
-_W_SHAPES_IMPERIAL: Dict[str, tuple] = {
-    "W8x31":   (9.13,   110.0,   37.1,  0.536,  8.00,  8.00),
-    "W8x40":   (11.7,   146.0,   49.1,  1.12,   8.25,  8.07),
-    "W10x33":  (9.71,   171.0,   36.6,  0.583,  9.73,  7.96),
-    "W10x49":  (14.4,   272.0,   93.4,  1.39,   9.98, 10.00),
-    "W12x26":  (7.65,   204.0,   17.3,  0.300, 12.20,  6.49),
-    "W12x40":  (11.7,   307.0,   44.1,  0.906, 11.90,  8.01),
-    "W12x65":  (19.1,   533.0,  174.0,  2.18,  12.10, 12.00),
-    "W14x30":  (8.85,   291.0,   19.6,  0.380, 13.80,  6.73),
-    "W14x48":  (14.1,   484.0,   51.4,  1.45,  13.80,  8.03),
-    "W14x90":  (26.5,   999.0,  362.0,  4.06,  14.00, 14.50),
-    "W16x36":  (10.6,   448.0,   24.5,  0.545, 15.90,  6.99),
-    "W16x57":  (16.8,   758.0,   43.1,  2.22,  16.40,  7.12),
-    "W18x50":  (14.7,   800.0,   40.1,  1.24,  18.00,  7.50),
-    "W18x76":  (22.3,  1330.0,  152.0,  2.83,  18.20, 11.00),
-    "W21x62":  (18.3,  1330.0,   57.5,  1.83,  21.00,  8.24),
-    "W21x93":  (27.3,  2070.0,   92.9,  6.03,  21.60,  8.42),
-    "W24x76":  (22.4,  2100.0,   82.5,  2.68,  23.90,  8.99),
-    "W24x104": (30.7,  3100.0,  259.0,  4.72,  24.10, 12.80),
-    "W27x94":  (27.6,  3270.0,  124.0,  4.03,  26.90, 10.00),
-    "W30x116": (34.2,  4930.0,  164.0,  6.43,  30.00, 10.50),
-    "W33x130": (38.3,  6710.0,  218.0,  7.37,  33.10, 11.50),
-    "W36x150": (44.3,  9040.0,  270.0, 10.10,  35.90, 12.00),
-}
+#: the historical library list (light to heavy); labels keep the old "x"
+_NAMES = ("W8x31", "W8x40", "W10x33", "W10x49", "W12x26", "W12x40",
+          "W12x65", "W14x30", "W14x48", "W14x90", "W16x36", "W16x57",
+          "W18x50", "W18x76", "W21x62", "W21x93", "W24x76", "W24x104",
+          "W27x94", "W30x116", "W33x130", "W36x150")
+
+#: legacy depth (in) kept for byte-identical results (see module doc)
+_LEGACY_D_IN = {"W10x49": 9.98}
+
+
+def _imperial(name: str) -> tuple:
+    """(A, Ix, Iy, J, d, bf) in inches from the AISC v16.0 database."""
+    from skyframe.core.steel_db import shape
+    a = shape("aisc", name.upper())["aisc"]
+    return (a["A"], a["Ix"], a["Iy"], a["J"],
+            _LEGACY_D_IN.get(name, a["d"]), a["bf"])
+
+
+_CACHE: Dict[str, tuple] = {}
+
+
+def _table() -> Dict[str, tuple]:
+    if not _CACHE:
+        _CACHE.update({n: _imperial(n) for n in _NAMES})
+    return _CACHE
+
+
+def __getattr__(attr: str):
+    # ``_W_SHAPES_IMPERIAL`` (used by skyframe.core.modifiers) is built
+    # lazily from the database on first access.
+    if attr == "_W_SHAPES_IMPERIAL":
+        return _table()
+    raise AttributeError(attr)
 
 
 def library_names() -> List[str]:
     """Available shape labels (library order: light to heavy)."""
-    return list(_W_SHAPES_IMPERIAL)
+    return list(_NAMES)
 
 
 def library_properties(name: str) -> dict:
     """SI properties dict for one shape: A [m^2], I33/I22/J [m^4], b/h [m]."""
-    try:
-        A, Ix, Iy, J, d, bf = _W_SHAPES_IMPERIAL[name]
-    except KeyError:
+    if name not in _NAMES:
         raise KeyError(f"Unknown library section {name!r}; available: "
                        f"{', '.join(library_names())}") from None
+    A, Ix, Iy, J, d, bf = _table()[name]
     return {
         "name": name,
         "A": A * _IN2,
