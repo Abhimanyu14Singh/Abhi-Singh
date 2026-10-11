@@ -78,7 +78,7 @@ export function openMaterials(sky, { select } = {}) {
       { label: "Delete Material", id: "dsMatDelete", needsSel: true, fn: k => del(k) },
     ],
     extraSide: el("div", { class: "dk-list-side" }, [el("div", { class: "dk-side-title", text: "New material type" }), typeSel,
-      el("div", { class: "dk-side-title", text: "ETABS defaults" }), libSel, libBtn, err]),
+      el("div", { class: "dk-side-title", text: "Quick defaults" }), libSel, libBtn, err]),
   });
   const modify = k => k && edit(k);
   const del = k => {
