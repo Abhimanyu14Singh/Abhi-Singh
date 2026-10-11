@@ -1,0 +1,56 @@
+name: Build Grasshopper plugin
+
+# Builds the SkyFrame Grasshopper plugin (rhino/), runs its unit tests and
+# packages it for the Rhino 8 Package Manager (Yak).
+#
+# Manual only: Actions tab -> "Build Grasshopper plugin" -> Run workflow.
+# Download the "skyframe-grasshopper" artifact: dist/net7.0 and dist/net48
+# hold SkyFrame.Grasshopper.gha; the .yak (when the Yak CLI could be fetched)
+# installs with `yak install` or the Package Manager.
+#
+# Independent of build-installers.yml (the SkyFrame desktop app).
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Also build the .yak package (downloads McNeel's Yak CLI)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Fetch Yak CLI
+        if: ${{ inputs.package }}
+        continue-on-error: true
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\yak" | Out-Null
+          Invoke-WebRequest -Uri "https://files.mcneel.com/yak/tools/latest/yak.exe" -OutFile "$env:RUNNER_TEMP\yak\yak.exe"
+          "YAK_EXE=$env:RUNNER_TEMP\yak\yak.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build, test, package
+        run: |
+          $yak = if ($env:YAK_EXE -and (Test-Path $env:YAK_EXE)) { $env:YAK_EXE } else { "" }
+          ./rhino/build.ps1 -Yak $yak
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skyframe-grasshopper
+          path: rhino/dist/
+          if-no-files-found: error

@@ -1,0 +1,297 @@
+{
+  "schema": "skyframe.exchange/1",
+  "source": {
+    "app": "grasshopper",
+    "doc": "floor.gh",
+    "units": "mm",
+    "tolerance": 0.01
+  },
+  "session": "floor-study",
+  "layers": [
+    {
+      "path": "Grasshopper",
+      "color": "#808080"
+    },
+    {
+      "path": "Structure::Walls",
+      "color": "#C04040"
+    },
+    {
+      "path": "Structure::Beams",
+      "color": "#4080C0"
+    }
+  ],
+  "objects": [
+    {
+      "id": "9c1b2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d/0/0",
+      "kind": "surface",
+      "layer": "Grasshopper",
+      "attrs": {},
+      "role": "slab",
+      "props": {
+        "shell_section": "SLAB200",
+        "thickness": 200,
+        "mesh_size": 1000
+      },
+      "geom": {
+        "type": "polygon",
+        "outer": [
+          [
+            0,
+            0,
+            3500
+          ],
+          [
+            6000,
+            0,
+            3500
+          ],
+          [
+            6000,
+            6000,
+            3500
+          ],
+          [
+            0,
+            6000,
+            3500
+          ]
+        ],
+        "holes": [
+          [
+            [
+              2000,
+              2000,
+              3500
+            ],
+            [
+              3000,
+              2000,
+              3500
+            ],
+            [
+              3000,
+              3000,
+              3500
+            ],
+            [
+              2000,
+              3000,
+              3500
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "id": "9c1b2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d/0/1",
+      "kind": "surface",
+      "layer": "Grasshopper",
+      "attrs": {},
+      "role": "shell",
+      "props": {
+        "mesh_size": 500
+      },
+      "geom": {
+        "type": "nurbs_surface",
+        "degree": [
+          2,
+          1
+        ],
+        "count": [
+          3,
+          2
+        ],
+        "cv": [
+          [
+            0,
+            0,
+            7000
+          ],
+          [
+            0,
+            4000,
+            7000
+          ],
+          [
+            3000,
+            0,
+            8000
+          ],
+          [
+            3000,
+            4000,
+            8000
+          ],
+          [
+            6000,
+            0,
+            7000
+          ],
+          [
+            6000,
+            4000,
+            7000
+          ]
+        ],
+        "weights": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "knots_u": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "knots_v": [
+          0,
+          1
+        ],
+        "closed": [
+          false,
+          false
+        ],
+        "mesh": {
+          "v": [
+            [
+              0,
+              0,
+              7000
+            ],
+            [
+              3000,
+              0,
+              7500
+            ],
+            [
+              6000,
+              0,
+              7000
+            ],
+            [
+              0,
+              4000,
+              7000
+            ],
+            [
+              3000,
+              4000,
+              7500
+            ],
+            [
+              6000,
+              4000,
+              7000
+            ]
+          ],
+          "f": [
+            [
+              0,
+              1,
+              4,
+              3
+            ],
+            [
+              1,
+              2,
+              5,
+              4
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": "7e57d004-2b97-4e7a-b45f-5387367791cd",
+      "kind": "mesh",
+      "layer": "Structure::Walls",
+      "attrs": {
+        "sf_role": "wall",
+        "sf_shell_section": "WALL250"
+      },
+      "geom": {
+        "type": "mesh",
+        "v": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            3000,
+            0,
+            0
+          ],
+          [
+            6000,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            3500
+          ],
+          [
+            3000,
+            0,
+            3500
+          ],
+          [
+            6000,
+            0,
+            3500
+          ]
+        ],
+        "f": [
+          [
+            0,
+            1,
+            4,
+            3
+          ],
+          [
+            1,
+            2,
+            5
+          ],
+          [
+            1,
+            5,
+            4
+          ]
+        ]
+      }
+    },
+    {
+      "id": "b1f0c2a4-0d3e-4c5f-8a6b-7c8d9e0f1a2b",
+      "kind": "curve",
+      "layer": "Structure::Beams",
+      "attrs": {
+        "sf_release_j": "000011",
+        "sf_role": "beam",
+        "sf_section": "W18X35"
+      },
+      "geom": {
+        "type": "line",
+        "p": [
+          [
+            0,
+            6000,
+            3500
+          ],
+          [
+            6000,
+            6000,
+            3500
+          ]
+        ]
+      }
+    }
+  ]
+}

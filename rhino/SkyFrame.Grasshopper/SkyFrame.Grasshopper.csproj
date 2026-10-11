@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Mirrors McNeel's Rhino 8 Grasshopper template: net7.0 (Rhino 8's default .NET Core runtime,
+       Windows and Mac) + net48 (Rhino 8 started with the .NET Framework runtime, SetDotNetRuntime).
+       No WinForms/WPF is used, so plain net7.0 (not net7.0-windows) keeps the plugin cross-platform.
+       Rhino picks the matching build from the Yak package's net48/ and net7.0/ folders. -->
+  <PropertyGroup>
+    <TargetFrameworks>net7.0;net48</TargetFrameworks>
+    <LangVersion>8.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <RootNamespace>SkyFrame.Grasshopper</RootNamespace>
+    <AssemblyName>SkyFrame.Grasshopper</AssemblyName>
+    <TargetExt>.gha</TargetExt>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!-- NU1701: Grasshopper's net48 lib is consumed by the net7.0 build (as in McNeel's template).
+         NETSDK1138: net7.0 is out of support but it is the Rhino 8 runtime target.
+         CA1416: Windows-only System.Drawing APIs; Rhino ships them on Windows and Mac. -->
+    <NoWarn>$(NoWarn);NU1701;NETSDK1086;NETSDK1138;CA1416</NoWarn>
+    <CheckEolTargetFramework>false</CheckEolTargetFramework>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Grasshopper" Version="8.0.23304.9001" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="RhinoCommon" Version="8.0.23304.9001" ExcludeAssets="runtime" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="System.Net.Http" Private="false" />
+    <Reference Include="System.Drawing" Private="false" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net7.0'">
+    <PackageReference Include="System.Drawing.Common" Version="7.0.0" ExcludeAssets="runtime" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- SkyFrame.Exchange is compiled INTO the .gha (source-linked, not referenced) so the plugin is a
+         single self-contained file: drag-and-drop installs copy only the .gha. The same sources are
+         built and unit-tested on their own as SkyFrame.Exchange.dll (netstandard2.0, no Rhino). -->
+    <Compile Include="..\SkyFrame.Exchange\**\*.cs" Exclude="..\SkyFrame.Exchange\bin\**;..\SkyFrame.Exchange\obj\**" LinkBase="Exchange" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Icons\*.png" LogicalName="SkyFrame.Grasshopper.Icons.%(Filename).png" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,24 @@
+# Yak package manifest (Rhino 8 Package Manager).
+# build.sh / build.ps1 copy this into dist/ next to net48/ and net7.0/ and stamp
+# `version` from Directory.Build.props, then run `yak build`.
+name: skyframe
+version: 0.1.0
+authors:
+  - SkyFrame contributors
+description: >
+  SkyFrame for Grasshopper — a live link between Rhino 8 / Grasshopper and the
+  SkyFrame building analysis app (OpenSees). Send lines, polylines, arcs, NURBS
+  curves, planar and freeform surfaces/breps, meshes and supports as frames,
+  walls, slabs and shells (merge or replace, preview first), run the analysis
+  and pull displacements, member forces, reactions, periods and drifts back into
+  data trees, with a deformed-shape preview.
+url: https://github.com/Abhimanyu14Singh/Abhi-Singh/tree/main/rhino
+keywords:
+  - skyframe
+  - structural
+  - analysis
+  - opensees
+  - etabs
+  - frame
+  - shell
+icon: icon.png
