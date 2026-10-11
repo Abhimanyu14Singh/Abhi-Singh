@@ -30,6 +30,7 @@
    __sky.openBuiltup(name?). ?mock=1 → js/mock_builtup.js. */
 
 import BuU from "./units.js";
+import { openMatLib as buOpenMatLib } from "./matlib.js";   // "Add steel grade…" when the model has no steel material
 import { dialog as buDialog, btn as buBtn, footBar as buFootBar, errorLine as buErrorLine,
   showError as buShowError, closeDialog as buCloseDialog } from "./analysisdlg.js";
 import { buSectionProperties as buProps, buComponentGeometry as buGeom, buFrameSection as buFrame,
@@ -233,10 +234,22 @@ export function initBuiltup(sky) {
     const mats = Object.keys(S.model.materials || {}).map(n => [n, n]);
     f.append(
       field("Name", nm),
-      field("Material", selInput("buMaterial", mats, st.sec.material, v => { st.sec.material = v; })),
+      field("Material", selInput("buMaterial", mats, st.sec.material, v => { st.sec.material = v; renderSecForm(); })),
       field("Analysis axes", selInput("buAxes", [["geometric", "Geometric (x / y)"], ["principal", "Principal (major / minor)"]], st.sec.axes, v => { st.sec.axes = v; })),
       field("Torsion J", selInput("buTorsion", [["auto", "Auto (open / Bredt cell)"], ["open", "Open Σ b·t³/3"], ["fem", "FEM (sectionproperties)"]], st.sec.torsion, v => { st.sec.torsion = v; })),
     );
+    const curMat = (S.model.materials || {})[st.sec.material];
+    if (!curMat || curMat.material_type !== "steel") {
+      // no steel material picked: offer the material library (deliberate import)
+      const add = el("button", { type: "button", class: "btn", id: "buAddSteel" }, ["Add steel grade…"]);
+      add.addEventListener("click", () => buOpenMatLib(window.__sky, { done: res => {
+        const got = (res || []).map(r => r.as || r.name).filter(n => (S.model.materials || {})[n]);
+        if (got.length) st.sec.material = got[0];
+        renderSecForm();
+      } }));
+      f.append(el("p", { class: "muted", id: "buMatHint" },
+        [curMat ? `“${st.sec.material}” is not a steel material. ` : "No steel material in the model yet. ", add]));
+    }
   }
   function renderCompForm() {
     const f = D.compForm; f.textContent = "";

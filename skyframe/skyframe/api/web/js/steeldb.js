@@ -19,6 +19,13 @@ import { el as sdbEl, esc as sdbEsc, dkForm as sdbForm, dkGroup as sdbGroup, dkD
 import { spvFramePanel as sdbPanel, spvSplit as sdbSplit } from "./secpreview.js";
 import { ssFromRecord as sdbFromRecord, SS_LABEL as sdbLabels } from "./secshapes.js";
 import { mockSdbStandards, mockSdbShapes, mockSdbImport } from "./mock_steeldb.js";
+import { mlMaterials as sdbMlMaterials, mlImportInto as sdbMlImportInto } from "./matlib.js";   // default steel grade per database
+
+/* steel grade added from the material library when the model has no steel
+   material yet: database id -> [material standard, grade] */
+const SDB_AUTO_MAT = { aisc: ["astm_aci", "A992"], eurocode: ["eurocode", "S355"], is808: ["is", "E250"],
+  bs: ["bs", "S355-t16"], as_nzs: ["as_nzs", "300-AS3679.1"] };
+const SDB_AUTO = "__auto_steel__";
 
 const MAX_ROWS = 400;
 let cssDone = false;
@@ -103,8 +110,9 @@ export function openSteelDb(sky, D, { done } = {}) {
   const mats = Object.keys(D.materials || {});
   const st = {
     std: "aisc", fam: "", q: "",
-    mat: mats.find(n => (D.materials[n].material_type || "") === "steel") || mats[0] || "",
+    mat: mats.find(n => (D.materials[n].material_type || "") === "steel") || SDB_AUTO,
   };
+  const autoLabel = () => { const a = SDB_AUTO_MAT[st.std] || SDB_AUTO_MAT.aisc; return `+ ${a[1]} (standard steel grade, added from the material library)`; };
   const picked = new Map();            // name → record (across families)
   let recs = [], hi = null, standards = [];
   const stdSel = sdbEl("select", { class: "dk-select", id: "sdbStd", "aria-label": "Section database" });
@@ -112,7 +120,7 @@ export function openSteelDb(sky, D, { done } = {}) {
   const search = sdbEl("input", { type: "search", class: "dk-search", id: "sdbSearch", placeholder: "Search, e.g. W14 or 5/8", "aria-label": "Search shapes", "data-no-enter": "1" });
   const box = sdbEl("div", { class: "sdb-table table-scroll", id: "sdbTableBox" });
   const status = sdbEl("p", { class: "muted sdb-status", id: "sdbStatus", "aria-live": "polite" });
-  const matRow = F.select(st, "mat", () => Object.keys(D.materials || {}).map(n => [n, n]), { label: "Material for imported sections", id: "sdbMat" });
+  const matRow = F.select(st, "mat", () => [[SDB_AUTO, autoLabel()], ...Object.keys(D.materials || {}).map(n => [n, n])], { label: "Material for imported sections", id: "sdbMat" });
   const edition = sdbEl("p", { class: "muted sdb-edition", id: "sdbEdition" });
 
   const filtered = () => {
@@ -181,6 +189,7 @@ export function openSteelDb(sky, D, { done } = {}) {
   };
   const loadStandard = std => {
     st.std = std;
+    { const o = matRow.querySelector && matRow.querySelector(`option[value="${SDB_AUTO}"]`); if (o) o.textContent = autoLabel(); }
     const s = standards.find(x => x.id === std) || {};
     edition.innerHTML = s.edition ? `${sdbEsc(s.edition)} · ${s.count} shapes` : "";
     famBar.textContent = "";
@@ -211,6 +220,16 @@ export function openSteelDb(sky, D, { done } = {}) {
     onOk: async () => {
       if (!picked.size) { done && done(null); return; }
       if (!st.mat) return "Define a material first.";
+      if (st.mat === SDB_AUTO) {                  // add the database's standard steel grade
+        const [mstd, grade] = SDB_AUTO_MAT[st.std] || SDB_AUTO_MAT.aisc;
+        try {
+          const recsM = await sdbMlMaterials(sky, mstd);
+          const rec = (recsM || []).find(r => r.name === grade);
+          if (!rec) return `Steel grade ${grade} not found in the material library.`;
+          const existing = Object.keys(D.materials || {}).find(n => n === grade);
+          st.mat = existing || sdbMlImportInto(D, [{ rec, std: mstd }])[0].as;
+        } catch (e) { return "Could not add the steel material: " + e.message; }
+      }
       let secs;
       try { secs = await buildSections(sky, st.std, [...picked.keys()], st.mat); }
       catch (e) { return "Import failed: " + e.message; }
