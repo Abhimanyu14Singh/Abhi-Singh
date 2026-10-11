@@ -2108,6 +2108,30 @@ def create_app() -> Flask:
             return jsonify({"error": f"bad model: {exc}"}), 400
         return jsonify(stability_diagnostics(model, max_dofs=cap))
 
+    # ------------------- Model repair (core/repair.py): Check Model fixes
+    @app.post("/api/repair")
+    def repair_endpoint():
+        """Analyze > Check Model > Fix...: ``{fixes?, tolerance? (m,
+        default 0.001), model?, dry_run?, max_dofs?}`` -> ``{model,
+        report}``; the stored model is replaced unless ``dry_run``."""
+        from skyframe.core.repair import repair_json
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        try:
+            base = (body["model"] if body.get("model") is not None
+                    else _state["model"].to_dict())
+            d, report = repair_json(
+                base, body.get("fixes"), body.get("tolerance", 0.001),
+                max_dofs=int(body.get("max_dofs", 3000)))
+            model = BuildingModel.from_dict(d)
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        report["dry_run"] = bool(body.get("dry_run"))
+        if not report["dry_run"]:
+            _state["model"] = model
+        return jsonify({"model": d, "report": report})
+
     # --------------- v1.16 auto lateral generators + shell/joint temperature
     @app.post("/api/pattern/auto-lateral")
     def pattern_auto_lateral():
