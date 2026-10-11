@@ -96,8 +96,6 @@ export function initFrameAxesUi(sky) {
 
   /* ---------------- menus ---------------- */
   if (sky.menu && sky.menu.add) {
-    sky.menu.add("Options", { label: "Convert to ETABS Axis Convention…", act: "opt-fa-convert",
-      hint: () => "current: " + conv(), fn: () => openConvert() });
     sky.menu.add("View", { label: "Show Local Axes", act: "vx-fa-axes", hint: "frame 1-2-3 arrows",
       check: () => axesOn(), fn: () => toggleAxes() });
   }
