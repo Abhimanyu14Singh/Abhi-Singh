@@ -10084,3 +10084,279 @@ The Pushover Options dialog's target-displacement placeholder now shows
 `target_drift x H_ctrl` with the backend's rule
 (`towers_fu.js controlHeight`): tower, roof, story elevation or joint z.
 The placeholder updates when the control tower, story or joint changes.
+
+## Built-up sections (v1.21)
+
+Frame sections assembled from components (plates, steel-database shapes,
+parametric shapes), stored as `builtup_sections` and MIRRORED by a
+same-named `FrameSection` (`shape: "builtup"`), exactly like
+`designer_sections`. Core: `skyframe/core/builtup.py` (+ the shape
+lookup adapter `skyframe/core/builtup_db.py`: `steel_db` when installed,
+else a stub of the `sections_library` W-shapes with the AISC tw/tf of
+`core/modifiers.py`, plus designation-only angles). API:
+`skyframe/api/builtup_api.py` (registered by `create_app` with one line).
+UI: `js/builtup.js`, `js/builtup_geom.js`, `js/mock_builtup.js`,
+`builtup.css`.
+
+### Model JSON
+
+`builtup_sections` is emitted only when non-empty (absent = none; every
+existing file and result is byte-identical — the quick-building model
+hashes the same before and after: model `95a41577bb25e727`, results
+`6cbc49fa195fc920`).
+
+```json
+"builtup_sections": {
+  "PG1": {
+    "name": "PG1", "material": "STEEL",
+    "components": [
+      {"kind": "plate", "b": 0.4, "t": 0.025, "x": 0.0, "y": 0.5875, "angle": 0.0, "label": "Top flange"},
+      {"kind": "db", "standard": "aisc", "name": "W14X90", "type": "I",
+       "dims": {"d": 0.3556, "bf": 0.3683, "tf": 0.018034, "tw": 0.011176},
+       "x": 0.0, "y": 0.0, "rotation": 0.0, "mirror": false,
+       "tab": {"A": 0.0170967, "I33": 4.158e-4, "I22": 1.507e-4, "J": 1.690e-6},
+       "props_from": "geometry", "material": "A36"},
+      {"kind": "param", "type": "angle", "dims": {"d": 0.1524, "b": 0.1016, "t": 0.0127},
+       "x": 0.05, "y": 0.0, "rotation": 90.0, "mirror": true}
+    ],
+    "axes": "geometric", "torsion": "auto",
+    "template": {"id": "plate_girder", "params": {}}, "notes": "…"
+  }
+},
+"sections": {"PG1": {"name": "PG1", "material": "STEEL", "A": …, "I33": …,
+  "I22": …, "J": …, "b": …, "h": …, "mod_A": 1.0, …, "shape": "builtup"}}
+```
+
+* All values are SI (m). Angles (`angle`, `rotation`) are in DEGREES,
+  counter-clockwise.
+* Coordinates: `x` is the width (horizontal), `y` is the depth (up). Local
+  2 runs along the depth and local 3 along the width (the js/secpreview.js
+  convention). `I33 = ∫y² dA` and `I22 = ∫x² dA`, both about the
+  centroid.
+* **Plate.** A `b × t` rectangle centred at `(x, y)`; `b` lies along `x`
+  when `angle = 0`.
+* **Shapes** (`db` / `param`). `(x, y)` is the centre of the unrotated
+  bounding box. `mirror` flips the shape about its local vertical axis,
+  then `rotation` is applied about `(x, y)`.
+* **Parametric types and their `dims`:**
+  * `I` (d, bf, tf, tw)
+  * `I_mono` (d, bf_top, tf_top, bf_bot, tf_bot, tw)
+  * `channel` (d, bf, tf, tw; web on the left, toes +x)
+  * `angle` (d vertical leg, b horizontal leg, t; heel bottom-left)
+  * `double_angle` (d, b, t, s, orientation `LLBB`|`SLBB`)
+  * `tee` (d, bf, tf, tw)
+  * `rect_tube` (d, b, t)
+  * `round_tube` (D, t)
+  * `rect_solid` (d, b)
+  * `round_solid` (D)
+  * `plate` (b, t)
+
+  Outlines have no fillets (sharp corners). The aliases `bft/tft/bfb/tfb/OD/h`
+  are accepted on input.
+* **Database components.** When a database component is saved, its
+  `type`, `dims` and tabulated `tab` (A, I33, I22, J, I_major, I_minor;
+  any key the record marks as `computed` is excluded) are SNAPSHOT into it,
+  so a saved section never changes when the database changes.
+  `props_from: "geometry"` uses the fillet-free outline instead of `tab`.
+* **`material`.** Optional on a component; it defaults to the section
+  material. Components are combined with the modular ratio
+  `n = E_i / E_section` (transformed section).
+* **`axes`.** `"geometric"` (default) gives `I33 = Ixx` and `I22 = Iyy`;
+  `Ixy` is not carried by the frame element. `"principal"` gives
+  `I33 = I_major` and `I22 = I_minor`; rotate the member's local axes by
+  `theta` yourself.
+* **`torsion`.**
+  * `"auto"` (default).
+  * `"open"`: the sum Σ b·t³/3.
+  * `"fem"`: the optional `sectionproperties` package (FEM warping on the
+    union outline, single material). When the package is not installed it
+    falls back to `"auto"` with a warning. It is never a hard dependency.
+* The mirrored FrameSection gets the transformed A, I33, I22, J and the
+  bounding box `b`/`h`.
+  * Its `As2`/`As3` are NOT set, so the member stays Euler-Bernoulli and
+    the engine is unchanged.
+  * Re-saving keeps the section's modifiers and shear settings.
+  * The name must not clash with a Section Designer section.
+
+### Properties (`section_properties`, identical in js/builtup_geom.js)
+
+**Returned keys:** `{A, cx, cy, Ixx, Iyy, Ixy, I_major, I_minor, theta,
+theta_deg, axes, I33, I22, J, J_method, S33, S33_top, S33_bot, S22,
+S22_left, S22_right, Z33, Z22, r33, r22, As2, As3, shear_centre:
+{x, y, method}|null, x0, y0, b, h, bbox, E_ref, n[], cells[],
+warnings[]}`.
+
+**Area properties.** Exact shoelace and circle integrals per component,
+with the parallel-axis theorem about the composite centroid. The
+principal angle satisfies `tan 2θ = −2Ixy/(Ixx−Iyy)`; θ is the MAJOR
+axis, in (−90°, 90°].
+
+**S and Z.**
+* S is I divided by the extreme-fibre distance on each face.
+* Z uses exact polygon clipping at the plastic neutral axis (equal
+  transformed areas). Circles are 360-gons for Z only.
+
+**J_method:**
+* `open`: Σ b·t³/3 over the rectangular walls. A database shape uses its
+  tabulated J.
+* `closed`: tubes. A rect tube uses Bredt `4Am²t/p_m`; a round tube uses
+  `π(D⁴−Di⁴)/32`. Solids use Roark and `πD⁴/32`.
+* `closed_cell`: ONE rectangular cell formed by axis-aligned components is
+  found by rasterising them on their own coordinate grid. Then:
+  * `J = 4Am² / Σ(s/t)` on the wall mid-line. Each wall thickness is
+    measured outward from the cell.
+  * The J of components that do not bound the cell is added.
+  * Flange outstands are neglected (conservative).
+* `approx`: several cells, or a non-rectangular cell. J = Σ n·J_i
+  (conservative), with a warning.
+* `fem`: see above.
+
+Stacked plates count as separate walls, so the open sum underestimates
+J; `fem` is exact.
+
+**Shear areas** (approximate):
+* A wall of aspect ≥ 2 adds `A·sin²φ` to As2 and `A·cos²φ` to As3.
+* Compact rectangles and solid rectangles: 5/6 A.
+* Solid rounds: 0.9 A.
+* Round tubes: A/2.
+* Rect tubes: their wall areas.
+
+**Shear centre** (the `method` key):
+* `symmetry`: the centroid, when the section is doubly symmetric or
+  point-symmetric.
+* `monosymmetric`: `y = Σ(I_i y_i)/Σ I_i`, where `I_i` is the wall inertia
+  about the vertical symmetry axis. Applies to axis-aligned plate sections
+  symmetric about the vertical axis.
+* `fem`: from the FEM analysis.
+* `null` otherwise.
+
+**Warnings:** components overlap (the area is counted twice); approximate
+J; fem unavailable.
+
+**Templates** (`template_section(id, params, name, material)`; the
+parameters and defaults are in `TEMPLATES`):
+* `plate_girder`: unequal flanges.
+* `box_girder`: `s` = web centre spacing.
+* `w_cover`: `where` top|bottom|both.
+* `double_angle`: gap `s`, LLBB|SLBB.
+* `double_channel`: back_to_back|toe_to_toe, `s` = clear gap.
+* `starred_angles`.
+* `w_channel_cap`: crane beam, channel toes down over the top flange.
+* `laced_column`: two channels, toe_out|toe_in, laced|battened. The
+  properties are those of the chords only. `notes` states the assumption:
+  composite action, NO shear flexibility of the lacing, use E6 modified
+  slenderness outside this analysis.
+* `tube_stiffener`: a rect or round tube with a fin plate at the top or
+  bottom.
+
+### HTTP
+
+* `POST /api/sections/builtup`
+  * `{action: "upsert", section}` returns `{model, properties, section}`.
+    It stores the section and its mirror.
+  * `{action: "delete", name}` returns `{model}`. It responds 400 when the
+    name is unknown or a member still uses the section.
+  * `{action: "properties", section, materials?|model?}` returns
+    `{properties, section}`. The server model is NEVER mutated.
+  * Errors respond 400 `{error}`.
+* `GET /api/sections/builtup/templates` returns `{templates: [{id, label,
+  params}], fem: bool, db_source: "steel_db"|"stub"}`.
+* `POST /api/sections/builtup/template {id, params?, name?, material?}`
+  returns `{section, properties|null}`.
+* The picker endpoints use `steel_db` when present, else the stub:
+  * `GET /api/sections/builtup/db/standards` returns `{standards, source}`.
+  * `GET /api/sections/builtup/db/families?standard=` returns
+    `{families}`.
+  * `GET /api/sections/builtup/db/shapes?standard=&family=&q=&limit=`
+    returns `{shapes, total}`.
+* `POST /api/model` round-trips `builtup_sections` byte-identically.
+
+### Validation (`tests/test_builtup.py`, all derived by hand)
+
+* **Plate girder** (1.2 m, unequal flanges): A, ȳ, I33, I22, S top and
+  bottom, Z by the PNA in the web, Σbt³/3, the monosymmetric shear centre,
+  and As2/As3. All within 1e-12.
+* **Box.** Bredt `4A²t/p` for uniform t; the general mid-line form with
+  unequal walls and outstands; the rect-tube component; two channels
+  toe-to-toe forming a cell.
+* **W14X90 + cover plate(s).** The tabulated W plus the plates, shifted to
+  the new centroid.
+* **2L 6×4×½** (LLBB and SLBB, gap ⅜"). The single-angle rectangles by
+  hand; the AISC 2L tabulated check comes once the merged DB has 2L.
+* **Single angle.** Ixy matches the hand value. tan 2θ = −2Ixy/(Ix−Iy).
+  Mohr invariants hold. A mirror flips Ixy and θ. Rotating the section
+  rotates the tensor. `principal` feeds I_major and I_minor.
+* **Starred angles.** Point-symmetric: the shear centre is the centroid
+  and Ixy is not zero.
+* **Mixed materials.** The modular ratio.
+* **sectionproperties** (when installed). A, Ixx, Iyy, Ixy within 1e-9;
+  Z within 1e-6. FEM J is within 3% of Bredt for the box and within 5% of
+  Σbt³/3 for the plate girder.
+* **Engine.** A cantilever made from a built-up plate girder deflects
+  PL³/(3E·I33) under a vertical tip load and PL³/(3E·I22) under a lateral
+  one, within 1e-6.
+* **JS vs Python.** All 9 templates (geometric and principal, one with a
+  mixed material) plus a rotated, mirrored mixed section: 450 values agree
+  within 6e-16 relative, and the JS templates equal the Python ones.
+
+### UI (js/builtup.js)
+
+**Opening the editor:**
+* Define › Section Properties › **Built-up Section…** (act `def-builtup`,
+  added through `sky.menu.add`).
+* **Add Built-up Section…** (`#dsSecBuiltup`) in Frame Properties.
+* Modify on a built-up section reopens the editor. Add Copy opens the
+  editor on a copy.
+* `__sky.openBuiltup(name?, {copy?})`.
+
+**Canvas:**
+* A grid with snapping of the reference point.
+* Edge, corner and mid-line snapping to the other components (8 px).
+* Wheel zoom, drag-pan and Fit.
+* Drag to move.
+* Commands: ±90° (R / Shift+R), a typed angle, Mirror (M), Align,
+  Duplicate, Delete (Del), and arrow keys to nudge by one grid step.
+
+**Palette:**
+* Plate.
+* Database shape…: standard → family → search, with the values in
+  js/units.js.
+* Parametric shape of any type.
+* Template gallery with thumbnails and parameter forms.
+
+**Inspector.** All dimensions are in display units (js/units.js `dim`):
+* Per component: x, y, angle/rotation, mirror, dims, material, and
+  "properties from".
+* For the section: name, material, axes, torsion.
+
+**Live properties:** A, I33, I22, J (+ method), centroid, θ, I
+major/minor, Ixy, S, Z, r, As2/As3, the shear centre, and warnings.
+* They are computed by js/builtup_geom.js.
+* Live mode confirms them through `action: "properties"`; the panel then
+  shows "backend ✓".
+
+**Canvas overlays:**
+* The centroid.
+* The principal axes.
+* Local 2 (up, green) and 3 (right, blue) arrows. They are rotated by θ
+  when `axes` is principal.
+* The shear centre.
+
+**Saving:**
+* OK writes `builtup_sections[name]` and the mirrored `sections[name]` into
+  the working model and marks it dirty, so the section can be assigned
+  straight away. In live mode the backend properties are used, including
+  FEM.
+* A rename retargets the members.
+* An unchanged OK and Cancel/Esc write nothing (byte-identical).
+* Deleting the section in Frame Properties also removes its
+  `builtup_sections` entry.
+
+**Preview.** js/secpreview.js draws the real component outlines for a
+built-up section, labelled "Built-up".
+
+**Mock.** `?mock=1` uses js/mock_builtup.js: the same formulas and the
+same stub DB.
+
+**Test hook:** `__sky.builtup = {open, close, state, props, serverProps,
+commit, select, fit, backend, computeProps}`.

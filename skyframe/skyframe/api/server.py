@@ -2320,6 +2320,10 @@ def create_app() -> Flask:
     from skyframe.api.material_db_api import register as _mdb_register
     _mdb_register(app, _state)
 
+    # v1.21 built-up sections (skyframe.api.builtup_api)
+    from skyframe.api.builtup_api import register as _bu_register
+    _bu_register(app, _state)
+
     return app
 
 
