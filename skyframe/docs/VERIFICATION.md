@@ -34,11 +34,15 @@ Last run: `46 passed in 24.34s`
   2010 practice), so a hinged model's stiffness-proportional damping acts on
   the elastic members only.  The suite pins this law EXACTLY against an
   independent 2-DOF integrator; versus a classical-Rayleigh SDOF it changes
-  the end-of-record displacement by +0.78 %.  Damping the springs with the
-  committed tangent (`-doRayleigh 1`) was tried and reproduces classical
-  Rayleigh exactly, but breaks the exact energy balance of the TH energy
-  tracker at yield events (`tests/test_th_options.py`), so the documented
-  behaviour was kept.
+  the end-of-record displacement by +0.78 %.  This is the DEFAULT
+  (`damping_options.rayleigh_on_links = "none"`, bit-identical);
+  `{"rayleigh_on_links": "all", "rayleigh_stiffness_basis": "committed"}`
+  (recommended) damps hinge springs, grounded springs and links with
+  `-doRayleigh` on the committed tangent and reproduces the classical
+  Rayleigh SDOF to < 0.1 %; the TH energy tracker books the applied
+  `Kc(n)` damping force, so the balance stays exact
+  (`tests/test_link_rayleigh.py`, CONTRACT "Rayleigh damping on springs,
+  links and hinges").
 
 ## Tolerance policy
 

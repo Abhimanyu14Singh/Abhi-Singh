@@ -183,6 +183,7 @@ from skyframe.core.thermal_ext import projected_factor as _proj_f  # v1.16
 from skyframe.core import springprops as _sprp     # B9/B11 named springs
 from skyframe.engine import hysteresis as _hyst    # B9/B11 builders
 from skyframe.engine import hinge_ties as _hinge_ties  # sprung hinge bases
+from skyframe.engine import link_rayleigh as _lrl  # Rayleigh on links/springs
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
                                  FP_DEFAULT_KINIT, G_ACCEL,
                                  ISOLATOR_DEFAULT_KV, TFP_DEFAULT_MINFV,
@@ -3073,7 +3074,8 @@ class OpenSeesEngine:
             etag += 1
             ops.element("zeroLength", etag, orig_tag, dup_tag,
                         "-mat", t_tag, y_tag, z_tag, "-dir", 4, 5, 6,
-                        "-orient", *xax, *yax)
+                        "-orient", *xax, *yax,
+                        *_lrl.flag(self, asm, etag, "hinge", (4, 5, 6)))
             k_tie = HINGE_TIE_FACTOR * (mat.E * A_eff / L
                                         + 12.0 * mat.E
                                         * max(I33_eff, I22_eff) / L ** 3)
@@ -3100,7 +3102,8 @@ class OpenSeesEngine:
                 mats_pz.append(mtag)
             etag += 1
             ops.element("zeroLength", etag, orig, dup,
-                        "-mat", *mats_pz, "-dir", 4, 5)
+                        "-mat", *mats_pz, "-dir", 4, 5,
+                        *_lrl.flag(self, asm, etag, "panel_zone", (4, 5)))
             pending_ties.append((orig, dup, (1, 2, 3, 6), None))
             asm.pz_joints[orig] = {"dup": dup, "K": k_theta, "ele": etag}
 
@@ -3260,7 +3263,9 @@ class OpenSeesEngine:
                     mats.append(mtag)
                 etag += 1
                 ops.element("zeroLength", etag, ni, nj, "-mat", *mats,
-                            "-dir", *dirs)
+                            "-dir", *dirs,
+                            *_lrl.flag(self, asm, etag, "elastic_link",
+                                       dirs))
                 asm.link_ele[lk.uid] = etag
                 for t in (ni, nj):
                     acc = link_node_k.setdefault(t, [0.0] * 6)
@@ -3431,12 +3436,18 @@ class OpenSeesEngine:
                 else:
                     mats, dirs = [kv_tag] + shear_tags, [1, 2, 3]
             etag += 1
+            rl_kind = ("hysteretic_link"
+                       if ltype in _sprp.MATERIAL_LINK_TYPES
+                       else f"{ltype}_link")
             if L_lk < _TOL:
                 ops.element("zeroLength", etag, ni, nj, "-mat", *mats,
-                            "-dir", *dirs)
+                            "-dir", *dirs,
+                            *_lrl.flag(self, asm, etag, rl_kind, dirs))
             else:
                 ops.element("twoNodeLink", etag, ni, nj, "-mat", *mats,
-                            "-dir", *dirs)
+                            "-dir", *dirs,
+                            *_lrl.flag(self, asm, etag, rl_kind, dirs,
+                                       "twoNodeLink"))
             asm.link_ele[lk.uid] = etag
             device_nodes.update((ni, nj))
 
@@ -3460,7 +3471,8 @@ class OpenSeesEngine:
                 mats.append(mtag)
             etag += 1
             ops.element("zeroLength", etag, gnd, rt, "-mat", *mats,
-                        "-dir", *dirs)
+                        "-dir", *dirs,
+                        *_lrl.flag(self, asm, etag, "spring", dirs))
             asm.spring_ground.setdefault(rt, []).append(
                 (gnd, tuple(d - 1 for d in dirs)))
             acc = asm.spring_nodes.setdefault(rt, [0.0] * 6)
@@ -3477,7 +3489,11 @@ class OpenSeesEngine:
             gnd = tag
             ops.node(gnd, *asm.node_coords[rt])
             ops.fix(gnd, 1, 1, 1, 1, 1, 1)
-            mtag, etag = _hyst.build_named_spring(spec, gnd, rt, mtag, etag)
+            mtag, etag = _hyst.build_named_spring(
+                spec, gnd, rt, mtag, etag,
+                rayleigh=lambda e, dirs, nl: _lrl.flag(
+                    self, asm, e, "named_spring_nl" if nl else
+                    "named_spring", dirs))
             asm.spring_ground.setdefault(rt, []).append(
                 (gnd, tuple(spec.global_dofs())))
             asm.named_springs.append((rt, spec))
@@ -3500,7 +3516,9 @@ class OpenSeesEngine:
             ops.uniaxialMaterial("Elastic", mtag, kz_ent * AXIAL_ONLY_RATIO,
                                  0.0, kz_ent)
             etag += 1
-            ops.element("zeroLength", etag, gnd, rt, "-mat", mtag, "-dir", 3)
+            ops.element("zeroLength", etag, gnd, rt, "-mat", mtag, "-dir", 3,
+                        *_lrl.flag(self, asm, etag,
+                                   "compression_only_spring", (3,)))
             asm.spring_ground.setdefault(rt, []).append((gnd, (2,)))
             asm.ent_springs[rt] = asm.ent_springs.get(rt, 0.0) + kz_ent
             if rt not in asm.support_tags:
@@ -7156,7 +7174,11 @@ class OpenSeesEngine:
         a0 = 2.0 * th.damping * w_i * w_j / (w_i + w_j)
         a1 = 2.0 * th.damping / (w_i + w_j)
 
-        asm = self._build(hinge_case=th if nonlinear else None)
+        _lrl.begin(self, th)          # Rayleigh on links ("none" = legacy)
+        try:
+            asm = self._build(hinge_case=th if nonlinear else None)
+        finally:
+            _lrl.end(self)
         self._seg_span_loads = {}
         self._seg_fef = {}
         # multi-component / load-pattern components (None -> legacy)
@@ -7201,6 +7223,23 @@ class OpenSeesEngine:
             ops.rayleigh(a0, 0.0, 0.0, a1)
         else:
             ops.rayleigh(a0, a1, 0.0, 0.0)     # elastic: K == Kinit
+        lrl_info = None
+        if getattr(asm, "rl_elements", None):
+            # damping_options.rayleigh_on_links: the participating springs
+            # / links / hinges take the case's stiffness coefficient (none
+            # under modal damping — modalDamping already damps the sprung
+            # modes) on the option's stiffness basis
+            if tho is not None and tho.damp is not None:
+                a1_l = tho.damp["a1"]
+            elif getattr(th, "damping_model", "rayleigh") == "modal":
+                a1_l = 0.0
+            else:
+                a1_l = a1
+            _lrl.begin(self, th)
+            try:
+                lrl_info = _lrl.apply(self, asm, a1_l)
+            finally:
+                _lrl.end(self)
         dof = 1 if th.direction == "X" else 2
         stories = model.stories
 
@@ -7393,6 +7432,8 @@ class OpenSeesEngine:
                            yielded=sorted(yielded))
         if tho is not None:
             result.extra = tho.results()
+        if lrl_info is not None:                          # Rayleigh on links
+            result.extra = dict(result.extra, link_rayleigh=lrl_info)
         if mc is not None:
             result.extra.update(mc.extra())
         if asm.user_hinges:                               # B10

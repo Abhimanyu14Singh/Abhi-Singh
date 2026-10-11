@@ -41,6 +41,7 @@ from skyframe.core.plotfn import (normalize as _plotfn_norm,  # plot fns
 from skyframe.core.nonprismatic import member_area as _np_area
 
 from skyframe.core import thermal_ext as _thx  # v1.16 temperature / projected
+from skyframe.core import damping_options as _dmpo
 from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
     PDELTA_INCLUDE_IN, PDELTA_METHODS, pdelta_defaults, pdelta_from_dict,
     pdelta_to_dict, validate_pdelta_options)
@@ -2026,6 +2027,13 @@ class BuildingModel:
     joint_patterns: Dict[str, dict] = field(default_factory=dict)
     shell_load_sets: Dict[str, dict] = field(default_factory=dict)
 
+    # Rayleigh damping on springs / links / hinges in direct-integration
+    # TH (skyframe.core.damping_options); default "none" = legacy (those
+    # zeroLength / twoNodeLink elements undamped).  Emitted by to_dict only
+    # when not the defaults.
+    damping_options: Dict[str, object] = field(
+        default_factory=_dmpo.damping_defaults)
+
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
         self.materials[mat.name] = mat
@@ -3814,6 +3822,7 @@ class BuildingModel:
         _fm_validate(self)                  # frame auto mesh / stations
         _uh.validate_model(self)            # B10 user hinges
         self._validate_open_wind()          # open-structure wind params
+        _dmpo.validate_damping_options(self)    # Rayleigh on links
 
     def _validate_open_wind(self) -> None:
         from skyframe.core.openwind import validate_model as _ow_validate
@@ -3956,6 +3965,7 @@ class BuildingModel:
 
             **_uh.model_to_dict(self),      # B10 hinge properties (if any)
             **_shellopts_model_to_dict(self),   # joint patterns / load sets
+            **_dmpo.damping_to_dict(self),  # Rayleigh on links (if set)
         }
 
     @classmethod
@@ -4382,6 +4392,7 @@ class BuildingModel:
 
         from skyframe.core.openwind import model_from_dict as _ow_from
         _ow_from(mdl, d)                    # open-structure wind params
+        _dmpo.damping_from_dict(mdl, d)     # Rayleigh on links (absent=none)
         mdl.validate()
         return mdl
 
