@@ -26,6 +26,7 @@
    request changed (OK with defaults leaves the model byte-identical). */
 
 import U from "./units.js";
+import { frameLocalAxes as pfFrameLocalAxes } from "./frameaxes.js";   // frame local axes (ETABS / legacy convention)
 import { dialog as pfDialog, btn as pfBtn, footBar as pfFootBar,
          errorLine as pfErrorLine, showError as pfShowError } from "./analysisdlg.js";
 import { pfMockSpectrum, pfMockExtend } from "./mock_plotfn.js";
@@ -908,22 +909,9 @@ export function initPlotFn(sky) {
     if (name.startsWith("rs:")) return (r.rs_cases || {})[name.slice(3)] || null;
     return (r.cases || {})[name] || (r.combos || {})[name] || null;
   }
-  function localAxes(m) {
-    const d = [m.pj[0] - m.pi[0], m.pj[1] - m.pi[1], m.pj[2] - m.pi[2]];
-    const L = Math.hypot(...d) || 1;
-    const x = d.map(v => v / L);
-    const vertical = Math.hypot(d[0], d[1]) < 1e-6;
-    let vxz = vertical ? [1, 0, 0] : [x[1], -x[0], 0];
-    const nv = Math.hypot(...vxz) || 1; vxz = vxz.map(v => v / nv);
-    const cr = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-    let y = cr(vxz, x); const ny = Math.hypot(...y) || 1; y = y.map(v => v / ny);
-    let z = cr(x, y);
-    const ang = (m.angle || 0) * Math.PI / 180;
-    if (Math.abs(ang) > 1e-12) {
-      const c = Math.cos(ang), s = Math.sin(ang);
-      const y2 = y.map((v, i) => c * v + s * z[i]), z2 = z.map((v, i) => c * v - s * y[i]);
-      y = y2; z = z2;
-    }
+  function localAxes(m) {   // frame local axes — single implementation (js/frameaxes.js)
+    const L = Math.hypot(m.pj[0] - m.pi[0], m.pj[1] - m.pi[1], m.pj[2] - m.pi[2]) || 1;
+    const { x, y, z } = pfFrameLocalAxes(m, S.model);
     return { x, y, z, L };
   }
   function f3Overlay(ctx, P, viewer) {

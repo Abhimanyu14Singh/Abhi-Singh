@@ -354,7 +354,7 @@ function vxBuildPrism(pts, holes, convex, stations, axes, refAt, smooth = false)
 /** Stations along a member (fractions in [t0, t1]) with taper + offsets. */
 function vxMemberStations(model, mm, prof, t0, t1, chunkLen, zcuts = []) {
   const L = Math.hypot(mm.pj[0] - mm.pi[0], mm.pj[1] - mm.pi[1], mm.pj[2] - mm.pi[2]) || 1;
-  const axes = vxMemberAxes(mm);
+  const axes = vxMemberAxes(mm, model);
   const sec = (model.sections || {})[mm.section];
   const cp = mm.cardinal_point == null ? 10 : +mm.cardinal_point;
   const g = VX_CP_GRID[cp] || [0, 0];
@@ -1064,7 +1064,7 @@ export function initViewExt(sky) {
       const secName = (mm && mm.section) || rm.section;
       const pr = g.prof(secName, animating ? "box" : "full");
       const pseudo = { ...(mm || {}), pi: Pi, pj: Pj, angle: mm ? mm.angle : 0, section: secName };
-      const axes = vxMemberAxes(pseudo);
+      const axes = vxMemberAxes(pseudo, v.model);
       const cp = mm && mm.cardinal_point != null ? +mm.cardinal_point : 10;
       const gg = VX_CP_GRID[cp] || [0, 0];
       const off = [0, 1, 2].map(k => -0.5 * pr.h * gg[0] * axes.y[k] - 0.5 * pr.b * gg[1] * axes.z[k]);
@@ -1113,7 +1113,7 @@ export function initViewExt(sky) {
     }
     if (show.axes) {
       const len = Math.min(Math.max((viewer.radius || 10) * 0.035, 0.25), 1.5);
-      const cols = ["#e66767", "#e8edf3", "#35b5e5"];
+      const cols = ["#e5484d", "#30a46c", "#3e7bfa"];   // local 1 / 2 / 3 = red / green / blue
       ctx.lineWidth = 1.4; ctx.font = "700 9px -apple-system, 'Segoe UI', sans-serif";
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
       const triad = (c, axs) => {
@@ -1124,12 +1124,14 @@ export function initViewExt(sky) {
           if (!q) return;
           ctx.strokeStyle = cols[i]; ctx.fillStyle = cols[i];
           ctx.beginPath(); ctx.moveTo(q0[0], q0[1]); ctx.lineTo(q[0], q[1]); ctx.stroke();
+          const ux = q[0] - q0[0], uy = q[1] - q0[1], ul = Math.hypot(ux, uy);   // arrowhead
+          if (ul > 4) { const hx = ux / ul * 5, hy = uy / ul * 5; ctx.beginPath(); ctx.moveTo(q[0], q[1]); ctx.lineTo(q[0] - hx - hy * 0.55, q[1] - hy + hx * 0.55); ctx.lineTo(q[0] - hx + hy * 0.55, q[1] - hy - hx * 0.55); ctx.closePath(); ctx.fill(); }
           ctx.fillText(String(i + 1), q[0] + (q[0] - q0[0]) * 0.25, q[1] + (q[1] - q0[1]) * 0.25);
         });
       };
       for (const [seg, vv] of segsVis) {
         const mm = g.byUid.get(seg.uid) || { pi: seg.p1, pj: seg.p2, angle: 0 };
-        const ax = vxMemberAxes(mm);
+        const ax = vxMemberAxes(mm, model());
         triad(lerp3(vv.p1, vv.p2, 0.5), [ax.x, ax.y, ax.z]);
       }
       for (const [sp, vv] of g.shellVis) {
@@ -1189,9 +1191,9 @@ export function initViewExt(sky) {
       if (dirn === "global_x") return [1, 0, 0];
       if (dirn === "global_y") return [0, 1, 0];
       if (dirn === "global_z") return [0, 0, 1];
-      if (dirn === "local_y" || dirn === "local_2") return vxMemberAxes(mm).y;
-      if (dirn === "local_z" || dirn === "local_3") return vxMemberAxes(mm).z;
-      if (dirn === "local_x" || dirn === "local_1") return vxMemberAxes(mm).x;
+      if (dirn === "local_y" || dirn === "local_2") return vxMemberAxes(mm, m).y;
+      if (dirn === "local_z" || dirn === "local_3") return vxMemberAxes(mm, m).z;
+      if (dirn === "local_x" || dirn === "local_1") return vxMemberAxes(mm, m).x;
       return [0, 0, -1];
     };
     const mloads = [...(pat.member_loads || []), ...(pat.member_udls || []).map(u => ({ member_uid: u.member_uid, kind: "udl", w: u.w, a: 0, b: 1, direction: "gravity" }))];
@@ -1579,6 +1581,8 @@ export function initViewExt(sky) {
     toggleExtrude, toggleSelOnly, toggleCut, benchmark,
     stats: () => ({ ...lastStats }), lastError: () => lastError,
     isExtrude: () => opts.extrude, isSelOnly: () => opts.selOnly, isCut: () => opts.cut.on,
+    // frame axes: the extruded vertices of a member (ring-major [x,y,z] …), for tests
+    meshOf: uid => { const mm = getGeo().memberMeshes.find(x => x.uid === uid); return mm && mm.parts.length ? mm.parts.map(p => ({ n: p.full.n, K: p.full.K, V: Array.from(p.full.V) })) : null; },
     profileOf: (name, lod = "full") => { const m = model(); return m ? vxProfileOf(m, name, (m.sections || {})[name], lod) : null; },
   };
 }

@@ -172,7 +172,7 @@ export function initEtabs(sky) {
       { label: "Set 3D View", act: "view-3d", fn: () => showResult("view3d") },
       SEP,
       { label: "Set Display Options…", act: "vx-display-options", hint: "objects · colours · stories", fn: () => sky.vx && sky.vx.openDisplayOptions() },
-      { label: "Extruded View", act: "vx-extrude", hint: "section shapes", check: () => !!(sky.vx && sky.vx.isExtrude()), fn: () => { if (sky.vx && !sky.vx.isExtrude()) showResult("view3d"); sky.vx && sky.vx.toggleExtrude(); } },
+      { label: "Extruded View", act: "vx-extrude", key: "Alt+X", hint: "section shapes", check: () => !!(sky.vx && sky.vx.isExtrude()), fn: () => { if (sky.vx && !sky.vx.isExtrude()) showResult("view3d"); sky.vx && sky.vx.toggleExtrude(); } },
       { label: "Show Selection Only", act: "vx-selonly", check: () => !!(sky.vx && sky.vx.isSelOnly()), fn: () => { if (sky.vx && !sky.vx.isSelOnly()) showResult("view3d"); sky.vx && sky.vx.toggleSelOnly(); } },
       { label: "Section Cut Plane View", act: "vx-cut", hint: "clip at a plane", check: () => !!(sky.vx && sky.vx.isCut()), fn: () => { if (sky.vx && !sky.vx.isCut()) showResult("view3d"); sky.vx && sky.vx.toggleCut(); } },
       { label: "Reset Display Options", act: "vx-reset", fn: () => sky.vx && sky.vx.reset() },

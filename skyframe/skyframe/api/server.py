@@ -333,6 +333,7 @@ from skyframe.core.units import units_table
 from skyframe.core.sections_library import library_to_dict
 from skyframe.core import tables as _tables
 from skyframe.core import runlog as _rl      # model info / run log / report
+from skyframe.core import frame_axes as _fa  # frame local-axis convention
 
 try:
     from skyframe.engine.opensees_engine import OpenSeesEngine
@@ -344,7 +345,8 @@ except Exception:  # pragma: no cover - opensees missing/broken
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
 # module-level singleton: the one current model
-_state: Dict[str, BuildingModel] = {"model": quick_building()}
+_state: Dict[str, BuildingModel] = {
+    "model": _fa.as_new_model(quick_building())}   # new model -> "etabs"
 
 # analysis-results tables: the last /api/analyze payload + engine context,
 # keyed by a signature of the model it was computed from (store-and-compute)
@@ -510,7 +512,8 @@ def create_app() -> Flask:
             body = {}
         try:
             kwargs = _validate_quick_kwargs(body)
-            _state["model"] = quick_building(**kwargs)
+            _state["model"] = _fa.as_new_model(   # new model -> "etabs"
+                quick_building(**kwargs))
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify(_state["model"].to_dict())
@@ -2058,6 +2061,7 @@ def create_app() -> Flask:
             return jsonify({"error": str(exc)}), 400
         except Exception as exc:
             return jsonify({"error": str(exc)}), 400
+        _fa.as_new_model(model)               # imported -> "etabs" axes
         _state["model"] = model
         return jsonify({"model": model.to_dict(), "warnings": warnings})
 
@@ -2238,9 +2242,27 @@ def create_app() -> Flask:
         _state["model"] = model
         return jsonify(model.to_dict())
 
+    @app.post("/api/model/convert-axes")
+    def convert_axes_endpoint():
+        """Options > Convert to ETABS Axis Convention.  Body {model?}
+        (default: the current model).  Response {"model", "report"}; the
+        converted model becomes current (skyframe.core.frame_axes)."""
+        body = request.get_json(silent=True) or {}
+        try:
+            src = (body["model"] if isinstance(body.get("model"), dict)
+                   else _state["model"].to_dict())
+            d, rep = _fa.convert_dict_to_etabs(src)
+            model = BuildingModel.from_dict(d)
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        _state["model"] = model
+        return jsonify({"model": d, "report": rep})
+
     @app.get("/api/model/info")
     def model_info_get():
         info = _rl.model_info(_state["model"])
+        info["frame_axis_convention"] = _fa.model_convention(
+            _state["model"])                  # frame local-axis convention
         log = _state.get("run_log")
         info["last_analysis"] = None if not log else {
             "started": log["started"], "total_s": log["total_s"],

@@ -505,6 +505,7 @@ def import_ifc(text: str) -> Tuple[BuildingModel, List[str]]:
             name = inst.args[2].strip()
             break
     mdl = BuildingModel(name=name)
+    mdl.frame_axis_convention = "etabs"   # new model: ETABS frame axes
     mdl.base_fixity = "fixed"
     mdl.add_material(Material("IFC", E=_DEFAULT_E, nu=0.2))
 

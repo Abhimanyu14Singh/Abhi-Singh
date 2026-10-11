@@ -727,6 +727,12 @@ class FrameMember:
 
     tower: str = ""     # C9 owning tower ("" = from story; core.towers)
 
+    # Frame local-axis convention STAMP (skyframe.core.frame_axes): copied
+    # from BuildingModel.frame_axis_convention by from_dict / add_member /
+    # the engine; never serialised per member.
+    axis_convention: str = field(default="legacy", repr=False,
+                                 compare=False)
+
     @property
     def length(self) -> float:
         return math.dist(self.pi, self.pj)
@@ -2063,6 +2069,11 @@ class BuildingModel:
     towers: List[dict] = field(default_factory=list)
     joint_towers: List[dict] = field(default_factory=list)
 
+    # Frame local axes (skyframe.core.frame_axes; CONTRACT "Frame local
+    # axes: ETABS convention"): "legacy" (default, every file without the
+    # key) or "etabs" (vertical members: local 2 = +X at angle 0).
+    frame_axis_convention: str = "legacy"
+
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
         self.materials[mat.name] = mat
@@ -2203,6 +2214,7 @@ class BuildingModel:
         self._validate_axial_limit(m)
         self._validate_member_hinges(m)
         self._validate_insertion(m)
+        m.axis_convention = self.frame_axis_convention   # frame_axes stamp
         self.members.append(m)
         return m
 
@@ -3624,6 +3636,8 @@ class BuildingModel:
 
     def validate(self) -> None:
         """Cross-reference validation; raises ValueError on the first issue."""
+        from skyframe.core.frame_axes import normalize_convention
+        normalize_convention(self.frame_axis_convention)  # frame axes
         for mat in self.materials.values():
             self._validate_material(mat)
         from skyframe.core.nonprismatic import resolve_sections
@@ -4030,6 +4044,8 @@ class BuildingModel:
             **_aopt.analysis_options_to_dict(self),   # (if not default)
 
             **_towers.model_to_dict(self),  # C9 towers (if defined)
+            **({"frame_axis_convention": "etabs"}    # only when "etabs"
+               if self.frame_axis_convention == "etabs" else {}),
         }
 
     @classmethod
@@ -4461,6 +4477,7 @@ class BuildingModel:
         mdl.analysis_options = _aopt.analysis_options_from_dict(d)
 
         _towers.model_from_dict(mdl, d)     # C9 towers (absent = none)
+        _frame_axes_from_dict(mdl, d)       # frame local-axis convention
         mdl.validate()
         return mdl
 
@@ -4649,3 +4666,12 @@ def eurocode8_spectrum(ag: float, ground_type: str = "A",
             ts.add(round(float(corner), 10))
     return [[float(tt), float(eurocode8_se(tt, ag, S, TB, TC, TD, eta))]
             for tt in sorted(ts)]
+
+
+def _frame_axes_from_dict(mdl: "BuildingModel", d: dict) -> None:
+    """Read ``frame_axis_convention`` (absent = "legacy") and stamp the
+    members (skyframe.core.frame_axes)."""
+    from skyframe.core.frame_axes import normalize_convention, sync_members
+    mdl.frame_axis_convention = normalize_convention(
+        d.get("frame_axis_convention"))
+    sync_members(mdl)

@@ -429,6 +429,7 @@ def import_dxf(
 
     # ----------------------------------------------------------------- model
     mdl = BuildingModel(name="DXF Import")
+    mdl.frame_axis_convention = "etabs"   # new model: ETABS frame axes
     mdl.add_material(Material("CONC", E=float(E), nu=0.2, unit_weight=24.0))
     mdl.add_section(FrameSection.rectangular(column_section, "CONC", 0.5, 0.5))
     if beam_section != column_section:

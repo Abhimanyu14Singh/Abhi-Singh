@@ -18,6 +18,7 @@
    with OK and no edit leaves the model untouched. */
 
 import U from "./units.js";
+import { frameLocalAxes as npFrameLocalAxes } from "./frameaxes.js";   // frame local axes (ETABS / legacy convention)
 import { selectionJoints as npSelectionJoints } from "./assigndlg.js";
 import {
   esc as npEsc, clone as npClone, isNum as npIsNum, dialog as npDialog, closeDialog as npCloseDialog,
@@ -848,7 +849,7 @@ function draw3d(ctx, P, viewer) {
     const ax = [(mm.pj[0] - mm.pi[0]) / L, (mm.pj[1] - mm.pi[1]) / L, (mm.pj[2] - mm.pi[2]) / L];
     // depth direction: local 2 (vertical for beams; rotated X for columns)
     let dv;
-    if (isVertical(mm)) { const a = (mm.angle || 0) * Math.PI / 180; dv = [Math.cos(a), Math.sin(a), 0]; }
+    if (isVertical(mm)) dv = npFrameLocalAxes(mm, m).y;   // local 2 per the model convention (js/frameaxes.js)
     else { const dot = ax[2]; dv = [-dot * ax[0], -dot * ax[1], 1 - dot * ax[2]]; const n = Math.hypot(...dv) || 1; dv = dv.map(v => v / n); }
     if (lay.segs.length && lay.segs.every(s => s.p0 && s.p1)) {
       const pts = profile(lay, L, 16);

@@ -9715,3 +9715,115 @@ solves.
   "Monitored displacement" control offers a "Tower" choice (only with
   towers) with a tower selector, which writes `control_tower`.
 * `?mock=1` supports all of the above (`js/mock_towers_fu.js`).
+
+## Frame local axes: ETABS convention
+
+A model field selects how frame members get their local 1/2/3 axes.
+`skyframe/core/frame_axes.py` is the only Python implementation and
+`js/frameaxes.js` is the only JS one. Every consumer goes through them:
+
+* engine `_local_axes`: geomTransf, fiber / hinge / designer sections,
+  auto-mesh segments, member loads, thermal gradients, insertion and
+  joint offsets, story shear, tendons, towers, staged and tables;
+* `buckling._local_axes` and the chord angles of curved frames;
+* the viewer: `polygeom.memberAxes`, the extruded view, the local-axes
+  overlay, the 3D force diagrams and the nonprismatic taper overlay.
+
+Panel zones use only the column's scalar b/h, so they need no axes.
+
+### Model field
+
+`frame_axis_convention`: `"legacy"` | `"etabs"`.
+
+* **Absent key.** `from_dict` reads an absent key as `"legacy"`. Old files
+  load, analyse and round-trip byte-identically.
+* **Serialisation.** `to_dict` writes the key only when it is `"etabs"`.
+* **Python default.** The dataclass default is `"legacy"`.
+  `quick_building()` and the Python API are unchanged.
+* **New models use `"etabs"`.** This covers:
+  * the server's startup model and `POST /api/model/quick` (File > New
+    templates and Quick Building);
+  * `POST /api/import/<fmt>` and the importers `import_dxf`,
+    `import_e2k` and `import_ifc`;
+  * the mock's `mockModel`.
+* **Bad values.** Any other value raises `ValueError` (400 from
+  `POST /api/model`).
+* **Member stamp.** Each `FrameMember` carries a non-serialised
+  `axis_convention` stamp. It is set by `from_dict`, `add_member`, the
+  engine entry (when the model says `"etabs"`) and the conversion.
+
+### Local axes by member orientation (angle 0)
+
+| member | legacy 1 | legacy 2 | legacy 3 | etabs 1 | etabs 2 | etabs 3 |
+|---|---|---|---|---|---|---|
+| beam along +X | +X | +Z | −Y | +X | +Z | −Y |
+| beam / brace, general (non-vertical) | i→j | vertical plane, up | 1×2 | i→j | vertical plane, up | 1×2 |
+| column drawn bottom-up (i below j) | +Z | −Y | +X | +Z | **+X** | **+Y** |
+| column drawn top-down (i above j) | −Z | +Y | +X | −Z | **+X** | **−Y** |
+
+* **Vertical members.** A member is vertical when its plan projection is
+  shorter than 1e-6 m.
+* **geomTransf `vecxz`.** It is the rotated local 3: legacy `(1,0,0)`;
+  etabs `(0,1,0)` drawn bottom-up and `(0,−1,0)` drawn top-down.
+* **Section depth.** The depth `h` lies along local 2, so I33 = b·h³/12.
+  Under `"etabs"` a column's depth runs along global X at angle 0.
+* **Top-down columns.** As in ETABS, local 1 stays i→j and local 2 stays
+  +X, so local 3 = 1×2 = −Y. The section's physical orientation does not
+  depend on the drawing sense.
+* **Angle.** `angle` (degrees) rotates local 2/3 about local 1 by the
+  right-hand rule in both conventions. Exact multiples of 90° use exact
+  cos / sin under `"etabs"`. The legacy branch keeps its historical
+  floating-point evaluation.
+* **Curved frames.** The chord angles are measured from each chord's own
+  default axes, and the ± sense of the curve's local-2 target is chosen
+  from the legacy axes. A curved member is therefore physically identical
+  under both conventions.
+
+### Conversion
+
+**UI.** Options > Convert to ETABS Axis Convention… (one undo step).
+
+**API.** `POST /api/model/convert-axes` with body `{model?}`. The default
+is the current model, and the converted model becomes current. The
+response is:
+
+```
+{"model": <model dict>,
+ "report": {"converted": bool, "from": "legacy"|"etabs", "to": "etabs",
+            "members": [{"uid", "old_angle", "new_angle"}]}}
+```
+
+Malformed input returns 400.
+
+**What changes.**
+* Every straight vertical member gets `angle − 90`, wrapped to
+  [−180, 180), so its local axes, b/h directions and results are
+  unchanged.
+* Curved members and non-vertical members are untouched.
+* An `"etabs"` model is left as it is (`converted: false`).
+
+**Validation** (`tests/test_frame_axes.py`):
+* For angle-0 columns, the results JSON has the same SHA-256 before and
+  after conversion.
+* For any angle, results agree to 1e-9 relative.
+* For a cantilever column with b=0.3, h=0.6 under tip Fx:
+  * etabs: δ = FL³/(3E·bh³/12) (strong axis);
+  * legacy: δ = FL³/(3E·hb³/12) (weak axis);
+  * under Fy the roles swap;
+  * etabs at angle 90 equals legacy at angle 0;
+  * conversion keeps δ identical.
+
+`GET /api/model/info` adds `"frame_axis_convention"`.
+
+### UI
+
+* **Model Info.** Shows the convention.
+* **View > Extruded View** (Alt+X; the shortcut registry is checked for
+  clashes before registering) and the quick-access toolbar View group's
+  **Extrude** toggle turn the extruded view on and off.
+* **Local axes overlay.** View > Show Local Axes and the toolbar **Axes**
+  toggle draw arrows 1/2/3 (red / green / blue) at member midpoints, in
+  both the line and the extruded 3D view.
+* **Test hook.** `__sky.frameAxes` exposes `{convention, convert,
+  openConvert, toggleExtrude, toggleAxes, axesOf}`.
+  `__sky.vx.meshOf(uid)` returns the extruded vertices of each part.
