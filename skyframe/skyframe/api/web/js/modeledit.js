@@ -2076,13 +2076,51 @@ function remapStoryZ(model, oldSpans) {
     const t = (o.zt - o.zb) > 1e-9 ? (z - o.zb) / (o.zt - o.zb) : 1;
     return +(n.zb + t * (n.zt - n.zb)).toFixed(6);
   };
+  // joint z map (old point -> new z) from the story-tagged objects, so
+  // point-keyed records (links, springs, supports, joint loads, ...) follow
+  const pk = p => `${(+p[0]).toFixed(6)},${(+p[1]).toFixed(6)},${(+p[2]).toFixed(6)}`;
+  const jz = new Map();
   for (const mm of model.members) {
-    mm.pi[2] = mapz(mm.story, mm.pi[2]);
-    mm.pj[2] = mapz(mm.story, mm.pj[2]);
+    for (const e of ["pi", "pj"]) {
+      const k = pk(mm[e]);
+      mm[e][2] = mapz(mm.story, mm[e][2]);
+      if (!jz.has(k)) jz.set(k, mm[e][2]);
+    }
     mm.length = dist(mm.pi, mm.pj);
   }
   for (const sh of model.shells)
-    for (const c of sh.corners) c[2] = mapz(sh.story, c[2]);
+    for (const c of sh.corners) {
+      const k = pk(c);
+      c[2] = mapz(sh.story, c[2]);
+      if (!jz.has(k)) jz.set(k, c[2]);
+    }
+  // untagged points: map by the old story span containing z
+  const olds = [...oldSpans].sort((a, b) => a.zt - b.zt);
+  const byElev = z => {
+    for (const o of olds)
+      if (z > o.zb + 1e-9 && z <= o.zt + 1e-9) return mapz(o.name, z);
+    return z;
+  };
+  const mv = p => {
+    if (!Array.isArray(p) || p.length < 3) return;
+    const k = pk(p);
+    p[2] = jz.has(k) ? jz.get(k) : byElev(+p[2]);
+  };
+  for (const l of model.links || []) { mv(l.pi); mv(l.pj); }
+  for (const k of ["supports", "spring_supports", "nodal_masses", "joint_diaphragms",
+                   "joint_panel_zones", "joint_towers"])
+    for (const r of model[k] || []) mv(r.point);
+  for (const pat of Object.values(model.patterns || {}))
+    for (const k of ["nodal_loads", "ground_displacements", "joint_temperatures"])
+      for (const r of pat[k] || []) mv(r.point);
+  for (const g of Object.values(model.groups || {})) for (const p of g.points || []) mv(p);
+  for (const td of model.tendons || []) for (const p of td.points || []) mv(p);
+  for (const tc of Object.values(model.th_cases || {}))
+    for (const p of (tc && tc.output_requests && tc.output_requests.joints) || []) mv(p);
+  for (const key of ["steady_state_cases", "psd_cases"])
+    for (const fc of Object.values(model[key] || {})) for (const p of (fc && fc.output_points) || []) mv(p);
+  for (const key of ["pushover_cases", "nonlinear_static_cases"])
+    for (const pc of Object.values(model[key] || {})) if (pc && pc.control_point) mv(pc.control_point);
 }
 
 export function setStoryHeight(model, name, h) {
