@@ -9157,3 +9157,170 @@ Report shape:
   - Every fix, and the whole pipeline, is idempotent. Clean models
     (quick building, slab on columns, fixed beam) are unchanged
     byte-for-byte.
+
+## Mesh sensitivity study and accuracy advisor
+
+Two analysis-accuracy tools. Neither one changes the server's current
+model or a saved model file. Both are new modules:
+`skyframe/core/mesh_study.py`, `skyframe/core/accuracy_advisor.py`, and
+the HTTP layer `skyframe/api/accuracy_api.py` (registered by
+`create_app` with one line). No model field was added, so every existing
+result and `to_dict` is byte-identical (results-JSON SHA-256 of the
+quick building and of an SS plate checked before and after).
+
+### POST /api/analyze/mesh_study
+
+    {"levels": [1, 2, 4],          # optional; ints in [1, 16], 2..6 distinct
+     "cases": ["DEAD", "MODAL"],   # optional; default below
+     "quantities": ["roof_disp", "periods", "base_reactions",
+                    "max_shell_moment", "max_frame_moment"],  # optional; all
+     "tolerance_pct": 5.0,         # optional; (0, 100]
+     "max_elements": 20000,        # optional; finest-level cap
+     "model": {...}}               # optional; default the current model
+
+* Default `cases`: every static case whose `effective_geometric` is
+  `"linear"`, plus `MODAL` when `num_modes > 0`. Cases listed in
+  `cases_not_run` are left out. An explicit P-Delta or large-displacement
+  case is a 400 error.
+* Errors (400 `{"error"}`): bad levels, unknown case, `MODAL` with
+  `num_modes == 0`, unknown quantity, nothing to study, or more than
+  `max_elements` shell elements plus frame segments at the finest level.
+* Each level runs on a refined DEEP COPY through the normal engine:
+  `OpenSeesEngine(copy).run_static(case)` and
+  `run_modal(min(num_modes, 3))`. No separate solver is involved.
+  - Level 1 is the model as defined. Its values equal a normal run
+    exactly (tested).
+  - 4-corner structured shells: `mesh_divisions = {"n1": f*nx, "n2":
+    f*ny}`, where `(nx, ny)` are the level-1 divisions. The refinement is
+    strictly nested.
+  - Polygon-mesher shells (3 or 5+ corners, or `floor_mesh` set):
+    `mesh_size`, `floor_mesh.max_size` and `mesh_divisions.max_size` are
+    divided by `f`; `mesh_divisions.n1/n2` are multiplied by `f`.
+  - Membrane-behaviour slabs are never meshed, so they are left alone.
+  - Frames: the member's effective auto mesh (its own dict, else the
+    model default, else all off) is copied onto the member with
+    `min_segments = f * (min_segments or 1)` and `max_length / f`.
+    Axial-only (Truss) members are skipped.
+
+Response:
+
+    {"levels": [1, 2, 4], "cases": [...], "quantities": [...],
+     "tolerance_pct": 5.0,
+     "mesh": [{"level", "n_nodes", "n_shell_elements",
+               "n_frame_segments", "elapsed_s"}, ...],
+     "rows": [{"case", "quantity", "key", "label",
+               "dim": "length"|"time"|"force"|"moment"|"moment_per_length",
+               "values": [per level],
+               "rel_change_pct": [null, %, ...],   # (v_k - v_k-1)/|v_k|
+               "richardson": float|null, "order": float|null,
+               "order_assumed": bool,
+               "est_error_pct": float|null, "converged": bool,
+               "verdict": "converged within 0.19%"
+                          | "not converged (est. error 7.1% > 5%)",
+               "point": [x, y, z]}],               # roof_disp rows only
+     "summary": {"n_rows", "n_converged", "all_converged",
+                 "max_est_error_pct"},
+     "warnings": [...]}
+
+Units are SI: m, s, kN, kN-m, kN-m/m. `dim` tells the UI which unit
+conversion to apply.
+
+Row keys:
+
+| quantity | key(s) | value |
+|---|---|---|
+| `roof_disp` | `roof_disp:0/1/2` (UX/UY/UZ) | Signed displacement at the roof point. At level 1 the code picks the roof node (highest structural node z) and the component with the largest magnitude, then reports that component at the same point on every level (nearest node if a non-nested mesh lacks it). |
+| `periods` | `T1`..`T3` | MODAL periods. |
+| `base_reactions` | `base:FX`..`base:MZ` | Base totals. Only components above 1e-6 of the largest force (or moment) at level 1 are reported. |
+| `max_shell_moment` | `max_shell_moment` | Max abs Mxx or Myy over all gauss-averaged shell resultants. |
+| `max_frame_moment` | `max_frame_moment` | Max abs M2 or M3 over all frame stations. |
+
+Richardson extrapolation (`richardson(levels, values)`):
+
+* The mesh size is `h = 1/level`.
+* With 3 or more levels, the observed order `p` comes from the last
+  three levels by bisection of
+  `(f1-f2)/(f2-f3) = (h1^p - h2^p)/(h2^p - h3^p)`. This handles unequal
+  ratios such as 1/2/3.
+* With only 2 levels, or a non-monotone sequence, or `p` outside
+  [0.5, 6], the code uses `p = 2` instead (`order_assumed: true`).
+* The estimate is `f_n + (f_n - f_n-1)/((h_n-1/h_n)^p - 1)`. A flat
+  sequence returns `f_n`.
+* `est_error_pct = |f_n - est| / |est| * 100`.
+* `converged` is `est_error_pct <= tolerance_pct`.
+* In the verdict, `X` is rounded UP to 2 significant digits. Values
+  below 0.005 % are shown as `<0.01%`.
+* The fit is exact on `f = C + A h^p` (tested for p = 1, 1.5 and 2, and
+  for 1/2/4 and 1/2/3 levels).
+
+Validation (`tests/test_mesh_study_advisor.py`):
+
+* Hard SS square plate: a = 4, t = 0.05, nu = 0.3, q = 10, ShellMITC4.
+  Edges use vertical line-spring penalties, so the support follows every
+  mesh level. Levels 1/2/4 give a 4/8/16 mesh.
+  - Centre deflection: w/w_ex = 0.9790, 0.9974, 1.0024, rising
+    monotonically. Richardson gives 1.0043 (p = 1.87), against Timoshenko
+    w = 0.00406 qa^4/D. The 0.4 % excess is Mindlin shear at a/t = 80.
+  - Max moment: 6.52, 7.39, 7.60. Richardson gives 7.678, against
+    0.0479 qa^2 = 7.664, an error of 0.19 %.
+  - Fundamental period (vertical self mass): Richardson is within
+    0.2 % of the Navier T11.
+  - Base FZ = qa^2 on every level.
+* Cantilever wall: 2 x 6 m, t = 0.2, nu = 0, rigid top diaphragm, top
+  shear 100 kN.
+  - Tip deflection: 1.968e-3, 2.207e-3, 2.278e-3, rising monotonically
+    from below. Richardson gives 2.3082e-3 (p = 1.75), against
+    PH^3/3EI + PH/(5/6 GA) = 2.304e-3, an error of 0.18 %.
+* An elastic frame-only model is mesh independent: every row is flat and
+  converged.
+* The saved model file and `GET /api/model` stay byte-identical after
+  the study runs.
+
+### GET | POST /api/accuracy_advice
+
+* `GET` checks the current model.
+* `POST` takes `{"model"?: {...}, "thresholds"?: {...}}`. A body model
+  is loaded leniently, the same way Check Model does it.
+* The advisor is static: it runs the mesher only and never solves. It
+  never raises on model defects. An unknown or non-positive threshold
+  returns 400.
+
+Response:
+
+    {"advice": [{"severity": "warning"|"info", "code", "title",
+                 "message",        # what was found (counts, worst value)
+                 "explanation",    # why it affects accuracy
+                 "fix",            # suggested remedy
+                 "count",          # objects affected
+                 "objects": [uid],                       # <= 50
+                 "refs": [{"type": "member"|"shell", "uid"}],
+                 "details": [{"uid", ...metric}]}],      # <= 50
+     "summary": {"warnings", "info", "by_code": {code: count}, "ok",
+                 "n_shells", "n_members"},
+     "thresholds": {"aspect_max": 4, "warp_max": 0.01,
+                    "min_elements_per_span": 4, "thick_ratio": 0.1,
+                    "thin_ratio": 0.02, "opening_ratio": 0.25}}
+
+There is one advice item per code. Warnings sort before info.
+
+| code | severity | trigger | details |
+|---|---|---|---|
+| `SHELL_ASPECT_RATIO` | warning | Meshed element with longest/shortest side > `aspect_max`. | `max_aspect`, `n_elements` |
+| `SHELL_WARPED` | warning | 4-node element warp > `warp_max`. Warp = max corner distance from the mean plane (normal = diagonal cross product) / sqrt(area). | `max_warp`, `n_elements` |
+| `SHELL_MESH_COARSE` | warning | Shortest in-plane extent / largest element side < `min_elements_per_span`. | `span`, `element_size`, `elements_across` |
+| `MEMBRANE_SLAB_BENDING` | warning | (a) Membrane-behaviour slab with an edge less than 99 % covered by collinear beams. (b) Meshed shell of `shell_type` membrane carrying out-of-plane load: slab area loads, self-weight or a load set; a wall with `wind_cp`. | `reason`, `edges` |
+| `PLATE_THIN_ON_THICK` | warning | `shell_thin` or `plate_thin` with t/span > `thick_ratio`. | `shell_type`, `t_over_span` |
+| `PLATE_THICK_ON_THIN` | info | `shell_thick` or `plate_thick` with t/span < `thin_ratio`. The legacy `shell` type is never flagged. | `shell_type`, `t_over_span` |
+| `RIGID_DIAPHRAGM_OPENINGS` | warning | Slab whose opening area / gross area ≥ `opening_ratio`, under a rigid diaphragm. The diaphragm comes from the named diaphragm type when assigned, else `effective_diaphragm(story)`. | `opening_ratio` |
+| `CRACKED_MODIFIERS_MISSING` | warning | Concrete frame section with `mod_I33 == mod_I22 == 1`, or concrete shell section with `mod == m11 == m22 == m12 == 1`. Concrete means `material_type == "concrete"` and E < 60 GPa. | `section` / `shell_section` |
+| `MASS_SOURCE_MISSING` | warning | A dynamic analysis is requested (MODAL with `num_modes > 0` and not switched off, or any RS/TH case not switched off) and total mass is 0. Total mass covers story masses from the mass source, nodal masses, additional mass, and element self mass in `element_self_mass` mode. | (no objects) |
+| `FRAME_POINT_LOAD_NO_AUTOMESH` | warning | Member (not axial-only) with no effective auto mesh, a point or moment `MemberLoad` at 0 < a < 1, and attached to a meshed shell (an end on a shell mesh node, or split by the shell mesh). | `load_positions`, `shell_joints_at_ends`, `analysis_segments` |
+
+### UI
+
+* Analyze > Mesh Sensitivity Study… opens a dialog. It sets levels,
+  cases, quantities and tolerance, then shows a results table and a
+  normalised convergence chart.
+* Model > Accuracy Advisor… opens a panel listing the advice. Clicking an
+  item selects its `refs`.
+* Both work in `?mock=1` (`js/mock_accuracy.js`).

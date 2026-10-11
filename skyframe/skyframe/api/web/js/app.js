@@ -68,6 +68,9 @@ import { initUserHinges as uhInitUserHinges } from "./uhdlg.js";
 import { mockValidateUserHinges as uhMockValidate } from "./mock_userhinge.js";
 // PT tendons + hyperstatic case — draw / profile / properties / results (aliased imports)
 import { initTendons as ptInitTendons } from "./tendons.js";
+// Mesh Sensitivity Study + Accuracy Advisor (js/accuracy.js; aliased import)
+import { initAccuracy as accInitAccuracy } from "./accuracy.js";
+import { initUx as uxInitUx } from "./ux.js";   // UX pass: palette · toolbar · shortcuts · dialog chrome · start screen
 import { mockValidateTendons as ptMockValidate } from "./mock_tendons.js";
 // Plot functions / story response plots / 3D force diagrams (Display menu)
 import { initPlotFn as pfInitPlotFn } from "./plotfn.js";
@@ -8540,6 +8543,8 @@ async function boot() {
   try { c9InstallTowers(window.__sky); } catch (err) { console.error("towers init failed", err); }   // C9 Define > Towers (js/towers.js)
 
   try { rpInitRepair(window.__sky); } catch (err) { console.error("model repair init failed", err); }   // Check Model › Fix… (js/repairdlg.js)
+
+  try { accInitAccuracy(window.__sky); } catch (err) { console.error("accuracy tools init failed", err); }   // Analyze > Mesh Sensitivity Study · Model > Accuracy Advisor (js/accuracy.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
 }
 

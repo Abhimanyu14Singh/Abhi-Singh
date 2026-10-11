@@ -2291,6 +2291,9 @@ def create_app() -> Flask:
     # Interactive Database Editing (model tables; skyframe.api.modeltables_api)
     from skyframe.api.modeltables_api import register as _mt_register
     _mt_register(app, _state)
+    # Mesh sensitivity study + accuracy advisor (skyframe.api.accuracy_api)
+    from skyframe.api.accuracy_api import register as _acc_register
+    _acc_register(app, _state)
 
     return app
 
