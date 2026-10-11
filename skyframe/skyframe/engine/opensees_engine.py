@@ -184,6 +184,10 @@ from skyframe.core import springprops as _sprp     # B9/B11 named springs
 from skyframe.engine import hysteresis as _hyst    # B9/B11 builders
 from skyframe.engine import hinge_ties as _hinge_ties  # sprung hinge bases
 from skyframe.engine import link_rayleigh as _lrl  # Rayleigh on links/springs
+
+from skyframe.engine import solver_policy as _slv   # solver per problem size
+from skyframe.core import mesh_cache as _mesh_cache  # cross-run mesh cache
+from skyframe.engine import convergence as _cvg     # nonlinear fallback ladder
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
                                  FP_DEFAULT_KINIT, G_ACCEL,
                                  ISOLATOR_DEFAULT_KV, TFP_DEFAULT_MINFV,
@@ -249,6 +253,12 @@ PUSHOVER_STEP_CAP = 2000
 # run() with a results warning (run_buckling() itself is never capped).
 BUCKLING_CASE_CAP = 25
 
+# Newton convergence tests of the nonlinear static / pushover setups (the
+# base tests of the shared convergence strategy, engine/convergence.py)
+_NL_STATIC_TEST = ("NormDispIncr", 1.0e-8, 20)
+_PUSHOVER_TEST = ("NormDispIncr", 1.0e-6, 50)
+_TH_TEST = ("NormDispIncr", 1.0e-8, 25)
+
 # v0.25 corotational static cases: each stage's load is ramped in this many
 # equal LoadControl increments (a single Newton load step to a finitely
 # rotated state frequently diverges; 10 increments converge the elastica
@@ -282,7 +292,12 @@ TD_CHI = 0.8
 # (the pre-v0.26 rebuild-per-case behavior, kept for A/B identity checks).
 # ``owner`` is a weakref so the token never keeps a dead engine (and its
 # result caches) alive.
-_REUSE: Dict[str, object] = {"owner": None, "loaded": False}
+_REUSE: Dict[str, object] = {"owner": None, "loaded": False,
+                             "factored": None}
+# ``factored`` (solver policy, engine/solver_policy.py): weakref to the
+# assembly whose ``algorithm Linear -factorOnce`` analysis is live on the
+# reused elastic domain (sparse systems only); cleared by every build and
+# every explicit analysis setup.
 
 
 def _reuse_owner():
@@ -294,6 +309,20 @@ def _reuse_owner():
 def _slow_path() -> bool:
     """True when SKYFRAME_SLOW_PATH=1 forces the rebuild-per-case path."""
     return os.environ.get("SKYFRAME_SLOW_PATH") == "1"
+
+
+def _mcd_units(engine, modal):
+    """Unit modal responses stored by the condensed modal solve for THIS
+    ModalResults object, else None (engine/modal_condensed.py)."""
+    from . import modal_condensed as _mcd
+    return _mcd.unit_responses(engine, modal)
+
+
+def _mcd_unit_rz(engine, story: str, load_vec):
+    """Memoized CR unit-load master rotation (engine/modal_condensed.py),
+    else None."""
+    from . import modal_condensed as _mcd
+    return _mcd.unit_rz(engine, story, load_vec)
 
 
 def aci209_creep(phi_inf: float, t: float) -> float:
@@ -1137,6 +1166,22 @@ def _modal_combine(values: Sequence[float], rho: np.ndarray) -> float:
     return float(math.sqrt(max(float(v @ rho @ v), 0.0)))
 
 
+def _combine_rows(per_mode: List[List[float]], rho: np.ndarray
+                  ) -> List[float]:
+    """:func:`_modal_combine` of every quantity at once: ``per_mode[j]`` is
+    mode j's flat value list.  The per-quantity arithmetic is UNCHANGED
+    (each quantity's mode vector is a fresh contiguous float64 array and
+    goes through the same ``v @ rho @ v``), so every value is bit-identical
+    to the one-call-per-quantity loop; only the Python list building per
+    quantity (n_modes dict/list lookups) is gone."""
+    if not per_mode or not per_mode[0]:
+        return []
+    mat = np.array(per_mode, dtype=float).T.copy()     # (quantities, modes)
+    sqrt = math.sqrt
+    return [float(sqrt(max(float(r @ rho @ r), 0.0)))
+            for r in (row.copy() for row in mat)]
+
+
 # --------------------------------------------------------------------------- #
 # assembled-domain bookkeeping
 # --------------------------------------------------------------------------- #
@@ -1234,6 +1279,9 @@ class _Assembly:
     #   B10 user hinges (engine/user_hinges.py): one entry per zeroLength
     #   hinge {uid, end, relative_distance, property, prop, env, ele, dir,
     #   material, orig, dup}
+    linear_system: str = ""
+    #   solver policy (engine/solver_policy.py): the OpenSees ``system``
+    #   chosen for this build ("" = legacy BandGeneral)
 
     def free_massed_dofs(self) -> int:
         """Number of massed (node, dof) pairs that are NOT restrained.
@@ -1544,6 +1592,13 @@ class AnalysisResults:
     #   curved frames stitched per drawn member (engine/curved.py; emitted
     #   only when the model has curved members)
 
+    convergence: Dict[str, dict] = field(default_factory=dict)
+    #   nonlinear convergence-strategy reports per case (engine/
+    #   convergence.py; emitted only in the opt-in "robust" mode)
+    model_size: Dict[str, object] = field(default_factory=dict)
+    #   model-size report (engine/model_size.py; emitted only when a size
+    #   warning fired)
+
     def to_dict(self) -> dict:
         d = {
             "model_name": self.model_name,
@@ -1606,6 +1661,12 @@ class AnalysisResults:
             d["hyperstatic"] = self.hyperstatic
         if self.curved_frames:           # curved frames (only when used)
             d["curved_frames"] = self.curved_frames
+
+        if self.convergence:             # robust convergence mode only
+            d["convergence"] = {n: dict(r) for n, r in
+                                self.convergence.items()}
+        if self.model_size:              # only when a size warning fired
+            d["model_size"] = dict(self.model_size)
         return d
 
 
@@ -1711,6 +1772,34 @@ class OpenSeesEngine:
         self._axes_cache: Dict[str, tuple] = {}
         self._effp_cache: Dict[str, Tuple[float, float, float, float]] = {}
 
+    # ------------------------------------------------ uid lookups (memo)
+    def _uid_lookups(self):
+        """Memoized ``model._uid_maps()`` (the model is frozen once the
+        engine is constructed): O(1) uid -> member / shell lookups with
+        the exact ``model._member`` / ``model._shell`` semantics."""
+        lk = getattr(self, "_uid_lk", None)
+        if lk is None:
+            lk = self._uid_lk = self.model._uid_maps()
+        return lk
+
+    def _station_xs(self, m: FrameMember, segs) -> List[float]:
+        """Memoized :func:`skyframe.core.framemesh.station_xs` (pure
+        geometry of a frozen model + the engine's fixed mesh); a fresh
+        list copy per call (callers own their result lists)."""
+        memo = getattr(self, "_xs_memo", None)
+        if memo is None:
+            memo = self._xs_memo = {}
+        xs = memo.get(m.uid)
+        if xs is None:
+            xs = memo[m.uid] = list(_fm.station_xs(self.model, m, segs))
+        return list(xs)
+
+    def _mlookup(self, uid: str):
+        return self._uid_lookups()[0](uid)
+
+    def _slookup(self, uid: str):
+        return self._uid_lookups()[1](uid)
+
     # ------------------------------------------------------------------ API
     def run(self, load_participation: bool = False) -> AnalysisResults:
         """Run every load case, combo, RS case, TH case, and modal analysis.
@@ -1746,6 +1835,7 @@ class OpenSeesEngine:
                 notes.append(f"case {name!r} failed: {exc}")
                 _REUSE["owner"] = None
                 _REUSE["loaded"] = False
+                _REUSE["factored"] = None
                 return None
             finally:
                 self.case_times[name] = time.perf_counter() - t0
@@ -1980,6 +2070,24 @@ class OpenSeesEngine:
                 res = attempt(name, lambda n=name: self.run_psd(n))
                 if res is not None:
                     psd[name] = res
+
+        # model-size safety (engine/model_size.py): warn, never fail; the
+        # block is emitted only when a warning fires (byte-identical below
+        # every threshold)
+        from . import model_size as _msz
+        size_rep: Dict[str, object] = {}
+        size_warn: List[str] = list(getattr(self, "_solver_notes", []))
+        if _msz.enabled(model):
+            rep = _msz.assess(self, asm)
+            ws = _msz.warnings_for(rep)
+            if ws:
+                size_rep = dict(rep, warnings=ws)
+                size_warn.extend(ws)
+                for w in ws:
+                    _log.warning("model size: %s", w)
+        if size_warn:
+            swarn = "; ".join(size_warn)
+            warning = f"{warning}; {swarn}" if warning else swarn
         res = AnalysisResults(
             model_name=model.name,
             nodes=dict(asm.node_coords),
@@ -2016,6 +2124,8 @@ class OpenSeesEngine:
 
             tendons=(_tdn.report(self) if _tdn.has_tendons(model) else {}),
             hyperstatic=hyperstatic,
+            convergence=_cvg.reports(self),
+            model_size=size_rep,
         )
         from . import curved as _curved     # curved frames (no-op if none)
         _curved.attach(self, res)
@@ -2173,7 +2283,7 @@ class OpenSeesEngine:
                 off = compute_panel_zone_offsets(
                     self.model, skip=_pzj.override_keys(self.model))
                 if self._mesh is None:
-                    self._mesh = mesh_model(self.model)
+                    self._mesh = _mesh_cache.cached_mesh(self.model)
                 for m in self.model.members:
                     user = (m.rigid_offset_i, m.rigid_offset_j)
                     if (off[m.uid] != user
@@ -2227,7 +2337,7 @@ class OpenSeesEngine:
                 from skyframe.core.insertion import compute_auto_end_offsets
                 cache = compute_auto_end_offsets(self.model)
                 if self._mesh is None:
-                    self._mesh = mesh_model(self.model)
+                    self._mesh = _mesh_cache.cached_mesh(self.model)
                 for uid, off in list(cache.items()):
                     m = self._members_by_uid[uid]
                     user = (m.rigid_offset_i, m.rigid_offset_j)
@@ -2340,9 +2450,16 @@ class OpenSeesEngine:
                 or self._nonlinear_static_links_present()
                 or self._compression_only_springs_present()):
             self._setup_nonlinear_analysis(asm)
+            # convergence strategy (legacy default: the single analyze)
+            ok = _cvg.static_step(self.model, label=case_name,
+                                  legacy_retry=False,
+                                  base_test=_NL_STATIC_TEST,
+                                  integrator=("LoadControl", 1.0),
+                                  engine=self)
         else:
-            self._setup_analysis(asm)
-        if ops.analyze(1) != 0:
+            self._setup_linear_reused(asm)     # factor-once on sparse
+            ok = ops.analyze(1)
+        if ok != 0:
             raise RuntimeError(f"Static analysis failed for case {case_name!r}")
 
         node_disp = {t: list(ops.nodeDisp(t)) for t in asm.node_coords}
@@ -2386,15 +2503,28 @@ class OpenSeesEngine:
         if n in self._modal_cache:
             return self._modal_cache[n]
 
-        self._setup_analysis(asm)
-        lambdas = self._solve_eigen(n, n_massed, asm)
+        # large (sparse-policy) models: exact static condensation onto the
+        # massed DOFs (engine/modal_condensed.py); else the legacy eigen
+        from . import modal_condensed as _mcd
+        cond = None
+        if _mcd.enabled(model) and _mcd.applicable(self, asm, n):
+            cond = _mcd.solve(self, asm, n)
+            if cond is None:
+                asm = self._build()          # fresh domain for the eigen
+        if cond is not None:
+            lambdas, shapes = cond[0], cond[1]
+        else:
+            self._setup_analysis(asm)
+            lambdas = self._solve_eigen(n, n_massed, asm)
+            shapes = {mode: {t: list(ops.nodeEigenvector(t, mode))
+                             for t in asm.node_coords}
+                      for mode in range(1, n + 1)}
         periods = [2.0 * math.pi / math.sqrt(lam) for lam in lambdas]
         frequencies = [1.0 / t for t in periods]
-        shapes = {mode: {t: list(ops.nodeEigenvector(t, mode))
-                         for t in asm.node_coords}
-                  for mode in range(1, n + 1)}
         participation = self._participation(asm, periods, shapes)
         result = ModalResults(periods, frequencies, participation, shapes)
+        if cond is not None:
+            _mcd.attach_units(self, result, cond)
         self._modal_cache[n] = result
         return result
 
@@ -2523,6 +2653,7 @@ class OpenSeesEngine:
         # was tracked as reusable is gone (see _REUSE / _elastic_domain).
         _REUSE["owner"] = None
         _REUSE["loaded"] = False
+        _REUSE["factored"] = None
         transf_name = (transf if transf is not None
                        else ("PDelta" if pdelta else "Linear"))
         # model-wide P-Delta options (engine/pdelta.py): False for "none"
@@ -2530,7 +2661,7 @@ class OpenSeesEngine:
         coro_release_fallback: List[str] = []
         timo_fallback: Dict[str, List[str]] = {}   # reason -> member uids
         if self._mesh is None:
-            self._mesh = mesh_model(model)
+            self._mesh = _mesh_cache.cached_mesh(model)
         mesh = self._mesh
 
         ops.wipe()
@@ -3747,6 +3878,12 @@ class OpenSeesEngine:
                 f"{sorted(set(uids))}", UserWarning)
         if _pdx:                    # model-wide P-Delta geometric stiffness
             _pdelta.inject(self, asm)
+        # solver policy: BandGeneral below the size threshold (legacy,
+        # bit-identical), a sparse direct solver above it
+        asm.linear_system, _slv_note = _slv.choose(model, asm)
+        if _slv_note:
+            self._solver_notes = sorted(
+                set(getattr(self, "_solver_notes", [])) | {_slv_note})
         if hinge_case is None:
             self._asm = asm
         return asm
@@ -3976,14 +4113,14 @@ class OpenSeesEngine:
                     continue
                 if inc_pat:
                     for udl in pat.member_udls:
-                        m = model._member(udl.member_uid)
+                        m = self._mlookup(udl.member_uid)
                         if (m is not None and m.story == s.name
                                 and m.kind != "column"):
                             line(m, fac * udl.w, fac * udl.w, 0.0, 1.0)
                     for ml in pat.member_loads:
                         if ml.direction != "gravity":
                             continue
-                        m = model._member(ml.member_uid)
+                        m = self._mlookup(ml.member_uid)
                         if (m is None or m.story != s.name
                                 or m.kind == "column"):
                             continue
@@ -3996,7 +4133,7 @@ class OpenSeesEngine:
                         else:
                             line(m, fac * ml.w, fac * ml.w2, ml.a, ml.b)
                     for al in pat.area_loads:
-                        region = model._shell(al.region_uid)
+                        region = self._slookup(al.region_uid)
                         if (region is None
                                 or not model._region_on_story(region, s)):
                             continue
@@ -4954,7 +5091,7 @@ class OpenSeesEngine:
         ``al`` (optional AreaLoad): a non-default direction / projected /
         joint-pattern load is distributed by consistent integration
         (:func:`skyframe.core.loads_ext.area_load_nodal_forces`)."""
-        region = self.model._shell(region_uid)
+        region = self._slookup(region_uid)
         if region is None:
             raise ValueError(f"Area load references unknown shell region "
                              f"{region_uid!r}")
@@ -5029,8 +5166,7 @@ class OpenSeesEngine:
                 N = float(ops.eleResponse(etag, "basicForce")[0])
                 member_forces[m.uid] = [-N, 0.0, 0.0, 0.0, 0.0, 0.0,
                                         N, 0.0, 0.0, 0.0, 0.0, 0.0]
-                xs = _fm.station_xs(self.model, m,
-                                    asm.mesh.segments[m.uid])
+                xs = self._station_xs(m, asm.mesh.segments[m.uid])
                 zeros = [0.0] * len(xs)
                 member_stations[m.uid] = {
                     "x": xs, "N": [N] * len(xs), "V2": list(zeros),
@@ -5056,7 +5192,7 @@ class OpenSeesEngine:
             member_forces[m.uid] = corrected[0][:6] + corrected[last][6:]
 
             # output stations (core.framemesh; default = the fixed 11)
-            xs = _fm.station_xs(self.model, m, segs)
+            xs = self._station_xs(m, segs)
             cols: Dict[str, List[float]] = {k: [] for k in
                                             ("N", "V2", "V3", "T", "M2", "M3")}
             # v0.26: unsplit members (the common case) always land in their
@@ -5566,14 +5702,38 @@ class OpenSeesEngine:
 
     # ------------------------------------------------------------- analysis
     @staticmethod
-    def _setup_analysis(asm: _Assembly) -> None:
+    def _setup_analysis(asm: _Assembly, factor_once: bool = False) -> None:
+        _REUSE["factored"] = None
         ops.wipeAnalysis()
         ops.constraints("Transformation" if asm.use_transformation else "Plain")
-        ops.numberer("RCM")
-        ops.system("BandGeneral")
-        ops.algorithm("Linear")
+        _slv.apply_system(asm)           # RCM + BandGeneral | sparse (policy)
+        if factor_once:
+            ops.algorithm("Linear", "-factorOnce")
+        else:
+            ops.algorithm("Linear")
         ops.integrator("LoadControl", 1.0)
         ops.analysis("Static")
+
+    def _setup_linear_reused(self, asm: _Assembly) -> None:
+        """Linear analysis for the reused-elastic-domain multi-RHS flows
+        (linear static cases, RS modal statics, CR unit loads).
+
+        With a sparse system that supports it the stiffness is factored ONCE
+        (``Linear -factorOnce``) and the analysis is kept alive across the
+        following solves on the same reused domain — every further load
+        case is a forward/back substitution (bit-identical to a fresh
+        factorization).  Otherwise (BandGeneral, slow path, a domain this
+        engine does not own) exactly the legacy :meth:`_setup_analysis`.
+        """
+        if (_slow_path() or not _slv.factor_once_ok(asm)
+                or _reuse_owner() is not self):
+            self._setup_analysis(asm)
+            return
+        ref = _REUSE.get("factored")
+        if ref is not None and ref() is asm:
+            return                       # factored analysis still live
+        self._setup_analysis(asm, factor_once=True)
+        _REUSE["factored"] = weakref.ref(asm)
 
     @staticmethod
     def _add_spring_reactions(asm: _Assembly,
@@ -5728,7 +5888,7 @@ class OpenSeesEngine:
                          * ssec.weight)
                     total += scale * self._area_load_fz(asm, region, q)
             for al in pat.area_loads:
-                region = model._shell(al.region_uid)
+                region = self._slookup(al.region_uid)
                 if region is not None:
                     total += scale * self._area_load_fz(asm, region, al.q,
                                                         al)
@@ -5857,6 +6017,9 @@ class OpenSeesEngine:
 
     def _master_rz(self, story: str, load_vec: Tuple[float, ...]) -> float:
         """Diaphragm-master rz under a single unit load at that master."""
+        hit = _mcd_unit_rz(self, story, load_vec)   # condensed-modal memo
+        if hit is not None:
+            return hit
         asm = self._elastic_domain()        # v0.26: no rebuild per unit load
         mtag = asm.masters[story]
         self._seg_span_loads = {}
@@ -5865,7 +6028,7 @@ class OpenSeesEngine:
         ops.pattern("Plain", 1, 1)
         _REUSE["loaded"] = True
         ops.load(mtag, *load_vec)
-        self._setup_analysis(asm)
+        self._setup_linear_reused(asm)                  # factor-once
         if ops.analyze(1) != 0:                          # pragma: no cover
             raise RuntimeError(f"CR unit-load solve failed for story "
                                f"{story!r}")
@@ -5896,14 +6059,14 @@ class OpenSeesEngine:
                 if pat is None:
                     continue
                 for udl in pat.member_udls:
-                    m = model._member(udl.member_uid)
+                    m = self._mlookup(udl.member_uid)
                     if m is not None and m.story == s.name and \
                             m.kind != "column":
                         add(fac * udl.w * m.length, *mid(m))
                 for ml in pat.member_loads:
                     if ml.direction != "gravity":
                         continue
-                    m = model._member(ml.member_uid)
+                    m = self._mlookup(ml.member_uid)
                     if m is None or m.story != s.name or m.kind == "column":
                         continue
                     if ml.kind == "point":
@@ -5915,7 +6078,7 @@ class OpenSeesEngine:
                             * m.length
                     add(w * _proj_f(m, ml), *mid(m))  # v1.16 projected
                 for al in pat.area_loads:
-                    region = model._shell(al.region_uid)
+                    region = self._slookup(al.region_uid)
                     if region is None or \
                             not model._region_on_story(region, s):
                         continue
@@ -6231,7 +6394,9 @@ class OpenSeesEngine:
         return self._run_static_geom(case, "pdelta")
 
     @staticmethod
-    def _analyze_geom_stage(geometric: str, err: str) -> None:
+    def _analyze_geom_stage(geometric: str, err: str, model=None,
+                            engine=None, label: str = "",
+                            base_test=None) -> None:
         """Run one static stage of a geometrically nonlinear case.
 
         P-Delta keeps the exact pre-v0.25 single Newton load step
@@ -6243,19 +6408,27 @@ class OpenSeesEngine:
         Linear time series, so the final state is the full stage load in
         both branches.
         """
+        # shared convergence strategy (engine/convergence.py): the legacy
+        # default mode is op-for-op the historical logic below
+        bt = base_test or _NL_STATIC_TEST
         if geometric != "corotational":
-            if ops.analyze(1) != 0:
+            st = _cvg.Strategy(model, base_test=bt, legacy_retry=False)
+            ok = st.static(("LoadControl", 1.0))
+            if engine is not None:
+                _cvg.file_report(engine, label, st)
+            if ok != 0:
                 raise RuntimeError(err)
             return
-        ops.integrator("LoadControl", 1.0 / CORO_INCREMENTS)
-        for _ in range(CORO_INCREMENTS):
-            ok = ops.analyze(1)
-            if ok != 0:
-                ops.algorithm("NewtonLineSearch")
-                ok = ops.analyze(1)
-                ops.algorithm("Newton")
-            if ok != 0:
-                raise RuntimeError(err)
+        inc = ("LoadControl", 1.0 / CORO_INCREMENTS)
+        ops.integrator(*inc)
+        st = _cvg.Strategy(model, base_test=bt, legacy_retry=True)
+        try:
+            for _ in range(CORO_INCREMENTS):
+                if st.static(inc) != 0:
+                    raise RuntimeError(err)
+        finally:
+            if engine is not None:
+                _cvg.file_report(engine, label, st)
 
     def _run_static_geom(self, case: LoadCase,
                          geometric: str) -> CaseResults:
@@ -6299,7 +6472,8 @@ class OpenSeesEngine:
                 geometric,
                 f"{label} analysis failed to converge for case "
                 f"{case.name!r} (gravity stage: patterns "
-                f"{case.pdelta_gravity})")
+                f"{case.pdelta_gravity})",
+                model=model, engine=self, label=case.name)
             ops.loadConst("-time", 0.0)
             snap_disp = {t: list(ops.nodeDisp(t)) for t in asm.node_coords}
             ops.reactions()
@@ -6327,7 +6501,8 @@ class OpenSeesEngine:
             f"{label} analysis failed to converge for case "
             f"{case.name!r}. The load level may exceed the elastic "
             "buckling capacity of the gravity state, or the model may "
-            "be unstable; reduce loads or check supports.")
+            "be unstable; reduce loads or check supports.",
+            model=model, engine=self, label=case.name)
 
         node_disp = {t: [d - s for d, s in
                          zip(ops.nodeDisp(t), snap_disp.get(t, (0.0,) * 6))]
@@ -6356,11 +6531,11 @@ class OpenSeesEngine:
 
     @staticmethod
     def _setup_nonlinear_analysis(asm: _Assembly) -> None:
+        _REUSE["factored"] = None
         ops.wipeAnalysis()
         ops.constraints("Transformation" if asm.use_transformation else "Plain")
-        ops.numberer("RCM")
-        ops.system("BandGeneral")
-        ops.test("NormDispIncr", 1.0e-8, 20)
+        _slv.apply_system(asm)
+        ops.test(*_NL_STATIC_TEST)
         ops.algorithm("Newton")
         ops.integrator("LoadControl", 1.0)
         ops.analysis("Static")
@@ -6378,12 +6553,12 @@ class OpenSeesEngine:
         note at the constraint-tie creation.  The Transformation handler
         therefore always sees a flat constraint graph.)
         """
+        _REUSE["factored"] = None
         ops.wipeAnalysis()
         ops.constraints("Transformation" if asm.use_transformation
                         else "Plain")
-        ops.numberer("RCM")
-        ops.system("BandGeneral")
-        ops.test("NormDispIncr", 1.0e-6, 50)
+        _slv.apply_system(asm)
+        ops.test(*_PUSHOVER_TEST)
         ops.algorithm("Newton")
         if ctrl is None:
             ops.integrator("LoadControl", 1.0)
@@ -6483,7 +6658,9 @@ class OpenSeesEngine:
             # keep the exact single-step path.
             self._analyze_geom_stage(
                 "corotational" if geom_po == "corotational" else "linear",
-                f"Pushover case {name!r}: gravity stage failed to converge")
+                f"Pushover case {name!r}: gravity stage failed to converge",
+                model=model, engine=self, label=name,
+                base_test=_PUSHOVER_TEST)
             ops.loadConst("-time", 0.0)
             d0 = ops.nodeDisp(mon, mdof)
 
@@ -6499,13 +6676,19 @@ class OpenSeesEngine:
             v_ref = plan.v_ref
         if case.control_mode == "load_control":
             _pod.setup_load_control(asm, case.target_load / case.steps)
+            po_integ = ("LoadControl", case.target_load / case.steps)
         else:
             if case.target_disp is not None:
                 du = case.target_disp / case.steps
             else:
                 du = case.target_drift * Hc / case.steps
-            self._setup_pushover_analysis(
-                asm, ctrl=_pod.drive_node(asm, mon), dof=mdof, du=du)
+            drive = _pod.drive_node(asm, mon)
+            self._setup_pushover_analysis(asm, ctrl=drive, dof=mdof, du=du)
+            po_integ = ("DisplacementControl", drive, mdof, du)
+        # shared convergence strategy (legacy default: analyze, then one
+        # NewtonLineSearch retry — the historical per-step logic)
+        po_strat = _cvg.Strategy(model, base_test=_PUSHOVER_TEST,
+                                 legacy_retry=True, label=name)
 
         roof_disp: List[float] = []
         base_shear: List[float] = []
@@ -6522,11 +6705,7 @@ class OpenSeesEngine:
         from skyframe.engine.user_hinges import Recorder as _UHRec
         uh_rec = _UHRec(asm)                         # B10 user hinges
         for k in range(case.steps):
-            ok = ops.analyze(1)
-            if ok != 0:
-                ops.algorithm("NewtonLineSearch")
-                ok = ops.analyze(1)
-                ops.algorithm("Newton")
+            ok = po_strat.static(po_integ)
             if ok != 0:
                 warn_list.append(
                     f"pushover stopped early at step {k}/{case.steps}: "
@@ -6612,6 +6791,7 @@ class OpenSeesEngine:
                 "rot_plastic": hh["rot_plastic"],
                 "state": hh["state"]})
         hinge_detail.extend(uh_rec.detail())              # B10
+        _cvg.file_report(self, name, po_strat)
 
         result = PushoverResults(
             name, roof_disp, base_shear, [u / Hc for u in roof_disp],
@@ -6671,7 +6851,7 @@ class OpenSeesEngine:
                                  f"{ml.member_uid!r}")
             parts[self._stage_of_member(m, sidx)].member_loads.append(ml)
         for al in pat.area_loads:
-            region = model._shell(al.region_uid)
+            region = self._slookup(al.region_uid)
             if region is None:
                 raise ValueError(f"Staged pattern {pat.name!r}: area load "
                                  f"references unknown shell region "
@@ -6726,6 +6906,8 @@ class OpenSeesEngine:
         sub.active_dof = list(getattr(model, "active_dof",         # v1.13
                                       DOF_LABELS))
         sub.num_modes = 0
+        sub.analysis_options = copy.deepcopy(           # solver/convergence
+            getattr(model, "analysis_options", None) or {})
         return sub
 
     # -------------------- v0.25 time-dependent staged helpers (AAEM) ----
@@ -6981,6 +7163,7 @@ class OpenSeesEngine:
                    "mf": {}, "st": {}, "story": {}}
 
             def accumulate(eng: "OpenSeesEngine", res: CaseResults) -> None:
+                _cvg.adopt_child(self, name, eng)   # robust-mode reports
                 asm = eng._asm
                 disp_acc, master_acc = acc["disp"], acc["master"]
                 reac_acc, base_acc = acc["reac"], acc["base"]
@@ -7276,16 +7459,19 @@ class OpenSeesEngine:
             ops.pattern("Plain", 10, 10)
             for pat_name, scale in th.gravity.items():
                 self._apply_pattern(asm, pat_name, scale)
+            _REUSE["factored"] = None
             ops.wipeAnalysis()
             ops.constraints("Transformation" if asm.use_transformation
                             else "Plain")
-            ops.numberer("RCM")
-            ops.system("BandGeneral")
-            ops.test("NormDispIncr", 1.0e-8, 25)
+            _slv.apply_system(asm)
+            ops.test(*_TH_TEST)
             ops.algorithm("Newton")
             ops.integrator("LoadControl", 1.0)
             ops.analysis("Static")
-            if ops.analyze(1) != 0:
+            if _cvg.static_step(model, label=name, legacy_retry=False,
+                                base_test=_TH_TEST,
+                                integrator=("LoadControl", 1.0),
+                                engine=self) != 0:
                 raise RuntimeError(f"TH case {name!r}: gravity stage "
                                    "failed to converge")
             ops.loadConst("-time", 0.0)
@@ -7301,15 +7487,15 @@ class OpenSeesEngine:
         else:
             mc.apply(self, asm)
 
+        _REUSE["factored"] = None
         ops.wipeAnalysis()
         ops.constraints("Transformation" if asm.use_transformation
                         else "Plain")
-        ops.numberer("RCM")
-        ops.system("BandGeneral")
+        _slv.apply_system(asm)
         if tho is not None:
             tho.apply_solution()
         elif use_newton:
-            ops.test("NormDispIncr", 1.0e-8, 25)
+            ops.test(*_TH_TEST)
             ops.algorithm("Newton")
         else:
             ops.algorithm("Linear")
@@ -7344,16 +7530,21 @@ class OpenSeesEngine:
             mc.begin_base(base_tags)
         from skyframe.engine import plotfn as _pfn        # plot functions
         pfr = _pfn.make(self, th, asm, accel, dt, dof, mc)  # None = legacy
+        # shared convergence strategy (legacy default: analyze, then one
+        # NewtonLineSearch retry for Newton runs — the historical logic)
+        th_strat = _cvg.Strategy(model, base_test=_TH_TEST,
+                                 legacy_retry=True, label=name)
+        if tho is not None:
+            tho.strategy = th_strat
         for k in range(n):
             if tho is not None:
                 ok = tho.step(k)
+            elif use_newton:
+                ok = th_strat.transient(dt)
             else:
                 ok = ops.analyze(1, dt)
-            if ok != 0 and use_newton and tho is None:
-                ops.algorithm("NewtonLineSearch")
-                ok = ops.analyze(1, dt)
-                ops.algorithm("Newton")
             if ok != 0:
+                _cvg.file_report(self, name, th_strat)
                 raise RuntimeError(
                     f"Time-history analysis failed at step {k + 1}/{n} "
                     f"for case {name!r}")
@@ -7427,6 +7618,7 @@ class OpenSeesEngine:
             prev_ux, prev_uy = ux_s, uy_s
         peaks = {"story": peaks_story,
                  "base": {"FX": peak(bfx), "FY": peak(bfy)}}
+        _cvg.file_report(self, name, th_strat)
         result = THResults(name, t_out, sux, suy, bfx, bfy, peaks,
                            nonlinear=nonlinear, hinge_rotations=hinge_rot,
                            yielded=sorted(yielded))
@@ -7508,6 +7700,10 @@ class OpenSeesEngine:
 
         omegas: List[float] = []
         per_mode: List[CaseResults] = []
+        # large models (condensed modal path): the unit modal responses
+        # computed with the mode shapes are scaled instead of re-solved
+        # (engine/modal_condensed.py; None = the legacy per-mode solve)
+        unit = _mcd_units(self, modal)
         for i, T in enumerate(modal.periods, start=1):
             omega = 2.0 * math.pi / T
             gamma = modal.participation[i - 1][gamma_key]
@@ -7516,7 +7712,12 @@ class OpenSeesEngine:
             loads = {(t, dof): gamma * sa * m * phi[t][dof - 1]
                      for (t, dof), m in mass_map.items()}
             omegas.append(omega)
-            per_mode.append(self._modal_static(loads))
+            if unit is not None:
+                c = gamma * sa / unit[i]["lam"]
+                per_mode.append(self._modal_static_scaled(asm, unit[i], c,
+                                                          loads))
+            else:
+                per_mode.append(self._modal_static(loads))
 
         from . import modalcombo as _mc            # v1.13 ETABS methods
         if _mc.is_legacy(rs):
@@ -8022,19 +8223,26 @@ class OpenSeesEngine:
         return run_psd(self, name)
 
     def _modal_static(self, loads: Dict[Tuple[int, int], float]) -> CaseResults:
-        """Linear static solve under explicit (node, dof) -> value loads."""
-        asm = self._build()
+        """Linear static solve under explicit (node, dof) -> value loads.
+
+        Solved on the reused elastic domain (one build for all modes of all
+        RS cases instead of one build per mode — the v0.26 reuse, verified
+        bit-identical to a fresh build) with the factor-once analysis on
+        sparse systems.
+        """
+        asm = self._elastic_domain()
         self._seg_span_loads = {}
         self._seg_fef = {}
         ops.timeSeries("Linear", 1)
         ops.pattern("Plain", 1, 1)
+        _REUSE["loaded"] = True
         for (t, dof), v in loads.items():
             if v == 0.0:
                 continue
             vec = [0.0] * 6
             vec[dof - 1] = v
             ops.load(t, *vec)
-        self._setup_analysis(asm)
+        self._setup_linear_reused(asm)
         if ops.analyze(1) != 0:
             raise RuntimeError("Modal static analysis failed")
 
@@ -8046,7 +8254,15 @@ class OpenSeesEngine:
         # deflection recovery is skipped for modal statics (RS results are
         # positive envelopes; deflections are a static-case quantity)
         member_forces, member_stations, _ = self._member_outputs(asm)
+        story = self._modal_story(asm, loads, node_disp)
+        return CaseResults("", node_disp, reactions, base, member_forces,
+                           story, member_stations)
 
+    def _modal_story(self, asm: _Assembly,
+                     loads: Dict[Tuple[int, int], float],
+                     node_disp: Dict[int, List[float]]
+                     ) -> Dict[str, Dict[str, float]]:
+        """Story values of a modal static solve (see _modal_static)."""
         # story values: modal story shear = cumulative applied modal force
         # at & above each story (loads live on massed nodes / masters)
         story: Dict[str, Dict[str, float]] = {}
@@ -8071,6 +8287,23 @@ class OpenSeesEngine:
                              "drift_y": (uy - prev_uy) / h,
                              "shear_x": vx, "shear_y": vy}
             prev_ux, prev_uy = ux, uy
+        return story
+
+    def _modal_static_scaled(self, asm: _Assembly, unit: dict, c: float,
+                             loads: Dict[Tuple[int, int], float]
+                             ) -> CaseResults:
+        """A modal static result from a stored UNIT modal response
+        (engine/modal_condensed.py): the response to ``loads = c x`` the
+        unit modal load is ``c x`` the unit response (linear statics) —
+        no solve.  Story values are recomputed from ``loads`` exactly as
+        :meth:`_modal_story` does."""
+        from . import modal_condensed as _mcd
+        node_disp = _mcd.scaled(unit, "node_disp", c)
+        reactions = _mcd.scaled(unit, "reactions", c)
+        base = self._base_totals(asm, reactions)
+        member_forces = _mcd.scaled(unit, "member_forces", c)
+        member_stations = _mcd.scaled(unit, "member_stations", c)
+        story = self._modal_story(asm, loads, node_disp)
         return CaseResults("", node_disp, reactions, base, member_forces,
                            story, member_stations)
 
@@ -8081,9 +8314,16 @@ class OpenSeesEngine:
 
         def comb_vecs(get) -> dict:
             first = get(parts[0])
-            return {k: [_modal_combine([get(p)[k][i] for p in parts], rho)
-                        for i in range(len(v))]
-                    for k, v in first.items()}
+            keys = list(first)
+            cols = _combine_rows([[x for k in keys for x in get(p)[k]]
+                                  for p in parts], rho)
+            out: Dict[object, List[float]] = {}
+            pos = 0
+            for k in keys:
+                n = len(first[k])
+                out[k] = cols[pos:pos + n]
+                pos += n
+            return out
 
         base = {k: _modal_combine([p.base[k] for p in parts], rho)
                 for k in ("FX", "FY", "FZ", "MX", "MY", "MZ")}
@@ -8091,13 +8331,19 @@ class OpenSeesEngine:
                      for k in s0}
                  for s, s0 in parts[0].story.items()}
         member_stations: Dict[str, Dict[str, List[float]]] = {}
-        for uid, st0 in parts[0].member_stations.items():
+        skeys = ("N", "V2", "V3", "T", "M2", "M3")
+        st_uids = list(parts[0].member_stations)
+        flat = _combine_rows(
+            [[x for uid in st_uids for key in skeys
+              for x in p.member_stations[uid][key]] for p in parts], rho)
+        pos = 0
+        for uid in st_uids:
+            st0 = parts[0].member_stations[uid]
             entry: Dict[str, List[float]] = {"x": list(st0["x"])}
-            for key in ("N", "V2", "V3", "T", "M2", "M3"):
-                entry[key] = [
-                    _modal_combine([p.member_stations[uid][key][i]
-                                    for p in parts], rho)
-                    for i in range(len(st0[key]))]
+            for key in skeys:
+                n = len(st0[key])
+                entry[key] = flat[pos:pos + n]
+                pos += n
             member_stations[uid] = entry
         return CaseResults(
             name=name,

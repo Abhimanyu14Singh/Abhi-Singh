@@ -8587,3 +8587,236 @@ The fix is a model-level option. It lives in
     of record -0.017 %, worst point over the whole history 0.041 %
     (legacy: +0.65 % at the end). In the elastic range the match is exact
     to 1e-6.
+
+## Analysis performance, solver policy and convergence strategy
+
+Engine speed on real building sizes, a shared nonlinear convergence strategy,
+and model-size safety. Profiles, the before/after table and the method are in
+`docs/PERFORMANCE.md`. The tests are in `tests/test_perf_robust.py`.
+
+### Model field `analysis_options` (all keys optional; `{}` = defaults)
+
+```json
+{"solver": "auto" | "band" | "umfpack" | "mumps" | "sparse_general",
+ "eigen_solver": "auto" | "legacy",
+ "convergence": {"mode": "legacy" | "robust",
+                 "algorithms": ["Newton", "ModifiedNewton", "KrylovNewton",
+                                "NewtonLineSearch", "BFGS"],
+                 "tests": [{"type": "NormDispIncr"},
+                           {"type": "EnergyIncr", "tolerance": 1e-10,
+                            "max_iterations": 100}],
+                 "max_halvings": 4},
+ "size_warnings": true}
+```
+
+* `to_dict` emits the key only when it differs from the defaults, so default
+  models serialize byte-identically.
+* `from_dict` reads it back, and `validate()` checks it
+  (`core/analysis_options.py`).
+* Validation rules:
+  * Unknown keys or values raise `ValueError`.
+  * `algorithms` must be a non-empty subset of the five algorithms above.
+  * Test `type` is one of NormDispIncr, EnergyIncr or NormUnbalance.
+  * `tolerance` must be > 0.
+  * `max_iterations` must be in 1..10000.
+  * `max_halvings` must be in 0..12.
+* Staged-construction stage models inherit the options.
+
+### Solver policy (`engine/solver_policy.py`)
+
+* With `auto`, the estimated equation count of a build decides the solver.
+  The estimate is:
+  * free node DOFs,
+  * minus 3 for every rigid-diaphragm slave node.
+* Below `SPARSE_EQ_THRESHOLD` = 300 equations, `auto` uses
+  `numberer RCM` + `system BandGeneral`. This is exactly the previous path,
+  so results are bit-identical.
+* At or above 300 equations it uses `system UmfPack` (still RCM). 300 is the
+  measured crossover of the two solvers.
+* On rigid-diaphragm buildings the band of the constrained stiffness is a
+  whole floor. A 20-story meshed building made BandGeneral abort the process
+  (SIGSEGV after about 12 s).
+* UmfPack agrees with the band solution to round-off: 1e-15..1e-13
+  relative in measured cases.
+* `band`, `umfpack`, `mumps` and `sparse_general` force that system.
+* If a forced `band` would need more band storage than the cap
+  (`model_size.BAND_MEMORY_CAP` = 2 GB, or half of physical RAM), the engine
+  falls back to UmfPack. A results `warning` reports the fallback instead of
+  crashing.
+* `SparseSYM` is never used: it returned wrong displacements on
+  Transformation-constrained models.
+* The policy applies to every setup the engine runs:
+  * linear statics, P-Delta and corotational statics;
+  * pushover, nonlinear static and time history;
+  * the eigen pre-setup.
+* Factor-once reuse:
+  * Linear static cases, response-spectrum modal statics and the CR unit
+    loads run on the reused elastic domain with one
+    `algorithm Linear -factorOnce` analysis kept alive. Every further load
+    case is a forward/back substitution.
+  * This is used only for UmfPack, because BandGeneral's band solver cannot
+    factor once.
+  * The result is bit-identical to a fresh factorization per case
+    (tested).
+  * Any `_build` or explicit analysis setup ends the reuse.
+
+### Condensed modal analysis (`engine/modal_condensed.py`)
+
+* Mass is lumped nodal only, so `K u = λ M u` restricted to the massed free
+  DOFs is exactly `u_m = λ G_mm M_m u_m`.
+* `G_mm` is the constrained flexibility: one factor-once static solve per
+  massed DOF.
+* The eigenpairs come from a dense `eigh` of `M^½ G M^½`.
+* Each full mode shape takes one more solve, with load `λ M φ_m`.
+* When it is used:
+  * The MODAL case of large models only, which means the policy picked a
+    sparse system and `n_massed` ≤ 600.
+  * `eigen_solver: "legacy"` turns it off.
+  * If it finds fewer than `num_modes` finite modes, the legacy eigen runs
+    instead.
+* Results:
+  * Periods agree with the OpenSees eigen to 1e-13.
+  * Shapes are mass-normalized (`φᵀMφ = 1`).
+  * Signs are deterministic: the largest-magnitude `M^½φ` component is
+    positive.
+  * Eigenvector signs are arbitrary in every solver. For exactly repeated
+    eigenvalues, any basis of the degenerate subspace is valid.
+* Two by-products save solves:
+  * The unit-load solves give the CR (`story_props`) unit rotations, so
+    `_master_rz` reads a memo of the same solve with no new solve.
+  * When RS cases exist, each mode's response to `λ M φ` is stored. Every
+    RS case scales it by `Γ·Sa/λ` (linear statics) instead of re-solving
+    per mode and per case.
+  * The scaling is not used with compression-only or nonlinear named
+    springs, or with ground displacements.
+
+### Other exact speedups
+
+* `compute_story_masses` and `story_gravity_loads` use uid→object maps
+  built once (`BuildingModel._uid_maps`, same first-match semantics). The
+  previous loop was O(stories × loads × objects).
+* The engine memoizes uid lookups and station positions.
+* RS CQC/SRSS combination evaluates each quantity's `v @ rho @ v` on a
+  fresh contiguous row. The arithmetic is the same, so results are
+  bit-identical.
+* `_modal_static` reuses the elastic domain instead of a full rebuild per
+  mode.
+* Mesh cache across engines (`core/mesh_cache.py`):
+  * Keeps the last 2 meshes, keyed by SHA-256 of the pickled model with the
+    case-definition attributes blanked.
+  * Load patterns are in the key, because point loads place mesh points.
+    So are the mesher tuning constants.
+  * A hit returns a fresh unpickled copy attached to the live model.
+  * `SKYFRAME_MESH_CACHE=0` or `SKYFRAME_SLOW_PATH=1` turns it off.
+
+### Convergence strategy (`engine/convergence.py`)
+
+Every nonlinear step runs through one `Strategy`:
+
+* static cases with axial-only members, gap links or nonlinear springs;
+* P-Delta and corotational stages;
+* pushover gravity and push steps;
+* nonlinear static cases;
+* nonlinear time history, with or without direct-integration options;
+* staged stage models.
+
+`legacy` mode (the default) is the historical per-path logic, op for op:
+
+* one `analyze`;
+* where the path had a retry, `NewtonLineSearch` and then
+  `algorithm Newton`;
+* no test change and no halving.
+
+Results are bit-identical (tested).
+
+`robust` mode (opt-in):
+
+* The first attempt is unchanged.
+* On failure the ladder runs: for each test in `tests` (an entry without
+  `tolerance` or `max_iterations` inherits the path's own), every algorithm
+  in `algorithms` is tried in order.
+* If the ladder fails and the path supplied its integrator (static) or
+  `dt` (transient), the step is split in two halves. Each half is solved
+  recursively with the full ladder, up to `max_halvings` levels.
+* OpenSees reverts a failed `analyze`, so a failed attempt leaves no trace.
+* After each step the path's own test and Newton are restored.
+* Paths that already substep (nonlinear static cases, direct-integration
+  options) get the ladder without halving, and their own substepping runs
+  after it.
+
+A run that needs no fallback gives the same results in both modes (tested).
+
+Report: only in `robust` mode, results carry `convergence`:
+
+```json
+{"<case>": {"mode": "robust", "steps": N, "fallback_steps": n,
+            "failed_steps": f, "halved_steps": h,
+            "by_algorithm": {"KrylovNewton": 1, ...},
+            "log": [{"step": k, "algorithm": "...", "test": "...",
+                     "halvings": lvl}, {"step": k, "failed": true}]}}
+```
+
+* A step appears in `log` only when it needed something beyond the first
+  attempt.
+* `halvings` is the deepest split level.
+* A failed case still runs as before:
+  * a failed static case becomes `case_status` `"failed"`;
+  * a pushover returns a partial curve with a warning;
+  * a nonlinear static case stops early.
+
+### Model-size warnings (`engine/model_size.py`)
+
+* `run()` sizes the model:
+  * equation estimate, nodes, frame and shell elements, system;
+  * static cases, RS modal statics, TH steps;
+  * an estimate of the result volume.
+* It warns and never fails when any of these is exceeded:
+  * 60 000 equations ("large") or 250 000 ("very large");
+  * 20 000 shell elements;
+  * 400 RS modal statics;
+  * TH steps × equations ≥ 2e8;
+  * 2e7 result values.
+* The warnings are appended to results `warning` and logged.
+* The `model_size` block (the report plus `warnings`) is emitted only when a
+  warning fires, so smaller models are byte-identical.
+* `size_warnings: false` turns it off.
+
+### Equivalence
+
+* `core/results_compare.py` compares results to a relative tolerance per
+  quantity family.
+* It is modal sign- and degenerate-subspace-invariant.
+* `ignore_keys` covers noise-ratio quantities.
+* Tests and measurements:
+  * Below the threshold, the default run is byte-identical to forced
+    `band` + `legacy` eigen, and to the pre-change engine. Measured SHA-256
+    of the full results JSON matched for `quick_building()` and for a
+    5-story model with RS, linear and nonlinear TH, pushover, staged and
+    P-Delta.
+  * Above it (eccentric 6-story frame; meshed slab and wall model), full
+    results agree with the legacy path to < 1e-9 relative.
+  * The benchmark buildings agree with the pre-change engine to
+    2.6e-13 .. 1.1e-11. The exception is the doubly symmetric 10-story
+    frame at 8.7e-9: a degenerate-mode basis artefact of the legacy path.
+* Known noise, not caused by this change:
+  * ASCE 7 `tors_ratio_*` and the `flag` of the orthogonal direction on
+    doubly symmetric buildings are ratios of round-off drifts in both
+    versions. They are not comparable.
+  * RS results of exactly repeated modes carry 1e-9-level basis artefacts
+    in the legacy Arpack path.
+
+### Before / after (one `/api/analyze`-equivalent run, seconds)
+
+Measured on a shared 4-core container (profiles and method in
+`docs/PERFORMANCE.md`). Every model has 12 modes, 2 RS cases, 4 static cases
+and 4 combos.
+
+| model (stories, bays) | before | after | speedup |
+| --- | ---: | ---: | ---: |
+| 10s 5x5 frame | 29.7 | 2.9 – 5.0 | 6 – 10x |
+| 20s 5x5 frame | 279.5 | 7.4 – 11.5 | 24 – 38x |
+| 20s 8x6 frame | 1 454.4 | 15.9 – 25.5 | 57 – 91x |
+| 40s 5x5 frame | 2 955.8 | 17.8 – 30.9 | 96 – 166x |
+| 10s 5x5 meshed slabs + core walls | >52 min (aborted, ~4.6 GB RSS) | 18.5 – 26.8 | >115x |
+| 20s 5x5 meshed (9 082 nodes, 8 320 quads) | crash (SIGSEGV, 12 s) | 68.4 – 83.5 | runs |
+| 20s 8x6 meshed (16 789 nodes, 15 680 quads) | not run (crashes) | 127 – 185 | runs |
