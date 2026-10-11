@@ -73,19 +73,20 @@ export function initDlgStd(sky) {
       if (ROUTES[act] && sky.etabs.hasItem(act)) { sky.etabs.closeMenus && sky.etabs.closeMenus(); return runRoute(act); }
       return origClick(act);
     };
+    /* route at the menu item itself: every activation path calls item.fn */
+    if (sky.menu && sky.menu.item)
+      for (const act of Object.keys(ROUTES)) {
+        const it = sky.menu.item(act);
+        if (it && typeof it.fn === "function") { it.legacyFn = it.fn; it.fn = () => { runRoute(act); }; }
+      }
     const origEx = sky.etabs.explorerClick;
     sky.etabs.explorerClick = label => (EXPLORER[label] && ROUTES[EXPLORER[label]]) ? runRoute(EXPLORER[label]) : origEx(label);
     /* DOM clicks — window capture runs before the menubar / explorer handlers */
     window.addEventListener("click", e => {
       const t = e.target && e.target.closest ? e.target : null;
       if (!t) return;
-      const it = t.closest("#etabsMenubar .etabs-menu-item[data-act]");
-      if (it && ROUTES[it.dataset.act]) {
-        e.stopPropagation(); e.preventDefault();
-        sky.etabs.closeMenus && sky.etabs.closeMenus();
-        runRoute(it.dataset.act);
-        return;
-      }
+      // menu items are routed at the item level (below), so mouse, keyboard,
+      // touch, palette and toolbar all open the same standard dialog
       const leaf = t.closest("#etabsExplorer .ex-leaf");
       if (leaf && !leaf.classList.contains("ex-case")) {
         const lbl = (leaf.querySelector(".ex-leaf-lbl") || leaf).textContent.trim();
