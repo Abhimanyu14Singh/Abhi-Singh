@@ -7723,6 +7723,10 @@ class OpenSeesEngine:
         # computed with the mode shapes are scaled instead of re-solved
         # (engine/modal_condensed.py; None = the legacy per-mode solve)
         unit = _mcd_units(self, modal)
+        if unit is not None and self.__dict__.get("_tw"):
+            # C9 towers: per-tower story shear is an element cut on the
+            # solved domain, which the scaled unit responses do not carry
+            unit = None
         for i, T in enumerate(modal.periods, start=1):
             omega = 2.0 * math.pi / T
             gamma = modal.participation[i - 1][gamma_key]

@@ -88,3 +88,22 @@ def test_section_shape_tag_round_trips():
     d2 = BuildingModel.from_dict(json.loads(json.dumps(d))).to_dict()
     assert d2["sections"][name]["shape"] == "W"
     assert d2 == d
+
+
+@pytest.mark.parametrize("solver", ["umfpack", "band"])
+def test_rs_tower_story_shear_independent_of_solver(solver):
+    """Condensed (UmfPack) RS used to report each tower's story shear as
+    the whole-model total (2x on twin towers)."""
+    sp = [[0.0, 0.5], [10.0, 0.5]]
+    ref = _twin(); ref.add_rs_case("RSX", "X", spectrum=sp)
+    ref.analysis_options = {"solver": "band"}
+    a = OpenSeesEngine(ref).run_response_spectrum("RSX")
+    t = _twin(); t.add_rs_case("RSX", "X", spectrum=sp)
+    t.analysis_options = {"solver": solver}
+    b = OpenSeesEngine(t).run_response_spectrum("RSX")
+    tot = 0.0
+    for nm, row in a.story.items():
+        assert _close(b.story[nm]["shear_x"], row["shear_x"], 1e-7)
+    for p in "AB":
+        tot += b.story[f"{p}1"]["shear_x"]
+    assert _close(tot, b.base["FX"], 1e-7)
