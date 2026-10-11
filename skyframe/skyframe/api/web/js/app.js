@@ -81,7 +81,7 @@ import { initOpenWind as owInitOpenWind } from "./openwind.js";
 import { initReportX as rxInitReportX } from "./reportx.js";
 import { owMockValidate as owMockValidateModel } from "./mock_openwind.js";   // UX pass: palette · toolbar · shortcuts · dialog chrome · start screen
 import { initDbEdit as dbeInitDbEdit } from "./dbedit.js";   // Edit > Interactive Database Editing (model tables)
-import { initUx as uxInitUx } from "./ux.js";   // UX pass: palette · toolbar · shortcuts · dialog chrome · start screen
+import { initRepair as rpInitRepair } from "./repairdlg.js";   // Analyze › Check Model › Fix… (model repair)
 
 /* ------------------------------------------------ state */
 const store = {
@@ -8529,6 +8529,7 @@ async function boot() {
   try { edInitEditMenu(window.__sky); } catch (err) { console.error("edit menu init failed", err); }   // Edit / Select menus + Undo/Redo
   try { owInitOpenWind(window.__sky); rxInitReportX(window.__sky); } catch (err) { console.error("open wind / report init failed", err); }   // open-structure wind · Create Report · Model Info · run log
   try { dbeInitDbEdit(window.__sky); } catch (err) { console.error("db edit init failed", err); }   // Interactive Database Editing (js/dbedit.js)
+  try { rpInitRepair(window.__sky); } catch (err) { console.error("model repair init failed", err); }   // Check Model › Fix… (js/repairdlg.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
 }
 

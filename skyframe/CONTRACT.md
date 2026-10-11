@@ -8587,3 +8587,116 @@ The fix is a model-level option. It lives in
     of record -0.017 %, worst point over the whole history 0.041 %
     (legacy: +0.65 % at the end). In the elastic range the match is exact
     to 1e-6.
+
+## Model repair (Check Model > Fix...)
+
+`skyframe/core/repair.py` repairs what Check Model reports, ETABS-style.
+
+* Each fix is a PURE function `model -> (new_model, report)`.
+  - `model` is the `BuildingModel.to_dict()` JSON, or a `BuildingModel`
+    (then a validated `BuildingModel` is returned).
+  - The input is never mutated.
+  - A fix that finds nothing returns the input byte-for-byte.
+  - Every fix is idempotent: `f(f(m)) == f(m)`.
+* The fixes reuse `core/edit.py` (joint remap, member split with load
+  carry-over, dependent cleanup) and the `core/checks.py` geometry
+  searches.
+
+### Fixes (canonical order)
+
+| id | repairs | effect |
+|---|---|---|
+| `merge_joints` | JOINT_COINCIDENT | Joints within `tolerance` become one joint. The rule is the Edit > Merge Joints one: a supported joint wins, then the joint with most objects, then the smallest coordinates. Every reference follows: frame / link ends, shell corners, supports, springs, nodal masses / loads, ground displacements, joint temperatures, joint diaphragms / panel zones, line-spring ends, group points, TH `output_requests.joints`, steady-state / PSD `output_points`, pushover / NLS `control_point`. Members or shells that collapse (zero length, duplicate) are deleted and listed as actions. |
+| `remove_zero_length` | FRAME_ZERO_LENGTH | Frames shorter than `tolerance` are deleted. Their two joints are merged first, so the connection survives. Loads on the frame are dropped (`loads_dropped`, warning). |
+| `remove_duplicates` | FRAME_DUPLICATE, FRAME_OVERLAP, SHELL_DUPLICATE | Collinear overlapping frames are divided at each other's ends. Then exact duplicates (same two joints / same corner set) are removed. The copy with the most loads is kept (ties: the first). Group / tendon-host / pushover `My` references move to the kept copy. Loads on deleted copies are dropped (`loads_dropped`, warning). |
+| `snap_shell_corners` | JOINT_COINCIDENT (shell) | A shell corner within `tolerance` of a frame / link end (else of another shell corner) moves onto it. Frame / link ends never move. A snap that would warp, fold or collapse a shell is skipped (warning). |
+| `split_at_joints` | FRAME_JOINT_ON_SPAN, JOINT_UNCONNECTED on a span | Frames are divided at every joint (object end / corner or point record) within `tolerance` of the axis, strictly inside the span. The piece ends are the joint coordinates. |
+| `split_at_crossings` | FRAME_INTERSECTION | Opt-in (not in the defaults). Both frames of a crossing are divided at the midpoint of the two closest points. A crossing means: closest approach <= `tolerance`, strictly inside both spans, not parallel. |
+| `remove_unconnected_joints` | JOINT_UNCONNECTED | Point records whose point is not a node of the analysis mesh (object ends / corners, shell mesh nodes, frame auto-mesh points) are deleted. This covers supports, springs, nodal masses, joint diaphragms / panel zones, nodal loads, ground displacements, joint temperatures and group points. |
+| `report_mechanisms` | STABILITY_MECHANISM | Report only: the model is never changed. Reports `checks.stability_diagnostics` (near-zero-stiffness mechanisms) and the Check Model connectivity errors (NO_SUPPORTS, FRAME/SHELL/LINK_UNCONNECTED, STRUCTURE_UNSUPPORTED_PART, STORY_NO_SUPPORT_PATH). |
+
+* Splitting (both split fixes and overlap resolution) uses
+  `edit._split_member`, so loads and assignments carry over:
+  - `member_loads` point / moment loads go to the piece that holds them.
+    A load exactly at a cut goes once, to `a = 0` of the next piece.
+  - `udl` / `trapezoid` loads are split by position. Trapezoid ordinates
+    are interpolated at the cuts.
+  - Legacy `member_udls` (full span) and `thermal_loads` apply to every
+    piece.
+  - Moment releases stay on the outer ends. Rigid ends and joint offsets
+    stay on the outer pieces. Hinges are mapped by relative distance.
+  - Groups, tendon hosts and pushover `My` list all pieces.
+  - New uids follow the Edit > Divide rule (`B1` -> `B2`, ...).
+* Some members are never divided (a warning is given instead):
+  - axial-only members (`axial_limit != "both"`, Truss);
+  - curved members;
+  - members with a nonprismatic section;
+  - members with automatic hinges (`hinges` other than "none").
+* `DEFAULT_FIXES` is used when `fixes` is omitted: every fix except
+  `split_at_crossings` and `report_mechanisms`. `"all"` means every fix.
+
+### API
+
+`POST /api/repair`
+
+```
+body: {"fixes": [ids] | "all" (default DEFAULT_FIXES),
+       "tolerance": m in (0, 1] (default 0.001 = Check Model default),
+       "model": {...}? (default: the stored model),
+       "dry_run": bool (default false),
+       "max_dofs": int (stability cap, default 3000)}
+200:  {"model": {...validated model JSON...}, "report": {...}}
+400:  {"error": "..."}   (unknown fix, bad tolerance, invalid model)
+```
+
+* The stored model is replaced unless `dry_run` is true. A dry run is the
+  preview: it returns the same `model` / `report` and stores nothing.
+* A clean model is echoed byte-identical, with `report.changed == false`.
+
+Report shape:
+
+```
+{"changed": bool, "tolerance_m": float, "dry_run": bool,
+ "fixes": [ids applied, canonical order],
+ "counts": {fix: number of actions},
+ "actions": [{"fix", "message", "objects": [uids], "location": [x,y,z]|null,
+              ...fix extras: "to"/"merged" (merge), "from"/"to" (snap),
+              "pieces"/"at" (splits), "kept"/"removed"/"loads_dropped"
+              (duplicates, zero length), "records" (unconnected joints),
+              "code"/"severity" (report_mechanisms)}],
+ "warnings": [str],
+ "results": [{"fix", "title", "changed", "count", "actions", "warnings",
+              "created", "deleted", "modified", "stability"?}],
+ "created": {"members", "shells", "links", "points"},   # net, whole run
+ "deleted": {"members", "shells", "links", "points"},
+ "modified": {"members", "shells", "links"},
+ "stability": {"stable", "built", "skipped", "n_equations",
+               "n_mechanisms", "mechanisms", "unstable_dofs", "message",
+               "issues"} | null,       # only with report_mechanisms
+ "check_before": {"errors", "warnings", "info", "by_code", "ok"},
+ "check_after":  {...same...}}
+```
+
+* Undo: the endpoint keeps no history; it only optionally stores the
+  model. The SPA adopts the returned model as ONE labelled history step
+  ("Repair model"). It uses the same `history.label` + `markDirty` path
+  as the Edit menu (`js/history.js`).
+* SPA: Analyze > Fix Model… and the "Fix…" button of the Check Model
+  panel open the dialog (`js/repairdlg.js`). It has one checkbox per fix,
+  a tolerance in the display length unit, a "Preview" button (a dry run
+  that lists the actions) and "Apply" (one undo step). `?mock=1` runs
+  `js/mock_repair.js`, which gives the same response shape.
+* Validation (`tests/test_repair.py`):
+  - A beam with a UDL split at an interior joint reproduces the closed
+    form exactly: simply supported theta = wL^3/24EI, delta(a) and M(a);
+    fixed-fixed M = wL^2/12 and delta(a). End joints, reactions and end
+    forces equal the undivided beam to 1e-9.
+  - Trapezoid / point / partial-UDL resultants are conserved.
+  - A nodal load on the span acts after the split:
+    5wL^4/384EI + PL^3/48EI.
+  - A pinned beam hanging 0.5 mm off its column is a mechanism. After
+    `merge_joints` it is stable. Its column reactions are wL/2 (+ the
+    joint load), and the base and beam-end moments are zero.
+  - Every fix, and the whole pipeline, is idempotent. Clean models
+    (quick building, slab on columns, fixed beam) are unchanged
+    byte-for-byte.

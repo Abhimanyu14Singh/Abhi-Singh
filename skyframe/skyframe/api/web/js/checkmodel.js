@@ -761,6 +761,7 @@ export function initCheckModel(sky) {
     sum.append(pill("error", s.errors, s.errors === 1 ? "error" : "errors"),
       pill("warning", s.warnings, s.warnings === 1 ? "warning" : "warnings"),
       pill("info", s.info, "info"));
+    if (sky.openRepair) sum.appendChild(el("button", { class: "ck-fix", id: "ckRepairBtn", text: "Fix…", title: "Repair the model (merge joints, split frames, remove duplicates…)", onclick: () => sky.openRepair() }));   // model repair (js/repairdlg.js)
     body.appendChild(sum);
     const stats = [];
     if (s.n_joints != null) stats.push(`${s.n_joints} joints`);
