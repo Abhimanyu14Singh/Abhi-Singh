@@ -22,6 +22,7 @@
 
 import U from "./units.js";
 import { selectionJoints as dpSelectionJoints } from "./assigndlg.js";
+import { rnaCell as dpRnaCell } from "./ratio_na.js";   // n/a (negligible drift) τ ratios
 import {
   esc, clone, isNum, dialog, closeDialog, btn, footBar, errorLine, showError,
   group, el, numInput, row, select, radio, samePt, storyAtZ, ptLabel, makeCtx,
@@ -498,7 +499,7 @@ export function renderDiaphragmCard(sky) {
       `<td>${f("length", p.cm_x, 2)}</td><td>${f("length", p.cm_y, 2)}</td><td>${f("length", p.cr_x, 2)}</td><td>${f("length", p.cr_y, 2)}</td>` +
       `<td>${c ? f("disp", c.ux, 2) : "—"}</td><td>${c ? f("disp", c.uy, 2) : "—"}</td><td>${c && isFinite(c.rz) ? (+c.rz).toExponential(2) : "—"}</td>` +
       `<td>${c && isFinite(c.drift_x) ? (Math.abs(c.drift_x) * 1000).toFixed(3) : "—"}</td><td>${c && isFinite(c.drift_y) ? (Math.abs(c.drift_y) * 1000).toFixed(3) : "—"}</td>` +
-      `<td>${c ? tr(c.tors_ratio_x) : "—"}</td><td>${c ? tr(c.tors_ratio_y) : "—"}</td></tr>`).join("") +
+      `<td>${c ? dpRnaCell(c, "tors_ratio_x", tr(c.tors_ratio_x)) : "—"}</td><td>${c ? dpRnaCell(c, "tors_ratio_y", tr(c.tors_ratio_y)) : "—"}</td></tr>`).join("") +
     `</tbody></table></div>`;
 }
 

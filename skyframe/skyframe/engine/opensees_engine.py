@@ -176,6 +176,7 @@ from skyframe.engine import pdelta as _pdelta      # model-wide P-Delta
 from skyframe.engine import diaphragms as _dgm     # named diaphragms/add. mass
 from skyframe.engine import tendons as _tdn        # PT tendons / hyperstatic
 from skyframe.engine import story_shear as _ssx    # story shear, all loads
+from skyframe.core import ratio_significance as _rsig  # n/a noise ratios
 
 from skyframe.engine import thermal_ext as _thx    # v1.16 temperature loads
 from skyframe.core.thermal_ext import projected_factor as _proj_f  # v1.16
@@ -6173,8 +6174,11 @@ class OpenSeesEngine:
                        or abs(st.get(n, {}).get("shear_y", 0.0)) > 1e-12
                        for n in order):
                 continue
+            thr = _rsig.case_threshold(st)      # negligible-drift gate
             kx_by: Dict[str, float] = {}
             ky_by: Dict[str, float] = {}
+            neg_x: set = set()
+            neg_y: set = set()
             prev_ux = prev_uy = 0.0
             sk: Dict[str, Dict[str, float]] = {}
             for s in stories:
@@ -6184,19 +6188,22 @@ class OpenSeesEngine:
                 ux, uy = info["ux"], info["uy"]
                 dx, dy = ux - prev_ux, uy - prev_uy
                 vx, vy = info["shear_x"], info["shear_y"]
-                kx = (abs(vx / dx) if abs(dx) > 1e-15 and abs(vx) > 1e-15
-                      else 0.0)
-                ky = (abs(vy / dy) if abs(dy) > 1e-15 and abs(vy) > 1e-15
-                      else 0.0)
+                kx = _rsig.story_stiffness(vx, dx, thr)
+                ky = _rsig.story_stiffness(vy, dy, thr)
                 kx_by[s.name] = kx
                 ky_by[s.name] = ky
                 sk[s.name] = {"kx": kx, "ky": ky}
+                for kk, dd, ng in (("kx", dx, neg_x), ("ky", dy, neg_y)):
+                    if _rsig.negligible(dd, thr):
+                        ng.add(s.name)
+                        _rsig.mark_na(sk[s.name], kk)
                 prev_ux, prev_uy = ux, uy
             stiffness[name] = sk
             # dominant loading direction picks the soft-story stiffness column
             sum_vx = sum(abs(st.get(n, {}).get("shear_x", 0.0)) for n in order)
             sum_vy = sum(abs(st.get(n, {}).get("shear_y", 0.0)) for n in order)
             k_primary = kx_by if sum_vx >= sum_vy else ky_by
+            neg_primary = neg_x if sum_vx >= sum_vy else neg_y
             irr: Dict[str, Dict[str, object]] = {}
             for idx, s in enumerate(stories):
                 if s.name not in st:
@@ -6209,32 +6216,19 @@ class OpenSeesEngine:
                     u_x = st[s.name]["ux"]
                     u_y = st[s.name]["uy"]
                     rz = 0.0
-                tr_x = self._tors_ratio(u_x, rz, ly)
-                tr_y = self._tors_ratio(u_y, rz, lx)
-                trmax = max(tr_x, tr_y)
-                flag = ("extreme" if trmax >= 1.4 else
-                        "torsional" if trmax >= 1.2 else "none")
+                # None (n/a) when that direction's delta_avg is negligible
+                tr_x = _rsig.tors_ratio(u_x, rz, ly, thr, self._tors_ratio)
+                tr_y = _rsig.tors_ratio(u_y, rz, lx, thr, self._tors_ratio)
+                flag = _rsig.tors_flag((tr_x, tr_y))
                 entry: Dict[str, object] = {
                     "tors_ratio_x": tr_x, "tors_ratio_y": tr_y, "flag": flag}
                 # soft-story stiffness ratio (Table 12.3-2)
-                k_here = k_primary.get(s.name, 0.0)
-                k_above = (k_primary.get(order[idx + 1])
-                           if idx + 1 < len(order) else None)
-                above3 = [k_primary.get(n, 0.0)
-                          for n in order[idx + 1:idx + 4]]
-                avg3 = (sum(above3) / len(above3)) if above3 else None
-                soft_flag = ""
-                if k_above and k_above > 1e-15:
-                    entry["stiff_ratio"] = k_here / k_above
-                    r = k_here / k_above
-                    ra = (k_here / avg3) if avg3 and avg3 > 1e-15 else None
-                    if r < 0.6 or (ra is not None and ra < 0.7):
-                        soft_flag = "extreme_soft"
-                    elif r < 0.7 or (ra is not None and ra < 0.8):
-                        soft_flag = "soft"
-                else:
-                    entry["stiff_ratio"] = None
-                entry["soft_flag"] = soft_flag
+                _rsig.soft_story(entry, idx, order, k_primary, neg_primary)
+                for kk, tr in (("tors_ratio_x", tr_x), ("tors_ratio_y", tr_y)):
+                    if tr is None:
+                        _rsig.mark_na(entry, kk)
+                if _rsig.NA_KEY in entry:       # keep na_reason last
+                    entry[_rsig.NA_KEY] = entry.pop(_rsig.NA_KEY)
                 irr[s.name] = entry
             irregularity[name] = irr
         return stiffness, irregularity

@@ -9324,3 +9324,94 @@ There is one advice item per code. Warnings sort before info.
 * Model > Accuracy Advisor… opens a panel listing the advice. Clicking an
   item selects its `refs`.
 * Both work in `?mock=1` (`js/mock_accuracy.js`).
+
+## Ratio-based story checks: negligible-drift significance
+
+Some story checks divide one response quantity by another of the same kind.
+In a direction a case does not load, both are round-off. One example is Y
+under an X force on a doubly symmetric plan, where drifts are about 1e-15 m.
+The quotient is then a random number. Before this change it could raise
+"extreme" torsional irregularity, or an extreme soft story, at random. Such
+a ratio is now reported as not applicable. Logic:
+`skyframe/core/ratio_significance.py`.
+
+### Rule
+
+A quantity `q` in a ratio's denominator is negligible when
+
+    |q| < max(1e-9 m, 1e-6 * ref)
+
+* `ref` is the largest story displacement `|ux|`, `|uy|` of the case, over
+  all stories and towers (the case's `story` block). It bounds every
+  interstory drift (`Delta <= 2 ref`) and sets the round-off scale of a
+  linear solve.
+* `1e-6` sits about ten orders of magnitude above double-precision
+  round-off. On the reference models, noise is at most 4e-10 of the
+  threshold and genuine response at least 5e4 of it.
+* `1e-9 m` is a floor for cases whose whole response is round-off.
+
+Ratios whose denominator passes the gate use the legacy expressions
+unchanged. Results for loaded directions are byte-identical.
+
+| check | where | denominator tested | n/a output |
+|---|---|---|---|
+| ASCE 7 §12.3.2.1 torsional ratio (Type 1a/1b) | `irregularity[case][story].tors_ratio_x/_y` | `delta_avg = (\|u+rz B/2\| + \|u-rz B/2\|)/2` in that direction | `null` + reason |
+| same, per named diaphragm (static cases, additive combos, RS cases) | `diaphragms.{cases,combos,rs_cases}[case][story][diaphragm].tors_ratio_x/_y` | same, per diaphragm | `null` + reason |
+| same, story level of multi-diaphragm stories | `irregularity[...]` | max over the applicable diaphragm ratios | `null` + reason only when none applies |
+| story stiffness `V / Delta` | `story_stiffness[case][story].kx/ky`, table `story_stiffness` | interstory drift `Delta` | `0.0` + reason (table: `0.0`) |
+| soft story (Table 12.3-2) | `irregularity[...].stiff_ratio`, `soft_flag` | `Delta` of this story, the story above, and the 3 above | `null` + reason when this story or the one above is negligible. Negligible stories drop out of the average of 3. |
+| Diaphragm Max Over Avg displacement / drift ratio | table `diaphragm_max_avg_drifts`: `disp_ratio`, `drift_ratio` | `avg_disp`; `avg_drift * h` | `null` cell + one table warning |
+
+`flag` is the 1.2 / 1.4 rule over the applicable ratios only. It is "none"
+when no ratio applies. `soft_flag` is `""` when `stiff_ratio` is n/a. Flag
+values are unchanged, so existing consumers that test `flag !== "none"`
+keep working.
+
+### JSON
+
+The n/a slot keeps its key and type slot: `null` for ratios, `0.0` for
+stiffness, which was already the "no stiffness" value. The entry gains
+`na_reason` (a map from slot key to reason string), present ONLY when at
+least one slot is n/a. It is the last key of the entry:
+
+```jsonc
+"irregularity": {"EQX": {"Story1": {
+   "tors_ratio_x": 1.0000000000000002, "tors_ratio_y": null,
+   "flag": "none", "stiff_ratio": 1.5931, "soft_flag": "",
+   "na_reason": {"tors_ratio_y": "not applicable (negligible drift)"}}}},
+"story_stiffness": {"EQX": {"Story1": {
+   "kx": 287241.75, "ky": 0.0,
+   "na_reason": {"ky": "not applicable (negligible drift)"}}}},
+"diaphragms": {"cases": {"EQX": {"S1": {"DA": {
+   "ux": 4.46e-4, "uy": 1.9e-22, "rz": -1.3e-21, "drift_x": 1.5e-4,
+   "drift_y": 6.6e-23, "tors_ratio_x": 1.0, "tors_ratio_y": null,
+   "na_reason": {"tors_ratio_y": "not applicable (negligible drift)"}}}}}}
+```
+
+The only reason string today is `"not applicable (negligible drift)"`.
+Clients should display the string, not test for it. Table rows keep exactly
+their column keys. The reason goes into the table's `warnings`, for example
+`"Disp/Drift Ratio not applicable (negligible drift) in 2 cell(s): ..."`.
+
+### Scope notes
+
+* Story drift ratios `drift_x/drift_y = Delta / h` divide by the story
+  height, not by noise, so they are unchanged. CM/CR (`cr = master -
+  theta/phi`) divides by the torsional flexibility `phi`, which is
+  non-zero for any diaphragm. Round-off in `theta` therefore moves the CR
+  by about 1e-12 m and needs no gate. There is no weight/mass
+  irregularity check in the backend. Time-history story peaks contain no
+  ratios. Per-tower diagnostics use the legacy routine per tower, with the
+  reference taken over the whole case.
+* RS rows go through the same gate. Under the default band eigen path, a
+  degenerate (square-plan) RS case can leak about 1e-4 of the response
+  into the orthogonal direction (the umfpack path gives about 1e-9). That
+  is above the round-off gate, so the ratio is reported. Its value stays
+  about 1.0 because the RS `rz` peak is round-off.
+* Determinism: under repeated runs with the same solver, diagnostics are
+  byte-identical. Across `analysis_options.solver` = auto/band/umfpack, the
+  n/a slots, reasons and flags are identical, and the loaded ratios agree
+  to 1e-9.
+* UI: n/a slots show "n/a", with the reason as a tooltip, in Results >
+  Diagnostics, the report, the CSV export and the Diaphragms card. The
+  `?mock=1` results emit the same shape.

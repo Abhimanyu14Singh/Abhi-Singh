@@ -89,6 +89,8 @@ import { installTowers as c9InstallTowers, syncTowerSelect as c9SyncTowerSelect,
 import { mockValidateTowers as c9MockValidateTowers } from "./mock_towers.js";
 
 import { initRepair as rpInitRepair } from "./repairdlg.js";   // Analyze › Check Model › Fix… (model repair)
+// n/a (negligible drift) story ratios — CONTRACT "Ratio-based story checks" (js/ratio_na.js)
+import { rnaCell as rnaRatioCell, rnaCsv as rnaRatioCsv } from "./ratio_na.js";
 
 /* ------------------------------------------------ state */
 const store = {
@@ -4136,11 +4138,11 @@ function renderDiagBlock() {
     return `<tr>
       <td class="txt">${esc(s)}</td>
       <td class="dim">${U.fmt("length", r.story_elev[s], 1)}</td>
-      <td>${U.fmt("stiffness", k.kx, 0)}</td><td>${U.fmt("stiffness", k.ky, 0)}</td>
-      <td class="${overX ? "exceed" : ""}">${fmt(trx, 2)}</td>
-      <td class="${overY ? "exceed" : ""}">${fmt(tryy, 2)}</td>
+      <td>${rnaRatioCell(k, "kx", U.fmt("stiffness", k.kx, 0))}</td><td>${rnaRatioCell(k, "ky", U.fmt("stiffness", k.ky, 0))}</td>
+      <td class="${overX ? "exceed" : ""}">${rnaRatioCell(ir, "tors_ratio_x", fmt(trx, 2))}</td>
+      <td class="${overY ? "exceed" : ""}">${rnaRatioCell(ir, "tors_ratio_y", fmt(tryy, 2))}</td>
       <td class="txt">${diagChip(TORS_CHIP, ir.flag || "none")}</td>
-      <td>${ir.stiff_ratio == null ? `<span class="dim">—</span>` : fmt(ir.stiff_ratio, 2)}</td>
+      <td>${ir.stiff_ratio == null ? rnaRatioCell(ir, "stiff_ratio", `<span class="dim">—</span>`) : fmt(ir.stiff_ratio, 2)}</td>
       <td class="txt">${ir.stiff_ratio == null ? `<span class="dim">—</span>` : diagChip(SOFT_CHIP, ir.soft_flag || "none")}</td>
     </tr>`;
   }).join("");
@@ -7436,8 +7438,9 @@ function csvRows(kind) {
         }
         if (diag) {
           const k = stiff[s] || {}, ir = irr[s] || {};
-          base.push(cv("stiffness", k.kx ?? ""), cv("stiffness", k.ky ?? ""), ir.tors_ratio_x ?? "", ir.tors_ratio_y ?? "",
-            ir.flag ?? "", ir.stiff_ratio ?? "", ir.soft_flag ?? "");
+          base.push(rnaRatioCsv(k, "kx", cv("stiffness", k.kx ?? "")), rnaRatioCsv(k, "ky", cv("stiffness", k.ky ?? "")),
+            rnaRatioCsv(ir, "tors_ratio_x", ir.tors_ratio_x ?? ""), rnaRatioCsv(ir, "tors_ratio_y", ir.tors_ratio_y ?? ""),
+            ir.flag ?? "", rnaRatioCsv(ir, "stiff_ratio", ir.stiff_ratio ?? ""), ir.soft_flag ?? "");
         }
         return base;
       }),

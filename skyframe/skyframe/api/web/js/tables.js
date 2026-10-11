@@ -18,6 +18,7 @@ import U from "./units.js";
 import { ICONS, MENUITEM_ICON, EXLEAF_ICON, icon } from "./icons.js";
 import { mockTablesList, mockTable, mockLoadParticipation } from "./mock_tables.js";
 import { initResultDisplays } from "./freqplots.js";
+import { RNA_TABLE_KEYS as tblRnaKeys, RNA_TEXT as tblRnaText } from "./ratio_na.js";   // null ratio = n/a (negligible drift)
 
 /* Glyphs for the new menu items / explorer leaves — registered at module
    evaluation (before the ETABS chrome builds its menus). Additive only. */
@@ -74,7 +75,7 @@ export function colSpec(col) {
     mass: ["mass", 3], angle: ["rotation", 6], time: ["period", 4], frequency: ["frequency", 4] };
   if (map[q]) return { kind: map[q][0], unit: U.label(map[q][0]), dec: map[q][1] };
   const fx = FIXED[q] || ["", 4];
-  return { kind: "none", unit: fx[0], dec: fx[1] };
+  return { kind: "none", unit: fx[0], dec: fx[1], na: tblRnaKeys.has(col.key) ? tblRnaText : undefined };
 }
 /** Display number (converted) for a cell, or null. */
 export function cellValue(spec, v) {
@@ -85,7 +86,7 @@ export function cellValue(spec, v) {
 export function cellText(spec, v) {
   if (spec.text) return v == null ? "" : String(v);
   const d = cellValue(spec, v);
-  if (d == null) return "—";
+  if (d == null) return spec.na || "—";              // n/a ratio cells (ratio_na.js)
   const dec = spec.kind === "none" ? spec.dec : U.dec(spec.kind, spec.dec);
   if (Math.abs(d) >= 1e12) return d.toExponential(4);
   const t = d.toFixed(dec);

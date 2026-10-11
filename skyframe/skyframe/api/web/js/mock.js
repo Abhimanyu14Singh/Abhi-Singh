@@ -28,6 +28,7 @@ import { mockAugmentUserHinges as uhMockAugment } from "./mock_userhinge.js";
 // PT tendons — results.tendons (P(x) after losses) + results.hyperstatic (js/mock_tendons.js)
 import { mockAugmentTendons as ptMockAugment } from "./mock_tendons.js";
 import { pfMockExtend as pfMockExtendResults } from "./mock_plotfn.js";   // plot functions (TH output_requests)
+import { mockRatioNaApply as rnaMockRatioNaApply } from "./mock_ratio_na.js";   // n/a (negligible drift) story ratios
 const G = 9.80665;
 
 function mulberry32(seed) {
@@ -3318,6 +3319,7 @@ export function mockResults(model) {
   uhMockAugment(model, r);                        // B10: user hinge histories (js/mock_userhinge.js)
   ptMockAugment(model, r);                        // PT tendons + hyperstatic cases (js/mock_tendons.js)
   pfMockExtendResults(model, r);                  // plot functions: th_cases[*].plot_functions (js/mock_plotfn.js)
+  rnaMockRatioNaApply(model, r);                  // n/a (negligible drift) story ratios (js/mock_ratio_na.js)
   return r;
 }
 
