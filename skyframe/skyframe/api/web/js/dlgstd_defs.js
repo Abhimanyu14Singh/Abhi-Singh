@@ -22,6 +22,7 @@ import {
   el, esc, clone, isNum, dkForm, dkGroup, dkAdvanced, dkTabs, dkList, dkNote, dkDialog,
   dkDraft, dkCommit, showNum, unitLabel, uniqueName,
 } from "./dlgkit.js";
+import { spvFramePanel as dsSpvFrame, spvShellPanel as dsSpvShell, spvSplit as dsSpvSplit } from "./secpreview.js";   // live member / property preview (js/secpreview.js)
 
 const G = 9.80665;
 const eff = (o, k, d = 1) => (o && o[k] != null && isFinite(o[k])) ? +o[k] : d;
@@ -240,10 +241,11 @@ export function openFrameSections(sky, { select } = {}) {
   const sync = () => dlg && dlg.setNote(`${Object.keys(D.sections).length} frame sections`);
   const des = el("button", { type: "button", class: "btn btn-small dk-legacy", id: "dsSecDesigner", title: "Draw a polygon + rebar section (applies these edits first)" }, ["Section Designer…"]);
   const np = el("button", { type: "button", class: "btn btn-small dk-legacy", id: "dsSecNp", title: "Tapered / haunched member section (applies these edits first)" }, ["Nonprismatic…"]);
+  const lpv = dsSpvFrame({ model: D, name: () => list.selected(), section: () => D.sections[list.selected()] || null });   // preview of the selected section
   const dlg = dkDialog({
     id: "dsFrameSections", title: "Frame Properties", iconId: "exleaf-frames", size: "lg",
     intro: "Frame sections assigned to columns, beams and braces. Rectangular sections compute A, I and J from b × h.",
-    body: list, extra: [des, np],
+    body: dsSpvSplit(list, lpv), extra: [des, np],
     onOk: () => { dkCommit(sky, D); },
   });
   des.addEventListener("click", () => thenLegacy(dlg, sky, D, () => sky.openSectionDesigner && sky.openSectionDesigner()));
@@ -293,8 +295,10 @@ export function editFrameSection(sky, D, name, { copyOf, done } = {}) {
     ]),
     dims, propsGroup, adv,
   ];
+  const pv = dsSpvFrame({ model: D, name: nm0, title: () => draftName.v, section: () => s, recompute: rect ? x => dsME.rectSectionProps(x) : null,   // live preview (read-only)
+    live: [["dsSecH", "h", "dim", "Depth h"], ["dsSecB", "b", "dim", "Width b"], ["dsSecA", "A", "area", "A"], ["dsSecI33", "I33", "inertia", "I33"], ["dsSecI22", "I22", "inertia", "I22"], ["dsSecJ", "J", "inertia", "J"]].map(([id, key, kind, label]) => ({ id, key, kind, label })) });
   return dkDialog({
-    id: "dsFrameSectionData", title: "Frame Section Property Data", iconId: "exleaf-frames", size: "md", form: F, body,
+    id: "dsFrameSectionData", title: "Frame Section Property Data", iconId: "exleaf-frames", size: "md", form: F, body: dsSpvSplit(body, pv),
     intro: isNew ? (copyOf ? `New section copied from <b>${esc(copyOf)}</b>.` : "New rectangular section.") : null,
     onOk: () => {
       if (!F.touched && !isNew) { done && done(name); return; }
@@ -397,10 +401,11 @@ export function openShellSections(sky, { select } = {}) {
   const edit = (name, opts = {}) => editShellSection(sky, D, name, { ...opts, done: nm => { list.select(nm); sync(); } });
   const sync = () => dlg && dlg.setNote(`${Object.keys(D.shell_sections).length} slab / wall sections`);
   const more = el("button", { type: "button", class: "btn btn-small dk-legacy", id: "dsShellMore", title: "Layered shell definitions (applies these edits first)" }, ["Layered Sections…"]);
+  const lpv = dsSpvShell({ model: D, name: () => list.selected(), section: () => D.shell_sections[list.selected()] || null });   // preview of the selected section
   const dlg = dkDialog({
     id: "dsShellSections", title: "Slab / Wall Properties", iconId: "exleaf-shells", size: "lg",
     intro: "Area sections for floors and walls: thickness, material and stiffness modifiers.",
-    body: list, extra: [more],
+    body: dsSpvSplit(list, lpv), extra: [more],
     onOk: () => { dkCommit(sky, D); },
   });
   more.addEventListener("click", () => thenLegacy(dlg, sky, D, () => sky.openSectionMgr && sky.openSectionMgr()));
@@ -434,8 +439,9 @@ export function editShellSection(sky, D, name, { copyOf, done } = {}) {
     ]),
     adv,
   ];
+  const pv = dsSpvShell({ model: D, name: nm0, title: () => draftName.v, section: () => s, thicknessId: "dsShT" });   // live preview (read-only)
   return dkDialog({
-    id: "dsShellSectionData", title: "Slab / Wall Property Data", iconId: "exleaf-shells", size: "md", form: F, body,
+    id: "dsShellSectionData", title: "Slab / Wall Property Data", iconId: "exleaf-shells", size: "md", form: F, body: dsSpvSplit(body, pv),
     intro: isNew ? (copyOf ? `New section copied from <b>${esc(copyOf)}</b>.` : "New shell section.") : null,
     onOk: () => {
       if (!F.touched && !isNew) { done && done(name); return; }

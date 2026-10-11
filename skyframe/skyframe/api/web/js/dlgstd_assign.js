@@ -21,6 +21,7 @@ import {
   el, esc, isNum, dkForm, dkGroup, dkAdvanced, dkTabs, dkNote, dkDialog, dkInfo,
   dkDraft, dkCommit,
 } from "./dlgkit.js";
+import { spvFramePanel as daSpvFrame, spvSplit as daSpvSplit } from "./secpreview.js";   // preview of the chosen section (js/secpreview.js)
 
 const sel = sky => (sky.store.selection || []);
 const common = (arr, f) => {
@@ -77,10 +78,11 @@ export function openAssignFrame(sky, { tab = "section" } = {}) {
   const kinds = ["column", "beam", "brace"].map(k => [k, mems.filter(m => m.kind === k).length]).filter(([, n]) => n).map(([k, n]) => `${n} ${k}${n > 1 ? "s" : ""}`).join(" · ");
   const secOpts = () => Object.keys(S.model.sections || {}).map(n => [n, n]);
   const tabs = dkTabs([
-    { id: "section", label: "Section", body: dkGroup("Frame Section", [
+    { id: "section", label: "Section", body: daSpvSplit(dkGroup("Frame Section", [
       F.select(V, "section", secOpts, { label: "Section Property", id: "daFrameSec", mixed: mx("section"), write: put("section") }),
       dkNote("Define › Frame Sections to add new sizes."),
-    ]) },
+    ]), daSpvFrame({ model: () => S.model, name: () => P.section ?? V.section, section: () => (S.model.sections || {})[P.section ?? V.section] || null,
+      emptyTitle: "Mixed sections", emptyText: "The selected objects use different sections — pick one to preview it." })) },
     { id: "releases", label: "Releases", body: dkGroup("Moment Releases (M2 and M3)", [
       F.check(V, "relMi", { label: "Release moments at the start (i-end)", id: "daFrameRelI", mixed: mx("relMi"), write: put("relMi") }),
       F.check(V, "relMj", { label: "Release moments at the end (j-end)", id: "daFrameRelJ", mixed: mx("relMj"), write: put("relMj") }),

@@ -96,6 +96,7 @@ import { initRepair as rpInitRepair } from "./repairdlg.js";   // Analyze › Ch
 import { rnaCell as rnaRatioCell, rnaCsv as rnaRatioCsv } from "./ratio_na.js";
 
 import { initDlgStd as dsInitDlgStd } from "./dlgstd.js";   // dialog standard (dlgkit) + Model Workflow checklist + canvas context menus
+import { initSecPreview as spvInitSecPreview } from "./secpreview.js";   // live member / property preview in the legacy editors (js/secpreview.js)
 
 /* ------------------------------------------------ state */
 const store = {
@@ -8558,6 +8559,7 @@ async function boot() {
   try { accInitAccuracy(window.__sky); } catch (err) { console.error("accuracy tools init failed", err); }   // Analyze > Mesh Sensitivity Study · Model > Accuracy Advisor (js/accuracy.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
+  try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)
 }
 
 boot();
