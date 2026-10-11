@@ -62,6 +62,7 @@ from typing import Dict, List, Optional, Tuple
 import openseespy.opensees as ops
 
 from skyframe.core import diaphragms as _cd
+from skyframe.core import ratio_significance as _rsig
 
 _TOL = 1e-6
 
@@ -636,6 +637,7 @@ def _case_rows(eng, asm, cr, story_idx) -> dict:
     model = eng.model
     groups = asm.dia["groups"]
     nd = cr.node_disp
+    thr = _rsig.case_threshold(getattr(cr, "story", None) or {})
     out: Dict[str, Dict[str, dict]] = {}
     for (sn, d), g in groups.items():
         dd = _disp_of(g, nd, asm)
@@ -671,9 +673,15 @@ def _case_rows(eng, asm, cr, story_idx) -> dict:
         x0, x1, y0, y1 = g["bbox"]
         row = {"ux": ux, "uy": uy, "rz": rz,
                "drift_x": (ux - bx) / h, "drift_y": (uy - by) / h,
-               "tors_ratio_x": eng._tors_ratio(ux, rz, y1 - y0),
-               "tors_ratio_y": eng._tors_ratio(uy, rz, x1 - x0)}
-        out.setdefault(sn, {})[d] = {k: float(v) for k, v in row.items()}
+               "tors_ratio_x": _rsig.tors_ratio(ux, rz, y1 - y0, thr,
+                                                eng._tors_ratio),
+               "tors_ratio_y": _rsig.tors_ratio(uy, rz, x1 - x0, thr,
+                                                eng._tors_ratio)}
+        row = {k: (None if v is None else float(v)) for k, v in row.items()}
+        for k in ("tors_ratio_x", "tors_ratio_y"):
+            if row[k] is None:                  # n/a: negligible drift
+                _rsig.mark_na(row, k)
+        out.setdefault(sn, {})[d] = row
     return out
 
 
@@ -725,12 +733,17 @@ def results(eng, asm, sources: Dict[str, Dict[str, object]],
             if sn not in by_story or sn not in rows:
                 continue
             e = by_story[sn]
-            trx = max(r["tors_ratio_x"] for r in rows[sn].values())
-            tr_y = max(r["tors_ratio_y"] for r in rows[sn].values())
-            e["tors_ratio_x"], e["tors_ratio_y"] = trx, tr_y
-            trmax = max(trx, tr_y)
-            e["flag"] = ("extreme" if trmax >= 1.4 else
-                         "torsional" if trmax >= 1.2 else "none")
+            # max over the APPLICABLE diaphragm ratios (None = n/a)
+            trs = []
+            for k in ("tors_ratio_x", "tors_ratio_y"):
+                vals = [r[k] for r in rows[sn].values() if r[k] is not None]
+                tr = max(vals) if vals else None
+                e[k] = tr
+                (_rsig.clear_na if tr is not None else _rsig.mark_na)(e, k)
+                trs.append(tr)
+            if _rsig.NA_KEY in e:                       # keep it last
+                e[_rsig.NA_KEY] = e.pop(_rsig.NA_KEY)
+            e["flag"] = _rsig.tors_flag(trs)
     return out
 
 

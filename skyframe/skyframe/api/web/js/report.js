@@ -5,6 +5,7 @@
 
 import { renderStoryCharts, spectrumChart, pushoverChart, setChartTheme } from "./charts.js";
 import U from "./units.js";   // v1.13 — report in the current display units (model stays SI)
+import { rnaIsNa as rnaRepIsNa, rnaHtml as rnaRepHtml } from "./ratio_na.js";   // n/a (negligible drift) ratios
 
 /* unit-aware cell + header helpers */
 const uf = (kind, v, d) => U.fmt(kind, v, d);
@@ -328,10 +329,11 @@ export function buildReportHtml(model, results, opts = {}) {
         const ss = ssAll[cn] || {}, ir = irAll[cn] || {};
         const rows = [...r.story_order].reverse().map(s => {
           const k = ss[s] || {}, x = ir[s] || {};
-          return [T(s), uf("stiffness", k.kx, 0), uf("stiffness", k.ky, 0),
-            fmt(x.tors_ratio_x, 2), fmt(x.tors_ratio_y, 2),
+          const na = (o, key, v) => rnaRepIsNa(o, key) ? { html: rnaRepHtml(o, key) } : v;   // n/a (negligible drift)
+          return [T(s), na(k, "kx", uf("stiffness", k.kx, 0)), na(k, "ky", uf("stiffness", k.ky, 0)),
+            na(x, "tors_ratio_x", fmt(x.tors_ratio_x, 2)), na(x, "tors_ratio_y", fmt(x.tors_ratio_y, 2)),
             { html: chip(x.flag || "none"), txt: true },
-            x.stiff_ratio == null ? D("—") : fmt(x.stiff_ratio, 2),
+            x.stiff_ratio == null ? na(x, "stiff_ratio", D("—")) : fmt(x.stiff_ratio, 2),
             { html: x.stiff_ratio == null ? "—" : chip(x.soft_flag || "none"), txt: true }];
         });
         const t = table([{ label: "Story", txt: true }, uh("kx", "stiffness"), uh("ky", "stiffness"),
@@ -340,6 +342,7 @@ export function buildReportHtml(model, results, opts = {}) {
         return `<div class="case-block"><h3>${esc(cn)} <span class="tag">diagnostics</span></h3>${t}</div>`;
       }).join("") +
       `<p class="note">Torsional irregularity: max/avg story drift — ≥ 1.2 torsional (Type 1a), ≥ 1.4 extreme (Type 1b).
+        n/a = not applicable (negligible drift): the case does not load that direction (drift &lt; max(1e-9 m, 1e-6 × the case's largest displacement)).
         Soft story: story stiffness vs the story above — &lt; 70 % soft (Type 1a), &lt; 60 % extreme soft (Type 1b).</p>`;
   }
 

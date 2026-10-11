@@ -31,6 +31,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from .loads_ext import area_load_is_default, area_load_resultant
 from .modifiers import frame_weight_mod, shell_weight_mod
+from . import ratio_significance as _rsig          # n/a noise ratios
 from .towers import (chain_break as _tw_chain_break,  # C9 towers
                      decorate_table as _tw_decorate)
 
@@ -449,6 +450,7 @@ def _t_story_stiffness(c: _Ctx) -> List[dict]:
                    abs(st.get(s.name, {}).get("shear_y", 0.0)) > 1e-12
                    for s in c.stories):
             continue
+        thr = _rsig.case_threshold(st)      # negligible drift -> 0 (n/a)
         prev_ux = prev_uy = 0.0
         out = []
         prev_s = None
@@ -461,8 +463,8 @@ def _t_story_stiffness(c: _Ctx) -> List[dict]:
             prev_s = s
             dx, dy = e["ux"] - prev_ux, e["uy"] - prev_uy
             vx, vy = e["shear_x"], e["shear_y"]
-            kx = abs(vx / dx) if abs(dx) > 1e-15 and abs(vx) > 1e-15 else 0.0
-            ky = abs(vy / dy) if abs(dy) > 1e-15 and abs(vy) > 1e-15 else 0.0
+            kx = _rsig.story_stiffness(vx, dx, thr)
+            ky = _rsig.story_stiffness(vy, dy, thr)
             out.append({"story": s.name, "case": name, "case_type": ctype,
                         "shear_x": vx, "drift_x": dx, "stiff_x": kx,
                         "shear_y": vy, "drift_y": dy, "stiff_y": ky})
@@ -687,9 +689,14 @@ def _t_diaphragm_drifts(c: _Ctx) -> List[dict]:
     diaphragm, the drift / displacement at the two plan extreme points
     transverse to each direction (rigid-body field of the master), ``ratio =
     max(|d1|,|d2|) / ((|d1|+|d2|)/2)`` — the ASCE 7 §12.3.2.1 torsional
-    ratio (1.0 for a non-rotating diaphragm)."""
+    ratio (1.0 for a non-rotating diaphragm).  A ratio whose average
+    (displacement, or drift displacement ``avg_drift * h``) is negligible
+    for the case (:mod:`skyframe.core.ratio_significance`) is ``None`` (n/a)
+    and the table carries one warning saying so."""
     rows = []
+    n_na = 0
     for name, ctype, cd in c.sources():
+        thr = _rsig.case_threshold(cd.get("story", {}))
         for idx in range(len(c.stories) - 1, -1, -1):
             s = c.stories[idx]
             if s.name not in c.masters or \
@@ -715,14 +722,24 @@ def _t_diaphragm_drifts(c: _Ctx) -> List[dict]:
                 if avg_u < 1e-14 and avg_d < 1e-14:
                     continue
                 imax = 0 if dd[0] >= dd[1] else 1
+                na_u = _rsig.negligible(avg_u, thr)
+                na_d = _rsig.negligible(avg_d * h, thr)
+                n_na += na_u + na_d
                 rows.append({
                     "story": s.name, "case": name, "case_type": ctype,
                     "direction": direction,
                     "max_disp": max(du), "avg_disp": avg_u,
-                    "disp_ratio": max(du) / avg_u if avg_u > 1e-30 else 1.0,
+                    "disp_ratio": None if na_u else
+                    (max(du) / avg_u if avg_u > 1e-30 else 1.0),
                     "max_drift": max(dd), "avg_drift": avg_d,
-                    "drift_ratio": max(dd) / avg_d if avg_d > 1e-30 else 1.0,
+                    "drift_ratio": None if na_d else
+                    (max(dd) / avg_d if avg_d > 1e-30 else 1.0),
                     "label_max": vals[imax][0]})
+    if n_na:
+        c.warnings.append(f"Disp/Drift Ratio {_rsig.NA_NEGLIGIBLE_DRIFT} "
+                          f"in {n_na} cell(s): the average is below "
+                          "max(1e-9 m, 1e-6 x the case's largest story "
+                          "displacement) - round-off, not response")
     return rows
 
 
