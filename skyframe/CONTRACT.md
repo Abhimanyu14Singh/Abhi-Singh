@@ -9827,3 +9827,81 @@ Malformed input returns 400.
 * **Test hook.** `__sky.frameAxes` exposes `{convention, convert,
   openConvert, toggleExtrude, toggleAxes, axesOf}`.
   `__sky.vx.meshOf(uid)` returns the extruded vertices of each part.
+
+## Eigen refinement and tower control height
+
+No JSON key is added, removed or renamed. Two value rules change.
+
+### 1. Verified eigenpairs, canonical degenerate basis
+
+`run_modal`'s legacy eigen path (OpenSees `eigen`; every small model,
+`eigen_solver: "legacy"`) now goes through `engine/eigen_refine.py`:
+
+* **Verification.** One inverse iteration `y_i = K^-1 M phi_i` per mode
+  (a linear static solve on the standard elastic domain) gives the
+  residual `max|lam_i y_i - phi_i| / max|phi_i|` over all DOFs and the
+  mass-orthogonality error of the set. When both are `<= 1e-9`, the
+  OpenSees eigenpairs are returned unchanged (same objects).
+* **Rayleigh-Ritz cleanup** otherwise, on `Z = [lam_i y_i]`:
+  `Z^T K Z = Z^T M Phi Lam` and `Z^T M Z` are exact small matrices
+  (lumped mass). This repeats at most 3 times. The cause is
+  `-fullGenLapack`, which returns non-M-orthogonal vectors inside a
+  degenerate pair. On the 2x2-bay quick building the error was 1e-3, and
+  `Gamma = L/m` then mis-split the X excitation: an RS X case leaked
+  4.4e-4 into Y. Arpack can also return vectors polluted in the massless
+  DOFs.
+* **Canonical basis of repeated eigenvalues.** Consecutive eigenvalues
+  within `1e-9` relative form a cluster. Every solver path, including the
+  condensed UmfPack path, rotates the cluster to the same M-orthonormal
+  basis. The first mode carries all of the cluster's X participation,
+  the next the rest of its Y, then RZ, then the complement. A doubly
+  symmetric building gets pure-X and pure-Y modes, so SRSS and ABS no
+  longer depend on the solver's arbitrary basis. CQC is invariant anyway,
+  because `rho = 1` inside the pair.
+* **Cut clusters.** When mode `n+1` repeats mode `n`, the whole cluster is
+  solved and made canonical, and its first members are kept. The mode
+  count is unchanged.
+
+Measured with the assembled `K`/`M` (`GimmeMCK`) on the quick building,
+the 2x2 square building, the twin towers and the twin square towers, for
+`n` = 8 and 12 and for band, umfpack and legacy:
+
+* the residual `||K phi - lam M phi|| / ||K phi||` is at most 3e-13;
+* the orthogonality error is at most 4e-14;
+* RS X leakage into Y is at most 1e-14 with both CQC and SRSS. Before the
+  change it was up to 4.5e-4 with CQC and up to 30% on the SRSS base
+  shear of the 4-fold cluster.
+
+**Back-compat.**
+
+* Models without repeated periods are byte-identical (results hashes
+  checked).
+* With repeated periods:
+  * periods are unchanged to 1.1e-14;
+  * per-mode shapes and participation of a cluster now follow the
+    canonical basis;
+  * CQC results change only where the old basis was non-orthogonal, which
+    removes the leakage. Otherwise they change by at most 5e-15;
+  * SRSS results follow the canonical basis.
+* Participation SUMS are basis-invariant. They change only where the
+  old basis was non-orthogonal. For example, the 2x2 quick building with
+  all 12 modes went from ux 1.00000022 and uy 0.99999978 to exactly 1.
+
+### 2. Pushover control height with towers
+
+`control.height` (`H_ctrl`, used by `target_drift x H_ctrl` and by
+`roof_drift`) is now the control tower's height:
+
+* with `control_tower`, the top story's elevation minus the tower's
+  `base_elevation`;
+* with towers and no control tower, the default roof story
+  (`stories[-1]`) minus ITS tower's base elevation.
+
+Without towers, or with towers based at 0, nothing changes. On the
+podium test model, `control_tower = "T1"` gives `H = 15 - 6 = 9 m`
+(it was 15). The default B2 gives `12 - 6 = 6 m` (it was 12).
+
+The Pushover Options dialog's target-displacement placeholder now shows
+`target_drift x H_ctrl` with the backend's rule
+(`towers_fu.js controlHeight`): tower, roof, story elevation or joint z.
+The placeholder updates when the control tower, story or joint changes.

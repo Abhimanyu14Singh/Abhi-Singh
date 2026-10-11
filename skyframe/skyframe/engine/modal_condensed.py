@@ -156,12 +156,21 @@ def solve(eng, asm, n: int
     want_units = bool(eng.model.rs_cases) and _units_linear(asm)
     tags = list(asm.node_coords)
     jobs = []
+    # degenerate clusters -> the canonical, solver-independent basis
+    # (engine/eigen_refine.align_basis); None = no cluster (unchanged)
+    from skyframe.engine import eigen_refine as _eref
+    ext = _eref.cluster_end([1.0 / float(mu[k]) for k in good], n)
+    canon = _eref.canonical_massed(
+        [1.0 / float(mu[k]) for k in good[:ext]],
+        np.column_stack([Y[:, k] / s for k in good[:ext]]), m, dofs)
     for mode, k in enumerate(good[:n], start=1):
         lam = 1.0 / float(mu[k])
         phi_m = Y[:, k] / s                       # phi_m^T M phi_m = 1
         i_big = int(np.argmax(np.abs(Y[:, k])))   # deterministic sign
         if Y[i_big, k] < 0.0:
             phi_m = -phi_m
+        if canon is not None and mode - 1 in canon[1]:
+            phi_m = canon[0][:, mode - 1]
         jobs.append((mode, lam, [(dofs[i], lam * m[i] * phi_m[i])
                                  for i in range(nm) if phi_m[i] != 0.0]))
 

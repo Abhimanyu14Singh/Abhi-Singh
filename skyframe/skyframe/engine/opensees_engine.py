@@ -2530,6 +2530,11 @@ class OpenSeesEngine:
             shapes = {mode: {t: list(ops.nodeEigenvector(t, mode))
                              for t in asm.node_coords}
                       for mode in range(1, n + 1)}
+            # verify; Rayleigh-Ritz cleanup only when needed (degenerate
+            # pairs / polluted vectors) — engine/eigen_refine.py
+            from . import eigen_refine as _eref
+            lambdas, shapes = _eref.refine(self, asm, lambdas, shapes,
+                                           n_massed)
         periods = [2.0 * math.pi / math.sqrt(lam) for lam in lambdas]
         frequencies = [1.0 / t for t in periods]
         participation = self._participation(asm, periods, shapes)

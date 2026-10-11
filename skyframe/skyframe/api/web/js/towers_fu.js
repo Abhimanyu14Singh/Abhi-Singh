@@ -32,6 +32,37 @@ export function towerTopStory(m, name) {
   return best;
 }
 
+/** Base elevation of a tower (0 when unknown). */
+export function towerBase(m, name) {
+  const t = fuTowersOf(m).find(x => x.name === name);
+  return t ? (+t.base_elevation || 0) : 0;
+}
+
+/** Control height H of a pushover's "target drift × H" default — client
+    mirror of the backend (engine/towers_ext.pushover_roof +
+    engine/pushover_distribution.resolve_control):
+      tower → that tower's top story − the tower's base elevation;
+      roof  → the last story (with towers: minus its tower's base);
+      story → the story's elevation; joint → its z (a non-positive story /
+              joint height falls back to the roof value). */
+export function controlHeight(m, d, ctrl) {
+  const sts = (m && m.stories) || [];
+  const top = sts[sts.length - 1];
+  const tw = fuHasTowers(m);
+  let H = top ? (+top.elevation || 0) : 0;
+  if (tw && top) H -= towerBase(m, fuStoryTowerMap(m)[top.name]);
+  if (ctrl === "tower" && d && d.control_tower && tw) {
+    const t = towerTopStory(m, d.control_tower);
+    return t ? (+t.elevation || 0) - towerBase(m, d.control_tower) : H;
+  }
+  let hc = null;
+  if (ctrl === "story" && d && d.control_story) {
+    const s = sts.find(x => x.name === d.control_story);
+    hc = s ? (+s.elevation || 0) : null;
+  } else if (ctrl === "point" && d && Array.isArray(d.control_point)) hc = +d.control_point[2];
+  return hc != null && isFinite(hc) && hc > 0 ? hc : H;
+}
+
 /** Client mirror of the backend control_tower check ("" = ok). */
 export function controlTowerError(m, c, at) {
   const ct = c && c.control_tower;
@@ -69,12 +100,12 @@ export function towerRadio(rr, m, d, ctrl, onPick, prefix) {
 }
 
 /** casedlg / nlsdlg hook: the tower selector row when "Tower" is picked. */
-export function towerRow(g, m, d, ctrl, prefix) {
+export function towerRow(g, m, d, ctrl, prefix, onChange) {
   if (!g || ctrl !== "tower" || !fuHasTowers(m)) return;
   const sel = fuSelect(towerNames(m).map(n => {
     const top = towerTopStory(m, n);
     return [n, top ? `${n} — roof ${top.name} (z ${U.fmt("length", top.elevation, 2)} ${U.label("length")})` : n];
-  }), d.control_tower || "", v => { d.control_tower = v || null; }, `${prefix}Tower`);
+  }), d.control_tower || "", v => { d.control_tower = v || null; if (onChange) onChange(); }, `${prefix}Tower`);
   g.appendChild(fuRow("Control tower", sel, null, "the tower's top-story diaphragm master"));
 }
 
