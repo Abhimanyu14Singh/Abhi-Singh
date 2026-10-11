@@ -285,6 +285,8 @@ export function initEtabs(sky) {
       { label: "Run Analysis", act: "an-run", key: "R", fn: () => runNow() },
       { label: "Check Model…", act: "an-check", fn: () => sky.openCheckModel && sky.openCheckModel() },
       { label: "Check Stability…", act: "an-stability", fn: () => sky.openCheckStability && sky.openCheckStability() },
+      { label: "Mesh Sensitivity Study…", act: "an-acc-meshstudy", hint: "refine · Richardson", fn: () => sky.openMeshStudy && sky.openMeshStudy() },   // js/accuracy.js
+      { label: "Accuracy Advisor…", act: "an-acc-advisor", hint: "modelling choices", fn: () => sky.openAccuracyAdvisor && sky.openAccuracyAdvisor() },   // js/accuracy.js
       { label: "Analysis Log…", act: "an-log", hint: "P-Δ · combos · warnings", fn: () => sky.openAnalysisLog && sky.openAnalysisLog() },
       { sep: true },
       { label: "Analysis Options (P-Δ · modal · damping)…", act: "an-opts", fn: () => { gotoLoads("ls-cases"); toast("Analysis options", "P-Δ, modal count and damping are set per case in the Cases editor."); } },
@@ -462,6 +464,7 @@ export function initEtabs(sky) {
       ["Shells (walls / slabs)", () => { sky.setMode("model"); syncStatus(); }],
       ["Supports & Springs", () => { sky.setMode("model"); syncStatus(); }],
       ["Links", () => { sky.setMode("model"); syncStatus(); }],
+      ["Accuracy Advisor", () => sky.openAccuracyAdvisor && sky.openAccuracyAdvisor()],   // Model > Accuracy Advisor (js/accuracy.js)
     ]],
     ["Definitions", [
       ["Materials", () => sky.openSectionMgr()],

@@ -68,6 +68,8 @@ import { initUserHinges as uhInitUserHinges } from "./uhdlg.js";
 import { mockValidateUserHinges as uhMockValidate } from "./mock_userhinge.js";
 // PT tendons + hyperstatic case — draw / profile / properties / results (aliased imports)
 import { initTendons as ptInitTendons } from "./tendons.js";
+// Mesh Sensitivity Study + Accuracy Advisor (js/accuracy.js; aliased import)
+import { initAccuracy as accInitAccuracy } from "./accuracy.js";
 import { mockValidateTendons as ptMockValidate } from "./mock_tendons.js";
 // Plot functions / story response plots / 3D force diagrams (Display menu)
 import { initPlotFn as pfInitPlotFn } from "./plotfn.js";
@@ -75,7 +77,6 @@ import { initViewExt as vxInitViewExt } from "./viewext.js";   // View > Set Dis
 import { pfMockValidate as pfMockValidateModel } from "./mock_plotfn.js";
 // ETABS Edit / Select menus + Undo/Redo history (aliased import; js/editmenu.js)
 import { initEditMenu as edInitEditMenu } from "./editmenu.js";
-import { initUx as uxInitUx } from "./ux.js";
 // Open-structure wind + Create Report / Model Info / analysis run log (aliased imports)
 import { initOpenWind as owInitOpenWind } from "./openwind.js";
 import { initReportX as rxInitReportX } from "./reportx.js";
@@ -8529,6 +8530,7 @@ async function boot() {
   try { edInitEditMenu(window.__sky); } catch (err) { console.error("edit menu init failed", err); }   // Edit / Select menus + Undo/Redo
   try { owInitOpenWind(window.__sky); rxInitReportX(window.__sky); } catch (err) { console.error("open wind / report init failed", err); }   // open-structure wind · Create Report · Model Info · run log
   try { dbeInitDbEdit(window.__sky); } catch (err) { console.error("db edit init failed", err); }   // Interactive Database Editing (js/dbedit.js)
+  try { accInitAccuracy(window.__sky); } catch (err) { console.error("accuracy tools init failed", err); }   // Analyze > Mesh Sensitivity Study · Model > Accuracy Advisor (js/accuracy.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
 }
 
