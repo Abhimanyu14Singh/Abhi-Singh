@@ -18,6 +18,8 @@
 
 import * as ME from "./modeledit.js";
 import U from "./units.js";
+import { towerRadio as c9fTowerRadio, towerRow as c9fTowerRow, initialCtrl as c9fInitialCtrl,
+  controlTowerError as c9fControlTowerError } from "./towers_fu.js";   // C9 follow-ups: control tower
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const clone = o => JSON.parse(JSON.stringify(o));
@@ -1118,6 +1120,7 @@ export const PO_DEFAULTS = {
   load_distribution: "roof_point", pattern: null, mode_number: null, k: null,
   control_story: null, control_point: null, control_dof: null, target_disp: null,
   control_mode: "displacement_control", target_load: 1.0, start_from: null,
+  control_tower: null,   // C9 follow-ups (js/towers_fu.js)
 };
 const PO_DIST_LABEL = {
   roof_point: "Roof point load (default)",
@@ -1134,7 +1137,7 @@ export function openPushoverOptions(ctx, name) {
   const d = {};
   for (const [k, v] of Object.entries(PO_DEFAULTS)) d[k] = pc[k] === undefined ? clone(v) : clone(pc[k]);
   let gravity = clone(pc.gravity || {});
-  let ctrl = d.control_point ? "point" : d.control_story ? "story" : "roof";
+  let ctrl = c9fInitialCtrl(d);   // C9 follow-ups: + "tower"
   const joints = modelJoints(m);
   const H = Math.max(0, ...(m.stories || []).map(s => s.elevation || 0));
   const body = el("div", "cd-poo");
@@ -1174,7 +1177,9 @@ export function openPushoverOptions(ctx, name) {
       radio("pooCtrl", "roof", ctrl === "roof", "Roof (default)", v => { ctrl = v; draw(); }, "pooCtrlRoof"),
       radio("pooCtrl", "story", ctrl === "story", "Story", v => { ctrl = v; if (!d.control_story) d.control_story = storyNames(m).slice(-1)[0] || null; draw(); }, "pooCtrlStory"),
       radio("pooCtrl", "point", ctrl === "point", "Joint", v => { ctrl = v; if (!d.control_point) d.control_point = (joints[joints.length - 1] || [0, 0, H]).slice(); draw(); }, "pooCtrlPoint"));
+    c9fTowerRadio(rr, m, d, ctrl, v => { ctrl = v; draw(); }, "poo");   // C9 follow-ups: control tower (towers only)
     g2.appendChild(rr);
+    c9fTowerRow(g2, m, d, ctrl, "poo");                                  // C9 follow-ups
     if (ctrl === "story")
       g2.appendChild(row("Control story", select(storyNames(m).map(s => [s, s]), d.control_story || "", v => { d.control_story = v; }, "pooStory")));
     if (ctrl === "point") {
@@ -1231,6 +1236,8 @@ export function openPushoverOptions(ctx, name) {
     if (ctrl !== "story") d.control_story = null;
     if (ctrl !== "point") d.control_point = null;
     else d.control_point = snapToJoint(joints, d.control_point);
+    if (ctrl !== "tower") d.control_tower = null;   // C9 follow-ups
+    if (c9fControlTowerError(m, d, "Pushover")) return fail(c9fControlTowerError(m, d, "Pushover"));
     if (d.load_distribution !== "pattern") d.pattern = null;
     if (d.load_distribution !== "mode") d.mode_number = null;
     if (d.load_distribution !== "triangular") d.k = null;

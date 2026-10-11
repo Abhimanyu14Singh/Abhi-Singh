@@ -190,6 +190,7 @@ from skyframe.core import mesh_cache as _mesh_cache  # cross-run mesh cache
 from skyframe.engine import convergence as _cvg     # nonlinear fallback ladder
 
 from skyframe.engine import towers as _tw          # C9 multiple towers
+from skyframe.engine import towers_ext as _twx     # C9 follow-ups
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
                                  FP_DEFAULT_KINIT, G_ACCEL,
                                  ISOLATOR_DEFAULT_KV, TFP_DEFAULT_MINFV,
@@ -6637,6 +6638,7 @@ class OpenSeesEngine:
             ctrl = min(t for t, c in asm.struct_coords.items()
                        if abs(c[2] - zmax) < _TOL)
         H = top.elevation
+        top, ctrl, H = _twx.pushover_roof(self, asm, case, top, ctrl, H)  # C9
         if H <= 0.0:
             raise ValueError(f"Pushover case {name!r}: roof elevation must "
                              "be > 0")
@@ -7493,6 +7495,7 @@ class OpenSeesEngine:
             story0 = {s.name: story_uxuy(s) for s in stories}
             ops.reactions()
             base0 = base_fxfy()
+        twcut = _twx.th_begin(self, asm, th)   # C9: per-tower cut (or None)
 
         if mc is None:
             ops.timeSeries("Path", 1, "-dt", float(dt),
@@ -7596,6 +7599,8 @@ class OpenSeesEngine:
             fx, fy = base_fxfy()
             bfx.append(fx - base0[0])
             bfy.append(fy - base0[1])
+            if twcut is not None:
+                twcut.record()                     # C9 per-tower cut shear
             # hinge tracking (nonlinear): peak rotation + yield detection
             for (uid, _end), etag in asm.hinge_ele.items():
                 defo = ops.eleResponse(etag, "deformation")
@@ -7647,6 +7652,8 @@ class OpenSeesEngine:
             result.extra = dict(result.extra, hinges=uh_rec.detail())
         if pfr is not None:                               # plot functions
             result.extra = dict(result.extra, plot_functions=pfr.results())
+        if twcut is not None:                             # C9 tower shears
+            twcut.finish(result, svx, svy)
         self._th_cache[name] = result
         return result
 
@@ -8210,6 +8217,8 @@ class OpenSeesEngine:
                            nonlinear=False)
         if mc is not None:
             result.extra.update(mc.extra())
+        _twx.fna(self, th, result, svx, svy, eng2, shp, w, mass_items, q,
+                 _fdev, B, k_lin)                 # C9 per-tower shear
         self._fna_cache[name] = result
         return result
 

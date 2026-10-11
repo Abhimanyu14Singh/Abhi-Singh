@@ -49,7 +49,8 @@ from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
-REQUEST_KEYS = ("joints", "links", "frames", "hinges")
+REQUEST_KEYS = ("joints", "links", "frames", "hinges",
+                "story_shears")      # C9 follow-up: story shear history
 
 #: default period grid (s): T = 0 (PGA) + 99 log-spaced points 0.02 .. 5 s
 DEFAULT_PERIODS: List[float] = [0.0] + [
@@ -108,6 +109,11 @@ def normalize(req) -> Optional[dict]:
         if not isinstance(req["hinges"], bool):
             raise ValueError("output_requests.hinges must be true/false")
         out["hinges"] = bool(req["hinges"])
+    if "story_shears" in req:                 # C9 follow-up (towers)
+        if not isinstance(req["story_shears"], bool):
+            raise ValueError("output_requests.story_shears must be "
+                             "true/false")
+        out["story_shears"] = bool(req["story_shears"])
     return out
 
 

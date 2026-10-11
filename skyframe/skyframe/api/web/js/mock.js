@@ -28,6 +28,7 @@ import { mockAugmentUserHinges as uhMockAugment } from "./mock_userhinge.js";
 // PT tendons — results.tendons (P(x) after losses) + results.hyperstatic (js/mock_tendons.js)
 import { mockAugmentTendons as ptMockAugment } from "./mock_tendons.js";
 import { pfMockExtend as pfMockExtendResults } from "./mock_plotfn.js";   // plot functions (TH output_requests)
+import { fuMockAugment as c9fMockAugment } from "./mock_towers_fu.js";   // C9 follow-ups: per-tower TH shear, control tower
 const G = 9.80665;
 
 function mulberry32(seed) {
@@ -3318,6 +3319,7 @@ export function mockResults(model) {
   uhMockAugment(model, r);                        // B10: user hinge histories (js/mock_userhinge.js)
   ptMockAugment(model, r);                        // PT tendons + hyperstatic cases (js/mock_tendons.js)
   pfMockExtendResults(model, r);                  // plot functions: th_cases[*].plot_functions (js/mock_plotfn.js)
+  c9fMockAugment(model, r);                       // C9 follow-ups: per-tower TH story shear + control_tower (js/mock_towers_fu.js)
   return r;
 }
 

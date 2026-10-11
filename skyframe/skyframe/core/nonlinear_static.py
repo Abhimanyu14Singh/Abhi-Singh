@@ -94,6 +94,7 @@ class NonlinearStaticCase:
     default_My: Optional[float] = None
     hardening: float = 0.02
     hinge_params: Dict[str, float] = field(default_factory=dict)
+    control_tower: Optional[str] = None     # C9 follow-up: tower roof joint
 
     def pattern_factors(self) -> Dict[str, float]:
         """pattern -> summed scale of this case's own loads."""
@@ -120,7 +121,10 @@ class NonlinearStaticCase:
                 "hinges": self.hinges, "My": dict(self.My),
                 "default_My": self.default_My,
                 "hardening": self.hardening,
-                "hinge_params": dict(self.hinge_params)}
+                "hinge_params": dict(self.hinge_params),
+                # C9 follow-up: emitted only when set (byte-identical files)
+                **({"control_tower": self.control_tower}
+                   if self.control_tower is not None else {})}
 
 
 def _coerce_loads(loads) -> List[dict]:
@@ -168,7 +172,8 @@ def case_from_dict(name: str, d: dict) -> NonlinearStaticCase:
         default_My=dmy,
         hardening=d.get("hardening", 0.02),
         hinge_params={str(k): v
-                      for k, v in (d.get("hinge_params") or {}).items()})
+                      for k, v in (d.get("hinge_params") or {}).items()},
+        control_tower=d.get("control_tower"))      # C9 follow-up
 
 
 def add_nonlinear_static_case(model, name: str, loads, **kw
@@ -347,6 +352,8 @@ def validate_nonlinear_static(model) -> None:
                              "already used by a "
                              f"{others.get(name, 'modal')} case")
         _validate_case(model, c)
+        from skyframe.core.towers_ext import _check_control_tower  # C9
+        _check_control_tower(model, f"Nonlinear static case {name}", c)
     for name, c in cases.items():
         chain = chain_of(model, name)
         geo = {cases[n].geometric for n in chain}

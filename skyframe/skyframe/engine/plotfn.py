@@ -273,4 +273,6 @@ def make(engine, th, asm, accel, dt, dof, mc) -> Optional[Recorder]:
     """A recorder when the case requests outputs, else ``None``."""
     if getattr(th, "output_requests", None) is None:
         return None
+    if not set(th.output_requests) - {"story_shears"}:
+        return None              # only the story-shear history (C9 towers)
     return Recorder(engine, th, asm, accel, dt, dof, mc)

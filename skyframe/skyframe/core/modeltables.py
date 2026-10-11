@@ -51,6 +51,7 @@ import zipfile
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .towers import story_post_dict as _tw_story_post   # C9 towers
+from . import towers_ext as _twx                         # C9 follow-ups
 
 # quantity (js/units.js kind) -> SI unit of the stored value
 QUANTITIES: Dict[str, str] = {
@@ -518,6 +519,10 @@ class Table:
     def rows(self, d) -> List[dict]:
         raise NotImplementedError
 
+    def columns(self, d) -> List[Col]:
+        """Columns shown for model ``d`` (default: all)."""
+        return self.cols
+
     def apply(self, d, rows, errs) -> dict:
         raise NotImplementedError
 
@@ -726,6 +731,30 @@ class ObjectTable(Table):
         if renames:
             out["renamed"] = renames
         return out
+
+
+class StoryDefsTable(ObjectTable):
+    """Story Definitions: the ``tower`` column exists only when the model
+    defines towers (C9 follow-up); without towers rows / columns / CSV
+    are exactly the legacy ones."""
+
+    def columns(self, d):
+        if (d or {}).get("towers"):
+            return self.cols
+        return [c for c in self.cols if c.key != "tower"]
+
+    def rows(self, d):
+        out = super().rows(d)
+        if not (d or {}).get("towers"):
+            for r in out:
+                r.pop("tower", None)
+        return out
+
+    def apply(self, d, rows, errs):
+        if not d.get("towers"):
+            rows = [{k: v for k, v in r.items() if k != "tower"}
+                    if isinstance(r, dict) else r for r in rows]
+        return super().apply(d, rows, errs)
 
 
 class PatternListTable(Table):
@@ -1017,6 +1046,7 @@ def _story_post(d, pairs, orig):
     when any height / order changed; otherwise keep the stored values."""
     stories = d.get("stories") or []
     if _tw_story_post(d):                   # C9: per-tower elevations
+        _twx.sync_tower_story_lists(d)      # C9: tower story lists
         return
     old = [orig[k] for k in sorted(orig)]
     same = (len(old) == len(stories) and all(
@@ -1547,11 +1577,13 @@ def _build_catalogue() -> List[Table]:
         new_obj=lambda d: {"mod": 1.0, "layered": None}))
 
     # ---- stories / grids / joints
-    T.append(ObjectTable(
+    T.append(StoryDefsTable(
         "stories", "Story Definitions", G_DEF, [
             Col("name", "Story", "text", required=True),
             Col("height", "Height", num, "length", required=True),
             Col("elevation", "Elevation", num, "length", editable=False),
+            Col("tower", "Tower", "enum", enum=_twx.tower_options,
+                get=_twx.story_tower_get, put=_twx.story_tower_put),
         ], container="stories", kind="list", keycol="name",
         on_rename=_cascade_story, on_delete=_delete_story, post=_story_post,
         new_obj=lambda d: {"name": "", "height": 3.0, "elevation": 0.0}))
@@ -1994,7 +2026,7 @@ def list_tables(d: Optional[dict] = None) -> List[dict]:
 
 def get_table(d: dict, key: str) -> dict:
     t = table(key)
-    return {**t.meta(d), "columns": [c.meta(d) for c in t.cols],
+    return {**t.meta(d), "columns": [c.meta(d) for c in t.columns(d)],
             "rows": t.rows(d)}
 
 
@@ -2105,7 +2137,7 @@ def table_to_csv(d: dict, key: str, include_id: bool = True) -> str:
     t = table(key)
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
-    cols = t.cols
+    cols = t.columns(d)
     w.writerow((["_id"] if include_id else []) + [c.key for c in cols])
     for r in t.rows(d):
         w.writerow(([json.dumps(r.get("_id"), separators=(",", ":"))]

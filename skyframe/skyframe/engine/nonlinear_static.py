@@ -144,6 +144,9 @@ def _monitor(eng, asm, case) -> Tuple[int, int]:
     """(monitored node tag, 1-based dof) of a case."""
     model = eng.model
     dof = NLS_DOFS.index(case.control_dof) + 1
+    from skyframe.engine.towers_ext import nls_monitor   # C9 control_tower
+    if nls_monitor(eng, asm, case) is not None:
+        return nls_monitor(eng, asm, case), dof
     if case.control_point is not None:
         return eng._find_node(asm, tuple(case.control_point)), dof
     if case.control_story is not None:

@@ -43,6 +43,7 @@ from skyframe.core.nonprismatic import member_area as _np_area
 from skyframe.core import thermal_ext as _thx  # v1.16 temperature / projected
 from skyframe.core import damping_options as _dmpo
 from skyframe.core import towers as _towers  # C9 multiple towers
+from skyframe.core import towers_ext as _towers_ext  # C9 follow-ups
 from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
     PDELTA_INCLUDE_IN, PDELTA_METHODS, pdelta_defaults, pdelta_from_dict,
     pdelta_to_dict, validate_pdelta_options)
@@ -1423,7 +1424,8 @@ PUSHOVER_DIST_DEFAULTS = {
     "k": None, "control_story": None, "control_point": None,
     "control_dof": None, "target_disp": None,
     "control_mode": "displacement_control", "target_load": 1.0,
-    "start_from": None}
+    "start_from": None,
+    "control_tower": None}             # C9 follow-up: monitored tower roof
 
 
 def _coerce_pushover_dist(d: dict) -> dict:
@@ -1512,6 +1514,7 @@ class PushoverCase:
     control_mode: str = "displacement_control"    # | "load_control"
     target_load: float = 1.0               # load_control final load factor
     start_from: Optional[str] = None       # static LoadCase held as gravity
+    control_tower: Optional[str] = None    # C9 follow-up: tower roof control
 
     def to_dict(self) -> dict:
         d = {"name": self.name, "direction": self.direction,
@@ -2888,6 +2891,8 @@ class BuildingModel:
             raise ValueError(f"Pushover case {po.name}: default_My must be "
                              "a finite value > 0 (or None)")
         self._validate_pushover_distribution(po)
+        _towers_ext._check_control_tower(self, f"Pushover case {po.name}",
+                                         po)       # C9 follow-up
 
     def _validate_pushover_distribution(self, po: PushoverCase) -> None:
         """Load distribution / control / start_from fields of a pushover."""

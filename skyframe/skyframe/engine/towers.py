@@ -80,16 +80,24 @@ def install(eng) -> None:
     d["run_time_history"] = functools.partial(_th_wrap, eng,
                                               cls.run_time_history)
     d["run_fna"] = functools.partial(_th_wrap, eng, cls.run_fna)
+    from skyframe.engine import towers_ext as _twx
+    _twx.install(eng)                       # follow-ups: staged per tower
 
 
 @contextlib.contextmanager
 def _as_view(eng, view):
     saved = eng.model
+    # the uid lookup memo is per model: never let a view's (partial) memo
+    # leak into the full model (or the full memo into the view)
+    memo = eng.__dict__.pop("_uid_lk", None)
     eng.model = view
     try:
         yield view
     finally:
         eng.model = saved
+        eng.__dict__.pop("_uid_lk", None)
+        if memo is not None:
+            eng.__dict__["_uid_lk"] = memo
 
 
 def _tower_of_story(eng, story: str) -> Optional[str]:

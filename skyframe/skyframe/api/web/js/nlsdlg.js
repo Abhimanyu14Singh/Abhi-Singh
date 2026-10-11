@@ -26,6 +26,8 @@ import {
   group, el, numInput, row, select, checkbox, radio, storyNames, modelJoints,
   snapToJoint, ptLabel, storyAtZ, makeCtx, ensureCss, svgIcon,
 } from "./nls_ui.js";
+import { towerRadio as c9fTowerRadio, towerRow as c9fTowerRow, initialCtrl as c9fInitialCtrl,
+  controlTowerError as c9fControlTowerError } from "./towers_fu.js";   // C9 follow-ups: control tower
 
 /* ================================================================
    model helpers
@@ -63,6 +65,7 @@ export function canonicalCase(c, name) {
     else if (k === "loads") out.loads = (c.loads || []).map(l => ({ pattern: String(l.pattern), scale: +l.scale }));
     else out[k] = c[k] === undefined ? clone(NLS_DEFAULTS[k]) : clone(c[k]);
   }
+  if (c.control_tower != null) out.control_tower = c.control_tower;   // C9 follow-ups: emitted only when set
   return out;
 }
 
@@ -138,6 +141,7 @@ export function validateNls(m) {
     if (c.control_point != null && !(Array.isArray(c.control_point) && c.control_point.length === 3 && c.control_point.every(isNum)))
       return `${at}: control joint needs x, y, z.`;
     if (c.control_story != null && !stories.has(c.control_story)) return `${at}: unknown control story ${c.control_story}.`;
+    if (c9fControlTowerError(m, c, at)) return c9fControlTowerError(m, c, at);   // C9 follow-ups
     if (c.load_application === "displacement_control" && !(isNum(c.target_disp) && c.target_disp !== 0))
       return `${at}: displacement control needs a non-zero target displacement.`;
     if (!["column_base", "all_ends", "asce41"].includes(c.hinges)) return `${at}: bad hinge option.`;
@@ -220,7 +224,7 @@ export function openNlsCase(ctx, name = null, opts = {}) {
     ...clone(NLS_DEFAULTS),
   } : nlsCases(m)[name];
   const d = canonicalCase(src, src.name);
-  let ctrl = d.control_point ? "point" : d.control_story ? "story" : "roof";
+  let ctrl = c9fInitialCtrl(d);   // C9 follow-ups: + "tower"
   let initCont = !!d.start_from;
   const joints = modelJoints(m);
   const H = Math.max(0, ...(m.stories || []).map(s => s.elevation || 0));
@@ -323,7 +327,9 @@ export function openNlsCase(ctx, name = null, opts = {}) {
       radio("nlsCtrl", "roof", ctrl === "roof", "Roof (default)", () => { ctrl = "roof"; draw(); }, "nlsCtrlRoof"),
       radio("nlsCtrl", "story", ctrl === "story", "Story", () => { ctrl = "story"; if (!d.control_story) d.control_story = storyNames(m).slice(-1)[0] || null; draw(); }, "nlsCtrlStory"),
       radio("nlsCtrl", "point", ctrl === "point", "Joint", () => { ctrl = "point"; if (!d.control_point) d.control_point = (joints[joints.length - 1] || [0, 0, H]).slice(); draw(); }, "nlsCtrlPoint"));
+    c9fTowerRadio(rr, m, d, ctrl, v => { ctrl = v; draw(); }, "nls");   // C9 follow-ups: control tower (towers only)
     g4.appendChild(rr);
+    c9fTowerRow(g4, m, d, ctrl, "nls");                                  // C9 follow-ups
     if (ctrl === "story")
       g4.appendChild(row("Control story", select(storyNames(m).map(s => [s, s]), d.control_story || "", v => { d.control_story = v; }, "nlsStory"), null,
         "its diaphragm master (else its lowest-numbered node)"));
@@ -398,6 +404,7 @@ export function openNlsCase(ctx, name = null, opts = {}) {
     if (ctrl !== "story") d.control_story = null;
     if (ctrl !== "point") d.control_point = null;
     else d.control_point = snapToJoint(joints, d.control_point);
+    if (ctrl !== "tower") delete d.control_tower;   // C9 follow-ups
     if (d.hinges === "asce41") { /* My / default_My kept as-is (ignored by asce41) */ }
     const my = {};
     for (const r of myRows) { if (r.uid) my[r.uid] = r.v; }
