@@ -19,7 +19,7 @@
 import * as ME from "./modeledit.js";
 import U from "./units.js";
 import { towerRadio as c9fTowerRadio, towerRow as c9fTowerRow, initialCtrl as c9fInitialCtrl,
-  controlTowerError as c9fControlTowerError } from "./towers_fu.js";   // C9 follow-ups: control tower
+  controlTowerError as c9fControlTowerError, controlHeight as c9fControlHeight } from "./towers_fu.js";   // C9 follow-ups: control tower (+ control height)
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const clone = o => JSON.parse(JSON.stringify(o));
@@ -1142,6 +1142,16 @@ export function openPushoverOptions(ctx, name) {
   const H = Math.max(0, ...(m.stories || []).map(s => s.elevation || 0));
   const body = el("div", "cd-poo");
   const err = errorLine("pooError");
+  /* target placeholder = target drift × CONTROL height (with towers: the
+     control tower's height above its base — mirror of the backend default) */
+  const pooTargetPlaceholder = () => {
+    const hc = c9fControlHeight(m, d, ctrl);
+    return `${U.inputValue("disp", (pc.target_drift ?? 0.02) * hc)} (drift × H = ${U.inputValue("length", hc)} ${U.label("length")})`;
+  };
+  const pooRefreshTarget = () => {
+    const t = body.querySelector("#pooTarget");
+    if (t) t.placeholder = pooTargetPlaceholder();
+  };
   const draw = () => {
     body.textContent = "";
     body.appendChild(el("p", "muted dlg-intro", `Load application for pushover case <b>${esc(name)}</b> (ETABS Nonlinear Static). ` +
@@ -1179,14 +1189,14 @@ export function openPushoverOptions(ctx, name) {
       radio("pooCtrl", "point", ctrl === "point", "Joint", v => { ctrl = v; if (!d.control_point) d.control_point = (joints[joints.length - 1] || [0, 0, H]).slice(); draw(); }, "pooCtrlPoint"));
     c9fTowerRadio(rr, m, d, ctrl, v => { ctrl = v; draw(); }, "poo");   // C9 follow-ups: control tower (towers only)
     g2.appendChild(rr);
-    c9fTowerRow(g2, m, d, ctrl, "poo");                                  // C9 follow-ups
+    c9fTowerRow(g2, m, d, ctrl, "poo", () => pooRefreshTarget());       // C9 follow-ups (+ target placeholder refresh)
     if (ctrl === "story")
-      g2.appendChild(row("Control story", select(storyNames(m).map(s => [s, s]), d.control_story || "", v => { d.control_story = v; }, "pooStory")));
+      g2.appendChild(row("Control story", select(storyNames(m).map(s => [s, s]), d.control_story || "", v => { d.control_story = v; pooRefreshTarget(); }, "pooStory")));
     if (ctrl === "point") {
       const p = d.control_point;
       const three = el("div", "cd-cols cd-cols3");
       ["X", "Y", "Z"].forEach((ax, k) => three.appendChild(
-        row(ax, numInput("length", p[k], { id: "pooP" + ax.toLowerCase(), onSet: v => { p[k] = v; } }), "length")));
+        row(ax, numInput("length", p[k], { id: "pooP" + ax.toLowerCase(), onSet: v => { p[k] = v; pooRefreshTarget(); } }), "length")));
       g2.appendChild(three);
       g2.appendChild(select([["", "Pick joint…"], ...joints.map((j, i) => [String(i), `${storyAt(m, j[2]) || "z"} · ${ptLabel(j)}`])], "", v => {
         if (v !== "") { d.control_point = joints[+v].slice(); draw(); }
@@ -1194,9 +1204,8 @@ export function openPushoverOptions(ctx, name) {
     }
     g2.appendChild(row("Monitored DOF", select([["", `Push direction (U${pc.direction === "Y" ? "Y" : "X"})`], ["UX", "UX"], ["UY", "UY"]],
       d.control_dof || "", v => { d.control_dof = v || null; }, "pooDof")));
-    const tgtDefault = (pc.target_drift ?? 0.02) * H;
     g2.appendChild(row("Target displacement", numInput("disp", d.target_disp, { id: "pooTarget", allowEmpty: true, nonzero: true,
-      placeholder: `${U.inputValue("disp", tgtDefault)} (drift × H)`, onSet: v => { d.target_disp = v; } }), "disp",
+      placeholder: pooTargetPlaceholder(), onSet: v => { d.target_disp = v; } }), "disp",
       "blank = target drift × control height"));
     body.appendChild(g2);
 

@@ -345,15 +345,17 @@ def test_pushover_control_tower_elastic_stiffness_by_hand():
     po = eng.run_pushover("PO_T1")
     masters = OpenSeesEngine(m)._build().masters
     assert po.control["node"] == masters["A3"]
-    assert po.control["height"] == pytest.approx(15.0)
+    # v1.20: H_ctrl = tower height = A3 elevation 15 - T1 base 6
+    assert po.control["height"] == pytest.approx(9.0)
     assert po.distribution["story_forces"] == {"A3": 1.0}
     for v, u in zip(po.base_shear, po.roof_disp):
         assert v / u == pytest.approx(1.0 / flex, rel=1e-6)
-    assert po.roof_disp[-1] == pytest.approx(0.001 * 15.0, rel=1e-9)
-    # default unchanged: the last story of `stories` (B2)
+    assert po.roof_disp[-1] == pytest.approx(0.001 * 9.0, rel=1e-9)
+    # default: the last story of `stories` (B2) controls; its tower T2
+    # stands at 6 m -> H_ctrl = 12 - 6
     pd = eng.run_pushover("PO_DEF")
     assert pd.control["node"] == masters["B2"]
-    assert pd.control["height"] == pytest.approx(12.0)
+    assert pd.control["height"] == pytest.approx(6.0)
     assert "control_tower" not in m.pushover_cases["PO_DEF"].to_dict()
     d = m.to_dict()
     assert d["pushover_cases"]["PO_T1"]["control_tower"] == "T1"

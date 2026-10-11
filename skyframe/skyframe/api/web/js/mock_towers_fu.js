@@ -18,7 +18,8 @@
 
 import { hasTowers as fuHas, towersOf as fuOf, towerStories as fuStories,
   storyTowerMap as fuMap, recomputeTowerElevations as fuRecompute } from "./towers.js";
-import { towerTopStory as fuTop, validateControlTowers as fuValidateCtl } from "./towers_fu.js";
+import { towerTopStory as fuTop, validateControlTowers as fuValidateCtl,
+  controlHeight as fuCtlH } from "./towers_fu.js";
 import { parseCsv as fuParseCsv } from "./mock_dbedit.js";
 
 const peakOf = a => (a || []).reduce((x, v) => Math.max(x, Math.abs(v)), 0);
@@ -118,13 +119,25 @@ function augmentControl(model, r) {
   const H = Math.max(1e-9, ...(model.stories || []).map(s => +s.elevation || 0));
   for (const [name, po] of Object.entries(r.pushover || {})) {
     const pc = (model.pushover_cases || {})[name] || {};
-    if (!pc.control_tower || !po) continue;
+    if (!po) continue;
+    const hasTarget = isFinite(pc.target_disp) && pc.target_disp;
+    if (!pc.control_tower) {
+      // v1.20: the default roof of a towers model — H_ctrl = its tower's height
+      const cc0 = po.capacity_curve;
+      if (cc0 && pc.control_story == null && pc.control_point == null) {
+        const hc = fuCtlH(model, pc, "roof");
+        if (!hasTarget && cc0.height) cc0.disp = (cc0.disp || []).map(u => +(u * hc / cc0.height).toFixed(6));
+        cc0.height = +hc.toFixed(6);
+      }
+      continue;
+    }
     const roof = towerRoofNode(model, r, pc.control_tower);
     if (!roof) continue;
     const cc = po.capacity_curve;
     if (cc) {
-      if (!(isFinite(pc.target_disp) && pc.target_disp)) cc.disp = (cc.disp || []).map(u => +(u * roof.z / H).toFixed(6));
-      cc.height = +roof.z.toFixed(6);
+      const hc = fuCtlH(model, pc, "tower");          // v1.20: tower height (above its base)
+      if (!hasTarget) cc.disp = (cc.disp || []).map(u => +(u * hc / H).toFixed(6));
+      cc.height = +hc.toFixed(6);
       cc.node = roof.node;
     }
     if (po.distribution && (pc.load_distribution || "roof_point") === "roof_point")

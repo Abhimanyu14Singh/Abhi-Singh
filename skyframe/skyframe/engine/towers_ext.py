@@ -38,7 +38,10 @@ Pushover / nonlinear static control tower
 ``control_tower``: the monitored joint is the tower's top-story master
 (else its lowest-tag node at that level); for the default ``roof_point``
 pushover distribution the unit push acts there too; H_ctrl = that
-story's elevation.
+story's elevation minus the tower's ``base_elevation`` (the tower height;
+v1.20 fix — it used the absolute elevation).  Without ``control_tower`` a
+towers model controls the default roof story (``stories[-1]``) with
+H_ctrl = its elevation minus ITS tower's base elevation.
 
 Staged construction across towers
 ---------------------------------
@@ -245,14 +248,30 @@ def _roof_node(asm, story, label: str) -> int:
 
 
 def pushover_roof(eng, asm, case, top, ctrl, H):
-    """(top story, control node, H) of a pushover; unchanged unless the
-    case sets ``control_tower``."""
+    """(top story, control node, H) of a pushover; unchanged without
+    towers.  ``H`` (the "target drift x H" control height) is the CONTROL
+    TOWER's height: its top story's elevation minus the tower's
+    ``base_elevation`` — the ``control_tower`` when set, else the tower of
+    the default roof story ``top`` (identical to the legacy roof elevation
+    for towers based at 0)."""
     tw = getattr(case, "control_tower", None)
     if not tw:
-        return top, ctrl, H
+        if not _ct.has_towers(eng.model):
+            return top, ctrl, H
+        base = _tower_base(eng.model, _ct.story_tower(eng.model, top))
+        return top, ctrl, (H - base if base else H)
     s = _cx.control_story(eng.model, tw)
+    base = _tower_base(eng.model, tw)
     return s, _roof_node(asm, s, f"Pushover case {case.name!r}"), \
-        s.elevation
+        (s.elevation - base if base else s.elevation)
+
+
+def _tower_base(model, name: str) -> float:
+    try:
+        return float(_ct.tower_entry(model, name).get("base_elevation", 0.0)
+                     or 0.0)
+    except KeyError:
+        return 0.0
 
 
 def nls_monitor(eng, asm, case) -> Optional[int]:
