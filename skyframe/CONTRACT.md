@@ -8488,3 +8488,102 @@ forces and nodal loads, run results hash identically before and after:
 * semi-rigid walls / slab with self-weight, area / member gravity,
   thermal, nodal and story loads, and a combo;
 * corotational gravity on an inclined brace.
+
+## Rayleigh damping on springs, links and hinges
+
+OpenSees `zeroLength` / `twoNodeLink` elements carry no Rayleigh term
+unless they are built with `-doRayleigh`. Until now SkyFrame never set
+it, so in direct-integration TH its plastic-hinge springs, grounded
+springs, links and panel-zone springs had no damping. Two effects:
+
+* an EPP hinged SDOF ran +0.78 % against the classically damped SDOF;
+* a linear TH of a spring-supported or linked model got less damping than
+  the case's Rayleigh ratio. A column whose base spring provides 2/3 of
+  the flexibility decayed at xi = 3.8 % instead of 5 %.
+
+The fix is a model-level option. It lives in
+`skyframe/core/damping_options.py`; the engine side is
+`skyframe/engine/link_rayleigh.py`.
+
+    "damping_options": {"rayleigh_on_links": "none" | "elastic_only" | "all",
+                        "rayleigh_stiffness_basis": "committed" | "current"
+                                                    | "initial"}
+
+* The default `{"none", "committed"}` keeps the old behaviour
+  bit-for-bit: every `ops.element` call is unchanged. To prove it, the
+  results-JSON SHA-256 of 14 TH runs was compared before and after the
+  change and is identical. The runs cover a grounded spring, a named
+  multilinear spring, an elastic link, a yielding isolator and a fixed
+  base, each linear and with hinged nonlinear analysis, with and without
+  energy output. `to_dict` writes the key only when it differs from the
+  default. An unknown key or value raises `ValueError`.
+* Which element kinds take part. The flag is set only in TH builds;
+  static, modal and pushover builds never set it.
+  - `elastic_only`: grounded linear point, line and area springs; named
+    LINEAR springs; elastic links; elastic panel-zone springs.
+  - `all`: everything in `elastic_only`, plus pushover, ASCE 41 and
+    user-hinge springs (nonlinear TH), named nonlinear springs (c/t-only,
+    gap, multilinear), compression-only vertical springs, and material
+    links (isolator, multilinear, takeda / pivot, gap, hook).
+  - never:
+    - viscous dampers. A damper is already a dashpot, so Rayleigh would
+      count its damping twice.
+    - dedicated bearing elements (singleFP, triple FP, flat slider,
+      Bouc-Wen). They have their own hysteretic dissipation and an
+      almost rigid initial stiffness. OpenSees TripleFrictionPendulum
+      also has no Rayleigh switch.
+    - stiff hinge-tie springs and the zero-free-DOF dummy spring. These
+      stand in for constraints.
+* The participating elements use the case's stiffness coefficient `a1`
+  (from the legacy fit or from `di_damping`), applied on
+  `rayleigh_stiffness_basis`. This is done with
+  `ops.region(tag, '-eleOnly', *eles, '-rayleigh', 0, betaK, betaK0, betaKc)`,
+  which leaves the nodal `a0 M` term untouched.
+* Under `modal` damping the option has no effect, because modalDamping
+  already damps the sprung modes.
+* When anything participates, the results carry
+  `THResults.extra["link_rayleigh"] = {"rayleigh_on_links",
+  "rayleigh_stiffness_basis", "a1", "elements": {kind: count}}`.
+* ETABS / SAP2000 behaviour (CSI). Direct-integration proportional
+  damping is applied element by element, and links are included. For the
+  stiffness-proportional part, each link chooses which stiffness it uses:
+  initial (the default), tangent, or effective. The effective option was
+  added for friction isolators, where initial-stiffness damping is
+  excessive. Each link also has a modification factor on `cK`. A link's
+  "effective damping" is used by LINEAR cases only.
+* How the three bases compare:
+  - `committed` is close to CSI's tangent option.
+  - `initial` matches CSI's default. It keeps `a1 k_theta theta_dot` on
+    stiff hinge springs after they yield, and the EPP SDOF then runs
+    78 % below the reference. Avoid it for hinges.
+  - `current` switches the damping tangent inside the Newton iterations
+    and does not converge on yielding Steel01 hinges.
+  - For elastic springs and links all three are identical (tested).
+* Recommended setting: `{"rayleigh_on_links": "all",
+  "rayleigh_stiffness_basis": "committed"}`
+  (`RECOMMENDED_DAMPING_OPTIONS`).
+* Energy tracker (`engine/thoptions.py`).
+  - Root cause of the broken balance: OpenSees refreshes an element's
+    committed stiffness `Kc` in `commitState`. The post-step
+    `reactions('-dynamic')` read therefore uses `Kc(n+1)`, while
+    equilibrium at `t_n+1` was solved with `Kc(n)`. At yield events the
+    two differ.
+  - Fix: for committed-basis elements the tracker adds the term
+    `a1 A^T diag(k_n - k_n+1) A v`. `A` is the basic-deformation matrix,
+    built from the element's `xaxis/yaxis/zaxis` responses (twoNodeLink
+    with shearDistI = 0.5); `k` are the material tangents.
+  - The term is non-zero only on steps where a tangent changes. It is
+    also applied for central difference, using the central velocity.
+  - Result with the option on: the balance error is about 4e-15 for a
+    hinge, a named multilinear spring and an isolator twoNodeLink.
+    Without the correction it would be 1.4e-4, 1.0e-3 and 1.1e-4.
+* Validation (`tests/test_link_rayleigh.py`):
+  - A column on a spring or link in linear TH matches an independent
+    Newmark SDOF with `c = a0 m + a1 k_series` to 1e-7. Its log decrement
+    gives xi = 5.005 % (legacy: 3.79 %).
+  - An EPP hinged SDOF (My = 150; it yields, then vibrates freely) is
+    compared with a classical Rayleigh EPP SDOF that uses the same series
+    spring and `c = a0 m + a1 k_t,committed`. Errors: peak -0.0014 %, end
+    of record -0.017 %, worst point over the whole history 0.041 %
+    (legacy: +0.65 % at the end). In the elastic range the match is exact
+    to 1e-6.

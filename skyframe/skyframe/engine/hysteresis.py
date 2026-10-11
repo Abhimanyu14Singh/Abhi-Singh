@@ -52,9 +52,11 @@ def _law_material(law: DofLaw, mtag: int) -> int:
 
 
 def build_named_spring(spec: SpringSpec, gnd: int, rt: int, mtag: int,
-                       etag: int) -> Tuple[int, int]:
+                       etag: int, rayleigh=None) -> Tuple[int, int]:
     """zeroLength(ground -> real) with one material per active LOCAL dof
-    and ``-orient`` for non-global axes.  Returns (mtag, etag)."""
+    and ``-orient`` for non-global axes.  Returns (mtag, etag).
+    ``rayleigh(etag, dirs, nonlinear)`` -> extra ``-doRayleigh`` args
+    (engine.link_rayleigh; None / [] = legacy element)."""
     mats: List[int] = []
     dirs: List[int] = []
     for d, law in enumerate(spec.laws):
@@ -68,6 +70,8 @@ def build_named_spring(spec: SpringSpec, gnd: int, rt: int, mtag: int,
     if not spec.identity_axes:
         args += ["-orient", *[float(v) for v in spec.axes[0]],
                  *[float(v) for v in spec.axes[1]]]
+    if rayleigh is not None:
+        args += rayleigh(etag, dirs, spec.nonlinear)
     ops.element(*args)
     return mtag, etag
 

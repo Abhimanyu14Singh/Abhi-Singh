@@ -30,6 +30,14 @@ reads, for EVERY node of the domain and all 6 dofs:
   ``ops.reactions('-dynamic')`` (element ``getResistingForceIncInertia``
   + node ``alphaM m v``) — elements with Rayleigh switched off (e.g.
   zeroLength hinge springs) contribute nothing, exactly as in the solve;
+  springs / links / hinges damped through ``damping_options`` on the
+  COMMITTED-stiffness basis get the force the integrator actually applied:
+  OpenSees refreshes their ``Kc`` in ``commitState``, so the post-step
+  read uses ``Kc(n+1)`` while equilibrium at ``t_n+1`` used ``Kc(n)``; the
+  tracker adds ``a1 A^T diag(k_n - k_n+1) A v`` per element (``A`` = the
+  element's basic-deformation matrix, ``k`` its material tangents —
+  :mod:`skyframe.engine.link_rayleigh`), non-zero only on tangent-change
+  steps;
 * for ``damping_model == "modal"`` the modal damping forces (applied by
   OpenSees inside the integrator, invisible to reactions) are the
   equilibrium residual ``P - m a - f_S - f_D``.
@@ -126,6 +134,9 @@ class EnergyTracker:
         self.ele_work: Dict[int, float] = {e: 0.0 for e in self.nl}
         self.Pg = np.zeros((n, 6))
         self.prev = None
+        # committed-basis Rayleigh springs / links / hinges (link_rayleigh)
+        self.rl: List[dict] = []
+        self.rl_a1 = 0.0
         # multi-component / load-pattern cases: callable
         # ext(t, tracker) -> (external load array, f_S correction)
         # (skyframe.engine.thmulti); None = legacy single record
@@ -181,7 +192,28 @@ class EnergyTracker:
             P = self.Pg + Pe
             fs = fs + corr      # element-load part -> external work
         return {"t": t, "u": u, "v": v, "a": a, "P": P, "fs": fs, "fd": fd,
-                "ele": self._ele_state()}
+                "ele": self._ele_state(), "rlk": self._rl_tangents()}
+
+    def _rl_tangents(self) -> List[np.ndarray]:
+        from skyframe.engine.link_rayleigh import material_tangents
+        return [material_tangents(e["ele"], e["A"].shape[0])
+                for e in self.rl]
+
+    def _rl_correct(self, fd: np.ndarray, vel: np.ndarray, k_used,
+                    k_now) -> None:
+        """Replace each committed-basis element's post-commit damping
+        ``a1 A^T diag(k_now) A v`` by the applied ``a1 A^T diag(k_used) A
+        v`` (in place on the nodal array ``fd``)."""
+        for e, ku, kn in zip(self.rl, k_used, k_now):
+            dk = ku - kn
+            if not np.any(dk):
+                continue
+            ii, jj = (self.idx[t] for t in e["nodes"])
+            ve = np.concatenate([vel[ii], vel[jj]])
+            A = e["A"]
+            f = self.rl_a1 * (A.T @ (dk * (A @ ve)))
+            fd[ii] += f[:6]
+            fd[jj] += f[6:]
 
     def _damping_at(self, vel: np.ndarray, v_now: np.ndarray) -> np.ndarray:
         """Applied Rayleigh damping forces at the nodal velocities ``vel``.
@@ -222,6 +254,7 @@ class EnergyTracker:
         st = self._finish(dict(raw))
         st["ek"] = 0.5 * float(np.sum(self.M * st["v"] ** 2))
         self.prev = st             # last effective state (sampled)
+        self._rl_k = raw["rlk"]    # tangents behind the next step's Kc
         self._raw_prev = raw       # central difference: u_n, f_S,n, ...
         self._u_nm1 = raw["u"]     # u_n-1 (OpenSees CD: u_-1 = u_0)
         self._D_nm1 = {e: D for e, (_F, D) in raw["ele"].items()}
@@ -232,6 +265,9 @@ class EnergyTracker:
         if self.method == "central_difference":
             self._record_cd(raw)
             return
+        if self.rl:
+            self._rl_correct(raw["fd"], raw["v"], self._rl_k, raw["rlk"])
+            self._rl_k = raw["rlk"]
         st, pv = self._finish(raw), self.prev
         du = st["u"] - pv["u"]
         self.E["input"] += float(np.sum(0.5 * (st["P"] + pv["P"]) * du))
@@ -260,6 +296,9 @@ class EnergyTracker:
         st = {"t": pr["t"], "u": pr["u"], "fs": pr["fs"], "ele": pr["ele"],
               "P": pr["P"], "v": vc, "a": ac,
               "fd": self._damping_at(vc, raw["v"])}
+        if self.rl:
+            self._rl_correct(st["fd"], vc, self._rl_k, raw["rlk"])
+            self._rl_k = raw["rlk"]
         st = self._finish(st)
         du = 0.5 * (raw["u"] - self._u_nm1)
         self.E["input"] += float(np.sum(st["P"] * du))
@@ -427,6 +466,10 @@ class DirectIntegrationRun:
             self.asm, dof, self.accel, self.dt, scale, self.alpha_m, modal,
             nl, method=self.integ["method"])
         self.tracker.ext = ext
+        if not modal:                       # damping_options (link_rayleigh)
+            from skyframe.engine.link_rayleigh import tracker_elements
+            self.tracker.rl = tracker_elements(self.asm)
+            self.tracker.rl_a1 = float(getattr(self.asm, "rl_a1", 0.0))
         self.tracker.begin()
 
     # ------------------------------------------------------------ stepping

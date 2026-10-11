@@ -192,10 +192,11 @@ def test_n03b_nonlinear_th_epp_sdof(regime):
     Rayleigh term, so the stiffness-proportional damping of a hinged model
     acts on the elastic members only and the delivered damping is slightly
     below the case's zeta (here the classical-Rayleigh SDOF would give a
-    0.78% smaller end-of-record displacement).  Damping the springs with
-    the committed tangent was tried: it reproduces classical Rayleigh
-    exactly but breaks the TH energy tracker's exact balance at yield
-    events, so the documented practice was kept."""
+    0.78% smaller end-of-record displacement).  That is the default
+    (``damping_options.rayleigh_on_links == "none"``); the opt-in
+    ``"all"`` / ``"committed"`` setting damps the hinge springs and is
+    verified against the classical Rayleigh SDOF in
+    ``tests/test_link_rayleigh.py``."""
     L, E, I, mass, zeta = 3.0, 2.0e8, 1.0e-4, 20.0, 0.02
     My = 60.0 if regime == "epp" else 1.0e9       # elastic: never yields
     m = new_model("N3b", E, heights=[L])

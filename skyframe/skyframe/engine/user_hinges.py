@@ -241,8 +241,11 @@ def build_springs(eng, asm, pending: list, plan: Dict[str, List[dict]],
             mats.append(mtag)
         xax, yax, _, _, _ = _local_axes(m)
         etag += 1
+        from skyframe.engine import link_rayleigh as _lrl
         ops.element("zeroLength", etag, orig, dup, "-mat", *mats,
-                    "-dir", 1, 2, 3, 4, 5, 6, "-orient", *xax, *yax)
+                    "-dir", 1, 2, 3, 4, 5, 6, "-orient", *xax, *yax,
+                    *_lrl.flag(eng, asm, etag, "user_hinge",
+                               (1, 2, 3, 4, 5, 6)))
         d = h["d"]
         end = "i" if d <= 0.0 else "j" if d >= 1.0 else f"{d:g}"
         asm.user_hinges.append({
