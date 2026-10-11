@@ -11,6 +11,7 @@
      * 2D validity: >= 3 points, no zero-length edge, non-zero area, no
        crossing or touching edges (self-intersection rejected).
    Used by the plan / elevation / 3D renderers, polydraw.js and mock_poly.js. */
+import { frameLocalAxes as pgFrameLocalAxes } from "./frameaxes.js";
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -232,21 +233,11 @@ export function clipToBox2(poly, x0, y0, x1, y1) {
 }
 
 /** Local axes (x, y, z) of a frame member — engine convention
-    (skyframe.engine _local_axes / buckling._local_axes), with angle. */
-export function memberAxes(mm) {
-  const d = sub(mm.pj, mm.pi);
-  const x = unit(d);
-  const vertical = Math.hypot(d[0], d[1]) < 1e-9;
-  const vecxz = vertical ? [1, 0, 0] : unit([x[1], -x[0], 0]);
-  let y = unit(cross(vecxz, x));
-  let z = cross(x, y);
-  const ang = +mm.angle || 0;
-  if (Math.abs(ang) > 1e-12) {
-    const a = ang * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
-    const y2 = [0, 1, 2].map(k => ca * y[k] + sa * z[k]);
-    const z2 = [0, 1, 2].map(k => ca * z[k] - sa * y[k]);
-    y = unit(y2); z = unit(z2);
-  }
+    (skyframe.core.frame_axes), with angle. `conv` = the model dict or
+    "etabs" | "legacy" (default legacy); single implementation in
+    js/frameaxes.js. */
+export function memberAxes(mm, conv) {
+  const { x, y, z } = pgFrameLocalAxes(mm, conv);
   return { x, y, z };
 }
 
@@ -263,7 +254,7 @@ export function memberOffsets(model, mm) {
   const cp = mm.cardinal_point == null ? 10 : +mm.cardinal_point;
   const jo = mm.joint_offsets;
   if (cp === 10 && !jo) return null;
-  const { x, y, z } = memberAxes(mm);
+  const { x, y, z } = memberAxes(mm, model);
   let ei = [0, 0, 0], ej = [0, 0, 0];
   if (cp !== 10 && !mm.no_transform_stiffness) {
     const sec = (model.sections || {})[mm.section] || {};
@@ -287,14 +278,14 @@ export function memberOffsets(model, mm) {
 /** Unfactored automatic end-offset lengths [Li, Lj] (insertion.auto_end_lengths). */
 export function autoEndLengths(model, mm) {
   const key = p => p.map(v => (+v).toFixed(6)).join(",");
-  const xm = memberAxes(mm).x;
+  const xm = memberAxes(mm, model).x;
   return [mm.pi, mm.pj].map(p => {
     const k = key(p);
     let best = 0;
     for (const n of model.members) {
       if (n === mm || n.uid === mm.uid) continue;
       if (key(n.pi) !== k && key(n.pj) !== k) continue;
-      const an = memberAxes(n);
+      const an = memberAxes(n, model);
       if (Math.abs(Math.abs(dot(xm, an.x)) - 1) < 1e-6) continue;
       const sec = (model.sections || {})[n.section];
       if (!sec) continue;

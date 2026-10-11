@@ -19,6 +19,7 @@
    totals) when it answers, otherwise the equilibrium check uses the
    client-side load totals. Every value goes through js/units.js. */
 
+import { conventionLabel as rxConventionLabel } from "./frameaxes.js";   // Model Info: frame local-axis convention
 import RXU from "./units.js";
 import { dialog as rxDialog, closeDialog as rxCloseDialog, btn as rxBtn, footBar as rxFootBar,
   errorLine as rxErrorLine, showError as rxShowError } from "./analysisdlg.js";
@@ -146,6 +147,7 @@ export function openModelInfo() {
       ["Shells by kind", esc(Object.entries(info.shells_by_kind).map(([k, n]) => `${n} ${k}`).join(" · ") || "—")],
       ["Unsaved edits", S.dirty ? `<span class="rx-warn">yes</span>` : "no"],
       ["Cases set to not run", esc(info.cases_not_run.join(", ") || "—")],
+      ["Frame local axes", `<span id="rxInfoAxes">${esc(rxConventionLabel(S.model || {}))}</span>`],   // frame axis convention (js/frameaxes.js)
     ].map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("") }));
     body.appendChild(g0);
     const g1 = group("Object counts");

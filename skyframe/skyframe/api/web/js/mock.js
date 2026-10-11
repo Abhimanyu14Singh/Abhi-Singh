@@ -426,6 +426,7 @@ export function mockModel(p = {}) {
       "ENV: EQ": { name: "ENV: EQ", combo_type: "envelope", cases: { EQX: 1.0, EQY: 1.0 } },
     },
     num_modes: Math.min(3 * o.stories, 12),
+    frame_axis_convention: "etabs",   // new model → ETABS frame local axes (js/frameaxes.js)
     _mock_params: o,
   });
 }

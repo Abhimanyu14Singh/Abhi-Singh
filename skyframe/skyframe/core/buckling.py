@@ -67,24 +67,10 @@ def _pkey(p: Vec3) -> Vec3:
 
 
 def _local_axes(member: FrameMember) -> Tuple[Vec3, Vec3, Vec3]:
-    """Local axis triad (x, y, z) — same convention as the OpenSees engine."""
-    d = (member.pj[0] - member.pi[0],
-         member.pj[1] - member.pi[1],
-         member.pj[2] - member.pi[2])
-    x = _unit(d)
-    vertical = math.hypot(d[0], d[1]) < _TOL
-    vecxz: Vec3 = (1.0, 0.0, 0.0) if vertical else _unit((x[1], -x[0], 0.0))
-    y = _unit(_cross(vecxz, x))
-    z = _cross(x, y)
-    ang = getattr(member, "angle", 0.0) or 0.0
-    if abs(ang) > 1e-12:
-        a = math.radians(ang)
-        ca, sa = math.cos(a), math.sin(a)
-        y2 = (ca * y[0] + sa * z[0], ca * y[1] + sa * z[1],
-              ca * y[2] + sa * z[2])
-        z2 = (ca * z[0] - sa * y[0], ca * z[1] - sa * y[1],
-              ca * z[2] - sa * y[2])
-        y, z = _unit(y2), _unit(z2)
+    """Local axis triad (x, y, z) — same convention as the OpenSees engine
+    (the member's frame-axis convention stamp; skyframe.core.frame_axes)."""
+    from skyframe.core.frame_axes import member_local_axes
+    x, y, z, _vecxz, _vertical = member_local_axes(member)
     return x, y, z
 
 

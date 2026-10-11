@@ -240,29 +240,31 @@ def arc_length(m) -> float:
     return g["radius"] * g["sweep"]
 
 
-def _default_axes(pi, pj):
-    """Engine default (angle = 0) local axes x, y, z (see
-    ``opensees_engine._local_axes``)."""
-    d = _sub(pj, pi)
-    x = _unit(d)
-    if math.hypot(d[0], d[1]) < _VERT_TOL:
-        vecxz = (1.0, 0.0, 0.0)
-    else:
-        vecxz = _unit((x[1], -x[0], 0.0))
-    y = _unit(_cross(vecxz, x))
-    z = _cross(x, y)
+def _default_axes(pi, pj, convention: str = "legacy"):
+    """Engine default (angle = 0) local axes x, y, z of a chord in the
+    member's frame-axis convention (skyframe.core.frame_axes)."""
+    from skyframe.core.frame_axes import frame_local_axes
+    x, y, z, _vecxz, _vertical = frame_local_axes(pi, pj, 0.0, convention)
     return x, y, z
 
 
 def chord_angles(m, pts: List[Vec3], normal: Vec3) -> List[float]:
     """Per-chord ``angle`` (deg) putting local 2 on the curve convention."""
     mode = (m.curve or {}).get("local2", "in_plane")
-    axes = [_default_axes(a, b) for a, b in zip(pts[:-1], pts[1:])]
+    from skyframe.core.frame_axes import member_convention
+    conv = member_convention(m)
+    # the +/- sense of the target is chosen from the LEGACY default axes in
+    # both conventions, so a curved member's chord axes are physically
+    # identical under "legacy" and "etabs" (angles are then measured from
+    # the chord's own default axes in the member's convention)
+    legacy = [_default_axes(a, b) for a, b in zip(pts[:-1], pts[1:])]
+    axes = (legacy if conv == "legacy" else
+            [_default_axes(a, b, conv) for a, b in zip(pts[:-1], pts[1:])])
     if mode == "normal":
         targets = [normal for _ in axes]
     else:
         targets = [_unit(_cross(normal, x)) for x, _, _ in axes]
-    s = sum(_dot(t, y) for t, (_, y, _) in zip(targets, axes))
+    s = sum(_dot(t, y) for t, (_, y, _) in zip(targets, legacy))
     sign = -1.0 if s < -1e-9 * len(axes) else 1.0
     out = []
     for t, (_, y, z) in zip(targets, axes):

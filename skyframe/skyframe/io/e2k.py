@@ -313,6 +313,7 @@ def import_e2k(text: str, *,
     e_scale = f_scale / l_scale ** 2           # file E -> kPa (kN/m^2)
 
     mdl = BuildingModel(name="E2K Import")
+    mdl.frame_axis_convention = "etabs"   # new model: ETABS frame axes
     mdl.base_fixity = "fixed"
 
     # ------------------------------------------------------------- stories

@@ -193,6 +193,8 @@ from skyframe.engine import parallel as _par        # parallel solve families
 
 from skyframe.engine import towers as _tw          # C9 multiple towers
 from skyframe.engine import towers_ext as _twx     # C9 follow-ups
+from skyframe.core.frame_axes import member_local_axes as _fa_member_local_axes  # noqa: E501
+from skyframe.core.frame_axes import sync_members_if_etabs as _fa_sync
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
                                  FP_DEFAULT_KINIT, G_ACCEL,
                                  ISOLATOR_DEFAULT_KV, TFP_DEFAULT_MINFV,
@@ -540,34 +542,16 @@ def _local_axes(member: FrameMember) -> Tuple[Vec3, Vec3, Vec3, Vec3, bool]:
     Convention: local x runs i -> j.  For non-vertical members
     ``vecxz = (dy, -dx, 0)`` normalised, which puts local y along global +Z
     for horizontal members so gravity bends the member about local z (I33,
-    the major axis).  Vertical members use ``vecxz = (1, 0, 0)``.
+    the major axis).  Vertical members use ``vecxz = (1, 0, 0)`` under the
+    "legacy" convention and local 2 = +X (``vecxz = (0, +-1, 0)``) under the
+    "etabs" convention (the member's ``axis_convention`` stamp; see
+    :mod:`skyframe.core.frame_axes`, the single implementation).
 
     v0.4: ``member.angle`` (degrees) rotates the default y/z pair about the
     member axis (right-hand rule about local +x); the rotated local z serves
     as vecxz (it lies in the local x-z plane by construction).
     """
-    d = (member.pj[0] - member.pi[0],
-         member.pj[1] - member.pi[1],
-         member.pj[2] - member.pi[2])
-    x = _unit(d)
-    vertical = math.hypot(d[0], d[1]) < _TOL
-    if vertical:
-        vecxz: Vec3 = (1.0, 0.0, 0.0)
-    else:
-        vecxz = _unit((x[1], -x[0], 0.0))
-    y = _unit(_cross(vecxz, x))
-    z = _cross(x, y)
-    ang = getattr(member, "angle", 0.0) or 0.0
-    if abs(ang) > 1e-12:
-        a = math.radians(ang)
-        ca, sa = math.cos(a), math.sin(a)
-        y2 = (ca * y[0] + sa * z[0], ca * y[1] + sa * z[1],
-              ca * y[2] + sa * z[2])
-        z2 = (ca * z[0] - sa * y[0], ca * z[1] - sa * y[1],
-              ca * z[2] - sa * y[2])
-        y, z = _unit(y2), _unit(z2)
-        vecxz = z
-    return x, y, z, vecxz, vertical
+    return _fa_member_local_axes(member)
 
 
 # --------------------------------------------------------------------------- #
@@ -1754,6 +1738,7 @@ class OpenSeesEngine:
         # curved frames / shell load sets / named joint patterns: analyse
         # an expanded copy (the SAME object when none is used)
         from skyframe.core.shellopts import expand_for_analysis
+        _fa_sync(model)     # frame local-axis convention stamps (etabs)
         self.source_model = model
         model = expand_for_analysis(model)
         self.model = model

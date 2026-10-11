@@ -75,6 +75,7 @@ import { mockValidateTendons as ptMockValidate } from "./mock_tendons.js";
 // Plot functions / story response plots / 3D force diagrams (Display menu)
 import { initPlotFn as pfInitPlotFn } from "./plotfn.js";
 import { initViewExt as vxInitViewExt } from "./viewext.js";   // View > Set Display Options + extruded 3D view
+import { initFrameAxesUi as faInitFrameAxesUi } from "./frameaxes_ui.js";   // frame local-axis convention: Options > Convert, View > Show Local Axes, Extrude toolbar / Alt+X
 import { pfMockValidate as pfMockValidateModel } from "./mock_plotfn.js";
 // ETABS Edit / Select menus + Undo/Redo history (aliased import; js/editmenu.js)
 import { initEditMenu as edInitEditMenu } from "./editmenu.js";
@@ -8556,6 +8557,7 @@ async function boot() {
   try { rpInitRepair(window.__sky); } catch (err) { console.error("model repair init failed", err); }   // Check Model › Fix… (js/repairdlg.js)
 
   try { accInitAccuracy(window.__sky); } catch (err) { console.error("accuracy tools init failed", err); }   // Analyze > Mesh Sensitivity Study · Model > Accuracy Advisor (js/accuracy.js)
+  try { faInitFrameAxesUi(window.__sky); } catch (err) { console.error("frame axes init failed", err); }   // frame local axes (js/frameaxes_ui.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
 }
