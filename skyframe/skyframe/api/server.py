@@ -2316,6 +2316,9 @@ def create_app() -> Flask:
     # Mesh sensitivity study + accuracy advisor (skyframe.api.accuracy_api)
     from skyframe.api.accuracy_api import register as _acc_register
     _acc_register(app, _state)
+    # v1.21 built-up sections (skyframe.api.builtup_api)
+    from skyframe.api.builtup_api import register as _bu_register
+    _bu_register(app, _state)
 
     return app
 

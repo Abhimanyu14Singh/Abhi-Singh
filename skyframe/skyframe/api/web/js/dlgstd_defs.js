@@ -193,6 +193,7 @@ export function editMaterial(sky, D, name, { copyOf, type = "concrete", done } =
    Frame sections
    ================================================================ */
 const secShape = s => s.kind === "nonprismatic" ? "Nonprismatic" : s.shape === "W" ? "Steel W-shape" : s.shape === "designer" ? "Section Designer"
+  : s.shape === "builtup" ? "Built-up"   // v1.21 built-up sections (js/builtup.js)
   : (s.b > 0 && s.h > 0) ? "Rectangular" : "General";
 
 export function openFrameSections(sky, { select } = {}) {
@@ -218,6 +219,7 @@ export function openFrameSections(sky, { select } = {}) {
       { label: "Add New Section…", id: "dsSecAdd", fn: () => edit(null) },
       { label: "Add Copy of Section…", id: "dsSecCopy", needsSel: true, fn: k => edit(null, { copyOf: k }), disabled: k => k && D.sections[k] && D.sections[k].kind === "nonprismatic" },
       { label: "Import from Library…", id: "dsSecLib", fn: () => openSectionLibrary(sky, D, { done: nm => { list.select(nm); sync(); } }) },
+      { label: "Add Built-up Section…", id: "dsSecBuiltup", fn: () => thenLegacy(dlg, sky, D, () => sky.openBuiltup && sky.openBuiltup()) },   // v1.21 (js/builtup.js)
       { sep: "Selected" },
       { label: "Modify/Show Section…", id: "dsSecModify", needsSel: true, fn: k => modify(k) },
       { label: "Delete Section", id: "dsSecDelete", needsSel: true, fn: k => del(k) },
@@ -227,6 +229,7 @@ export function openFrameSections(sky, { select } = {}) {
   const modify = k => {
     if (!k) return;
     if (D.sections[k] && D.sections[k].kind === "nonprismatic") { thenLegacy(dlg, sky, D, () => sky.openNonprismatic && sky.openNonprismatic(k)); return; }
+    if (D.builtup_sections && D.builtup_sections[k] && sky.openBuiltup) { thenLegacy(dlg, sky, D, () => sky.openBuiltup(k)); return; }   // v1.21 re-edit built-up
     edit(k);
   };
   const del = k => {
@@ -235,9 +238,11 @@ export function openFrameSections(sky, { select } = {}) {
     err.textContent = "";
     delete D.sections[k];
     if (D.designer_sections && D.designer_sections[k]) delete D.designer_sections[k];
+    if (D.builtup_sections && D.builtup_sections[k]) { delete D.builtup_sections[k]; if (!Object.keys(D.builtup_sections).length) delete D.builtup_sections; }   // v1.21
     list.render(); sync();
   };
-  const edit = (name, opts = {}) => editFrameSection(sky, D, name, { ...opts, done: nm => { list.select(nm); sync(); } });
+  const edit = (name, opts = {}) => (opts.copyOf && D.builtup_sections && D.builtup_sections[opts.copyOf] && sky.openBuiltup) ? thenLegacy(dlg, sky, D, () => sky.openBuiltup(opts.copyOf, { copy: true }))   // v1.21 copy of a built-up
+    : editFrameSection(sky, D, name, { ...opts, done: nm => { list.select(nm); sync(); } });
   const sync = () => dlg && dlg.setNote(`${Object.keys(D.sections).length} frame sections`);
   const des = el("button", { type: "button", class: "btn btn-small dk-legacy", id: "dsSecDesigner", title: "Draw a polygon + rebar section (applies these edits first)" }, ["Section Designer…"]);
   const np = el("button", { type: "button", class: "btn btn-small dk-legacy", id: "dsSecNp", title: "Tapered / haunched member section (applies these edits first)" }, ["Nonprismatic…"]);

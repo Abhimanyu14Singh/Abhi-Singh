@@ -27,6 +27,7 @@
 
 import spvU from "./units.js";
 import { rectSectionProps as spvRectProps } from "./modeledit.js";
+import { buPreviewPolys as spvBuPolys } from "./builtup_geom.js";   // v1.21 built-up section outlines (js/builtup.js)
 
 const NS = "http://www.w3.org/2000/svg";
 const isNum = v => typeof v === "number" && isFinite(v);
@@ -133,6 +134,7 @@ const SHAPE_LABEL = {
   rect: "Rectangular", circle: "Circular", pipe: "Pipe", box: "Box / Tube", I: "I / Wide Flange", I1: "I — singly symmetric",
   channel: "Channel", angle: "Angle", tee: "Tee", "2L": "Double Angle", designer: "Section Designer", general: "General (A, I only)",
   nonprismatic: "Nonprismatic",
+  builtup: "Built-up",   // v1.21 (js/builtup.js)
 };
 
 /** Cross-section geometry of a frame section dict.
@@ -170,6 +172,14 @@ export function spvGeometry(sec, model = {}, name = "") {
     if (out.rebar.length) out.notes.push(`${out.rebar.length} bars · As = ${spvU.sci("area", out.rebar.reduce((a, r) => a + r.area, 0), 3)} ${spvU.label("area")}`);
     const pp = spvPolyProps(out.polys), Ip = pp.I33 + pp.I22;
     out.J = Ip > 0 ? pp.A ** 4 / (40 * Ip) : null;
+    return fin();
+  }
+  /* ---- v1.21 built-up sections: the component outlines (js/builtup_geom.js) */
+  const bu = (model.builtup_sections || {})[name];
+  if (bu && Array.isArray(bu.components) && bu.components.length && (out.polys = spvBuPolys(bu)).length) {
+    out.shape = "builtup"; out.J = A > 0 ? sec.J : null;
+    const bb = bboxOf(out.polys);
+    out.dims.push({ dir: "h", a: bb.x0, b: bb.x1, at: bb.y0, side: -1, label: dimTxt("b", bb.w) }, { dir: "v", a: bb.y0, b: bb.y1, at: bb.x0, side: -1, label: dimTxt("h", bb.h) });
     return fin();
   }
 

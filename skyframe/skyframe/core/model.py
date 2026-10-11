@@ -48,6 +48,8 @@ from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
     PDELTA_INCLUDE_IN, PDELTA_METHODS, pdelta_defaults, pdelta_from_dict,
     pdelta_to_dict, validate_pdelta_options)
 from skyframe.core import analysis_options as _aopt  # solver/convergence
+from skyframe.core.builtup import (  # v1.21 built-up sections
+    model_to_dict as _builtup_to_dict, model_from_dict as _builtup_from_dict)
 
 G_ACCEL = 9.80665  # m/s^2
 _PLANAR_TOL = 1e-6  # m
@@ -2081,6 +2083,11 @@ class BuildingModel:
     # key) or "etabs" (vertical members: local 2 = +X at angle 0).
     frame_axis_convention: str = "legacy"
 
+    # v1.21 built-up sections (skyframe.core.builtup): name ->
+    # BuiltupSection, each MIRRORED by a same-named FrameSection (like
+    # designer_sections).  Emitted by to_dict only when non-empty.
+    builtup_sections: Dict[str, object] = field(default_factory=dict)
+
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
         self.materials[mat.name] = mat
@@ -2141,6 +2148,21 @@ class BuildingModel:
                              f"member(s) {used}")
         del self.designer_sections[name]
         self.sections.pop(name, None)
+
+    # ---------------- v1.21 built-up sections (skyframe.core.builtup) ------
+    def add_builtup_section(self, bs) -> dict:
+        """Add/replace a built-up section + mirrored FrameSection (props)."""
+        from skyframe.core.builtup import add_to_model
+        return add_to_model(self, bs)
+
+    def remove_builtup_section(self, name: str) -> None:
+        from skyframe.core.builtup import remove_from_model
+        remove_from_model(self, name)
+
+    def _validate_builtup(self) -> None:
+        if self.builtup_sections:
+            from skyframe.core.builtup import validate_model
+            validate_model(self)
 
     @staticmethod
     def _validate_section_mods(sec: FrameSection) -> None:
@@ -3659,6 +3681,7 @@ class BuildingModel:
                 validate_designer_section
             for ds in self.designer_sections.values():
                 validate_designer_section(ds, self.materials)
+        self._validate_builtup()            # v1.21 built-up sections
         for ssec in self.shell_sections.values():
             if ssec.material not in self.materials:
                 raise ValueError(f"Shell section {ssec.name}: unknown "
@@ -4053,6 +4076,7 @@ class BuildingModel:
             **_towers.model_to_dict(self),  # C9 towers (if defined)
             **({"frame_axis_convention": "etabs"}    # only when "etabs"
                if self.frame_axis_convention == "etabs" else {}),
+            **_builtup_to_dict(self),   # v1.21 built-up sections (if any)
         }
 
     @classmethod
@@ -4487,6 +4511,7 @@ class BuildingModel:
 
         _towers.model_from_dict(mdl, d)     # C9 towers (absent = none)
         _frame_axes_from_dict(mdl, d)       # frame local-axis convention
+        _builtup_from_dict(mdl, d)          # v1.21 built-up sections
         mdl.validate()
         return mdl
 
