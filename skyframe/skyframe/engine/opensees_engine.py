@@ -188,6 +188,7 @@ from skyframe.engine import link_rayleigh as _lrl  # Rayleigh on links/springs
 from skyframe.engine import solver_policy as _slv   # solver per problem size
 from skyframe.core import mesh_cache as _mesh_cache  # cross-run mesh cache
 from skyframe.engine import convergence as _cvg     # nonlinear fallback ladder
+from skyframe.engine import parallel as _par        # parallel solve families
 
 from skyframe.engine import towers as _tw          # C9 multiple towers
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
@@ -1848,9 +1849,13 @@ class OpenSeesEngine:
                 _REUSE["factored"] = None
                 return None
             finally:
-                self.case_times[name] = time.perf_counter() - t0
+                self.case_times[name] = (time.perf_counter() - t0
+                                         + _par.prefetched_time(self, name))
 
         cases: Dict[str, CaseResults] = {}
+        # large models: plain linear static cases solved process-parallel
+        # into the case cache first (engine/parallel.py; byte-identical)
+        _par.prefetch_static(self, [n for n in model.cases if runs(n)])
         for name in model.cases:
             if runs(name):
                 res = attempt(name, lambda n=name: self.run_static(n))
@@ -1884,6 +1889,8 @@ class OpenSeesEngine:
             from . import modalcombo as _mc
             modal.load_participation = _mc.load_participation(self, modal)
         rs_cases: Dict[str, CaseResults] = {}
+        # large models: solve-free RS cases evaluated process-parallel
+        _par.prefetch_rs(self, [n for n in model.rs_cases if runs(n)])
         for name in model.rs_cases:
             if runs(name):
                 res = attempt(name,
@@ -2504,7 +2511,13 @@ class OpenSeesEngine:
             # stiffness at the end of a nonlinear static case
             from skyframe.engine import nonlinear_static as _nls
             return _nls.run_modal_from_case(self, num_modes)
-        asm = self._build()
+        # large models: the live reused elastic domain IS the standard
+        # build -> no rebuild (engine/parallel.reuse_for_modal)
+        hit, asm = _par.reuse_for_modal(self, num_modes)
+        if hit is not None:
+            return hit
+        if asm is None:
+            asm = self._build()
         # only masses on unrestrained dofs yield generalized eigenpairs;
         # a model whose masses all sit on fixed nodes has no dynamics
         n_massed = asm.free_massed_dofs()

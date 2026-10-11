@@ -272,6 +272,40 @@ def _mesh_region(region: ShellRegion, pool: _PointPool,
 # --------------------------------------------------------------------------- #
 # frame member splitting at shell mesh nodes
 # --------------------------------------------------------------------------- #
+class _NearPoints:
+    """Exact pre-filter of the shell mesh nodes a member can pass through.
+
+    :func:`_split_member` keeps a node only when its foot point lies
+    strictly inside the member (``_TOL < t < L - _TOL``) and the node is
+    closer than ``_TOL`` to it, so every kept node lies inside the member's
+    axis-aligned bounding box grown by ``_TOL`` (plus round-off).  Testing
+    the box first (vectorised) and running the unchanged per-point test on
+    the survivors only, in the original order, gives the same cuts as
+    scanning every node — without the O(members x nodes) Python loop that
+    dominated meshing of large meshed buildings (4.5 s of a 20-story
+    model)."""
+
+    def __init__(self, pool: _PointPool, shell_pts: List[int]) -> None:
+        import numpy as np
+        self._np = np
+        self.idx = np.asarray(shell_pts, dtype=np.int64)
+        self.xyz = (np.asarray([pool.points[i] for i in shell_pts],
+                               dtype=float).reshape(-1, 3))
+
+    def candidates(self, member: FrameMember) -> List[int]:
+        np = self._np
+        if not len(self.idx):
+            return []
+        a = np.asarray(member.pi, dtype=float)
+        b = np.asarray(member.pj, dtype=float)
+        lo, hi = np.minimum(a, b), np.maximum(a, b)
+        pad = 2.0 * _TOL + 1e-9 * (1.0 + float(np.max(np.abs(
+            np.concatenate((a, b))))))
+        inside = np.all((self.xyz >= lo - pad) & (self.xyz <= hi + pad),
+                        axis=1)
+        return [int(i) for i in self.idx[inside]]
+
+
 def _split_member(member: FrameMember, pool: _PointPool,
                   shell_pts: List[int],
                   model: Optional[BuildingModel] = None,
@@ -841,7 +875,8 @@ def mesh_model(model: BuildingModel) -> MeshedModel:
                         ShellQuad)
 
     shell_pts = sorted({n for q in quads for n in q.nodes})
-    segments = {m.uid: _split_member(m, pool, shell_pts, model,
+    near = _NearPoints(pool, shell_pts)
+    segments = {m.uid: _split_member(m, pool, near.candidates(m), model,
                                      (auto_idx.get(m.uid) or [])
                                      + uh_idx.get(m.uid, []) or None)
                 for m in model.members}
