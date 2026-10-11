@@ -23,6 +23,7 @@ import {
   dkDraft, dkCommit, showNum, unitLabel, uniqueName,
 } from "./dlgkit.js";
 import { spvFramePanel as dsSpvFrame, spvShellPanel as dsSpvShell, spvSplit as dsSpvSplit } from "./secpreview.js";   // live member / property preview (js/secpreview.js)
+import { openMatLib as dsOpenMatLib } from "./matlib.js";   // v1.21 material library browser (js/matlib.js)
 
 const G = 9.80665;
 const eff = (o, k, d = 1) => (o && o[k] != null && isFinite(o[k])) ? +o[k] : d;
@@ -70,12 +71,14 @@ export function openMaterials(sky, { select } = {}) {
       { sep: "Add" },
       { label: "Add New Material…", id: "dsMatAdd", fn: () => edit(null, { type: newType }) },
       { label: "Add Copy of Material…", id: "dsMatCopy", needsSel: true, fn: k => edit(null, { copyOf: k }) },
+      // v1.21 code material libraries (js/matlib.js): imports into this draft
+      { label: "Add from Library…", id: "dsMatAddStdLib", title: "ASTM/ACI · Eurocode · IS · BS · AS/NZS grades", fn: () => dsOpenMatLib(sky, { D, done: r => { if (r.length) list.select(r[r.length - 1].as); sync(); } }) },
       { sep: "Selected" },
       { label: "Modify/Show Material…", id: "dsMatModify", needsSel: true, fn: k => modify(k) },
       { label: "Delete Material", id: "dsMatDelete", needsSel: true, fn: k => del(k) },
     ],
     extraSide: el("div", { class: "dk-list-side" }, [el("div", { class: "dk-side-title", text: "New material type" }), typeSel,
-      el("div", { class: "dk-side-title", text: "Library" }), libSel, libBtn, err]),
+      el("div", { class: "dk-side-title", text: "ETABS defaults" }), libSel, libBtn, err]),
   });
   const modify = k => k && edit(k);
   const del = k => {

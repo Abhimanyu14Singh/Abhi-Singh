@@ -307,3 +307,6 @@ function drawPlot(wrap, res, mat) {
     wrap.appendChild(ul);
   }
 }
+
+// v1.21 material library preview (js/matlib.js) reuses the backbone plot
+export { drawPlot as ssDrawPlot };

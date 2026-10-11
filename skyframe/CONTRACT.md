@@ -9827,3 +9827,182 @@ Malformed input returns 400.
 * **Test hook.** `__sky.frameAxes` exposes `{convention, convert,
   openConvert, toggleExtrude, toggleAxes, axesOf}`.
   `__sky.vx.meshOf(uid)` returns the extruded vertices of each part.
+
+## v1.21 material library
+
+Built-in code material libraries for ANALYSIS: the properties the analysis
+uses (E, ν, G, unit weight, mass density, thermal α) plus the reference
+strengths (fc / fy / fu) that the existing nonlinear concrete and steel laws
+read. There are no design checks.
+
+### Data files
+
+`skyframe/data/materials/<standard>.json` ships as package data (pyproject
+`"skyframe" = ["data/materials/*.json"]`; PyInstaller's `collect_all` picks it
+up). The five standards:
+
+| id | Standards covered |
+|---|---|
+| `astm_aci` | US: ASTM, AISC 360-16, ACI 318-19, ADM 2020, AISI S100-16 |
+| `eurocode` | EN 1992-1-1, EN 1993-1-1 / 1-3, EN 1999-1-1 |
+| `is` | IS 800, IS 456, IS 2062, IS 1786, IS 1161, IS 4923, IS 14268 |
+| `bs` | BS EN + UK NA, plus the legacy BS 5950 / BS 8110 grades |
+| `as_nzs` | AS 4100, AS 3600-2018, AS/NZS 4671 / 4672 / 4600 |
+
+A file looks like this:
+
+```json
+{"standard": "...", "edition": "...", "source": "...", "units": "SI (...)", "notes"?: "...",
+ "materials": [
+  {"name": "C30/37", "kind": "concrete", "group": "EN 1992-1-1",
+   "E": 32836568031.33079, "nu": 0.2, "G": 13681903346.38783,
+   "unit_weight": 25000.0, "mass_density": 2549.29, "alpha": 1e-05,
+   "fy": null, "fu": null, "fc": 30000000.0,
+   "E_basis": "formula", "E_formula": 32836568031.33079, "E_table": 33000000000.0,
+   "fcm": 38000000.0, "fcu": 37000000.0,
+   "source": "EN 1992-1-1:2004 Table 3.1 ...; nu = 0.2 (3.1.3(4)); ...",
+   "formula": "Ecm = 22 (fcm/10)^0.3 GPa = 22 (38/10)^0.3 = 32.84 GPa ..."}]}
+```
+
+**Units.** Records use SI base units:
+
+* E, G, fy, fu and fc in Pa;
+* `unit_weight` in N/m³;
+* `mass_density` in kg/m³;
+* `alpha` in 1/K.
+
+**Kinds and names.** `kind` is one of `steel`, `concrete`, `rebar`,
+`tendon`, `aluminum` or `cold_formed`. Names are the published designations
+and are unique within a file.
+
+**Optional keys:**
+
+* `E_basis`: `formula`, `table`, `code value` or `typical value`.
+* `E_formula` and `E_table`: both are stored where the code gives both.
+* `G_code`: the code's tabulated G where it differs from E/2(1+ν), for
+  example AISC 11,200 ksi or EN 1999 27,000 MPa. The analysis always uses
+  E/2(1+ν).
+* `Ry`: from AISC 341-16 Table A3.1, for ASTM steels only.
+* `fcm` (EC2), `fcu` (cube), `fcmi` (AS 3600) and `notes`.
+
+**Invariants.** The tests pin these:
+
+* `G == E/(2(1+nu))`, which is what `Material.G` derives;
+* `unit_weight == mass_density * 9.80665`;
+* every record cites a clause or table in `source` / `formula`.
+
+**Which E is used:**
+
+| Code | E used | Kept for reference |
+|---|---|---|
+| EN 1992 | the formula value (C30/37: 32.84 GPa) | `E_table` (33 GPa) |
+| AS 3600 | the Table 3.1.2 value, as the code directs (N32: 30,100 MPa) | `E_formula` (29,910 MPa) |
+| ACI | 57,000√f'c psi for psi grades; 4,700√f'c MPa for MPa grades | — |
+| IS 456 | 5,000√fck | — |
+| BS 8110-2 | eq. 17: 20 + 0.2 fcu GPa | — |
+
+For BS 8110 cube grades, `fc` is the cylinder fck of the EN 206 class with the
+same cube strength.
+
+**Unit weights used:**
+
+| Material | Value |
+|---|---|
+| ACI concrete | 150 pcf = 23.56 kN/m³ |
+| EN and IS concrete | 25 kN/m³ (reinforced) |
+| BS 8110 and AS 3600 concrete | 2,400 kg/m³ |
+| Steel | 7,850 kg/m³ |
+| ASTM steel | 490 pcf |
+
+### Mapping onto `Material`
+
+`skyframe.core.material_db.record_to_material` adds **no new Material
+fields**, so existing models stay byte-identical. It maps a record as follows:
+
+| Material field | From the record |
+|---|---|
+| `E`, `fy`, `fu`, `fc` | value / 1000 (kPa) |
+| `unit_weight` | value / 1000 (kN/m³) |
+| `mass_density` | value / 1000 (t/m³) |
+| `nu`, `alpha` | unchanged |
+| `material_type` | `kind`, with `cold_formed` → `coldformed` |
+| `symmetry` | `uniaxial` for rebar / tendon, otherwise `isotropic` |
+| `Ry` | the record's value, else the default 1.1 |
+| `color` | the per-type colour swatch |
+| `notes` | `"<standard> library: <name> — <source>"` |
+| `stress_strain` | `null` |
+
+### Loader
+
+`skyframe/core/material_db.py`:
+
+| Function | Returns |
+|---|---|
+| `standards()` | `[{id, standard, edition, count, kinds: {kind: n}, notes}]` |
+| `materials(standard, kind=None, query=None)` | matching records |
+| `material(standard, name)` | one record |
+| `material_from_db(standard, name, material_name=None)` | a `Material` |
+| `listing(standard, kind=None, query=None)` | records, each with `material` added |
+| `import_into(model, standard, names, on_clash="suffix", rename=None)` | `[{name, as, replaced}]` |
+
+* `materials`: `query` is a case-insensitive substring of the name or group.
+  An unknown standard raises `KeyError`; an unknown kind raises `ValueError`.
+* `listing`: `material` is the exact `Material.to_dict()` an import stores.
+* `import_into` handles a name that is already taken according to
+  `on_clash`:
+  * `"suffix"` adds `NAME-2`, `NAME-3` and so on;
+  * `"replace"` overwrites the material, and sections keep the name;
+  * `"error"` raises `ValueError`.
+* `import_into` is atomic: it resolves every name and validates every
+  material before it writes anything.
+
+### API
+
+`skyframe/api/material_db_api.py`, registered with one line in `create_app`.
+
+| Endpoint | Returns | Errors |
+|---|---|---|
+| `GET /api/material_db/standards` | the `standards()` list | — |
+| `GET /api/material_db/materials?standard=&kind=&q=` | `{standard, materials: [record + material]}` | unknown standard 404; bad kind 400 |
+| `GET /api/material_db/material?standard=&name=` | `{standard, record, material}` | unknown 404 |
+| `POST /api/material_db/import` | `{imported: [{name, as, replaced}], model}` | see below |
+
+The import body is `{standard, names: [..], on_clash?: "suffix"|"replace"|"error",
+rename?: {record name: model name}}`. It adds the materials to the current
+model. Its errors:
+
+* 404: unknown standard or name;
+* 409: a clash when `on_clash` is `"error"`;
+* 400: a bad body or empty `names`.
+
+### UI
+
+The UI lives in `js/matlib.js`, `js/mock_matlib.js` and the generated
+`js/matlib_data.js`.
+
+**Entry points:**
+
+* **Define › Material Library…** (`act` `def-matlib`, added with
+  `sky.menu.add`) works on its own draft and commits it on Import.
+* **Define Materials › Add from Library…** (`#dsMatAddStdLib`) imports into
+  that dialog's draft. The list's OK commits the draft; Cancel discards it.
+
+**Browser:**
+
+* Pick Standard (`#mlStd`), then kind (`#mlKind`), then search
+  (`#mlSearch`). The grade table (`#mlTable`, checkboxes `.ml-pick`) shows
+  f'c or Fy, Fu, E and weight in display units (units.js).
+* The info line (`#mlInfo`) shows the source clause and formula.
+* The side panel (`#mlProps`) shows E, ν, G, weight, mass, α, the strengths
+  and the E table / formula values.
+* The stress–strain preview (`#mlPreview`) uses the existing `POST
+  /api/materials/curve` and the sscurve plot.
+* Name clashes: **Add with a “-2” suffix** (`#mlClashSuffix`, the default)
+  or **Replace existing** (`#mlClashReplace`).
+
+**Data source.** Live mode uses the GET endpoints. `?mock=1`, or an
+unavailable endpoint, uses the bundled `matlib_data.js` instead. A test
+asserts that this copy is identical to the JSON files, and its `material`
+dicts equal the backend's.
+
+**Test hook.** `__sky.matLib = {open, standards, materials, importInto}`.

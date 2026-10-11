@@ -98,6 +98,7 @@ import { rnaCell as rnaRatioCell, rnaCsv as rnaRatioCsv } from "./ratio_na.js";
 
 import { initDlgStd as dsInitDlgStd } from "./dlgstd.js";   // dialog standard (dlgkit) + Model Workflow checklist + canvas context menus
 import { initSecPreview as spvInitSecPreview } from "./secpreview.js";   // live member / property preview in the legacy editors (js/secpreview.js)
+import { initMatLib as mlInitMatLib } from "./matlib.js";   // v1.21 Define › Material Library… (js/matlib.js)
 
 /* ------------------------------------------------ state */
 const store = {
@@ -8559,6 +8560,7 @@ async function boot() {
 
   try { accInitAccuracy(window.__sky); } catch (err) { console.error("accuracy tools init failed", err); }   // Analyze > Mesh Sensitivity Study · Model > Accuracy Advisor (js/accuracy.js)
   try { faInitFrameAxesUi(window.__sky); } catch (err) { console.error("frame axes init failed", err); }   // frame local axes (js/frameaxes_ui.js)
+  try { mlInitMatLib(window.__sky); } catch (err) { console.error("material library init failed", err); }   // v1.21 material library (js/matlib.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)
