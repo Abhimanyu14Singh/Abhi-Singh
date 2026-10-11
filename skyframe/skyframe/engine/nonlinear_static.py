@@ -97,35 +97,45 @@ def _cache(eng) -> dict:
 
 
 def _setup(asm, *integrator) -> None:
+    from skyframe.engine import solver_policy as _slv
+    from skyframe.engine.opensees_engine import _REUSE
+    _REUSE["factored"] = None
     ops.wipeAnalysis()
     ops.constraints("Transformation" if asm.use_transformation
                     else "Plain")
-    ops.numberer("RCM")
-    ops.system("BandGeneral")
+    _slv.apply_system(asm)          # RCM + BandGeneral | sparse (policy)
     ops.test("NormDispIncr", 1.0e-8, 50)
     ops.algorithm("Newton")
     ops.integrator(*integrator)
     ops.analysis("Static")
 
 
-def _try_step() -> bool:
-    ok = ops.analyze(1)
-    if ok != 0:
-        ops.algorithm("NewtonLineSearch")
+# the Newton test of :func:`_setup` (the convergence strategy's base test)
+_BASE_TEST = ("NormDispIncr", 1.0e-8, 50)
+
+
+def _try_step(strat=None, integ=None) -> bool:
+    """One analyze with the fallback ladder (engine/convergence.py; the
+    default legacy mode is exactly analyze -> NewtonLineSearch retry)."""
+    if strat is None:
         ok = ops.analyze(1)
-        ops.algorithm("Newton")
-    return ok == 0
+        if ok != 0:
+            ops.algorithm("NewtonLineSearch")
+            ok = ops.analyze(1)
+            ops.algorithm("Newton")
+        return ok == 0
+    return strat.static(integ) == 0
 
 
-def _step(asm, integ: Tuple) -> bool:
+def _step(asm, integ: Tuple, strat=None) -> bool:
     """One increment ``integ`` (integrator args) with retries; the
     analysis is left set up with ``integ``."""
-    if _try_step():
+    if _try_step(strat, integ):
         return True
     sub = list(integ)
     sub[-1] = integ[-1] / _SUBSTEPS
     _setup(asm, *sub)
-    ok = all(_try_step() for _ in range(_SUBSTEPS))
+    ok = all(_try_step(strat, tuple(sub)) for _ in range(_SUBSTEPS))
     _setup(asm, *integ)
     return ok
 
@@ -328,9 +338,11 @@ def _run_stage(eng, asm, st: _ChainState, case, on_step=None,
     else:
         integ = ("LoadControl", 1.0 / n)
     _setup(asm, *integ)
+    from skyframe.engine import convergence as _cvg
+    strat = _cvg.Strategy(eng.model, base_test=_BASE_TEST, label=case.name)
     ok_all, warn = True, ""
     for i in range(n):
-        if not _step(asm, integ):
+        if not _step(asm, integ, strat):
             ok_all = False
             warn = (f"nonlinear static case {case.name!r} stopped early at "
                     f"step {i}/{n}: the solution did not converge (results "
@@ -338,6 +350,7 @@ def _run_stage(eng, asm, st: _ChainState, case, on_step=None,
             break
         if on_step is not None:
             on_step()
+    _cvg.file_report(eng, case.name, strat)
     if not ok_all and not tolerate_failure:
         raise RuntimeError(f"Nonlinear static case {case.name!r} (start "
                            "state of a chained analysis) failed to "

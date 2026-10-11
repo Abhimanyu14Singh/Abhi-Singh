@@ -431,12 +431,18 @@ class DirectIntegrationRun:
 
     # ------------------------------------------------------------ stepping
     def _analyze(self, h: float) -> int:
-        ok = ops.analyze(1, h)
-        if ok != 0 and self.use_newton \
-                and self.integ["method"] != "central_difference":
-            ops.algorithm("NewtonLineSearch")
+        st = getattr(self, "strategy", None)    # engine/convergence.py
+        if (st is not None and self.use_newton
+                and self.integ["method"] != "central_difference"):
+            # shared ladder (legacy default mode: exactly the retry below)
+            ok = st.attempt(lambda: ops.analyze(1, h))
+        else:
             ok = ops.analyze(1, h)
-            ops.algorithm("Newton")
+            if ok != 0 and self.use_newton \
+                    and self.integ["method"] != "central_difference":
+                ops.algorithm("NewtonLineSearch")
+                ok = ops.analyze(1, h)
+                ops.algorithm("Newton")
         if ok == 0 and self.tracker is not None:
             self.tracker.record()
         return ok

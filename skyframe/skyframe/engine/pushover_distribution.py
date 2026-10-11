@@ -315,11 +315,13 @@ def resolve_control(engine, asm, case, ctrl: int, dof: int, H: float
 
 def setup_load_control(asm, inc: float) -> None:
     """The pushover Newton analysis with LoadControl(``inc``)."""
+    from skyframe.engine import solver_policy as _slv
+    from skyframe.engine.opensees_engine import _REUSE
+    _REUSE["factored"] = None
     ops.wipeAnalysis()
     ops.constraints("Transformation" if asm.use_transformation
                     else "Plain")
-    ops.numberer("RCM")
-    ops.system("BandGeneral")
+    _slv.apply_system(asm)          # RCM + BandGeneral | sparse (policy)
     ops.test("NormDispIncr", 1.0e-6, 50)
     ops.algorithm("Newton")
     ops.integrator("LoadControl", inc)

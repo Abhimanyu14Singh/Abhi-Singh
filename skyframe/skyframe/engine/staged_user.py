@@ -130,6 +130,8 @@ def _submodel(model: BuildingModel, active: Dict[str, set], keys: set,
     sub.panel_zones = getattr(model, "panel_zones", "none")
     sub.active_dof = list(getattr(model, "active_dof", DOF_LABELS))
     sub.num_modes = 0
+    sub.analysis_options = copy.deepcopy(               # solver/convergence
+        getattr(model, "analysis_options", None) or {})
     return sub
 
 
@@ -377,6 +379,8 @@ def run_user_staged(engine: OpenSeesEngine, name: str) -> StagedResults:
         sub.cases = {"__ustage__": LoadCase("__ustage__", facs)}
         eng = OpenSeesEngine(sub)
         res = eng.run_static("__ustage__")
+        from skyframe.engine import convergence as _cvg
+        _cvg.adopt_child(engine, name, eng)          # robust-mode reports
         asm = eng._asm
         # accumulate the standard fields (keyed by coordinates)
         for tg, c in asm.struct_coords.items():

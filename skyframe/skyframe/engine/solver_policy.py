@@ -1,0 +1,125 @@
+"""Linear-system (solver + numberer) choice per problem size.
+
+CONTRACT "Analysis performance, solver policy and convergence strategy".
+
+The engine historically used ``numberer RCM`` + ``system BandGeneral`` for
+every static / transient solve.  On rigid-diaphragm buildings the
+Transformation constraint handler couples every slaved node of a floor to
+its master, so the band of the reduced stiffness is essentially the whole
+floor: BandGeneral cost grows like ``n * b^2`` and on real building sizes it
+is the dominant cost of an analysis (a 10-story 5x5-bay frame spends ~0.3 s
+per solve; a 4-story meshed-slab model ~3 s; a 20-story meshed model
+exhausts memory and crashes the interpreter).
+
+Policy (``model.analysis_options["solver"]``):
+
+* ``"auto"`` (default) — BandGeneral (the exact legacy path, bit-identical)
+  while the ESTIMATED equation count is below :data:`SPARSE_EQ_THRESHOLD`;
+  at or above it the sparse direct solver UmfPack (same RCM numberer).
+  The threshold sits at the measured BandGeneral/UmfPack crossover, so
+  every small model (all hand-checked validation problems) keeps its
+  byte-identical legacy results, and the large models where the band solver
+  is the wrong tool get a solver whose results agree with the band solution
+  to solver round-off (measured 1e-15 .. 1e-13 relative).
+* ``"band"`` — always the legacy BandGeneral (A/B reference path).
+* ``"umfpack"`` / ``"mumps"`` / ``"sparse_general"`` — force that solver.
+
+Only linear-system choice changes; the eigen solver (``ops.eigen``) keeps its
+own legacy policy.  ``SparseSYM`` is deliberately NOT offered: on
+Transformation-constrained models it returned wrong displacements (probed on
+openseespy 3.7.1, relative error 1.0).
+
+Factor-once reuse: for the linear elastic multi-RHS flows (linear static
+cases, response-spectrum modal statics, center-of-rigidity unit loads) the
+engine keeps ONE ``algorithm Linear -factorOnce`` analysis alive on the
+reused elastic domain when the chosen system supports it (UmfPack): the
+stiffness is factored once and every further load case is a
+forward/back substitution.  Verified bit-identical to a fresh UmfPack
+factorization per case.  (BandGeneral's LAPACK band solver does NOT support
+``-factorOnce`` — the second solve fails — so the band path never uses it.)
+"""
+
+from __future__ import annotations
+
+from typing import Optional, Tuple
+
+import openseespy.opensees as ops
+
+# estimated equations at/above which "auto" leaves BandGeneral (measured
+# crossover on rigid-diaphragm frame / meshed models: ~250 equations)
+SPARSE_EQ_THRESHOLD = 300
+
+SOLVERS = ("auto", "band", "umfpack", "mumps", "sparse_general")
+
+_SYSTEM = {"band": "BandGeneral", "umfpack": "UmfPack", "mumps": "Mumps",
+           "sparse_general": "SparseGeneral"}
+
+# systems whose solver supports ``algorithm Linear -factorOnce``
+FACTOR_ONCE_SYSTEMS = ("UmfPack",)
+
+
+def estimate_equations(asm) -> int:
+    """Active-equation estimate of an assembly: free node dofs minus the 3
+    (ux, uy, rz) each rigid-diaphragm slave gives up (the same estimate the
+    eigen solver policy uses)."""
+    n = sum(6 - sum(asm.node_restraints.get(t, (0,) * 6))
+            for t in asm.node_coords)
+    n -= 3 * sum(len(asm.story_nodes.get(s, ())) for s in asm.masters)
+    return max(int(n), 0)
+
+
+def solver_name(model) -> str:
+    """The requested solver policy name (validated elsewhere)."""
+    opts = getattr(model, "analysis_options", None) or {}
+    name = opts.get("solver", "auto") if isinstance(opts, dict) else "auto"
+    return name if name in SOLVERS else "auto"
+
+
+def choose(model, asm) -> Tuple[str, str]:
+    """``(system, note)`` for an assembly — ``system`` is the OpenSees
+    ``system`` command name; ``note`` is a warning ("" normally) when a
+    forced band solver was replaced to avoid a memory blow-up (see
+    :func:`skyframe.engine.model_size.band_fallback`)."""
+    name = solver_name(model)
+    if name == "auto":
+        neq = estimate_equations(asm)
+        return ("BandGeneral" if neq < SPARSE_EQ_THRESHOLD
+                else "UmfPack"), ""
+    if name == "band":
+        from skyframe.engine.model_size import band_fallback
+        note = band_fallback(asm)
+        if note:
+            return "UmfPack", note
+    return _SYSTEM[name], ""
+
+
+def system_of(asm) -> str:
+    """The linear system recorded on an assembly (legacy BandGeneral when
+    the assembly was built without a policy — e.g. a hand-made one)."""
+    return getattr(asm, "linear_system", None) or "BandGeneral"
+
+
+def apply_system(asm) -> None:
+    """Issue ``numberer`` + ``system`` for an assembly (RCM always — the
+    legacy numberer; it is also the best one measured for UmfPack here).
+    A system this OpenSees build lacks (e.g. Mumps) degrades to UmfPack
+    (recorded on the assembly so later setups skip the failed attempt)."""
+    ops.numberer("RCM")
+    try:
+        ops.system(system_of(asm))
+    except Exception:                                   # pragma: no cover
+        asm.linear_system = "UmfPack"
+        ops.system("UmfPack")
+
+
+def factor_once_ok(asm) -> bool:
+    """True when the assembly's system supports ``Linear -factorOnce``."""
+    return system_of(asm) in FACTOR_ONCE_SYSTEMS
+
+
+def describe(asm) -> Optional[dict]:
+    """Small JSON-safe summary for diagnostics."""
+    if asm is None:
+        return None
+    return {"system": system_of(asm),
+            "equations_estimate": estimate_equations(asm)}

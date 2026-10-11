@@ -43,6 +43,7 @@ from skyframe.core import thermal_ext as _thx  # v1.16 temperature / projected
 from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
     PDELTA_INCLUDE_IN, PDELTA_METHODS, pdelta_defaults, pdelta_from_dict,
     pdelta_to_dict, validate_pdelta_options)
+from skyframe.core import analysis_options as _aopt  # solver/convergence
 
 G_ACCEL = 9.80665  # m/s^2
 _PLANAR_TOL = 1e-6  # m
@@ -1971,6 +1972,12 @@ class BuildingModel:
     # (skyframe.core.user_hinges; emitted by to_dict only when non-empty)
     hinge_properties: Dict[str, dict] = field(default_factory=dict)
 
+    # Analysis options: solver policy / nonlinear convergence strategy /
+    # model-size warnings (skyframe.core.analysis_options).  Empty (default)
+    # = auto solver, legacy convergence, warnings on.  Emitted by to_dict
+    # only when not the defaults.
+    analysis_options: Dict[str, object] = field(default_factory=dict)
+
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
         self.materials[mat.name] = mat
@@ -3367,6 +3374,9 @@ class BuildingModel:
                    else bool(patterns))
         masses: Dict[str, float] = {}
         source = self.effective_mass_source()
+        # uid -> object maps (first match, == _member/_shell) built once:
+        # the per-story loops were O(stories x loads x objects)
+        _member, _shell = self._uid_maps()
         for s in self.stories:
             if s.name in self.story_masses:
                 masses[s.name] = self.story_masses[s.name]
@@ -3379,13 +3389,13 @@ class BuildingModel:
                 if not inc_pat:
                     pat = _SelfWeightOnly(pat)
                 for udl in pat.member_udls:
-                    m = self._member(udl.member_uid)
+                    m = _member(udl.member_uid)
                     if m is not None and m.story == s.name and m.kind != "column":
                         total_w += fac * udl.w * m.length
                 for ml in pat.member_loads:
                     if ml.direction != "gravity":
                         continue
-                    m = self._member(ml.member_uid)
+                    m = _member(ml.member_uid)
                     if m is None or m.story != s.name or m.kind == "column":
                         continue
                     if ml.kind == "point":
@@ -3398,7 +3408,7 @@ class BuildingModel:
                             * (ml.b - ml.a) * m.length \
                             * _thx.projected_factor(m, ml)
                 for al in pat.area_loads:
-                    region = self._shell(al.region_uid)
+                    region = _shell(al.region_uid)
                     if region is None or not self._region_on_story(region, s):
                         continue
                     total_w += (fac * al.q * region.net_area  # v0.5
@@ -3443,6 +3453,19 @@ class BuildingModel:
             return region.story == story.name
         zs = [c[2] for c in region.corners]
         return abs(max(zs) - story.elevation) < 1e-6
+
+    def _uid_maps(self):
+        """``(member_lookup, shell_lookup)`` callables with EXACTLY the
+        :meth:`_member` / :meth:`_shell` first-match semantics, backed by
+        dicts built once (for loops that look up many uids against a model
+        that does not change during the loop)."""
+        mem: Dict[str, FrameMember] = {}
+        for m in self.members:
+            mem.setdefault(m.uid, m)
+        shl: Dict[str, ShellRegion] = {}
+        for r in self.shells:
+            shl.setdefault(r.uid, r)
+        return mem.get, shl.get
 
     def _member(self, uid: str) -> Optional[FrameMember]:
         for m in self.members:
@@ -3747,6 +3770,12 @@ class BuildingModel:
         from skyframe.core.framemesh import validate_model as _fm_validate
         _fm_validate(self)                  # frame auto mesh / stations
         _uh.validate_model(self)            # B10 user hinges
+        self._validate_analysis_options()   # solver / convergence options
+
+    def _validate_analysis_options(self) -> None:
+        """Solver / convergence / size-warning options
+        (see core.analysis_options)."""
+        _aopt.validate_analysis_options(self)
 
     def _validate_nonlinear_static(self) -> None:
         """Nonlinear static cases / chains (see core.nonlinear_static)."""
@@ -3884,6 +3913,7 @@ class BuildingModel:
                if self.hyperstatic_cases else {}),
 
             **_uh.model_to_dict(self),      # B10 hinge properties (if any)
+            **_aopt.analysis_options_to_dict(self),   # (if not default)
         }
 
     @classmethod
@@ -4302,6 +4332,7 @@ class BuildingModel:
                                      for e in jpz]
 
         _uh.model_from_dict(mdl, d)         # B10 hinge props / overwrites
+        mdl.analysis_options = _aopt.analysis_options_from_dict(d)
         mdl.validate()
         return mdl
 
@@ -4326,17 +4357,18 @@ def story_gravity_loads(model: "BuildingModel",
     pat = model.patterns.get(pattern_name)
     if pat is None:
         return out
+    _member, _shell = model._uid_maps()      # built once (same semantics)
     for s in model.stories:
         total = 0.0
         for udl in pat.member_udls:
-            m = model._member(udl.member_uid)
+            m = _member(udl.member_uid)
             if m is not None and m.story == s.name and m.kind != "column":
                 total += udl.w * m.length
         for ml in pat.member_loads:
             if (ml.direction not in ("gravity", "global_z")
                     or ml.kind == "moment"):
                 continue
-            m = model._member(ml.member_uid)
+            m = _member(ml.member_uid)
             if m is None or m.story != s.name or m.kind == "column":
                 continue
             if ml.kind == "point":
@@ -4346,7 +4378,7 @@ def story_gravity_loads(model: "BuildingModel",
             else:  # trapezoid
                 total += 0.5 * (ml.w + ml.w2) * (ml.b - ml.a) * m.length
         for al in pat.area_loads:
-            region = model._shell(al.region_uid)
+            region = _shell(al.region_uid)
             if region is not None and model._region_on_story(region, s):
                 total += area_load_weight(region, al)
         for nl in pat.nodal_loads:
