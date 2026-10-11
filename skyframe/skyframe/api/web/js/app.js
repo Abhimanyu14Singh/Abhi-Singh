@@ -75,7 +75,6 @@ import { initViewExt as vxInitViewExt } from "./viewext.js";   // View > Set Dis
 import { pfMockValidate as pfMockValidateModel } from "./mock_plotfn.js";
 // ETABS Edit / Select menus + Undo/Redo history (aliased import; js/editmenu.js)
 import { initEditMenu as edInitEditMenu } from "./editmenu.js";
-import { initUx as uxInitUx } from "./ux.js";
 // Open-structure wind + Create Report / Model Info / analysis run log (aliased imports)
 import { initOpenWind as owInitOpenWind } from "./openwind.js";
 import { initReportX as rxInitReportX } from "./reportx.js";
