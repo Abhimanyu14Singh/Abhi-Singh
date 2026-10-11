@@ -14,7 +14,8 @@ CONTRACT "Analysis performance, solver policy and convergence strategy".
          "tests": [{"type": "NormDispIncr"}, {"type": "EnergyIncr",
                     "tolerance": 1e-10, "max_iterations": 100}],
          "max_halvings": 4},
-     "size_warnings": true}
+     "size_warnings": true,
+     "parallel": "auto" | "off" | 1..8}
 
 * ``solver`` — see :mod:`skyframe.engine.solver_policy` ("auto" keeps the
   legacy BandGeneral path, bit-identical, below the size threshold).
@@ -27,6 +28,11 @@ CONTRACT "Analysis performance, solver policy and convergence strategy".
   x tests, then step halving up to ``max_halvings`` levels) and reports
   which steps needed which fallback.  A test entry without ``tolerance`` /
   ``max_iterations`` inherits the calling analysis path's own values.
+* ``parallel`` — process-parallel independent solves on large (sparse
+  policy) models, see :mod:`skyframe.engine.parallel`: "auto" (default)
+  uses up to 8 processes when at least 4 cores are available, "off" (or 1)
+  is serial, an int sets the number of processes.  Results are
+  byte-identical either way.
 * ``size_warnings`` — warn (results ``warning`` + ``model_size`` block) when
   the model exceeds sizes that will be slow.
 
@@ -46,7 +52,10 @@ ALGORITHMS = ("Newton", "ModifiedNewton", "KrylovNewton",
               "NewtonLineSearch", "BFGS")
 TESTS = ("NormDispIncr", "EnergyIncr", "NormUnbalance")
 MAX_HALVINGS_CAP = 12
-KEYS = ("solver", "eigen_solver", "convergence", "size_warnings")
+KEYS = ("solver", "eigen_solver", "convergence", "size_warnings",
+        "parallel")
+PARALLEL_MODES = ("auto", "off")
+MAX_PARALLEL = 8
 EIGEN_SOLVERS = ("auto", "legacy")
 CONV_KEYS = ("mode", "algorithms", "tests", "max_halvings")
 TEST_KEYS = ("type", "tolerance", "max_iterations")
@@ -65,7 +74,8 @@ def convergence_defaults() -> dict:
 
 def defaults() -> dict:
     return {"solver": "auto", "eigen_solver": "auto",
-            "convergence": convergence_defaults(), "size_warnings": True}
+            "convergence": convergence_defaults(), "size_warnings": True,
+            "parallel": "auto"}
 
 
 def normalized(model_or_opts) -> dict:
@@ -75,7 +85,7 @@ def normalized(model_or_opts) -> dict:
         opts = getattr(model_or_opts, "analysis_options", None)
     out = defaults()
     if isinstance(opts, dict):
-        for k in ("solver", "eigen_solver", "size_warnings"):
+        for k in ("solver", "eigen_solver", "size_warnings", "parallel"):
             if k in opts:
                 out[k] = opts[k]
         conv = opts.get("convergence")
@@ -114,6 +124,8 @@ def validate_analysis_options(model) -> None:
     if "size_warnings" in opts and not isinstance(opts["size_warnings"],
                                                   bool):
         raise ValueError("analysis_options.size_warnings must be a bool")
+    if "parallel" in opts:
+        _validate_parallel(opts["parallel"])
     conv = opts.get("convergence")
     if conv is None:
         return
@@ -146,6 +158,16 @@ def validate_analysis_options(model) -> None:
                 or not 0 <= mh <= MAX_HALVINGS_CAP):
             raise ValueError(f"analysis_options.convergence.max_halvings "
                              f"must be an int 0..{MAX_HALVINGS_CAP}")
+
+
+def _validate_parallel(v) -> None:
+    if v in PARALLEL_MODES and isinstance(v, str):
+        return
+    if (isinstance(v, bool) or not isinstance(v, int)
+            or not 1 <= v <= MAX_PARALLEL):
+        raise ValueError(f"analysis_options.parallel must be one of "
+                         f"{list(PARALLEL_MODES)} or an int "
+                         f"1..{MAX_PARALLEL} (got {v!r})")
 
 
 def _validate_test(t) -> None:

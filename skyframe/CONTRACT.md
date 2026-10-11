@@ -9415,3 +9415,64 @@ their column keys. The reason goes into the table's `warnings`, for example
 * UI: n/a slots show "n/a", with the reason as a tooltip, in Results >
   Diagnostics, the report, the CSV export and the Diaphragms card. The
   `?mock=1` results emit the same shape.
+
+## Meshed-model performance: parallel solves and fewer rebuilds
+
+Large models (the sparse factor-once solver policy, ≥ 300 estimated
+equations) run their independent solves on several processes and build
+the OpenSees domain once per run. Results JSON is unchanged: it is
+byte-identical to the serial run and to v1.19.0 (same SHA-256 on every
+benchmark). Profiles and numbers are in `docs/PERFORMANCE.md` "Meshed
+models: parallel solve families". The tests are in
+`tests/test_meshed_perf.py`.
+
+### Model field `analysis_options.parallel` (new key, optional)
+
+```json
+{"analysis_options": {"parallel": "auto" | "off" | 1..8}}
+```
+
+* `"auto"` (default): `min(cores, 8)` processes when the process may use
+  at least 4 cores, otherwise serial.
+* `"off"` or `1`: serial.
+* An int `2..8`: that many processes, whatever the core count.
+* `to_dict` emits `analysis_options` only when it differs from the
+  defaults, so `{"parallel": "auto"}` and default models serialize
+  byte-identically. `from_dict` round-trips it.
+* `validate()` raises `ValueError` on any other value, including bools,
+  floats, 0 and 9.
+* `SKYFRAME_PARALLEL=0` or `SKYFRAME_SLOW_PATH=1` forces serial.
+* Parallel runs need `os.fork` (Linux). Other platforms run serial.
+
+### Engine behaviour (`engine/parallel.py`)
+
+* Four families run in parallel:
+  * the plain linear static cases;
+  * the condensed-modal unit-load columns (one per massed DOF);
+  * the mode-shape solves with their unit modal responses;
+  * the solve-free RS cases (legacy CQC/SRSS on cached unit responses).
+* Static cases with Newton paths (axial-only members, gap links,
+  compression-only springs) or a non-linear `geometric` still run serially.
+* A family runs like this:
+  * The parent builds the domain and factors it.
+  * Each worker is a `fork` of the parent. It inherits the live domain and
+    the factorization, solves its items and returns pickled Python
+    results.
+  * The parent merges them by item index.
+* The plan is deterministic: item `k` of `n` goes to lane
+  `(n − 1 − k) mod L`, and lane 0 is the parent, which solves the last
+  item last.
+* A worker that fails or dies has its items re-solved by the parent.
+* `OpenSeesEngine.case_times` (run log) includes the prefetched cases'
+  own solve times.
+* One build per run: on large models `run_modal` reuses the live elastic
+  domain. The RS cases' modal cache hits and the CR solves no longer
+  rebuild.
+* Small (BandGeneral) models are untouched: the serial legacy path,
+  byte-identical.
+
+### Mesher
+
+* `core/mesh.mesh_model` filters shell nodes by each member's bounding box
+  before the unchanged on-axis test. The resulting mesh is identical.
+* Meshing a 20-story 8x6-bay meshed building drops from 14.1 s to 1.6 s.

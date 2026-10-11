@@ -119,13 +119,27 @@ def solve(eng, asm, n: int
     G = np.zeros((nm, nm))
     masters = set(asm.masters.values())
     rz_memo: Dict[Tuple[int, int], float] = {}
-    for j, key in enumerate(dofs):
+    # the unit-load columns are independent solves on the same factored
+    # domain: process-parallel on large models (engine/parallel.py; the
+    # merge is by column index, byte-identical to the serial loop)
+    from skyframe.engine import parallel as _par
+    n_lanes = _par.lanes(eng.model, asm)
+
+    def g_column(key):
         _solve_loads(eng, [(key, 1.0)])
-        G[:, j] = [ops.nodeDisp(t, d) for (t, d) in dofs]
-        if key[0] in masters:
-            # the CR unit-load solve of _master_rz is THIS solve (same
-            # domain, same unit load, same factorization) -> memo
-            rz_memo[key] = float(ops.nodeDisp(key[0])[5])
+        col = [ops.nodeDisp(t, d) for (t, d) in dofs]
+        # the CR unit-load solve of _master_rz is THIS solve (same
+        # domain, same unit load, same factorization) -> memo
+        rz = (float(ops.nodeDisp(key[0])[5]) if key[0] in masters
+              else None)
+        return col, rz
+
+    warm = _par.factored_live(eng, asm)   # no serial first solve needed
+    for j, (key, (col, rz)) in enumerate(
+            zip(dofs, _par.map_family(g_column, dofs, n_lanes, warm))):
+        G[:, j] = col
+        if rz is not None:
+            rz_memo[key] = rz
     G = 0.5 * (G + G.T)
     s = np.sqrt(m)
     A = s[:, None] * G * s[None, :]
@@ -141,18 +155,32 @@ def solve(eng, asm, n: int
     units: Dict[int, dict] = {}
     want_units = bool(eng.model.rs_cases) and _units_linear(asm)
     tags = list(asm.node_coords)
+    jobs = []
     for mode, k in enumerate(good[:n], start=1):
         lam = 1.0 / float(mu[k])
         phi_m = Y[:, k] / s                       # phi_m^T M phi_m = 1
         i_big = int(np.argmax(np.abs(Y[:, k])))   # deterministic sign
         if Y[i_big, k] < 0.0:
             phi_m = -phi_m
-        _solve_loads(eng, [(dofs[i], lam * m[i] * phi_m[i])
-                           for i in range(nm) if phi_m[i] != 0.0])
-        shapes[mode] = {t: list(ops.nodeDisp(t)) for t in tags}
+        jobs.append((mode, lam, [(dofs[i], lam * m[i] * phi_m[i])
+                                 for i in range(nm) if phi_m[i] != 0.0]))
+
+    def mode_solve(job):
+        mode, lam, loads = job
+        _solve_loads(eng, loads)
+        shape = {t: list(ops.nodeDisp(t)) for t in tags}
+        unit = (_unit_response(eng, asm, shape, lam) if want_units
+                else None)
+        return shape, unit
+
+    # full shapes (+ unit responses): independent solves, parallel too
+    for (mode, lam, _), (shape, unit) in zip(
+            jobs, _par.map_family(mode_solve, jobs, n_lanes,
+                                  _par.factored_live(eng, asm))):
+        shapes[mode] = shape
         lambdas.append(lam)
         if want_units:
-            units[mode] = _unit_response(eng, asm, shapes[mode], lam)
+            units[mode] = unit
     eng._mcd_rz_memo = rz_memo
     return lambdas, shapes, units
 
