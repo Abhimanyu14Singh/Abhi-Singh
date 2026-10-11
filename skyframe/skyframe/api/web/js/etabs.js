@@ -6,7 +6,8 @@
    / switchTab / doRun and the existing managers (Section Manager, Grid editor,
    Section Designer, gallery, import, loads editor sections, design sub-tabs). */
 
-import { icon, TOOL_ICON, MENU_ICON, EXGROUP_ICON, EXLEAF_ICON, VIEW_ICON, MENUITEM_ICON } from "./icons.js";
+import { icon, TOOL_ICON, EXGROUP_ICON, EXLEAF_ICON, VIEW_ICON } from "./icons.js";
+import { buildMenuTree } from "./menutree.js";       // v1.20 — cascading menu tree (menu architecture)
 import U from "./units.js";                       // v1.13 — status-bar units selector
 import * as ME from "./modeledit.js";             // v1.13 — case list / DOF presets
 
@@ -103,337 +104,399 @@ export function initEtabs(sky) {
   };
   const toggleTheme = () => setTheme(theme === "dark" ? "light" : "dark");
 
-  /* ================= TOP MENU BAR ================= */
+  /* ================= TOP MENU BAR =================
+     Menu architecture v1.20 (docs/MENU_ARCHITECTURE.md): the ETABS menu flow
+     File · Edit · View · Define · Draw · Select · Assign · Analyze · Display ·
+     Options · Tools · Help, with cascading submenus for families (≤ 14
+     entries per level), separators between task groups, "…" only on items
+     that open a dialog, shortcuts right-aligned, and disabled states that
+     say why. Rendering / keyboard / touch / viewport clamping / runtime
+     registry live in js/menutree.js. EVERY act id is unchanged — only the
+     place in the tree (and the label shown in context) moved. */
+  const hasResults = () => !!S.results;
+  const NEEDS = {
+    results: () => (hasResults() ? null : "run the analysis first (F5) — no results yet"),
+    selection: () => ((S.selection || []).length ? null : "select one or more objects first (V)"),
+    undo: () => (sky.edit && sky.edit.history && sky.edit.history.state && !sky.edit.history.state().canUndo ? "nothing to undo" : null),
+    redo: () => (sky.edit && sky.edit.history && sky.edit.history.state && !sky.edit.history.state().canRedo ? "nothing to redo" : null),
+    clipboard: () => (sky.edit && sky.edit.clipboard && !sky.edit.clipboard() ? "copy objects first (Ctrl+C)" : null),
+  };
+  const fileReport = () => { const b = $("reportBtn"); if (b && !b.disabled) b.click(); else toast("Report", "Run an analysis first."); };
+  const scrollToCard = (tab, id) => { showResult(tab); requestAnimationFrame(() => { const c = $(id); if (c) c.scrollIntoView({ block: "start", behavior: "smooth" }); }); };
+  const SEP = { sep: true };
+
   const menus = [
-    ["File", [
-      { label: "New Model…", act: "file-new", hint: "template gallery", fn: () => sky.fileNew() },
-      { label: "Template Gallery…", act: "file-gallery", fn: () => sky.openGallery() },
-      { label: "Import…", act: "file-import", hint: "DXF / e2k / IFC", fn: () => sky.openImportDialog() },
-      { label: "Open…", act: "file-open", hint: "saved models", fn: () => sky.openFileDialog() },
-      { sep: true },
-      { label: "Save", act: "file-save", fn: () => sky.fileSave() },
-      { label: "Save As…", act: "file-saveas", fn: () => sky.openSaveAs() },
-      { sep: true },
-      { label: "Report…", act: "file-report", hint: "after a solve", fn: () => { const b = $("reportBtn"); if (b && !b.disabled) b.click(); else toast("Report", "Run an analysis first."); } },
+    { name: "File", accel: "f", items: [
+      { label: "New Model…", act: "file-new", key: "Alt+N", fn: () => sky.fileNew() },
+      { label: "Open…", act: "file-open", key: "Ctrl+O", fn: () => sky.openFileDialog() },
+      SEP,
+      { label: "Save", act: "file-save", key: "Ctrl+S", fn: () => sky.fileSave() },
+      { label: "Save As…", act: "file-saveas", key: "Ctrl+Shift+S", fn: () => sky.openSaveAs() },
+      SEP,
+      { label: "Import…", act: "file-import", hint: "ETABS .e2k · DXF · IFC", fn: () => sky.openImportDialog() },
+      { label: "Template Gallery…", act: "file-gallery", hint: "preset buildings", fn: () => sky.openGallery() },
+      SEP,
       { label: "Create Report…", act: "file-rx-create", hint: "print · PDF · HTML", fn: () => sky.openCreateReport && sky.openCreateReport() },   // js/reportx.js
-      { label: "Model Info…", act: "file-rx-info", hint: "counts · last analysis", fn: () => sky.openModelInfo && sky.openModelInfo() },   // js/reportx.js
-    ]],
+      { label: "Quick Results Report…", act: "file-report", hint: "print-friendly summary of the last run", needs: "results", fn: fileReport },
+      { label: "Model Information…", act: "file-rx-info", hint: "counts · last analysis", fn: () => sky.openModelInfo && sky.openModelInfo() },   // js/reportx.js
+      SEP,
+      { dynamic: "recent" },
+    ]},
     // Edit utilities + Undo/Redo (js/editmenu.js, js/history.js) — delegates to sky.edit
-    ["Edit", [
-      { label: "Undo", act: "edit-undo", hint: () => (sky.edit ? sky.edit.undoHint() : "Ctrl+Z"), fn: () => sky.edit && sky.edit.undo() },
-      { label: "Redo", act: "edit-redo", hint: () => (sky.edit ? sky.edit.redoHint() : "Ctrl+Y"), fn: () => sky.edit && sky.edit.redo() },
-      { sep: true },
-      { label: "Copy", act: "edit-copy", hint: "Ctrl+C", fn: () => sky.edit && sky.edit.copy() },
-      { label: "Paste…", act: "edit-paste", hint: "Ctrl+V · offset", fn: () => sky.edit && sky.edit.paste() },
-      { label: "Delete", act: "edit-delete", hint: "with dependents", fn: () => sky.edit && sky.edit.deleteSelection() },
-      { sep: true },
+    { name: "Edit", accel: "e", items: [
+      { label: "Undo", act: "edit-undo", key: "Ctrl+Z", hint: () => (sky.edit ? sky.edit.undoHint() : ""), needs: "undo", fn: () => sky.edit && sky.edit.undo() },
+      { label: "Redo", act: "edit-redo", key: "Ctrl+Y", hint: () => (sky.edit ? sky.edit.redoHint() : ""), needs: "redo", fn: () => sky.edit && sky.edit.redo() },
+      SEP,
+      { label: "Copy", act: "edit-copy", key: "Ctrl+C", needs: "selection", fn: () => sky.edit && sky.edit.copy() },
+      { label: "Paste…", act: "edit-paste", key: "Ctrl+V", hint: "with offset", needs: "clipboard", fn: () => sky.edit && sky.edit.paste() },
+      { label: "Delete", act: "edit-delete", key: "Del", hint: "with dependents", needs: "selection", fn: () => sky.edit && sky.edit.deleteSelection() },
+      SEP,
       { label: "Replicate…", act: "edit-replicate", hint: "linear · radial · mirror · story", fn: () => sky.edit && sky.edit.openReplicate() },
       { label: "Move…", act: "edit-move", fn: () => sky.edit && sky.edit.openMove() },
-      { label: "Divide Frames…", act: "edit-divide", fn: () => sky.edit && sky.edit.openDivide() },
-      { label: "Join Frames", act: "edit-join", hint: "collinear", fn: () => sky.edit && sky.edit.join() },
-      { label: "Merge Joints…", act: "edit-merge", hint: "tolerance", fn: () => sky.edit && sky.edit.openMerge() },
-      { label: "Align Points / Trim-Extend…", act: "edit-align", fn: () => sky.edit && sky.edit.openAlign() },
       { label: "Extrude…", act: "edit-extrude", hint: "points → frames · frames → shells", fn: () => sky.edit && sky.edit.openExtrude() },
-      { sep: true },   // Interactive Database Editing (js/dbedit.js) — model tables
+      { label: "Edit Points", sub: [
+        { label: "Merge Joints…", act: "edit-merge", hint: "tolerance", fn: () => sky.edit && sky.edit.openMerge() },
+        { label: "Align Points / Trim-Extend…", act: "edit-align", fn: () => sky.edit && sky.edit.openAlign() },
+      ]},
+      { label: "Edit Frames", sub: [
+        { label: "Divide Frames…", act: "edit-divide", fn: () => sky.edit && sky.edit.openDivide() },
+        { label: "Join Frames", act: "edit-join", hint: "collinear members in the selection", fn: () => sky.edit && sky.edit.join() },
+      ]},
+      SEP,   // Interactive Database Editing (js/dbedit.js) — model tables
       { label: "Interactive Database Editing…", act: "edit-dbedit", hint: "model tables", fn: () => sky.openDbEdit && sky.openDbEdit() },
-    ]],
-    ["Define", [
-      { label: "Materials…", act: "def-materials", fn: () => sky.openSectionMgr() },
-      { label: "Frame Sections…", act: "def-frame", fn: () => sky.openSectionMgr() },
-      { label: "Frame Sections · Add Nonprismatic…", act: "def-np-section", hint: "tapered / haunched", fn: () => sky.openNonprismatic && sky.openNonprismatic() },   // js/npsect.js
-      { label: "Shell Sections…", act: "def-shell", fn: () => sky.openSectionMgr() },
-      { label: "Section Designer…", act: "def-designer", hint: "polygon + rebar", fn: () => sky.openSectionDesigner() },
-      { sep: true },
-      { label: "Grid Systems…", act: "def-grid", fn: () => sky.openGridEditor() },
-      { label: "Stories…", act: "def-stories", fn: () => sky.openGridEditor() },
-      // Groups — ETABS Define > Groups (js/groups.js)
-      { label: "Groups…", act: "def-groups", hint: "staging · section cuts", fn: () => sky.openGroups && sky.openGroups() },
-      { sep: true },
-      { label: "Load Patterns…", act: "def-patterns", fn: () => gotoLoads("ls-patterns") },
-      { label: "Open Structure Wind Pattern…", act: "def-ow-pattern", hint: "ASCE 7 Ch. 29 · frames", fn: () => sky.openOpenWindPattern && sky.openOpenWindPattern() },   // js/openwind.js
-      { label: "Auto Lateral Loads…", act: "def-l116-autolat", hint: "ASCE 7-22 · EC8 · IS 1893 · user", fn: () => sky.openAutoLateral && sky.openAutoLateral() },   // v1.16 (js/loads116.js)
-      { label: "Load Cases…", act: "def-loadcases", hint: "all types", fn: () => sky.openLoadCases() },
-      { label: "Static Load Cases…", act: "def-cases", fn: () => gotoLoads("ls-cases") },
-      { label: "Response-Spectrum Cases…", act: "def-rs", fn: () => gotoLoads("ls-rs") },
-      { label: "Time-History Cases…", act: "def-th", fn: () => gotoLoads("ls-th") },
-      { label: "Pushover Cases…", act: "def-pushover", fn: () => gotoLoads("ls-pushover") },
-      { label: "Nonlinear Static Case…", act: "def-nls", hint: "new · chaining", fn: () => sky.openNlsCase && sky.openNlsCase(null) },   // G3
-      { label: "Modal Case…", act: "def-modal", hint: "stiffness", fn: () => sky.openModalCase && sky.openModalCase() },   // G3
-      { label: "Buckling Cases…", act: "def-buckling", fn: () => gotoLoads("ls-buckling") },
-      { label: "Staged Cases…", act: "def-staged", fn: () => gotoLoads("ls-staged") },
-      { label: "Steady-State Cases…", act: "def-ss", fn: () => sky.openFreqCase("steady_state") },
-      { label: "Power Spectral Density Cases…", act: "def-psd", fn: () => sky.openFreqCase("psd") },
-      { label: "Frequency Functions (SS / PSD)…", act: "def-freqfn", fn: () => sky.openFreqFunctions() },
-      { label: "Load Combinations…", act: "def-combos", fn: () => sky.openCombos ? sky.openCombos() : gotoLoads("ls-combos") },
-      { label: "Functions (RS / TH)…", act: "def-functions", fn: () => gotoLoads("ls-functions") },
-      { label: "Section Cuts…", act: "def-cuts", fn: () => gotoLoads("ls-cuts") },
-      { label: "Mass Source…", act: "def-mass", fn: () => sky.openMassSource() },
-      { label: "P-Delta Options…", act: "def-pdelta", hint: "model-wide", fn: () => sky.openPDeltaOptions && sky.openPDeltaOptions() },
-      { label: "Diaphragms…", act: "def-diaphragms", hint: "named · rigid / semi-rigid", fn: () => sky.openDiaphragms && sky.openDiaphragms() },   // G3
-      { label: "Towers…", act: "def-c9-towers", hint: "multi-tower · podium", fn: () => sky.openTowers && sky.openTowers() },   // C9 (js/towers.js)
-
-      // B9 — named point-spring properties (js/springdlg.js)
-      { label: "Spring Properties · Point Springs…", act: "def-b9-springprops", hint: "linear · multilinear · gap", fn: () => sky.openSpringProperties && sky.openSpringProperties() },
-      { label: "Frame Hinge Properties…", act: "def-uh-hingeprops", hint: "user backbones A–E", fn: () => sky.openHingeProperties && sky.openHingeProperties() },   // B10 (js/uhdlg.js)
-      // PT — tendon properties + hyperstatic case (js/tendons.js)
-      { label: "Tendon Properties…", act: "def-pt-tendons", hint: "PT · losses", fn: () => sky.openTendonProperties && sky.openTendonProperties() },
-      { label: "Hyperstatic Load Case…", act: "def-pt-hyper", hint: "PT secondary", fn: () => sky.openHyperstaticCase && sky.openHyperstaticCase(null) },
-      { sep: true },
-      { label: "Code Tools (ASCE 7 · NBCC · EC)…", act: "def-codetools", fn: () => gotoLoads("ls-codetools") },
-    ]],
-    ["Draw", [
-      { label: "Select", act: "draw-select", key: "V", fn: () => drawTool("select") },
-      { sep: true },
-      { label: "Column", act: "draw-column", key: "C", fn: () => drawTool("column") },
-      { label: "Beam", act: "draw-beam", key: "B", fn: () => drawTool("beam") },
-      { label: "Brace", act: "draw-brace", key: "X", fn: () => drawTool("brace") },
-      { label: "Wall", act: "draw-wall", key: "W", fn: () => drawTool("wall") },
-      { label: "Slab", act: "draw-slab", key: "S", fn: () => drawTool("slab") },
-      // G2 — polygon floors / walls / openings (js/polydraw.js)
-      { label: "Draw Floor (Polygon)", act: "draw-polyfloor", hint: "plan", fn: () => { sky.polyDraw && sky.polyDraw.start("slab"); syncStatus(); } },
-      { label: "Draw Wall (Polygon)", act: "draw-polywall", hint: "elevation", fn: () => { sky.polyDraw && sky.polyDraw.start("wall"); syncStatus(); } },
-      { label: "Draw Opening (Polygon)", act: "draw-polyopen", hint: "in selected shell", fn: () => { sky.polyDraw && sky.polyDraw.start("opening"); syncStatus(); } },
-      { label: "Opening / Erase", act: "draw-erase", key: "E", fn: () => drawTool("erase") },
-      { sep: true },
-      { label: "Point Spring", act: "draw-spring", key: "G", fn: () => drawTool("spring") },
-      { label: "Line Spring", act: "draw-linespring", key: "K", fn: () => drawTool("linespring") },
-      { label: "Link / Device", act: "draw-link", key: "L", fn: () => drawTool("link") },
-      { label: "Draw Tendon…", act: "draw-pt-tendon", hint: "PT · beams / slab", fn: () => { sky.openDrawTendon && sky.openDrawTendon(); syncStatus(); } },   // PT (js/tendons.js)
-      { sep: true },
-      { label: "Section Cut…", act: "draw-cut", fn: () => gotoLoads("ls-cuts") },
-      { label: "Grid…", act: "draw-grid", fn: () => sky.openGridEditor() },
-      { sep: true },
-      { label: "Plan Draw Mode", act: "draw-plan", fn: () => setView("plan") },
-      { label: "Elevation Draw Mode", act: "draw-elev", fn: () => setView("elev") },
-    ]],
-    ["Assign", [
-      { label: "Frame · Section", act: "asn-fsec", fn: () => assignHint("frame section") },
-      { label: "Frame · Releases", act: "asn-frel", fn: () => assignHint("end releases") },
-      { label: "Frame · Local Axis / Orientation", act: "asn-forient", fn: () => assignHint("orientation") },
-      { label: "Frame · Rigid End Offsets", act: "asn-foff", fn: () => assignHint("rigid end offsets") },
-      // G2 — ETABS Insertion Point / End Length Offsets dialogs (js/insertdlg.js)
-      { label: "Frame · Insertion Point…", act: "asn-finsert", hint: "cardinal point", fn: () => sky.openInsertionPoint && sky.openInsertionPoint() },
-      { label: "Frame · End Length Offsets…", act: "asn-fendoff", hint: "auto / define", fn: () => sky.openEndOffsets && sky.openEndOffsets() },
-      { label: "Frame · Axial Limit", act: "asn-faxial", fn: () => assignHint("axial limit") },
-      { label: "Frame · Hinges", act: "asn-fhinge", fn: () => assignHint("plastic hinges") },
-      { label: "Frame · Panel Zones", act: "asn-fpz", fn: () => assignHint("panel zones") },
-      // B9 — frame auto mesh + output stations (js/framemesh.js)
-      { label: "Frame · Frame Auto Mesh Options…", act: "asn-b9-automesh", hint: "joints · intersections", fn: () => sky.openFrameAutoMesh && sky.openFrameAutoMesh() },
-      { label: "Frame · Output Stations…", act: "asn-b9-stations", fn: () => sky.openOutputStations && sky.openOutputStations() },
-      // B10 — user-defined hinges (js/uhdlg.js)
-      { label: "Frame · Hinges (User-Defined)…", act: "asn-uh-hinges", hint: "property · rel. distance", fn: () => sky.openFrameHinges && sky.openFrameHinges("hinges") },
-      { label: "Frame · Hinge Overwrites…", act: "asn-uh-overwrites", fn: () => sky.openFrameHinges && sky.openFrameHinges("overwrites") },
-      { sep: true },
-      { label: "Shell · Section", act: "asn-ssec", fn: () => assignHint("shell section") },
-      { label: "Shell · Area Spring", act: "asn-sspring", fn: () => assignHint("area spring") },
-      { label: "Shell · Wind Cp", act: "asn-scp", fn: () => assignHint("wind Cp") },
-      { label: "Shell · Layered", act: "asn-slayer", fn: () => assignHint("layered shell") },
-      { sep: true },
-      { label: "Supports / Springs", act: "asn-support", fn: () => assignHint("supports & springs") },
-      // B9/B11 — joint springs with named properties (js/springdlg.js) · link hysteresis (js/linkhyst.js)
-      { label: "Joint · Panel Zone…", act: "asn-np-jpanelzone", hint: "per-joint override", fn: () => sky.openPanelZone && sky.openPanelZone() },   // js/npsect.js
-      { label: "Joint · Springs…", act: "asn-b9-jsprings", hint: "named property · angle", fn: () => sky.openJointSprings && sky.openJointSprings() },
-      { label: "Link · Link Properties…", act: "asn-b9-linkprops", hint: "hysteresis types", fn: () => sky.openLinkProperties && sky.openLinkProperties() },
-      { label: "Frame Loads", act: "asn-fload", fn: () => assignHint("member loads") },
-      { label: "Area Loads", act: "asn-aload", fn: () => assignHint("area loads") },
-      { sep: true },
-      { label: "Joint Loads · Force / Moment…", act: "asn-jforce", fn: () => sky.openJointLoads && sky.openJointLoads("force") },
-      { label: "Joint Loads · Ground Displacement…", act: "asn-jground", fn: () => sky.openJointLoads && sky.openJointLoads("ground") },
-      { label: "Frame Loads · Concentrated…", act: "asn-fconc", hint: "force / moment", fn: () => sky.openFrameConcentrated && sky.openFrameConcentrated("moment") },
-      // v1.16 — distributed (projected) + temperature loads (js/loads116.js)
-      { label: "Frame Loads · Distributed…", act: "asn-l116-fdist", hint: "uniform / trapezoid · projected", fn: () => sky.openFrameDistributed && sky.openFrameDistributed() },
-      { label: "Frame Loads · Open Structure Wind Parameters…", act: "asn-ow-params", hint: "Cf · width · shielding", fn: () => sky.openOpenWindParams && sky.openOpenWindParams() },   // js/openwind.js
-      { label: "Frame Loads · Temperature…", act: "asn-l116-ftemp", hint: "ΔT · gradients", fn: () => sky.openFrameTemperature && sky.openFrameTemperature() },
-      { label: "Shell Loads · Temperature…", act: "asn-l116-stemp", hint: "ΔT · gradient", fn: () => sky.openShellTemperature && sky.openShellTemperature() },
-      { label: "Joint Loads · Temperature…", act: "asn-l116-jtemp", fn: () => sky.openJointTemperature && sky.openJointTemperature() },
-      { label: "Shell Loads · Uniform…", act: "asn-suniform", hint: "direction · joint pattern", fn: () => sky.openShellUniform && sky.openShellUniform() },
-      // G3 — named diaphragms + additional mass (js/diaphdlg.js)
-      { sep: true },
-      { label: "Joint · Diaphragm…", act: "asn-jdiaph", fn: () => sky.openAssignJointDiaphragm && sky.openAssignJointDiaphragm() },
-      { label: "Shell · Diaphragm…", act: "asn-sdiaph", fn: () => sky.openAssignShellDiaphragm && sky.openAssignShellDiaphragm() },
-      { label: "Joint · Additional Mass…", act: "asn-jmass", fn: () => sky.openJointAddMass && sky.openJointAddMass() },
-      { label: "Frame · Additional Mass…", act: "asn-fmass", fn: () => sky.openFrameAddMass && sky.openFrameAddMass() },
-      { label: "Shell · Additional Mass…", act: "asn-smass", fn: () => sky.openShellAddMass && sky.openShellAddMass() },
-
-      // Groups — assign the current selection to a group (js/groups.js)
-      { sep: true },
-      { label: "Assign Objects to Group…", act: "asn-group", hint: "selection", fn: () => sky.openAssignGroup && sky.openAssignGroup() },
-    ]],
-    // Groups — ETABS Select menu (js/groups.js)
-    ["Select", [
-      // Select utilities (js/editmenu.js) — delegates to sky.selectx
-      { label: "Select All", act: "sel-all", hint: "Ctrl+A", fn: () => sky.selectx && sky.selectx.all() },
-      { label: "Invert Selection", act: "sel-invert", fn: () => sky.selectx && sky.selectx.invert() },
-      { label: "Select by Property…", act: "sel-prop", hint: "section · material", fn: () => sky.selectx && sky.selectx.openByProperty() },
-      { label: "Select by Story…", act: "sel-story", fn: () => sky.selectx && sky.selectx.openByStory() },
-      { label: "Select by Plane…", act: "sel-plane", hint: "XY · XZ · YZ", fn: () => sky.selectx && sky.selectx.openByPlane() },
-      { label: "Previous Selection", act: "sel-prev", fn: () => sky.selectx && sky.selectx.previous() },
-      { sep: true },
-      { label: "Select by Group…", act: "sel-group", fn: () => sky.openSelectByGroup && sky.openSelectByGroup() },
-      { label: "Clear Selection", act: "sel-clear", fn: () => sky.handleSelect && sky.handleSelect([], false) },
-    ]],
-    // View — display options, extruded view, selection-only, cut plane, story clipping (js/viewext.js)
-    ["View", [
+    ]},
+    // View — views, display options, extruded view, selection-only, cut plane (js/viewext.js)
+    { name: "View", accel: "v", items: [
+      { label: "Set Plan View", act: "draw-plan", fn: () => setView("plan") },
+      { label: "Set Elevation View", act: "draw-elev", fn: () => setView("elev") },
+      { label: "Set 3D View", act: "view-3d", fn: () => showResult("view3d") },
+      SEP,
       { label: "Set Display Options…", act: "vx-display-options", hint: "objects · colours · stories", fn: () => sky.vx && sky.vx.openDisplayOptions() },
-      { label: "Extrude View", act: "vx-extrude", hint: "section shapes", check: () => !!(sky.vx && sky.vx.isExtrude()), fn: () => { if (sky.vx && !sky.vx.isExtrude()) showResult("view3d"); sky.vx && sky.vx.toggleExtrude(); } },
+      { label: "Extruded View", act: "vx-extrude", hint: "section shapes", check: () => !!(sky.vx && sky.vx.isExtrude()), fn: () => { if (sky.vx && !sky.vx.isExtrude()) showResult("view3d"); sky.vx && sky.vx.toggleExtrude(); } },
       { label: "Show Selection Only", act: "vx-selonly", check: () => !!(sky.vx && sky.vx.isSelOnly()), fn: () => { if (sky.vx && !sky.vx.isSelOnly()) showResult("view3d"); sky.vx && sky.vx.toggleSelOnly(); } },
       { label: "Section Cut Plane View", act: "vx-cut", hint: "clip at a plane", check: () => !!(sky.vx && sky.vx.isCut()), fn: () => { if (sky.vx && !sky.vx.isCut()) showResult("view3d"); sky.vx && sky.vx.toggleCut(); } },
       { label: "Reset Display Options", act: "vx-reset", fn: () => sky.vx && sky.vx.reset() },
-    ]],
-    ["Analyze", [
-      { label: "Set Load Cases to Run…", act: "an-cases-run", fn: () => sky.openCasesToRun() },
+      SEP,
+      { label: "Model Explorer", act: "view-explorer", check: () => !document.querySelector(".workspace.explorer-collapsed"), fn: () => exHead && exHead.querySelector(".ex-collapse").click() },
+      { label: "Quick-Access Toolbar", act: "help-toolbar", key: "Alt+Q", check: () => !!(sky.ux && sky.ux.toolbar && sky.ux.toolbar.isVisible()), fn: () => sky.ux && sky.ux.toolbar && sky.ux.toolbar.toggle() },
+    ]},
+    { name: "Define", accel: "d", items: [
+      { label: "Material Properties…", act: "def-materials", fn: () => sky.openSectionMgr() },
+      { label: "Section Properties", sub: [
+        { label: "Frame Sections…", act: "def-frame", fn: () => sky.openSectionMgr() },
+        { label: "Nonprismatic Frame Sections…", act: "def-np-section", hint: "tapered / haunched", fn: () => sky.openNonprismatic && sky.openNonprismatic() },   // js/npsect.js
+        { label: "Section Designer…", act: "def-designer", hint: "polygon + rebar", fn: () => sky.openSectionDesigner() },
+        { label: "Slab / Wall Sections…", act: "def-shell", fn: () => sky.openSectionMgr() },
+        SEP,
+        { label: "Spring Properties…", act: "def-b9-springprops", hint: "point springs · linear · multilinear · gap", fn: () => sky.openSpringProperties && sky.openSpringProperties() },   // B9 (js/springdlg.js)
+        { label: "Frame Hinge Properties…", act: "def-uh-hingeprops", hint: "user backbones A–E", fn: () => sky.openHingeProperties && sky.openHingeProperties() },   // B10 (js/uhdlg.js)
+        { label: "Tendon Properties…", act: "def-pt-tendons", hint: "PT · losses", fn: () => sky.openTendonProperties && sky.openTendonProperties() },   // PT (js/tendons.js)
+      ]},
+      { label: "Stories, Grids & Towers", aliases: ["Stories", "Grids", "Stories and Grid Systems"], sub: [
+        { label: "Grid Data…", act: "def-grid", fn: () => sky.openGridEditor() },
+        { label: "Story Data…", act: "def-stories", fn: () => sky.openGridEditor() },
+        { label: "Towers…", act: "def-c9-towers", hint: "multi-tower · podium", fn: () => sky.openTowers && sky.openTowers() },   // C9 (js/towers.js)
+      ]},
+      { label: "Diaphragms…", act: "def-diaphragms", hint: "named · rigid / semi-rigid", fn: () => sky.openDiaphragms && sky.openDiaphragms() },   // G3
+      { label: "Groups…", act: "def-groups", hint: "staging · section cuts", fn: () => sky.openGroups && sky.openGroups() },   // js/groups.js
+      { label: "Section Cuts…", act: "def-cuts", fn: () => gotoLoads("ls-cuts") },
+      SEP,
+      { label: "Mass Source…", act: "def-mass", fn: () => sky.openMassSource() },
+      { label: "P-Delta Options…", act: "def-pdelta", hint: "model-wide", fn: () => sky.openPDeltaOptions && sky.openPDeltaOptions() },
+      SEP,
+      { label: "Functions", sub: [
+        { label: "Response Spectrum / Time History…", act: "def-functions", fn: () => gotoLoads("ls-functions") },
+        { label: "Steady State / PSD Frequency…", act: "def-freqfn", fn: () => sky.openFreqFunctions() },
+      ]},
+      { label: "Load Patterns…", act: "def-patterns", fn: () => gotoLoads("ls-patterns") },
+      { label: "Auto Lateral Loads", aliases: ["Lateral Loads"], sub: [
+        { label: "Seismic / Wind Generators…", act: "def-l116-autolat", hint: "ASCE 7-22 · EC8 · IS 1893 · user", fn: () => sky.openAutoLateral && sky.openAutoLateral() },   // v1.16 (js/loads116.js)
+        { label: "Open Structure Wind Pattern…", act: "def-ow-pattern", hint: "ASCE 7 Ch. 29 · frames", fn: () => sky.openOpenWindPattern && sky.openOpenWindPattern() },   // js/openwind.js
+        { label: "Code Tools (ASCE 7 · NBCC · EC)…", act: "def-codetools", fn: () => gotoLoads("ls-codetools") },
+      ]},
+      { label: "Load Cases", sub: [
+        { label: "All Load Cases…", act: "def-loadcases", hint: "every case type in one list", fn: () => sky.openLoadCases() },
+        SEP,
+        { label: "Linear Static…", act: "def-cases", fn: () => gotoLoads("ls-cases") },
+        { label: "Modal…", act: "def-modal", hint: "stiffness", fn: () => sky.openModalCase && sky.openModalCase() },   // G3
+        { label: "Response Spectrum…", act: "def-rs", fn: () => gotoLoads("ls-rs") },
+        { label: "Time History…", act: "def-th", fn: () => gotoLoads("ls-th") },
+        { label: "Buckling…", act: "def-buckling", fn: () => gotoLoads("ls-buckling") },
+        SEP,
+        { label: "Nonlinear Static…", act: "def-nls", hint: "new · chaining", fn: () => sky.openNlsCase && sky.openNlsCase(null) },   // G3
+        { label: "Pushover…", act: "def-pushover", fn: () => gotoLoads("ls-pushover") },
+        { label: "Staged Construction…", act: "def-staged", fn: () => gotoLoads("ls-staged") },
+        SEP,
+        { label: "Steady State…", act: "def-ss", fn: () => sky.openFreqCase("steady_state") },
+        { label: "Power Spectral Density…", act: "def-psd", fn: () => sky.openFreqCase("psd") },
+        { label: "Hyperstatic (PT)…", act: "def-pt-hyper", hint: "PT secondary", fn: () => sky.openHyperstaticCase && sky.openHyperstaticCase(null) },
+      ]},
+      { label: "Load Combinations…", act: "def-combos", fn: () => sky.openCombos ? sky.openCombos() : gotoLoads("ls-combos") },
+    ]},
+    { name: "Draw", accel: "r", items: [
+      { label: "Select Object", act: "draw-select", key: "V", fn: () => drawTool("select") },
+      SEP,
+      { label: "Frames", aliases: ["Beam/Column/Brace"], sub: [
+        { label: "Columns", act: "draw-column", key: "C", fn: () => drawTool("column") },
+        { label: "Beams", act: "draw-beam", key: "B", fn: () => drawTool("beam") },
+        { label: "Braces", act: "draw-brace", key: "X", fn: () => drawTool("brace") },
+      ]},
+      { label: "Floors & Walls", aliases: ["Shells", "Floor/Wall"], sub: [
+        { label: "Rectangular Floor", act: "draw-slab", key: "S", fn: () => drawTool("slab") },
+        { label: "Wall", act: "draw-wall", key: "W", fn: () => drawTool("wall") },
+        SEP,   // G2 — polygon floors / walls / openings (js/polydraw.js)
+        { label: "Floor (Polygon, Plan)", act: "draw-polyfloor", fn: () => { sky.polyDraw && sky.polyDraw.start("slab"); syncStatus(); } },
+        { label: "Wall (Polygon, Elevation)", act: "draw-polywall", fn: () => { sky.polyDraw && sky.polyDraw.start("wall"); syncStatus(); } },
+        { label: "Opening (Polygon)", act: "draw-polyopen", hint: "in the selected shell", fn: () => { sky.polyDraw && sky.polyDraw.start("opening"); syncStatus(); } },
+      ]},
+      { label: "Links & Springs", aliases: ["Links", "Springs"], sub: [
+        { label: "Link / Device", act: "draw-link", key: "L", fn: () => drawTool("link") },
+        { label: "Point Spring", act: "draw-spring", key: "G", fn: () => drawTool("spring") },
+        { label: "Line Spring", act: "draw-linespring", key: "K", fn: () => drawTool("linespring") },
+      ]},
+      { label: "Tendon…", act: "draw-pt-tendon", hint: "PT · beams / slab", fn: () => { sky.openDrawTendon && sky.openDrawTendon(); syncStatus(); } },   // PT (js/tendons.js)
+      SEP,
+      { label: "Section Cut…", act: "draw-cut", fn: () => gotoLoads("ls-cuts") },
+      { label: "Grid Lines…", act: "draw-grid", fn: () => sky.openGridEditor() },
+      SEP,
+      { label: "Erase Object / Add Opening", act: "draw-erase", key: "E", fn: () => drawTool("erase") },
+    ]},
+    // Select utilities (js/editmenu.js → sky.selectx) + groups (js/groups.js)
+    { name: "Select", accel: "s", items: [
+      { label: "Select All", act: "sel-all", key: "Ctrl+A", fn: () => sky.selectx && sky.selectx.all() },
+      { label: "Invert Selection", act: "sel-invert", fn: () => sky.selectx && sky.selectx.invert() },
+      { label: "Previous Selection", act: "sel-prev", fn: () => sky.selectx && sky.selectx.previous() },
+      { label: "Clear Selection", act: "sel-clear", needs: "selection", fn: () => sky.handleSelect && sky.handleSelect([], false) },
+      SEP,
+      { label: "By Property…", act: "sel-prop", hint: "section · material", fn: () => sky.selectx && sky.selectx.openByProperty() },
+      { label: "By Story…", act: "sel-story", fn: () => sky.selectx && sky.selectx.openByStory() },
+      { label: "By Plane…", act: "sel-plane", hint: "XY · XZ · YZ", fn: () => sky.selectx && sky.selectx.openByPlane() },
+      { label: "By Group…", act: "sel-group", fn: () => sky.openSelectByGroup && sky.openSelectByGroup() },
+    ]},
+    { name: "Assign", accel: "a", items: [
+      { label: "Joint", sub: [
+        { label: "Restraints / Springs", act: "asn-support", fn: () => assignHint("supports & springs") },
+        { label: "Springs (Named Property)…", act: "asn-b9-jsprings", hint: "named property · angle", fn: () => sky.openJointSprings && sky.openJointSprings() },   // B9 (js/springdlg.js)
+        { label: "Panel Zone…", act: "asn-np-jpanelzone", hint: "per-joint override", fn: () => sky.openPanelZone && sky.openPanelZone() },   // js/npsect.js
+        { label: "Diaphragm…", act: "asn-jdiaph", fn: () => sky.openAssignJointDiaphragm && sky.openAssignJointDiaphragm() },   // G3 (js/diaphdlg.js)
+        { label: "Additional Mass…", act: "asn-jmass", fn: () => sky.openJointAddMass && sky.openJointAddMass() },
+      ]},
+      { label: "Frame", sub: [
+        { label: "Section Property", act: "asn-fsec", fn: () => assignHint("frame section") },
+        { label: "Releases / Partial Fixity", act: "asn-frel", fn: () => assignHint("end releases") },
+        { label: "Local Axes", act: "asn-forient", fn: () => assignHint("orientation") },
+        SEP,   // G2 — insertion point / end length offsets (js/insertdlg.js)
+        { label: "Insertion Point…", act: "asn-finsert", hint: "cardinal point", fn: () => sky.openInsertionPoint && sky.openInsertionPoint() },
+        { label: "End Length Offsets…", act: "asn-fendoff", hint: "auto / define", fn: () => sky.openEndOffsets && sky.openEndOffsets() },
+        { label: "Rigid End Offsets", act: "asn-foff", hint: "in the Properties panel", fn: () => assignHint("rigid end offsets") },
+        { label: "Tension / Compression Limits", act: "asn-faxial", fn: () => assignHint("axial limit") },
+        { label: "Panel Zone", act: "asn-fpz", fn: () => assignHint("panel zones") },
+        { label: "Additional Mass…", act: "asn-fmass", fn: () => sky.openFrameAddMass && sky.openFrameAddMass() },
+        SEP,
+        { label: "Hinges", sub: [
+          { label: "Hinges (User-Defined)…", act: "asn-uh-hinges", hint: "property · rel. distance", fn: () => sky.openFrameHinges && sky.openFrameHinges("hinges") },   // B10 (js/uhdlg.js)
+          { label: "Hinge Overwrites…", act: "asn-uh-overwrites", fn: () => sky.openFrameHinges && sky.openFrameHinges("overwrites") },
+          { label: "Auto Hinges (Properties Panel)", act: "asn-fhinge", fn: () => assignHint("plastic hinges") },
+        ]},
+        { label: "Frame Auto Mesh Options…", act: "asn-b9-automesh", hint: "joints · intersections", fn: () => sky.openFrameAutoMesh && sky.openFrameAutoMesh() },   // B9 (js/framemesh.js)
+        { label: "Output Stations…", act: "asn-b9-stations", fn: () => sky.openOutputStations && sky.openOutputStations() },
+      ]},
+      { label: "Shell", aliases: ["Area"], sub: [
+        { label: "Slab / Wall Section", act: "asn-ssec", fn: () => assignHint("shell section") },
+        { label: "Layered Section", act: "asn-slayer", fn: () => assignHint("layered shell") },
+        { label: "Area Springs", act: "asn-sspring", fn: () => assignHint("area spring") },
+        { label: "Wind Pressure Coefficients", act: "asn-scp", fn: () => assignHint("wind Cp") },
+        SEP,
+        { label: "Diaphragm…", act: "asn-sdiaph", fn: () => sky.openAssignShellDiaphragm && sky.openAssignShellDiaphragm() },
+        { label: "Additional Mass…", act: "asn-smass", fn: () => sky.openShellAddMass && sky.openShellAddMass() },
+      ]},
+      { label: "Link", sub: [
+        { label: "Link Properties…", act: "asn-b9-linkprops", hint: "hysteresis types", fn: () => sky.openLinkProperties && sky.openLinkProperties() },   // B11 (js/linkhyst.js)
+      ]},
+      SEP,
+      { label: "Joint Loads", sub: [
+        { label: "Force / Moment…", act: "asn-jforce", fn: () => sky.openJointLoads && sky.openJointLoads("force") },
+        { label: "Ground Displacement…", act: "asn-jground", fn: () => sky.openJointLoads && sky.openJointLoads("ground") },
+        { label: "Temperature…", act: "asn-l116-jtemp", fn: () => sky.openJointTemperature && sky.openJointTemperature() },
+      ]},
+      { label: "Frame Loads", sub: [
+        { label: "Distributed…", act: "asn-l116-fdist", hint: "uniform / trapezoid · projected", fn: () => sky.openFrameDistributed && sky.openFrameDistributed() },   // v1.16 (js/loads116.js)
+        { label: "Point (Concentrated)…", act: "asn-fconc", hint: "force / moment", fn: () => sky.openFrameConcentrated && sky.openFrameConcentrated("moment") },
+        { label: "Temperature…", act: "asn-l116-ftemp", hint: "ΔT · gradients", fn: () => sky.openFrameTemperature && sky.openFrameTemperature() },
+        { label: "Open Structure Wind Parameters…", act: "asn-ow-params", hint: "Cf · width · shielding", fn: () => sky.openOpenWindParams && sky.openOpenWindParams() },   // js/openwind.js
+        SEP,
+        { label: "Member Loads (Properties Panel)", act: "asn-fload", fn: () => assignHint("member loads") },
+      ]},
+      { label: "Shell Loads", aliases: ["Area Loads"], sub: [
+        { label: "Uniform…", act: "asn-suniform", hint: "direction · joint pattern", fn: () => sky.openShellUniform && sky.openShellUniform() },
+        { label: "Temperature…", act: "asn-l116-stemp", hint: "ΔT · gradient", fn: () => sky.openShellTemperature && sky.openShellTemperature() },
+        SEP,
+        { label: "Area Loads (Properties Panel)", act: "asn-aload", fn: () => assignHint("area loads") },
+      ]},
+      SEP,   // Groups — assign the current selection to a group (js/groups.js)
+      { label: "Assign Objects to Group…", act: "asn-group", hint: "current selection", fn: () => sky.openAssignGroup && sky.openAssignGroup() },
+    ]},
+    { name: "Analyze", accel: "y", items: [
       { label: "Set Active Degrees of Freedom…", act: "an-dof", fn: () => sky.openActiveDof() },
-      { label: "Run Analysis", act: "an-run", key: "R", fn: () => runNow() },
-      { label: "Check Model…", act: "an-check", fn: () => sky.openCheckModel && sky.openCheckModel() },
+      { label: "Set Load Cases to Run…", act: "an-cases-run", fn: () => sky.openCasesToRun() },
+      SEP,
+      { label: "Check Model…", act: "an-check", key: "Alt+C", fn: () => sky.openCheckModel && sky.openCheckModel() },
       { label: "Check Stability…", act: "an-stability", fn: () => sky.openCheckStability && sky.openCheckStability() },
-      { label: "Fix Model…", act: "an-repair", hint: "merge · split · clean", fn: () => sky.openRepair && sky.openRepair() },   // model repair (js/repairdlg.js)
-
-      { label: "Mesh Sensitivity Study…", act: "an-acc-meshstudy", hint: "refine · Richardson", fn: () => sky.openMeshStudy && sky.openMeshStudy() },   // js/accuracy.js
-      { label: "Accuracy Advisor…", act: "an-acc-advisor", hint: "modelling choices", fn: () => sky.openAccuracyAdvisor && sky.openAccuracyAdvisor() },   // js/accuracy.js
-      { label: "Analysis Log…", act: "an-log", hint: "P-Δ · combos · warnings", fn: () => sky.openAnalysisLog && sky.openAnalysisLog() },
-      { sep: true },
-      { label: "Analysis Options (P-Δ · modal · damping)…", act: "an-opts", fn: () => { gotoLoads("ls-cases"); toast("Analysis options", "P-Δ, modal count and damping are set per case in the Cases editor."); } },
-      { sep: true },
-      { label: "Run FNA (Time History)…", act: "an-fna", fn: () => { showResult("th"); toast("FNA", "Pick a TH case, then click Run FNA."); } },
-      { label: "Run Ritz Vectors…", act: "an-ritz", fn: () => { showResult("modal"); toast("Ritz", "Use the Eigen / Ritz basis toggle on the Modal tab."); } },
-      { label: "Run Cracked Analysis…", act: "an-cracked", fn: () => { showResult("story"); requestAnimationFrame(() => { const c = $("crackedCard"); if (c) c.scrollIntoView({ block: "start", behavior: "smooth" }); }); } },
+      { label: "Fix Model…", act: "an-repair", hint: "merge · split · clean", fn: () => sky.openRepair && sky.openRepair() },   // js/repairdlg.js
+      SEP,
+      { label: "Run Analysis", act: "an-run", key: "F5", fn: () => runNow() },
+      { label: "Last Analysis Run Log…", act: "an-log", hint: "P-Δ · combos · warnings", fn: () => sky.openAnalysisLog && sky.openAnalysisLog() },
+      SEP,
+      { label: "Advanced", sub: [
+        { label: "Analysis Options…", act: "an-opts", hint: "DOF · P-Δ · mass · modal", fn: () => { gotoLoads("ls-cases"); toast("Analysis options", "P-Δ, modal count and damping are set per case in the Cases editor."); } },
+        { label: "Accuracy Advisor…", act: "an-acc-advisor", hint: "modelling choices", fn: () => sky.openAccuracyAdvisor && sky.openAccuracyAdvisor() },   // js/accuracy.js
+        { label: "Mesh Sensitivity Study…", act: "an-acc-meshstudy", hint: "refine · Richardson", fn: () => sky.openMeshStudy && sky.openMeshStudy() },   // js/accuracy.js
+        SEP,
+        { label: "Time History (FNA)", act: "an-fna", hint: "opens the Time History results to run FNA", fn: () => { showResult("th"); toast("FNA", "Pick a TH case, then click Run FNA."); } },
+        { label: "Ritz Vectors", act: "an-ritz", hint: "opens the Modal results (Eigen / Ritz toggle)", fn: () => { showResult("modal"); toast("Ritz", "Use the Eigen / Ritz basis toggle on the Modal tab."); } },
+        { label: "Cracked Analysis", act: "an-cracked", hint: "opens the Story results cracked-section card", fn: () => scrollToCard("story", "crackedCard") },
+      ]},
       // case definitions live under Define only (ETABS layout; UX audit N3)
-    ]],
-    ["Display", [
-      { label: "3D / Deformed View", act: "dis-view3d", fn: () => showResult("view3d") },
-      { label: "Deformed Shape", act: "dis-deformed", fn: () => clickChip("chipDeformed", "The deformed shape") },
-      { label: "Mode Shape", act: "dis-mode", fn: () => clickChip("chipMode", "Mode-shape animation") },
-      { label: "Shell Contours", act: "dis-contours", fn: () => clickChip("chipContours", "Shell force contours") },
-      { label: "Show Tables…", act: "dis-tables", hint: "analysis results", fn: () => sky.openShowTables && sky.openShowTables() },
-      // Groups — highlight groups; per-stage staged results (js/groups.js, js/stagedata.js)
+    ]},
+    { name: "Display", accel: "p", items: [
+      { label: "Undeformed Shape", act: "dis-view3d", fn: () => showResult("view3d") },
+      { label: "Deformed Shape", act: "dis-deformed", key: "F6", needs: "results", fn: () => clickChip("chipDeformed", "The deformed shape") },
+      { label: "Mode Shapes", act: "dis-mode", needs: "results", fn: () => clickChip("chipMode", "Mode-shape animation") },
+      { label: "Force Diagrams", aliases: ["Force/Stress Diagrams", "Forces"], sub: [
+        { label: "Frame Force Diagrams (3D)…", act: "dis-pf-forces3d", hint: "M3 · V2 · P · reactions", needs: "results", fn: () => sky.openForces3d && sky.openForces3d() },   // js/plotfn.js
+        { label: "Show Forces in 3D View", act: "dis-pf-forces3d-toggle", needs: "results", check: () => !!(sky.forces3d && sky.forces3d.on()), fn: () => sky.forces3d && sky.forces3d.toggle() },
+        SEP,
+        { label: "Frame Forces", act: "dis-forces", needs: "results", fn: () => showResult("forces") },
+        { label: "Joint Reactions", act: "dis-reactions", needs: "results", fn: () => showResult("reactions") },
+        { label: "Section Cut Forces", act: "dis-cuts", needs: "results", fn: () => showResult("cuts") },
+        { label: "Pier Forces", act: "dis-piers", needs: "results", fn: () => showResult("piers") },
+        { label: "Tendon Forces…", act: "dis-pt-forces", hint: "P(x) after losses", fn: () => sky.openTendonForces && sky.openTendonForces() },   // PT (js/tendons.js)
+      ]},
+      { label: "Shell Forces / Stresses", act: "dis-contours", needs: "results", fn: () => clickChip("chipContours", "Shell force contours") },
+      SEP,
+      { label: "Story Response", sub: [
+        { label: "Story Response Plots…", act: "dis-pf-story", hint: "disp · drift · shear · OTM", fn: () => sky.openStoryResponse && sky.openStoryResponse() },   // js/plotfn.js
+        { label: "Drifts & Shears", act: "dis-story", needs: "results", fn: () => showResult("story") },
+        { label: "Drift Optimizer", act: "dis-drift", needs: "results", fn: () => showResult("drift") },
+        { label: "Load Takedown", act: "dis-takedown", needs: "results", fn: () => showResult("takedown") },
+        { label: "Serviceability", act: "dis-svc", needs: "results", fn: () => showResult("svc") },
+      ]},
+      { label: "Modal & Buckling", sub: [
+        { label: "Modal Information", act: "dis-modal", needs: "results", fn: () => showResult("modal") },
+        { label: "Buckling Factors", act: "dis-buckling", needs: "results", fn: () => showResult("buckling") },
+      ]},
+      { label: "Plot Functions", sub: [
+        { label: "Show Plot Functions…", act: "dis-pf-plotfn", hint: "TH · hysteresis · floor spectra", fn: () => sky.openPlotFunctions && sky.openPlotFunctions() },   // js/plotfn.js
+        { label: "Time History Results", act: "dis-th", needs: "results", fn: () => showResult("th") },
+        { label: "Frequency Domain (SS · PSD)", act: "dis-freq", needs: "results", fn: () => { showResult("freq"); sky.freq && sky.freq.renderFreq(); } },
+      ]},
+      { label: "Nonlinear Results", aliases: ["Nonlinear"], sub: [
+        { label: "Static Pushover Curve", act: "dis-pushover", needs: "results", fn: () => showResult("pushover") },
+        { label: "Nonlinear Static Results…", act: "dis-nls", hint: "history · hinges", fn: () => sky.openNlsResults && sky.openNlsResults() },   // G3
+        { label: "Hinge Results…", act: "dis-uh-hinges", hint: "states · step slider", fn: () => sky.openHingeResults && sky.openHingeResults() },   // B10 (js/uhresults.js)
+        { label: "Staged Construction Results…", act: "dis-stages", hint: "per stage", fn: () => sky.openStageResults && sky.openStageResults() },   // js/stagedata.js
+        { label: "Hyperstatic Results…", act: "dis-pt-hyper", hint: "PT secondary moments", fn: () => sky.openHyperstaticResults && sky.openHyperstaticResults() },
+      ]},
+      SEP,
+      { label: "Show Tables…", act: "dis-tables", key: "Alt+T", hint: "model and analysis results", fn: () => sky.openShowTables && sky.openShowTables() },
       { label: "Show Group…", act: "dis-group", hint: "highlight", fn: () => sky.openShowGroup && sky.openShowGroup() },
-      { label: "Staged Construction Stages…", act: "dis-stages", hint: "per stage", fn: () => sky.openStageResults && sky.openStageResults() },
-      // Plot functions / story response plots / 3D force diagrams (js/plotfn.js)
-      { label: "Show Plot Functions…", act: "dis-pf-plotfn", hint: "TH · hysteresis · floor spectra", fn: () => sky.openPlotFunctions && sky.openPlotFunctions() },
-      { label: "Story Response Plots…", act: "dis-pf-story", hint: "disp · drift · shear · OTM", fn: () => sky.openStoryResponse && sky.openStoryResponse() },
-      { label: "Force/Stress Diagrams (3D)…", act: "dis-pf-forces3d", hint: "M3 · V2 · P · reactions", fn: () => sky.openForces3d && sky.openForces3d() },
-      { label: "Force Diagrams in 3D View", act: "dis-pf-forces3d-toggle", check: () => !!(sky.forces3d && sky.forces3d.on()), fn: () => sky.forces3d && sky.forces3d.toggle() },
-      { sep: true },
-      { label: "Story Drifts & Shears", act: "dis-story", fn: () => showResult("story") },
-      { label: "Modal", act: "dis-modal", fn: () => showResult("modal") },
-      { label: "Reactions", act: "dis-reactions", fn: () => showResult("reactions") },
-      { label: "Member Forces", act: "dis-forces", fn: () => showResult("forces") },
-      { label: "Drift Optimizer", act: "dis-drift", fn: () => showResult("drift") },
-      { sep: true },
-      { label: "Time History", act: "dis-th", fn: () => showResult("th") },
-      { label: "Pushover + Performance", act: "dis-pushover", fn: () => showResult("pushover") },
-      { label: "Nonlinear Static Results…", act: "dis-nls", hint: "history · hinges", fn: () => sky.openNlsResults && sky.openNlsResults() },   // G3
-      { label: "Hinge Results…", act: "dis-uh-hinges", hint: "states · step slider", fn: () => sky.openHingeResults && sky.openHingeResults() },   // B10 (js/uhresults.js)
-      { label: "Frequency Domain (Steady State · PSD)", act: "dis-freq", fn: () => { showResult("freq"); sky.freq && sky.freq.renderFreq(); } },
-      { label: "Buckling", act: "dis-buckling", fn: () => showResult("buckling") },
-      { label: "Load Takedown", act: "dis-takedown", fn: () => showResult("takedown") },
-      { label: "Section Cuts", act: "dis-cuts", fn: () => showResult("cuts") },
-      { label: "Wall Piers", act: "dis-piers", fn: () => showResult("piers") },
-      { label: "Serviceability", act: "dis-svc", fn: () => showResult("svc") },
-      // PT — tendon force P(x) + hyperstatic results (js/tendons.js)
-      { sep: true },
-      { label: "Tendon Forces…", act: "dis-pt-forces", hint: "P(x) after losses", fn: () => sky.openTendonForces && sky.openTendonForces() },
-      { label: "Hyperstatic Results…", act: "dis-pt-hyper", hint: "secondary moments", fn: () => sky.openHyperstaticResults && sky.openHyperstaticResults() },
-    ]],
-    ["Design", [
-      { label: "Steel", act: "des-steel", fn: () => showDesign("steel") },
-      { label: "Concrete", act: "des-concrete", fn: () => showDesign("concrete") },
-      { label: "Wall Pier", act: "des-wall", fn: () => showDesign("wall") },
-      { label: "Punching Shear", act: "des-punching", fn: () => showDesign("punching") },
-      { label: "Composite Beam", act: "des-composite", fn: () => showDesign("composite") },
-      { label: "Two-Way Slab", act: "des-slab", fn: () => showDesign("slab") },
-      { label: "Seismic (AISC 341)", act: "des-s341", fn: () => showDesign("seismic341") },
-      { sep: true },
-      { label: "Section Optimization", act: "des-optimize", fn: () => { showDesign("steel"); requestAnimationFrame(() => { const p = $("optimizePanel"); if (p) p.scrollIntoView({ block: "start", behavior: "smooth" }); }); } },
-    ]],
-    ["Options", [
-      { label: "Units…", act: "opt-units", hint: () => U.getUnits(), fn: () => sky.openUnitsDialog() },
-      { sep: true },
+    ]},
+    { name: "Options", accel: "o", items: [
+      { label: "Units…", act: "opt-units", key: "Alt+U", hint: () => "current: " + U.getUnits(), fn: () => sky.openUnitsDialog() },
+      SEP,
       { label: "Snap to Grid", act: "opt-snap", check: () => snapOn, fn: () => toggleSnap() },
       { label: "Check Model Before Run", act: "opt-check-before-run", check: () => !!(sky.checkModel && sky.checkModel.beforeRunEnabled()), fn: () => sky.checkModel && sky.checkModel.toggleBeforeRun() },
       { label: "Auto Edge Constraints", act: "opt-edge", check: () => !!(S.model && S.model.edge_constraints), fn: () => toggleEdge() },
       { label: "Frame Auto Mesh Defaults…", act: "opt-b9-automesh", hint: "model-wide", fn: () => sky.openFrameAutoMesh && sky.openFrameAutoMesh("default") },   // B9 (js/framemesh.js)
-      { sep: true },
-      { label: "Diaphragm · Rigid", act: "opt-diaph-rigid", check: () => !(S.model && S.model.diaphragm === "none"), fn: () => setDiaphragm("rigid") },
-      { label: "Diaphragm · None (semi-rigid)", act: "opt-diaph-none", check: () => !!(S.model && S.model.diaphragm === "none"), fn: () => setDiaphragm("none") },
-      { sep: true },
-      { label: "Panel Zones · Centerline", act: "opt-pz-none", check: () => !(S.model && (S.model.panel_zones === "rigid" || S.model.panel_zones === "scissors")), fn: () => setPanelZone("none") },
-      { label: "Panel Zones · Rigid", act: "opt-pz-rigid", check: () => !!(S.model && S.model.panel_zones === "rigid"), fn: () => setPanelZone("rigid") },
-      { label: "Panel Zones · Flexible", act: "opt-pz-scissors", check: () => !!(S.model && S.model.panel_zones === "scissors"), fn: () => setPanelZone("scissors") },
-      { sep: true },
-      { label: "Theme · Dark", act: "opt-theme-dark", check: () => theme === "dark", fn: () => setTheme("dark") },
-      { label: "Theme · Light", act: "opt-theme-light", check: () => theme === "light", fn: () => setTheme("light") },
-    ]],
-    // UX pass — Help menu (js/ux.js: palette / shortcuts / start screen / toolbar)
-    ["Help", [
+      SEP,
+      { label: "Default Diaphragm", sub: [
+        { label: "Rigid", act: "opt-diaph-rigid", radio: () => !(S.model && S.model.diaphragm === "none"), fn: () => setDiaphragm("rigid") },
+        { label: "None (Semi-Rigid)", act: "opt-diaph-none", radio: () => !!(S.model && S.model.diaphragm === "none"), fn: () => setDiaphragm("none") },
+      ]},
+      { label: "Panel Zones", sub: [
+        { label: "Centerline", act: "opt-pz-none", radio: () => !(S.model && (S.model.panel_zones === "rigid" || S.model.panel_zones === "scissors")), fn: () => setPanelZone("none") },
+        { label: "Rigid", act: "opt-pz-rigid", radio: () => !!(S.model && S.model.panel_zones === "rigid"), fn: () => setPanelZone("rigid") },
+        { label: "Flexible (Scissors)", act: "opt-pz-scissors", radio: () => !!(S.model && S.model.panel_zones === "scissors"), fn: () => setPanelZone("scissors") },
+      ]},
+      { label: "Theme", sub: [
+        { label: "Dark", act: "opt-theme-dark", radio: () => theme === "dark", fn: () => setTheme("dark") },
+        { label: "Light", act: "opt-theme-light", radio: () => theme === "light", fn: () => setTheme("light") },
+      ]},
+    ]},
+    // Tools — secondary utilities; also hosts "More" for commands added at runtime
+    { name: "Tools", accel: "l", items: [
+      { label: "Code Checks", aliases: ["Design"], title: "Member code checks on the analysis results (secondary to the analysis)", sub: [
+        { label: "Steel Frame", act: "des-steel", needs: "results", fn: () => showDesign("steel") },
+        { label: "Steel Frame · Seismic (AISC 341)", act: "des-s341", needs: "results", fn: () => showDesign("seismic341") },
+        { label: "Concrete Frame", act: "des-concrete", needs: "results", fn: () => showDesign("concrete") },
+        { label: "Composite Beam", act: "des-composite", needs: "results", fn: () => showDesign("composite") },
+        SEP,
+        { label: "Shear Wall (Pier)", act: "des-wall", needs: "results", fn: () => showDesign("wall") },
+        { label: "Slab · Punching Shear", act: "des-punching", needs: "results", fn: () => showDesign("punching") },
+        { label: "Slab · Two-Way", act: "des-slab", needs: "results", fn: () => showDesign("slab") },
+      ]},
+      { label: "Section Optimization", act: "des-optimize", needs: "results", fn: () => { showDesign("steel"); requestAnimationFrame(() => { const p = $("optimizePanel"); if (p) p.scrollIntoView({ block: "start", behavior: "smooth" }); }); } },
+    ]},
+    // UX pass — Help menu (js/ux.js: palette / shortcuts / start screen)
+    { name: "Help", accel: "h", items: [
       { label: "Search Commands…", act: "help-palette", key: "Ctrl+K", fn: () => sky.ux && sky.ux.palette && sky.ux.palette.open() },
       { label: "Keyboard Shortcuts…", act: "help-shortcuts", key: "F1", fn: () => sky.ux && sky.ux.shortcuts && sky.ux.shortcuts.openOverlay() },
       { label: "Start Screen / Templates…", act: "help-start", fn: () => sky.ux && sky.ux.start ? sky.ux.start.open() : sky.fileNew() },
-      { label: "Quick-Access Toolbar", act: "help-toolbar", check: () => !!(sky.ux && sky.ux.toolbar && sky.ux.toolbar.isVisible()), fn: () => sky.ux && sky.ux.toolbar && sky.ux.toolbar.toggle() },
-    ]],
+    ]},
   ];
 
-  const menubar = $("etabsMenubar");
-  const actMap = {};        // data-act -> item
-  let openWrap = null;
-  const closeMenus = () => {
-    if (!openWrap) return;
-    openWrap.classList.remove("open");
-    openWrap.querySelector(".etabs-menu").classList.add("hidden");
-    openWrap.querySelector(".etabs-menu-btn").setAttribute("aria-expanded", "false");
-    openWrap = null;
-  };
-  const openMenuWrap = wrap => {
-    if (openWrap === wrap) return;
-    closeMenus();
-    wrap.classList.add("open");
-    const dd = wrap.querySelector(".etabs-menu");
-    dd.classList.remove("hidden");
-    // refresh checkmarks against live model state each open
-    dd.querySelectorAll(".etabs-menu-item").forEach(it => {
-      const item = actMap[it.dataset.act];
-      if (item && item.check) it.classList.toggle("checked", !!item.check());
-      if (item && typeof item.hint === "function") {
-        const h = it.querySelector(".mi-hint");
-        if (h) h.textContent = item.hint();
-      }
+  /* File › Recent — most-recently opened / saved models (js/ux_start.js keeps the list) */
+  const recentRows = () => {
+    let names = [];
+    try { const v = JSON.parse(localStorage.getItem("skyframe.ux.recentFiles") || "[]"); if (Array.isArray(v)) names = v; } catch { names = []; }
+    names = names.filter(n => typeof n === "string" && n).slice(0, 5);
+    const out = [el("div", { class: "sky-menu-header", role: "presentation", text: "Recent" })];
+    if (!names.length) {
+      out.push(el("button", { type: "button", class: "etabs-menu-item sky-recent is-disabled", role: "menuitem", tabindex: "-1", "aria-disabled": "true",
+        title: "Models you open or save appear here" }, [el("span", { class: "mi-check" }), el("span", { class: "mi-label", text: "No recent models" }), el("span", { class: "mi-key" })]));
+      return out;
+    }
+    names.forEach(n => {
+      const cur = n === S.fileName;
+      const b = el("button", { type: "button", class: "etabs-menu-item sky-recent" + (cur ? " checked" : ""), role: "menuitem", tabindex: "-1",
+        "data-recent": n, title: cur ? `“${n}” is the open model` : `Open “${n}”` }, [
+        el("span", { class: "mi-check", text: "✓" }), el("span", { class: "mi-label", text: n }), el("span", { class: "mi-key" })]);
+      b.addEventListener("click", () => {
+        menuApi.closeMenus();
+        if (cur) return;
+        openRecent(n);
+      });
+      out.push(b);
     });
-    wrap.querySelector(".etabs-menu-btn").setAttribute("aria-expanded", "true");
-    openWrap = wrap;
+    return out;
   };
+  async function openRecent(name) {
+    if (S.dirty && !window.confirm(`Open “${name}”? Unsaved edits to the current model will be lost.`)) return;
+    try {
+      const m = await sky.filesApi.open(name);
+      sky.adoptModel(m, name);
+      toast("Model opened", `“${name}” is now the working model`);
+    } catch (e) { toast("Open failed", e.message, "error", 6000); }
+  }
 
-  menubar.textContent = "";
-  menus.forEach(([name, items]) => {
-    const btn = el("button", { class: "etabs-menu-btn", role: "menuitem", "aria-haspopup": "true", "aria-expanded": "false", "data-menu": name });
-    if (MENU_ICON[name]) btn.insertAdjacentHTML("afterbegin", icon(MENU_ICON[name], "etabs-menu-ico"));
-    btn.appendChild(document.createTextNode(name));
-    const dd = el("div", { class: "etabs-menu hidden", role: "menu" });
-    items.forEach(item => {
-      if (item.sep) { dd.appendChild(el("div", { class: "etabs-menu-sep" })); return; }
-      actMap[item.act] = item;
-      const lbl = el("span", { class: "mi-label", text: item.label });
-      if (MENUITEM_ICON[item.act]) lbl.insertAdjacentHTML("afterbegin", icon(MENUITEM_ICON[item.act], "mi-ico"));
-      const hint = typeof item.hint === "function" ? item.hint() : item.hint;
-      const row = el("button", {
-        class: "etabs-menu-item" + (item.disabled ? " is-disabled" : ""),
-        role: "menuitem", "data-act": item.act,
-      }, [
-        el("span", { class: "mi-check", text: "✓" }),
-        lbl,
-        item.key ? el("kbd", { text: item.key }) : (hint ? el("span", { class: "mi-hint", text: hint }) : null),
-      ]);
-      if (!item.disabled) row.addEventListener("click", () => { closeMenus(); item.fn && item.fn(); });
-      dd.appendChild(row);
-    });
-    const wrap = el("div", { class: "etabs-menu-wrap" }, [btn, dd]);
-    btn.addEventListener("click", e => { e.stopPropagation(); openWrap === wrap ? closeMenus() : openMenuWrap(wrap); });
-    btn.addEventListener("mouseenter", () => { if (openWrap && openWrap !== wrap) openMenuWrap(wrap); });
-    menubar.appendChild(wrap);
-  });
-  document.addEventListener("click", e => { if (openWrap && !menubar.contains(e.target)) closeMenus(); });
-  document.addEventListener("keydown", e => {
-    if (e.key === "Escape" && openWrap) { closeMenus(); e.stopImmediatePropagation(); }
-  }, true);
+  const menubar = $("etabsMenubar");
+  const menuApi = buildMenuTree({ menubar, menus, needs: NEEDS, dynamic: { recent: recentRows } });
+  const actMap = menuApi.actMap;        // data-act -> item (shared with the registry)
+  const closeMenus = menuApi.closeMenus;
+  const openMenuWrap = w => menuApi.openMenuWrap(w);
+  // runtime registry for other modules: __sky.menu.add("Assign/Frame Loads", item)
+  sky.menu = {
+    add: (path, item) => menuApi.add(path, item),
+    remove: act => menuApi.remove(act),
+    path: act => menuApi.pathOf(act),
+    open: path => menuApi.openPath(path),
+    close: () => closeMenus(),
+    stats: () => menuApi.stats(),
+    refresh: () => menuApi.refresh(),
+    disabledReason: act => menuApi.reasonOf(act),
+    acts: () => Object.keys(actMap),
+    item: act => actMap[act] || null,
+  };
 
   /* ================= LEFT TOOL PALETTE ================= */
   const PALETTE = [
@@ -737,7 +800,7 @@ export function initEtabs(sky) {
   /* ================= TEST HOOK ================= */
   sky.etabs = {
     el: { menubar, palette, explorer, status },
-    menuNames: () => menus.map(m => m[0]),
+    menuNames: () => menus.map(m => m.name),
     openMenu: name => {
       const wrap = [...menubar.querySelectorAll(".etabs-menu-wrap")]
         .find(w => w.querySelector(".etabs-menu-btn").dataset.menu === name);
@@ -745,7 +808,9 @@ export function initEtabs(sky) {
       return !!wrap;
     },
     closeMenus,
-    isMenuOpen: () => !!openWrap,
+    isMenuOpen: () => menuApi.isOpen(),
+    openPath: path => menuApi.openPath(path),     // v1.20 — "Assign/Frame/Hinges"
+    menuPath: act => menuApi.pathOf(act),
     clickItem: act => { const it = actMap[act]; if (it && it.fn) { closeMenus(); it.fn(); return true; } return false; },
     hasItem: act => !!actMap[act],
     drawTool, setView, showResult, showDesign, gotoLoads, assignHint, runNow,
