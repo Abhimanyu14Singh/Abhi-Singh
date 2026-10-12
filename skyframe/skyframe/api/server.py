@@ -2357,6 +2357,10 @@ def create_app() -> Flask:
     from skyframe.api.modalx_api import register as _mxa_register
     _mxa_register(app, _state)
 
+    # time-dependent material curves / tendon losses (timedep_api)
+    from skyframe.api.timedep_api import register as _tdp_register
+    _tdp_register(app, _state)
+
     return app
 
 

@@ -1,0 +1,20 @@
+/* Time-dependent materials / staged creep / tendon elements (js/timedep.js) */
+.td-chart { width: 100%; max-width: 640px; height: auto; display: block; }
+.td-chart .td-axis { stroke: var(--text-2, #888); stroke-width: 1; }
+.td-chart .td-zero { stroke: var(--border, #ccc); stroke-dasharray: 3 3; }
+.td-chart .td-ax { fill: var(--text-2, #888); font-size: 10px; font-family: inherit; }
+.td-chart .td-ax-title { font-weight: 600; }
+.td-line { stroke-width: 1.8; }
+.td-c0 { stroke: #3b6ea5; background: #3b6ea5; } .td-c1 { stroke: #d1793a; background: #d1793a; }
+.td-c2 { stroke: #4f9a5b; background: #4f9a5b; } .td-c3 { stroke: #a8506b; background: #a8506b; }
+.td-c4 { stroke: #7b62b8; background: #7b62b8; } .td-c5 { stroke: #2f9aa0; background: #2f9aa0; }
+.td-c6 { stroke: #a08a2f; background: #a08a2f; } .td-c7 { stroke: #6b6f78; background: #6b6f78; }
+.td-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; margin-top: 4px; }
+.td-key { display: inline-flex; align-items: center; gap: 4px; }
+.td-sw { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
+.td-staged { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 6px 0; }
+.td-staged .td-sum { font-size: 11px; }
+.td-ctl { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 6px; }
+.td-scroll { max-height: 220px; }
+.td-tel { margin: 8px 0; }
+.td-prev .dk-group { margin-bottom: 6px; }

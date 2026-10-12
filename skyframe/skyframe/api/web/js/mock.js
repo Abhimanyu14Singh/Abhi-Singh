@@ -33,6 +33,7 @@ import { mockRatioNaApply as rnaMockRatioNaApply } from "./mock_ratio_na.js";   
 
 import { fuMockAugment as c9fMockAugment } from "./mock_towers_fu.js";   // C9 follow-ups: per-tower TH shear, control tower
 import { rsxMockAugment } from "./mock_rs_ext.js";   // RS ext: U3 / angle / CQC3 / ABS / ecc / RS shell forces
+import { tdMockAugment as tdMockAugmentResults } from "./mock_timedep.js";   // step creep time history + tendon elements
 const G = 9.80665;
 
 function mulberry32(seed) {
@@ -3328,6 +3329,7 @@ export function mockResults(model) {
   c9fMockAugment(model, r);                       // C9 follow-ups: per-tower TH story shear + control_tower (js/mock_towers_fu.js)
   rnaMockRatioNaApply(model, r);                  // n/a (negligible drift) story ratios (js/mock_ratio_na.js)
   rsxMockAugment(model, r);                       // RS ext: U3 / angle / CQC3 / ABS / ecc / RS shell forces (js/mock_rs_ext.js)
+  tdMockAugmentResults(model, r);                 // step creep time history + tendon elements (js/mock_timedep.js)
   return r;
 }
 

@@ -60,6 +60,10 @@ def apply_pattern_tendons(eng, asm, pat_name: str, scale: float) -> None:
     for td in _tendons(eng):
         if td["pattern"] != pat_name or scale == 0.0:
             continue
+        if td.get("model_as") == "elements":     # bonded tendon elements
+            from skyframe.engine import tendon_elements as _tel
+            _tel.apply_pattern(eng, asm, td, scale)
+            continue
         if _td.host_kind(eng.model, td) == "frame":
             for uid, kind, w, a, b, dn in _member_loads(eng, td):
                 member = eng._members_by_uid[uid]
@@ -158,5 +162,8 @@ def run_hyperstatic(eng, name: str) -> dict:
 
 def report(eng) -> Dict[str, dict]:
     """results ``"tendons"``: per-tendon force profile + load summary."""
-    return {td["uid"]: _td.tendon_report(eng.model, td, _equiv(eng, td))
-            for td in _tendons(eng)}
+    rep = {td["uid"]: _td.tendon_report(eng.model, td, _equiv(eng, td))
+           for td in _tendons(eng)}
+    from skyframe.engine import tendon_elements as _tel
+    _tel.augment_report(eng, rep)       # element tendons only (no-op else)
+    return rep

@@ -176,6 +176,7 @@ from skyframe.engine import shell_elements as _shel  # shell_type (B3)
 from skyframe.engine import pdelta as _pdelta      # model-wide P-Delta
 from skyframe.engine import diaphragms as _dgm     # named diaphragms/add. mass
 from skyframe.engine import tendons as _tdn        # PT tendons / hyperstatic
+from skyframe.engine import tendon_elements as _tel  # bonded tendon elements
 from skyframe.engine import story_shear as _ssx    # story shear, all loads
 from skyframe.core import ratio_significance as _rsig  # n/a noise ratios
 
@@ -3927,6 +3928,9 @@ class OpenSeesEngine:
             etag += 1
             ops.element("zeroLength", etag, d1, d2, "-mat", 1, "-dir", 1)
 
+        # bonded tendon elements (engine/tendon_elements.py; no-op if none)
+        etag = _tel.build(self, asm, etag)
+
         # --- mass -----------------------------------------------------------
         self._assign_mass(asm)
         if coro_release_fallback:                                  # v0.25
@@ -4740,6 +4744,9 @@ class OpenSeesEngine:
             self._apply_thermal(asm, member, tl.dT * scale)
         # v1.16 gradients / joint-pattern / shell temperatures (no-op legacy)
         _thx.apply_pattern_ext(self, asm, pat, scale)
+        if getattr(pat, "imposed_strains", None):   # staged step creep only
+            from skyframe.engine.staged_creep import apply_imposed
+            apply_imposed(self, asm, pat.imposed_strains, scale)
 
         for nl in pat.nodal_loads:
             t = self._find_node(asm, nl.point)

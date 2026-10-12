@@ -370,6 +370,9 @@ def _cascade_material(d, mp):
         s["material"] = mp.get(s.get("material"), s.get("material"))
         for la in ((s.get("layered") or {}).get("layers") or []):
             la["material"] = mp.get(la.get("material"), la.get("material"))
+    if d.get("material_time_dependent"):      # core.timedep props follow
+        d["material_time_dependent"] = _rename_keys(
+            d["material_time_dependent"], mp)
 
 
 def _cascade_section(d, mp):

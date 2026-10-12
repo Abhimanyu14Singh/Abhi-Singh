@@ -856,6 +856,16 @@ def mesh_model(model: BuildingModel) -> MeshedModel:
         u = tuple(d / m.length for d in _sub(tuple(map(float, m.pj)), pi))
         uh_idx[m.uid] = [(_dot(_sub(pool.points[k], pi), u), k)
                          for k in (pool.add(p) for _, p in lst)]
+    # bonded tendon elements (core.tendon_elements): host cuts under every
+    # tendon piece boundary.  Empty unless a tendon has model_as=elements.
+    from .tendon_elements import interior_points as _te_points
+    for uid, lst in _te_points(model).items():
+        m = next(mm for mm in model.members if mm.uid == uid)
+        pi = tuple(map(float, m.pi))
+        u = tuple(d / m.length for d in _sub(tuple(map(float, m.pj)), pi))
+        uh_idx.setdefault(uid, []).extend(
+            (_dot(_sub(pool.points[k], pi), u), k)
+            for k in (pool.add(p) for _, p in lst))
 
     quads: List[ShellQuad] = []
     region_trib: Dict[str, Dict[int, float]] = {}

@@ -218,7 +218,7 @@ def normalize_tendon(d: dict) -> dict:
     lo = d.get("losses") or {}
     if not isinstance(lo, dict):
         raise ValueError(f"{tag}: losses must be an object")
-    bad = set(lo) - set(LOSS_KEYS)
+    bad = set(lo) - set(LOSS_KEYS) - {"es_factor"}   # + tendon_elements
     if bad:
         raise ValueError(f"{tag}: unknown losses keys {sorted(bad)} "
                          f"(allowed: {list(LOSS_KEYS)})")
@@ -242,11 +242,14 @@ def normalize_tendon(d: dict) -> dict:
     if (not isinstance(n_sub, int) or isinstance(n_sub, bool)
             or not 1 <= n_sub <= 200):
         raise ValueError(f"{tag}: n_sub must be an integer in 1..200")
-    return {"uid": uid, "points": [list(p) for p in pts],
-            "sags": list(sags), "drape_dir": list(dd), "material": mat,
-            "area": area, "jacking_stress": fj, "jacking_end": je,
-            "losses": losses, "host": list(host), "pattern": pat,
-            "n_sub": n_sub}
+    out = {"uid": uid, "points": [list(p) for p in pts],
+           "sags": list(sags), "drape_dir": list(dd), "material": mat,
+           "area": area, "jacking_stress": fj, "jacking_end": je,
+           "losses": losses, "host": list(host), "pattern": pat,
+           "n_sub": n_sub}
+    from skyframe.core import tendon_elements as _tde
+    _tde.normalize_extra(d, out, tag)   # model_as / es_factor (only if set)
+    return out
 
 
 def tendon_material(model, td: dict):
@@ -305,6 +308,8 @@ def validate_tendons(model) -> None:
                     raise ValueError(f"Tendon {td['uid']!r}: host member "
                                      f"{m.uid!r} is axial-only")
             sub_pieces(model, td)          # raises when off the host
+        from skyframe.core import tendon_elements as _tde
+        _tde.validate(model, td)           # elements / es_factor (if set)
     if not isinstance(hcs, dict):
         raise ValueError("hyperstatic_cases must be an object")
     tendon_pats = {t["pattern"] for t in tds}
@@ -588,6 +593,13 @@ def force_profile(model, td: dict, pieces: Optional[List[dict]] = None
     vals = dict(zip(xs, pv))
     P_mid = [max(vals[x], 0.0) * ltf for x in s_m]
     P_bnd = [max(vals[x], 0.0) * ltf for x in s_b]
+    if lo.get("es_factor"):         # hand elastic shortening (if set)
+        from skyframe.core import tendon_elements as _tde
+        P_mid = [max(vals[x], 0.0) for x in s_m]
+        P_bnd = [max(vals[x], 0.0) for x in s_b]
+        _tde.apply_es(model, td, pieces, P_mid, P_bnd)
+        P_mid = [v * ltf for v in P_mid]
+        P_bnd = [v * ltf for v in P_bnd]
     return {"P0": P0, "length": total_L, "s_mid": s_m, "alpha_mid": a_m,
             "P_mid": P_mid, "s_bound": s_b, "alpha_bound": a_b,
             "P_bound": P_bnd, "anchor_set_length": sets}

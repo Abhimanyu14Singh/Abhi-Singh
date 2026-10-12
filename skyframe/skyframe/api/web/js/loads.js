@@ -2197,6 +2197,8 @@ export class LoadsEditor {
 
     /* v0.25 — time-dependent (creep/shrinkage) staged construction */
     card.appendChild(this._stagedTimeDependent(sc));
+    // creep integration method + time options (js/timedep.js)
+    if (window.__sky && window.__sky.tdStagedCard) window.__sky.tdStagedCard(card, m, sc, () => this._mutated(false));
 
     const note = document.createElement("p");
     note.className = "muted staged-note";

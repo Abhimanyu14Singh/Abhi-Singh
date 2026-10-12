@@ -1315,6 +1315,8 @@ export function renameMaterial(model, oldName, newName) {
   delete model.materials[oldName];
   for (const s of Object.values(model.sections)) if (s.material === oldName) s.material = newName;
   for (const s of Object.values(model.shell_sections)) if (s.material === oldName) s.material = newName;
+  const mtd = model.material_time_dependent;   // time-dependent props follow the material (js/timedep.js)
+  if (mtd && mtd[oldName]) { mtd[newName] = mtd[oldName]; delete mtd[oldName]; }
   return true;
 }
 

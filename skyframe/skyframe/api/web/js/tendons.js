@@ -406,6 +406,7 @@ export function initTendons(sky) {
       props: c ? {
         material: c.material, area: c.area, jacking_stress: c.jacking_stress,
         jacking_end: c.jacking_end, losses: { ...c.losses }, pattern: c.pattern, n_sub: c.n_sub,
+        ...(c.model_as ? { model_as: c.model_as } : {}),   // bonded elements (js/timedep.js)
       } : {
         material: TG.DEFAULT_MATERIAL, area: PT_DEFAULTS.area, jacking_stress: PT_DEFAULTS.jacking_stress,
         jacking_end: PT_DEFAULTS.jacking_end, losses: { ...PT_DEFAULTS.losses },
@@ -499,6 +500,7 @@ export function initTendons(sky) {
       uid: d.uid, points, sags, drape_dir: d.drape, material: p.material, area: p.area,
       jacking_stress: p.jacking_stress, jacking_end: p.jacking_end,
       losses: p.losses, host: d.hosts, pattern: p.pattern, n_sub: p.n_sub,
+      model_as: p.model_as,   // bonded tendon elements (js/timedep.js; emitted only for "elements")
     });
   }
   function ensureNewPatterns(m, names, used) {
@@ -558,6 +560,8 @@ export function initTendons(sky) {
       row("Anchor set (draw-in)", numInput("small", p.losses.anchor_set, { min: 0, id: ids + "AnchorSet", onSet: v => setL("anchor_set", v) }), "small"),
       row("Long-term loss fraction", numInput("none", p.losses.long_term_fraction, { min: 0, lt: 1, id: ids + "LongTerm", onSet: v => setL("long_term_fraction", v) }), null, "creep + shrinkage + relaxation, 0 ≤ f < 1"),
       row("Sub-pieces / segment", numInput("none", p.n_sub, { int: true, min: 1, max: 200, id: ids + "NSub", onSet: v => set("n_sub", v) }), null));
+    // bonded tendon elements + hand elastic-shortening loss (js/timedep.js)
+    if (sky.tdTendonRows) c2.append(...sky.tdTendonRows(p, onDirty, ids, { row, select, numInput }));
     showP0();
     g.append(c1, c2);
     return g;
@@ -1112,6 +1116,7 @@ export function initTendons(sky) {
         kv("Net moment", `${esc(fmtV("moment", nmo))} ${esc(ptU.label("moment"))}`) +
         `<p class="muted cd-note">Self-equilibrated: the net force and moment vanish (to round-off).</p>`));
       body.appendChild(cards);
+      if (rep.element && sky.tdTendonElementCard) body.appendChild(sky.tdTendonElementCard(rep));   // bonded elements (js/timedep.js)
       // segment uplift table
       const up = rep.segment_uplift || [];
       if (up.length) {

@@ -282,6 +282,9 @@ def run_user_staged(engine: OpenSeesEngine, name: str) -> StagedResults:
     """Run one user-defined staged case (see module docstring)."""
     model = engine.model
     sc = model.staged_cases[name]
+    from skyframe.engine import staged_creep as _crp   # step-by-step creep
+    if _crp.is_step(sc):
+        return _crp.run_step_staged(engine, name)
     model._validate_staged_case(sc)
     stages = normalize_stages(sc.stages)
     groups = {n: normalize_group(g) for n, g in model.groups.items()}
