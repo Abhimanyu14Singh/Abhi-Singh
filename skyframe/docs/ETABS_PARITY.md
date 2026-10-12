@@ -196,6 +196,8 @@ national codes. Let ETABS users move models in and out.
     OpenAPI). Add an optional OAPI-style facade (`SapModel.FrameObj.AddByCoord`
     and similar) so existing ETABS Python scripts port with few edits.
     - Dependency: Track G (Rhino/Grasshopper) needs this.
+    - **Done (Wave B):** `/api/v1` + generated OpenAPI 3 (`/api/openapi.json`)
+      and the `skyframe.oapi` facade; docs/API.md. Status: full.
 12. **Modelling productivity** (med, S–M):
     - Richer templates (waffle, ribbed, two-way with beams) that also set up
       code loads, RS and mass source.
@@ -237,6 +239,8 @@ ecosystem.
    L + L).
 5. **Plugin framework** (med, M). A documented manifest that loads JS menu
    items and Python hooks, building on the existing `sky.menu` registry.
+   **Done (Wave B):** docs/PLUGINS.md, Options › Plugins, example plugin.
+   Status: full.
 6. **Further hinge tables** (med, M): FEMA 356, EC8-3 chord rotation. Add
    **wall fiber hinges** (med, M) as a lighter alternative to layered shells.
 7. **Breadth backlog** (low, S–M each):
@@ -262,10 +266,14 @@ Column shortening matches a CEB-FIP reference.
 ## R4: Long horizon / low ROI
 
 1. Revit link (XL). Prefer an IFC round trip and judge demand first.
+   **Wave B:** Revit-friendly IFC export + documented workflow
+   (docs/INTEROP.md). Status: partial; a native add-in is out of scope.
 2. Tendons as stiffness elements (L).
 3. BucklingFEM-style shell-FEM member buckling (XL).
 4. Frequency-dependent link properties (M).
-5. Steel interop: SDNF, CIS/2, Tekla, IDEA StatiCa (L).
+5. Steel interop: SDNF, CIS/2, Tekla, IDEA StatiCa (L). **Done (Wave B):**
+   SDNF v3 read/write, CIS/2 read, IDEA IOM export; SAP2000 .s2k and SAFE
+   .f2k too (docs/INTEROP.md). Status: full (documented subsets).
 6. Access export (S). SQLite is the better substitute.
 
 ---

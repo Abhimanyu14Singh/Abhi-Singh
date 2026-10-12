@@ -13784,3 +13784,254 @@ template group + Download .rtf; Show Tables table sets.
   diaphragm membership, wall-stack piers in the results, relabel leaves
   base reactions unchanged, RTF content, HTTP endpoints.
 * Playwright in mock and live modes for every tool.
+
+
+## Programmatic API, plugins, and SAP2000 / SAFE / steel / Revit interop
+
+All of this is new code. The shared files get only hooks:
+
+* `server.py`:
+  * the plugin pre / post hooks in `POST /api/analyze` (2 lines);
+  * three `register` lines;
+  * one import.
+* `ifc_write.py`: `revit` hooks.
+* `js/app.js`: 2 imports and 2 init lines.
+* `js/etabs.js`: the empty `Tools › Plugins` submenu node.
+
+Legacy behaviour is byte-identical. For the quick building (4 stories,
+3 × 2 bays):
+
+* the model SHA-256 is `1960628077e1ff4a`;
+* the `POST /api/analyze` SHA-256 is `8cc6df37e1d22071`;
+* the `/api/tables/list` SHA-256 is `9c85e4fcb2577a36`;
+
+which are the same before and after. The default IFC text is also
+unchanged.
+
+### Versioned REST API and OpenAPI (`skyframe/api/openapi.py`)
+
+* **`/api/v1/<path>`.** Every `/api/<path>` is also served under
+  `/api/v1/<path>`. A WSGI rewrite sets
+  `environ["skyframe.api_version"] = "v1"`.
+* **`GET /api/openapi.json`.** Also served as `/api/v1/openapi.json`. It
+  returns an OpenAPI 3.0.3 document built from the live URL map:
+  * paths are `/api/v1/...` with `{param}`; `servers: [{"url": "/"}]`;
+  * `operationId = <method>_<endpoint>`;
+  * the tag is the first path segment;
+  * `description` is the CONTRACT.md text for that endpoint;
+  * `400` / `404` responses use `#/components/schemas/Error`.
+* **Component schemas.** `Error`, `SoftError`, `Health`, `Material`,
+  `FrameSection`, `Story`, `FrameMember`, `ShellRegion`, `LoadPattern`,
+  `Model`, `CaseResults`, `ModalResults`, `AnalysisResults`,
+  `ExportResponse`, `ImportResponse`, `Plugin`.
+* **Other endpoints.** Request and response schemas come from the
+  `{key, key?: [..], …}` shapes in CONTRACT.md (`?` = optional; `[` →
+  array, `{` → object). A response written as "model dict" or
+  `results.to_dict()` maps to `Model` / `AnalysisResults`.
+* **Extending.** Feature modules can publish exact shapes with
+  `add_override(method, rule, request, response, summary)`.
+* **Validation.** `validate_spec(spec)` checks the structure (version,
+  info, unique operationIds, path parameters, dangling `$ref`). The test
+  also runs `openapi_spec_validator.validate` when it is installed.
+  Coverage: 133 paths and 142 operations at this commit, 114 with
+  CONTRACT text and 71 with a typed 200 schema.
+
+### OAPI facade (`skyframe/oapi/`; docs/API.md)
+
+* **Entry points.**
+  * `from skyframe.oapi import comtypes`, then
+    `comtypes.client.CreateObject('ETABSv1.Helper' | 'SAP2000v1.Helper')`
+    → `QueryInterface(comtypes.gen.*.cHelper)` →
+    `CreateObjectProgID(...)` → `ApplicationStart()` → `.SapModel`.
+  * Or directly: `skyframe.oapi.SapModel(units=6)`.
+* **Conventions.** Methods return `0` (or non-zero on failure). A method
+  with CSI `ByRef` arguments returns `[byrefs..., ret]`. Values are in the
+  present `eUnits` 1..16. The surface table is in docs/API.md.
+* **SkyFrame model.** `SapModel.to_skyframe()` builds the `BuildingModel`
+  that `RunAnalysis` solves:
+  * `frame_axis_convention = "etabs"`;
+  * `rigid_diaphragms = False`;
+  * `mass_source_mode = "element_self_mass"`;
+  * `num_modes` from the modal case;
+  * `supports` from the restraints;
+  * frame kind from geometry (vertical = column, horizontal = beam, else
+    brace);
+  * story = the story at the member's top end;
+  * per-story rigid diaphragms from `Diaphragm` assignments.
+
+  `SapModel.skyframe_results` is the `AnalysisResults` of the last run.
+* **Frame loads.** CSI `Dir` maps as follows:
+  * 2 → `local_y`;
+  * 1 / 3 → exact global components of local 1 / 3;
+  * 4–6 → `global_x|y|z`;
+  * 7–9 → the projected global directions;
+  * 10 → `gravity`; 11 → projected `gravity`.
+* **Sections.** Rectangles get the CSI shear areas `As2 = As3 = 5/6 A`.
+  A zero shear-area modifier removes the shear area (`As = None`).
+* **Results.**
+  * `JointDispl` / `JointReact` / `FrameForce` / `BaseReact` /
+    `ModalPeriod` / `ModalParticipatingMassRatios` / `StoryDrifts` use the
+    CSI array order.
+  * `FrameForce` uses the engine station convention, which is the CSI one
+    (P tension +, gravity beam V2 −/+ at i/j, M3 sagging +).
+  * Envelope combos give `Max` / `Min` rows. Modal displacements use
+    `StepType = "Mode"`.
+* **Validation (`tests/test_oapi_facade.py`).**
+  * CSI SAP2000 "Example 2", with only its import line changed, matches
+    all 7 independent results to < 0.05 % (largest 0.021 %).
+  * An ETABS-style portal (`examples/oapi_etabs_portal.py`) gives exactly
+    the REST `/api/analyze` numbers for `to_skyframe()`.
+  * Rigid-beam portal sway equals `H / (2·12EI/h³/(1+Φ))`,
+    `Φ = 12EI/(G As h²)`, to 1e-4.
+  * A pinned-pinned beam under self-weight gives midspan `wL²/8`.
+  * A slab under a uniform load gives `FZ = qA`.
+  * Building the same model in kip-in gives the kN-m result to 1e-9.
+  * `File.Save` / `OpenFile` reproduce the results.
+
+### Plugins (`skyframe/core/plugins.py`, `skyframe/api/plugins_api.py`; docs/PLUGINS.md)
+
+* **Manifest.** `plugin.json` keys: `id, name, version, description,
+  author, skyframe (">=x.y"), python, js[], css[], hooks[pre_analysis |
+  post_analysis], endpoints[], tables[{key, title, columns[{key, label,
+  quantity}]}], menus[], permissions[model:read | model:write |
+  results:read | network | files], enabled_by_default`.
+* **Folders.** `$SKYFRAME_PLUGINS_DIR` (pathsep list), or
+  `~/.skyframe/plugins` plus `<repo>/plugins`. The enabled state is in
+  `$SKYFRAME_PLUGINS_STATE` (default `~/.skyframe/plugins_state.json`).
+  Every plugin is disabled by default.
+* **HTTP.**
+  * `GET /api/plugins` → `{plugins: [Plugin], dirs, state_path}`.
+  * `POST /api/plugins/rescan` → the same listing.
+  * `POST /api/plugins/<id>/enable {enabled: bool}` → `Plugin` (404 for
+    an unknown id, 400 for an invalid plugin).
+  * `GET /api/plugins/<id>/files/<path>` → a web asset from inside the
+    folder only (404 otherwise).
+  * `POST /api/plugins/<id>/call/<name>` → the endpoint's JSON (404 unless
+    the plugin is enabled and declares it; 400 when it raises).
+* **`Plugin` shape.** `{id, name, version, description, author, dir,
+  enabled, loaded, error, invalid, js, css, hooks, endpoints, tables:
+  ["plugin.<id>.<key>"], menus, permissions, log}`.
+* **Analysis hooks.**
+  * `pre_analysis(model, ctx)` runs before the engine is built. The
+    warnings it returns are re-issued through `warnings.warn`, so they
+    reach the run log.
+  * `post_analysis(model, results, ctx)` may return a JSON-safe dict,
+    which is stored at `results["plugins"][id]`. A hook that raises gives
+    `{"error": msg}`.
+  * The `plugins` key exists only when an enabled plugin returned data.
+* **Tables.** Registered with `core.tables.register_table` as
+  `plugin.<id>.<key>`, group `"Plugins"`, served by the ordinary `POST
+  /api/tables/<key>`. They are unregistered on disable, and a new
+  `PluginManager` starts from no plugin tables.
+* **UI (`js/plugins.js`, `js/mock_plugins.js`).**
+  * Options › Plugins… (`opt-plg-manager`) and Tools › Plugins ▸ Plugin
+    Manager… (`tool-plg-manager`) open dialog `#plManager`: list
+    `#plList`, `#plEnable`, `#plDisable`, `#plRescan`. Changes apply on
+    OK.
+  * Help › Scripting API (REST / OAPI)… (`help-plg-apiref`) opens
+    `#plApiRef`, the endpoint list from the spec.
+  * Enabled plugins' JS modules are imported at start-up and given
+    `activate(api)`. The menu items they add are removed on disable.
+* **Test hook.** `__sky.plugins = {state, refresh, openManager,
+  openApiRef, setEnabled, showTable, active}`.
+* **Example.** `plugins/example-story-summary` adds menu
+  `tool-plg-story-summary`, table `plugin.example-story-summary.story_summary`
+  (`story, elevation, columns, beams, braces, max_drift`), endpoint
+  `summary` → `{model, stories: [{story, elevation, columns, beams,
+  braces}]}`, and post-analysis output `{stories, max_drift, governing}`.
+
+### Interop formats (`skyframe/api/interop_api.py`; docs/INTEROP.md)
+
+* **`GET /api/interop/formats`** → `{formats: [{fmt, label, ext, export,
+  import, mime}]}`. The formats are `s2k`, `f2k`, `sdnf`, `cis2`
+  (import only), `idea` (export only) and `ifc_revit` (export only).
+* **`POST /api/interop/export/<fmt>`.**
+  * Body: `{model?, units?: [F, L] | "m|mm|in|ft", story?,
+    loads_from_above? = true, load_effects? = true, results?, include?,
+    soft_errors?}`.
+  * Response: `{ok: true, filename, mime, content | content_b64 (idea
+    zip), report}`.
+  * `f2k` and `idea` run the analysis when no `results` are given.
+* **`POST /api/interop/import/<fmt>`.**
+  * Body: `{text | content_b64, units?, sections_from_current? = true,
+    dry_run?, soft_errors?}`.
+  * Response: `{ok: true, model, warnings, report: {format, read}}`.
+  * The imported model replaces the server model unless `dry_run`.
+  * A file with no frames or areas is a 400.
+* **Reports.**
+  * `s2k`: `{format, units, written, tables: {name: rows}, skipped}`.
+  * `f2k`: `{format, story, elevation, units, written: {points, slabs,
+    beams, columns, load_patterns, column_reactions, load_cases,
+    load_combinations}, reaction_totals: {case: ΣFgrav}, tables,
+    skipped}`.
+  * `sdnf`: `{format, version: "3.0", units, written, skipped}`.
+  * `idea`: `{format, schema, written: {points, members, cross_sections,
+    materials, connection_points, load_cases, combinations,
+    internal_force_results}, skipped, files}`.
+  * `ifc_revit`: the IFC report plus `written.revit_types` /
+    `revit_psets`.
+* **`export_ifc(model, include=None, revit=False)`.**
+  * `revit=True` adds Body / Axis sub-contexts, storeys placed at their
+    elevation with `LongName`, Ifc{Column,Beam,Member}Type with
+    Revit-recognised names plus IfcRelDefinesByType, Pset_*Common
+    (Reference / LoadBearing / IsExternal), and Revit material names with
+    a capitalised Category.
+  * `read_ifc` reads the file back with identical geometry.
+* **UI (`js/interop.js`, `js/mock_interop.js`).**
+  * Import acts: `file-iop-imp-s2k|f2k|sdnf|cis2`. Export acts:
+    `file-iop-exp-s2k|f2k|sdnf|idea|ifc_revit`.
+  * Dialogs: `#ioExport` (`#ioUnits` defaults to the display units,
+    `#ioStory`, `#ioAbove`, `#ioLen`, `#ioEffects`, `#ioInc_*`) and
+    `#ioImport` (`#ioFile`, `#ioImpUnits`, `#ioFromCur`).
+  * Downloads and reports reuse `__sky.exchange`.
+  * Test hook: `__sky.interop = {EXPORT, IMPORT, openExport, openImport,
+    exportNow, importNow, state}`.
+  * Panels: File › Import 9 and File › Export 11 entries.
+
+### Validation
+
+* `tests/test_api_openapi.py`:
+  * official and structural spec validity;
+  * every route covered;
+  * core shapes;
+  * the v1 alias.
+* `tests/test_oapi_facade.py`: see above.
+* `tests/test_plugins.py`:
+  * disabled = no-op;
+  * enable → JS served, traversal refused, table added (closed-form
+    counts 6 columns / 7 beams per story, drifts equal to the analysis);
+  * hooks and endpoint work;
+  * state persists;
+  * failures are contained;
+  * manifest validation.
+* `tests/test_interop_csi.py`:
+  * s2k round trips (identical static results and periods; a rich model
+    exact; kip-in to 1e-12);
+  * f2k reactions closed forms (ΣFgrav = 25·ΣL of the beams above, ΣFx =
+    story forces above);
+  * f2k round trip;
+  * HTTP.
+* `tests/test_interop_steel.py`:
+  * SDNF round trip (exact; mm; foreign packets; placeholders);
+  * CIS/2 analysis and design models (AISC lookup, parametric I area
+    closed form, mm units);
+  * IDEA IOM well-formed, with the expected counts: 6 points, 7
+    members / elements / segments, 2 sections, 5 connection points, 1
+    load case, 1 combination, 77 results;
+  * base forces in the written LCS balance 240 kN;
+  * HTTP.
+* `tests/test_ifc_revit.py`: default unchanged, Revit entities, exact
+  re-import, names.
+* Playwright, mock 21/21 and live 23/23:
+  * every new dialog opens from its menu;
+  * exports leave the model byte-identical;
+  * kip-in sets the s2k units;
+  * s2k export → import round trip (byte-identical in mock);
+  * a bad CIS/2 file gives an inline error;
+  * Plugins OK with defaults is a no-op;
+  * enabling the example adds its menu item and table (one row per
+    story), and disabling removes it;
+  * the API reference dialog opens;
+  * live analysis succeeds; existing menus still work;
+  * every panel has ≤ 14 entries;
+  * zero console errors.
