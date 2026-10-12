@@ -2016,6 +2016,9 @@ def _build_catalogue() -> List[Table]:
 
     from .props_tables import extend_catalogue as _wbp_extend
     _wbp_extend(T)       # Wave B: ortho / slab / spring props (props_tables)
+
+    from .modeltables_wave_c import extend as _wc_extend
+    _wc_extend(T)        # Wave C: cuts / temps / options / stages / sections
     return T
 
 

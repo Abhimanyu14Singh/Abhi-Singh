@@ -94,6 +94,7 @@ const KINDS = {
   mass_per_area:   s => [s.F / s.L ** 3, `${s.mass}/${s.lu}²`],   // additional shell mass (kN-m: t/m²)
   accel:        s => [s.L, `${s.lu}/s²`],
   velocity:      s => [s.L, `${s.lu}/s`],
+  volume:        s => [s.L ** 3, `${s.lu}³`],   // Wave C: material take-off volume
   temp:          s => [s.temp === "F" ? 1 / 1.8 : 1, s.temp === "F" ? "°F" : "°C"],
   temp_delta:    s => [s.temp === "F" ? 1 / 1.8 : 1, s.temp === "F" ? "°F" : "°C"],
   thermal_coeff: s => [s.temp === "F" ? 1.8 : 1, s.temp === "F" ? "1/°F" : "1/°C"],

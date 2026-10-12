@@ -61,6 +61,7 @@ const FIXED = {                          // unitless quantities: units.js "none"
   ratio: ["", 5], factor: ["", 4], percent: ["%", 3],
   circular_frequency: ["rad/s", 4], eigenvalue: ["rad²/s²", 3],
   angle_deg: ["deg", 2],                 // A3: principal directions
+  angular_velocity: ["rad/s", 5], angular_accel: ["rad/s²", 5],   // Wave C: TH joint rotations
 };
 /** {kind, unit, dec, text} for a table column. Lengths that are displacements
     (ux, disp_x, max_disp, story drift in m …) use the small-length "disp" kind
@@ -76,7 +77,8 @@ export function colSpec(col) {
     mass: ["mass", 3], angle: ["rotation", 6], time: ["period", 4], frequency: ["frequency", 4],
     line_force: ["line_force", 3], line_moment: ["line_moment", 3], stress: ["stress", 1],   // A3: shell forces / stresses
 
-    area: ["area", 2] };   // area: live-load reduction tributary area (js/loadcodes.js)
+    area: ["area", 2],   // area: live-load reduction tributary area (js/loadcodes.js)
+    velocity: ["velocity", 4], accel: ["accel", 4], volume: ["volume", 3], mass_moi: ["mass_moi", 3] };   // Wave C tables (core/tables_wave_c.py)
   if (map[q]) return { kind: map[q][0], unit: U.label(map[q][0]), dec: map[q][1] };
   const fx = FIXED[q] || ["", 4];
   return { kind: "none", unit: fx[0], dec: fx[1], na: tblRnaKeys.has(col.key) ? tblRnaText : undefined };

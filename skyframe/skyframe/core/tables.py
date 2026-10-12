@@ -1314,6 +1314,7 @@ def compute_table(key: str, results: dict, model, context: Optional[dict] = None
     title, group, cols, fn = TABLES[key]
     c = _Ctx(results, model, context, cases)
     rows = fn(c)
+    cols = _tables_wave_c.decorate(key, cols, rows, c)  # Wave C link cols
     cols, rows = _tw_decorate(model, cols, rows)    # C9 tower column
     # Wave B: Joint Reactions F1..M3 in joint local axes (only when the
     # model has joint local axes; core/joint_local_results.py)
@@ -1335,3 +1336,9 @@ _tables_results.register()
 # Wave B: Irregularity Checks table (core/irregularity_ext.py)
 from . import irregularity_ext as _irregularity_ext  # noqa: E402
 _irregularity_ext.register()
+
+# Wave C: TH joint velocities / accelerations, assembled masses, mass and
+# material summaries, story max/avg, modal load participation, generalized
+# displacements, nonlinear link rows (core/tables_wave_c.py)
+from . import tables_wave_c as _tables_wave_c  # noqa: E402
+_tables_wave_c.register()
