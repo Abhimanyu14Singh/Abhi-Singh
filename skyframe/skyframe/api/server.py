@@ -2119,7 +2119,11 @@ def create_app() -> Flask:
             model = _check_target(body)
         except (ValueError, KeyError, TypeError) as exc:
             return jsonify({"error": f"bad model: {exc}"}), 400
-        return jsonify(stability_diagnostics(model, max_dofs=cap))
+        meth = body.get("method", "auto")          # v1.24 sparse check
+        if meth not in ("auto", "dense", "sparse"):
+            return jsonify({"error": "'method' must be auto|dense|sparse"}), 400
+        return jsonify(stability_diagnostics(model, max_dofs=cap,
+                                             method=meth))
 
     # ------------------- Model repair (core/repair.py): Check Model fixes
     @app.post("/api/repair")
@@ -2393,6 +2397,10 @@ def create_app() -> Flask:
     _plg_register(app, _state)
     from skyframe.api.interop_api import register as _iop_register
     _iop_register(app, _state)
+
+    # v1.24 BucklingFEM member shell buckling (skyframe.api.buckling_api)
+    from skyframe.api.buckling_api import register as _bfem_register
+    _bfem_register(app, _state)
 
     return app
 

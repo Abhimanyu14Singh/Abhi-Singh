@@ -6,7 +6,7 @@ CONTRACT "Analysis performance, solver policy and convergence strategy".
 ``BuildingModel.analysis_options`` is a plain dict (empty = every default)::
 
     {"solver": "auto" | "band" | "umfpack" | "mumps" | "sparse_general",
-     "eigen_solver": "auto" | "legacy",
+     "eigen_solver": "auto" | "legacy" | "lanczos",
      "convergence": {
          "mode": "legacy" | "robust",
          "algorithms": ["Newton", "ModifiedNewton", "KrylovNewton",
@@ -21,7 +21,10 @@ CONTRACT "Analysis performance, solver policy and convergence strategy".
   legacy BandGeneral path, bit-identical, below the size threshold).
 * ``eigen_solver`` — "auto" lets large (sparse-policy) models use the exact
   massed-DOF condensation of :mod:`skyframe.engine.modal_condensed` for the
-  MODAL case; "legacy" always runs OpenSees' eigen solver.
+  MODAL case and (v1.24) large models with more massed DOFs than the
+  condensation takes the sparse shift-invert Lanczos of
+  :mod:`skyframe.engine.sparse_modal`; "legacy" always runs OpenSees'
+  eigen solver; "lanczos" forces the Lanczos solver on any model.
 * ``convergence`` — see :mod:`skyframe.engine.convergence`.  ``"legacy"``
   (default) reproduces every analysis path's historical retry logic
   exactly; ``"robust"`` (opt-in) runs the full fallback ladder (algorithms
@@ -56,7 +59,7 @@ KEYS = ("solver", "eigen_solver", "convergence", "size_warnings",
         "parallel")
 PARALLEL_MODES = ("auto", "off")
 MAX_PARALLEL = 8
-EIGEN_SOLVERS = ("auto", "legacy")
+EIGEN_SOLVERS = ("auto", "legacy", "lanczos")   # v1.24 + lanczos
 CONV_KEYS = ("mode", "algorithms", "tests", "max_halvings")
 TEST_KEYS = ("type", "tolerance", "max_iterations")
 

@@ -1765,10 +1765,25 @@ class BucklingCase:
     gravity: Dict[str, float] = field(default_factory=dict)
     num_modes: int = 6
     base_case: Optional[str] = None            # v0.25 stressed-state base
+    # v1.24 (engine/buckling_fem.py): "frame" = the legacy numpy frame-only
+    # solver (default, byte-identical); "fem" = the engine's FE model
+    # (shells with plate geometric stiffness, links, releases, diaphragms)
+    # with sparse Lanczos.  include_* only matter for "fem".
+    formulation: str = "frame"
+    include_shells: bool = True
+    include_links: bool = True
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "gravity": dict(self.gravity),
-                "num_modes": self.num_modes, "base_case": self.base_case}
+        d = {"name": self.name, "gravity": dict(self.gravity),
+             "num_modes": self.num_modes, "base_case": self.base_case}
+        # v1.24: emitted only when not the defaults (legacy files identical)
+        if self.formulation != "frame":
+            d["formulation"] = self.formulation
+        if not self.include_shells:
+            d["include_shells"] = False
+        if not self.include_links:
+            d["include_links"] = False
+        return d
 
 
 # v0.10 response-spectrum directional combination methods (ASCE 7 §12.5)
@@ -3021,12 +3036,18 @@ class BuildingModel:
 
     def add_buckling_case(self, name: str, gravity: Dict[str, float],
                           num_modes: int = 6,
-                          base_case: Optional[str] = None) -> BucklingCase:
+                          base_case: Optional[str] = None,
+                          formulation: str = "frame",
+                          include_shells: bool = True,
+                          include_links: bool = True) -> BucklingCase:
         bc = BucklingCase(name, gravity={k: float(v)
                                          for k, v in gravity.items()},
                           num_modes=int(num_modes),
                           base_case=(None if base_case is None
-                                     else str(base_case)))
+                                     else str(base_case)),
+                          formulation=formulation,
+                          include_shells=include_shells,
+                          include_links=include_links)
         self._validate_buckling_case(bc)
         self.buckling_cases[name] = bc
         return bc
@@ -3048,6 +3069,8 @@ class BuildingModel:
             raise ValueError(f"Buckling case {bc.name}: base_case "
                              f"{bc.base_case!r} is not a defined static "
                              "load case")
+        from skyframe.core.buckling_fem import validate_case as _bfv
+        _bfv(bc)                                   # v1.24 formulation
 
     def add_rs_combo(self, name: str, name_x: str, name_y: str,
                      method: str = "100_30") -> Dict[str, str]:
@@ -4708,7 +4731,10 @@ class BuildingModel:
                 gravity={p: float(f)
                          for p, f in (bd.get("gravity") or {}).items()},
                 num_modes=int(bd.get("num_modes", 6)),
-                base_case=(None if bcase is None else str(bcase)))
+                base_case=(None if bcase is None else str(bcase)),
+                formulation=bd.get("formulation", "frame"),   # v1.24
+                include_shells=bd.get("include_shells", True),
+                include_links=bd.get("include_links", True))
         for name, cd in (d.get("rs_combos") or {}).items():
             mdl.rs_combos[name] = {"name_x": str(cd["name_x"]),
                                    "name_y": str(cd["name_y"]),

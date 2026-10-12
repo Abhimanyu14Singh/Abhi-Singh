@@ -1355,7 +1355,8 @@ def _analyze_stiffness(result: dict, K: np.ndarray, model, asm, direct,
 
 def stability_diagnostics(model: BuildingModel,
                           max_dofs: int = STABILITY_MAX_DOFS,
-                          n_report: int = 8) -> dict:
+                          n_report: int = 8,
+                          method: str = "auto") -> dict:
     """Mechanism / ill-conditioning diagnostics of the assembled stiffness.
 
     See the module docstring and CONTRACT.md for the result shape.
@@ -1408,6 +1409,13 @@ def stability_diagnostics(model: BuildingModel,
         est -= 3 * len(ops.getConstrainedNodes() or [])
     except Exception:
         pass
+    # v1.24: above the dense cap, the sparse Lanczos mechanism check
+    # (core/stability_sparse.py; method "dense" keeps the legacy skip)
+    from skyframe.core import stability_sparse as _sst
+    if (est > max_dofs or method == "sparse") and _sst.use_sparse(
+            method, est, max_dofs):
+        result["built"] = True
+        return _sst.run(model, eng, asm, result, est, n_report, t0)
     if est > max_dofs:
         ops.wipe()
         result["skipped"] = True

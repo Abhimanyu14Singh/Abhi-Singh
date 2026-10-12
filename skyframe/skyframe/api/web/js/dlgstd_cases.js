@@ -376,7 +376,8 @@ export function editBucklingCase(sky, D, name, { copyOf, done } = {}) {
     dkAdvanced([
       F.select(c, "base_case", [["", "None — unstressed"], ...Object.keys(D.cases || {}).map(n => [n, "Stressed state of " + n])], {
         label: "Initial state", id: "dcBuckBase", read: () => c.base_case || "", write: v => { c.base_case = v || null; } }),
-    ], { summary: "Advanced — initial state", countFn: () => c.base_case ? 1 : 0 }),
+      ...((window.__sky && window.__sky.bucklingFem) ? window.__sky.bucklingFem.caseFields(F, c, D) : []),   // v1.24 formulation / shells / links (js/bucklingfem.js)
+    ], { summary: "Advanced — initial state and model", countFn: () => (c.base_case ? 1 : 0) + (c.formulation === "fem" ? 1 : 0) }),
   ];
   return dkDialog({
     id: "dcBuckCase", title: "Load Case Data — Buckling", iconId: "exleaf-buckling", size: "md", form: F, body,

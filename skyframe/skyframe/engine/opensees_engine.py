@@ -2513,7 +2513,7 @@ class OpenSeesEngine:
                                   engine=self)
         else:
             self._setup_linear_reused(asm)     # factor-once on sparse
-            ok = ops.analyze(1)
+            ok = _slv.analyze_reused(self, asm)   # v1.24 Mumps refactor retry
         if ok != 0:
             raise RuntimeError(f"Static analysis failed for case {case_name!r}")
 
@@ -2575,8 +2575,18 @@ class OpenSeesEngine:
             cond = _mcd.solve(self, asm, n)
             if cond is None:
                 asm = self._build()          # fresh domain for the eigen
+        # v1.24: above both thresholds (sparse system, > MAX_MASSED massed
+        # dofs) sparse shift-invert Lanczos instead of band Arpack
+        from . import sparse_modal as _spm
+        spm = None
+        if cond is None and _spm.applicable(self, asm, n):
+            spm = _spm.solve(self, asm, n)
+            if spm is None:
+                asm = self._build()          # fresh domain for the eigen
         if cond is not None:
             lambdas, shapes = cond[0], cond[1]
+        elif spm is not None:
+            lambdas, shapes = spm[0], spm[1]
         else:
             self._setup_analysis(asm)
             lambdas = self._solve_eigen(n, n_massed, asm)
@@ -7944,6 +7954,11 @@ class OpenSeesEngine:
         if name not in model.buckling_cases:
             raise ValueError(f"Unknown buckling case {name!r}")
         bc = model.buckling_cases[name]
+        # v1.24: formulation "fem" -> the engine's FE model (shells, links,
+        # releases; sparse Lanczos) — engine/buckling_fem.py
+        if getattr(bc, "formulation", "frame") == "fem":
+            from skyframe.engine import buckling_fem as _bfem
+            return _bfem.run(self, name)
         base_N: Optional[Dict[str, float]] = None
         base_case = getattr(bc, "base_case", None)
         if base_case is not None:

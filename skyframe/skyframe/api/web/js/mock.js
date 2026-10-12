@@ -1,6 +1,7 @@
 /* SkyFrame mock backend — matches CONTRACT.md shapes so the UI is fully
    explorable without the Flask server (offline / ?mock=1). */
 
+import { mockBucklingCaseExtra as bfMockCaseExtra } from "./mock_bucklingfem.js";   // v1.24 buckling FEM (js/mock_bucklingfem.js)
 import { designerProps, blankMaterial,                  // v0.21 — shoelace properties
   allAnalysisCases, MODAL_CASE, normalizeActiveDof,       // v1.13 — cases to run / DOF
   ssFamily, ssStrengths, ssDefaultParams, normalizeSsPoints } from "./modeledit.js";
@@ -1217,6 +1218,7 @@ function _mockResultsAll(model) {
     }
     buckling[name] = { factors, modes, gravity: { ...(bc.gravity || {}) }, warnings,
                        base_case: baseCase };
+    Object.assign(buckling[name], bfMockCaseExtra(bc) || {});   // v1.24 formulation "fem" extras
   }
 
   /* ---- v0.8: center of mass / center of rigidity per story. Present only

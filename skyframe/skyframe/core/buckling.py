@@ -149,9 +149,13 @@ class BucklingResult:
     node_coords: Dict[int, Vec3] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
     base_case: Optional[str] = None                            # v0.25
+    # v1.24 FEM formulation (engine/buckling_fem.py): extra JSON keys
+    # ("formulation", "solver", ...) — empty for the frame formulation, so
+    # its dict stays byte-identical
+    extra: Dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "factors": [float(f) for f in self.factors],
             "modes": {str(m): {str(t): [float(x) for x in v]
                                for t, v in sh.items()}
@@ -160,6 +164,9 @@ class BucklingResult:
             "warnings": list(self.warnings),
             "base_case": self.base_case,
         }
+        if self.extra:
+            d.update(self.extra)
+        return d
 
 
 # --------------------------------------------------------------------------- #
