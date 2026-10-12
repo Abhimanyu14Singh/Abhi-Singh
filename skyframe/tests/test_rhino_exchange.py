@@ -336,8 +336,10 @@ def test_links_and_releases():
     (lk,) = new.links
     assert lk.stiffness == [1, 2, 3, 4, 5, 6] and lk.source_ref["id"] == "lk"
     (b,) = new.members
-    assert b.releases == "Mi,Mj"
-    assert any("release approximated" in w for w in rep["warnings"])
+    # i end: M2+M3 pin -> legacy token; j end: T + M3 -> per-DOF releases
+    assert b.releases == "Mi"
+    assert b.end_releases == {"j": {"T": 0.0, "M3": 0.0}}
+    assert not any("release approximated" in w for w in rep["warnings"])
 
 
 def test_sections_from_steel_db_and_material_override():

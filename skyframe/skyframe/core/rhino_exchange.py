@@ -1109,6 +1109,24 @@ def _release_tokens(res: dict) -> Optional[Tuple[str, str]]:
     return ("Mi" if ri[4] or ri[5] else "", "Mj" if rj[4] or rj[5] else "")
 
 
+def _apply_releases(md: dict, res: dict, i_end: bool, j_end: bool) -> None:
+    """Set ``releases`` / ``end_releases`` on a member dict from the
+    6-flag release_i / release_j (P, V2, V3, T, M2, M3; core/releases.py).
+    A plain M2+M3 pin keeps the legacy Mi/Mj token."""
+    from skyframe.core.releases import DOFS, canonical
+    eff = {}
+    for end, key, use in (("i", "release_i", i_end), ("j", "release_j", j_end)):
+        flags = res.get(key) or ()
+        if use and any(flags):
+            eff[end] = {DOFS[k]: 0.0 for k, f in enumerate(flags[:6]) if f}
+    toks, er = canonical(eff)
+    md["releases"] = toks
+    if er:
+        md["end_releases"] = er
+    else:
+        md.pop("end_releases", None)
+
+
 def _partial_release(res: dict) -> bool:
     for k in ("release_i", "release_j"):
         r = res.get(k)
@@ -1372,11 +1390,7 @@ def build(model_dict: dict, payload, mapping=None, mode: str = "merge",
                                                "release_j" in exp) else None
                 if rel is not None:
                     for i, o in enumerate(pieces):
-                        toks = [t for t, keep_t in
-                                ((rel[0], i == 0),
-                                 (rel[1], i == len(pieces) - 1))
-                                if t and keep_t]
-                        o["releases"] = ",".join(toks)
+                        _apply_releases(o, res, i == 0, i == len(pieces) - 1)
                 if "story_rule" in exp or changed:
                     for o in pieces:
                         o["story"] = story
@@ -1398,9 +1412,8 @@ def build(model_dict: dict, payload, mapping=None, mode: str = "merge",
                   "story": story, "releases": "",
                   "angle": float(res.get("angle") or 0.0),
                   "source_ref": ref}
-            rel = _release_tokens(res)
-            if rel is not None:
-                md["releases"] = ",".join(t for t in rel if t)
+            if _release_tokens(res) is not None:
+                _apply_releases(md, res, True, True)
             if p["curve"] is not None:
                 md["curve"] = copy.deepcopy(p["curve"])
             d["members"].append(md)
@@ -1409,10 +1422,6 @@ def build(model_dict: dict, payload, mapping=None, mode: str = "merge",
             summary["create"]["members"] += 1
             row["section"], row["story"] = sec, story
             _row_status(row, "create")
-            if _partial_release(res):
-                warnings.append(f"{key[1]}: only moment releases (M2+M3 "
-                                "together) are modelled -- release "
-                                "approximated")
         elif typ == "shell":
             mesh_size = float(res.get("mesh_size") or DEFAULT_MESH_SIZE)
             if old:

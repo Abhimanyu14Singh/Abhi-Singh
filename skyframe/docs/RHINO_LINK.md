@@ -115,9 +115,9 @@ named story.
 | `sf_restraint` | support restraints UX UY UZ RX RY RZ | `111000` (pinned) |
 | `sf_release_i`, `sf_release_j` | end releases P V2 V3 T M2 M3 | `000011` (moment release) |
 
-Keys are case-insensitive. A bad value is ignored with a warning. Releases: SkyFrame
-models the moment release at an end (M2 and M3 together); other release patterns are
-approximated, with a warning.
+Keys are case-insensitive. A bad value is ignored with a warning. Releases: every
+pattern of the six flags is modelled exactly (per-DOF end releases); a plain M2+M3
+pin is stored as the classic moment release.
 
 ---
 
@@ -223,7 +223,6 @@ session's objects in one undo step. The dialog also shows the address for the Gr
   a polycurve are split per segment.
 - A full circle cannot be one curved member. It is imported as segments when it comes as a
   NURBS with samples.
-- Frame releases: moment releases only (M2 and M3 together).
 - Non-planar polygon faces (beyond 2 × tolerance) are skipped. Send them as meshes.
 - Links (`role: link`) are elastic springs; without `props.stiffness` they get 10⁶ kN/m
   (kN·m/rad) on all six DOFs.
