@@ -11301,3 +11301,158 @@ Every endpoint takes an optional `"model"` in the body: the UI's working model, 
 * CORS: `Access-Control-Allow-Origin` echoes only `http(s)://127.0.0.1|localhost|[::1]` (any port) on `/api/*`; there is no auth (the server is localhost-bound). Flask route functions are prefixed `rhx_`.
 
 UI: File › Import › Rhino (.3dm)…, File › Link Rhino File… and File › Exchange Sessions… (registered via `sky.menu.add`); a status-bar chip **Rhino: linked ✓ / Rhino: changed — Update**. Apply / Remove are one undo step each. `?mock=1` uses canned payloads.
+
+## Shell force contours and shell stresses
+
+ETABS Display › Force/Stress Diagrams › Shell Stresses/Forces parity, and
+the Shell Forces / Shell Stresses result tables.  Pure post-processing in
+`skyframe/core/shell_results.py` (contours) and
+`skyframe/core/shell_tables.py` (tables); the engine and the analyze
+payload are untouched (every results JSON stays byte-identical).
+
+### Inputs
+
+Per shell element `i` (`results["shell_quads"][i]`) the 8 Gauss-averaged
+resultants `[F11, F22, F12, M11, M22, M12, V13, V23]` (the engine's
+`[Nxx, Nyy, Nxy, Mxx, Myy, Mxy, Vxz, Vyz]`, CONTRACT "Shell element
+forces") of a SOURCE:
+
+| source | where | state |
+|---|---|---|
+| static case | `cases[n].shell_forces` | signed |
+| staged case | `staged[n].shell_forces` | signed |
+| single-valued add combo | `combos[n].shell_forces` (engine superposition) | signed |
+| RS case / RS directional combo | `rs_cases[n].shell_forces` — the same `{"<i>": [8]}` shape (unsigned peaks `r`); a source only once the engine emits it | box `[-r, +r]` |
+| any other combo | evaluated from `model.combos` | see below |
+| TH case | — | not a source ("TH results record no shell forces") |
+
+A source is a list of STATES; a state is a per-element box `lo <= x <= hi`
+of the 8 resultants (a signed state is a degenerate box).  Combo rules =
+CONTRACT "Load combinations: RS/TH/nested members": `add` sums the member
+boxes (nested add combos flattened), `abs` / `srss` / `range` build one box
+from the member magnitudes, nested non-add combos enter as their bounding
+box, and `envelope` keeps one state PER MEMBER, so every displayed quantity
+(principal values and stresses included) is enveloped member by member.
+Sign convention: RS signs are lost (`1.2D + E`: max = `1.2D + r`, min =
+`1.2D - r`).
+
+### Axes, signs, stresses
+
+* Element axes (verified against OpenSees `stresses` by probing every
+  family): quads `e1 = (x2+x3-x1-x4)/2`, `e3 = e1 x (x3+x4-x1-x2)/2`,
+  `e2 = e3 x e1` (ShellMITC4, ShellDKGQ, ASDShellQ4 with `-local`);
+  ShellDKGT triangles `e1 = x2-x1`, `e3 = e1 x (x3-x1)`; ASDShellT3
+  triangles (shell_thick / membrane / plate_thick) `e1' = -e2`, `e2' = e1`.
+* `M = ∫ σ z dz` with `z` along `+3`: `σ(z) = N/t + 12 M z / t³`.
+  **Top** = `+3` face: `S = F/t + 6M/t²`; **Bottom** = `-3` face:
+  `F/t - 6M/t²`; **Mid** = `F/t`.  `S13`/`S23` = `V/t` (average).
+  `t` = `ShellSection.total_thickness`.
+* **Global axes** (`axes: "global"`): per element an in-plane frame aligned
+  with the global axes — slabs (`|n_z| >= cos 45°`): 1 = global X projected
+  on the plane, 3 = the upward normal, 2 = 3 x 1; walls: 2 = global Z
+  projected (up), 1 = horizontal pointing to +X (+Y for walls along Y),
+  3 = 1 x 2.  `N' = B N Bᵀ` (`B_ab = a_a·e_b`); moments and transverse
+  shears also take `s = sign(a3·e3)`; Top/Bottom follow `a3`.
+* Derived: `Max/Min = (a+b)/2 ± √(((a-b)/2)² + c²)`, `VM = √(a² - ab + b²
+  + 3c²)`, `Angle = atan2(2c, a-b)/2` (deg, axis 1 → Max), `VMax =
+  hypot(V13, V23)`.  On a box the linear components are exact bounds; the
+  nonlinear ones are taken over the 8 corners of the (11, 22, 12) box —
+  EXACT for the governing bound (FMax/SMax/FVM upper, FMin/SMin lower),
+  a corner estimate for the opposite one; `VMax` exact both ways.  Box
+  stresses bound N and M independently (conservative for RS).
+* **Layered sections**: linear runs solve them as one elastic section, so
+  layer stresses are an APPROXIMATION (always flagged): strain at the layer
+  centre from the homogeneous section (`E·mod`, `ν`, summed `t`; stiffness
+  modifiers ignored), layers stacked from the `-3` face up; concrete layers
+  use their own plane-stress law, steel layers `σ = E_s ε` along the bar
+  (`angle` from local 1).  Same-material layers reproduce `N/t + 12Mz/t³`.
+
+### Nodal averaging
+
+`none` = element (centroid) values.  `objects` = at each element corner,
+the mean over the elements of the same shell object (region) sharing the
+node; `all` = the mean over every element sharing the node whose plane is
+parallel (`|n_i·n_j| >= 0.9998`, no mixing across wall/slab junctions).
+Neighbour tensors are rotated into the receiving element's output frame
+first (exact for a uniform field, any node ordering / flipped normals),
+per state; the component is then evaluated from the averaged resultants.
+Corner values average the neighbours' CENTROID values (no Gauss-point
+extrapolation): a linear field is exact at interior nodes.
+
+### API (`skyframe/api/shell_results_api.py`)
+
+| Method | Path | Body → response |
+|---|---|---|
+| GET/POST | `/api/shell_results/options` | → `{components: [{key, family, quantity}], locations, axes, averaging, bounds}` |
+| POST | `/api/shell_results/sources` | `{results?}` → `{sources: [{name, kind, bounded}], layers, n_elements}` |
+| POST | `/api/shell_results/contour` | `{case, component, location?="top", axes?="local", averaging?="none", bound?="max", results?}` → contour |
+
+Results: the body's `results`, else the stored last `/api/analyze`
+payload when the model is unchanged, else one analysis (stored) — the
+`/api/tables` rule.  400 on bad input / a source without shell results.
+
+```jsonc
+{"case": "ENV", "kind": "combo", "bounded": true, "bound": "max",   // bound null when signed
+ "component": "S11", "quantity": "stress",   // line_force | line_moment | stress
+ "location": "top",                          // null for non-S families
+ "axes": "local", "averaging": "objects",
+ "values":  [/* per shell_quads index; null where t is unknown */],
+ "corners": [[/* per element node, same order as shell_quads[i].nodes */]] | null,
+ "range": [min, max],                        // over values and corners
+ "approximations": ["..."], "warnings": ["..."]}
+```
+
+Components: `F11 F22 F12 FMax FMin FVM FAngle`, `M11 M22 M12 MMax MMin
+MVM MAngle`, `V13 V23 VMax`, `S11 S22 S12 SMax SMin SVM SAngle` (location
+`top | mid | bot | layer:<k>`), `S13 S23`.  `*Angle` is table-only (null on
+max/min sources).
+
+### Tables (registered into `core.tables` by a one-line hook)
+
+| key | title | group |
+|---|---|---|
+| `shell_forces` | Shell Forces | Analysis Results > Element Output > Area Output |
+| `shell_stresses` | Shell Stresses | Analysis Results > Element Output > Area Output |
+
+Columns: `story`, `area` (shell object uid), `element` (shell_quads
+index), `case`, `case_type` (LinStatic / NonStatic / LinRespSpec /
+Combination / NonStaged), `step_type` ("" signed, "Max"/"Min" for max/min
+sources) then `F11 F22 F12 FMax FMin FAngle FVM M11 M22 M12 MMax MMin
+MAngle V13 V23 VMax` (shell_forces) or `location` ("Top", "Bottom",
+"Layer k (material, kind)") + `S11 S22 S12 SMax SMin SAngle SVM S13 S23`
+(shell_stresses; labels S13Avg / S23Avg).  Element-local, unaveraged.
+Unlike the other case tables they also list RS cases and max/min combos.
+New column quantities: `line_force` (kN/m), `line_moment` (kN·m/m),
+`stress` (kPa), `angle_deg` (deg).  Empty rows when the results have no
+shell elements.
+
+### UI (`js/shellres.js`, `js/mock_shellres.js`)
+
+Display › Force Diagrams › **Shell Stresses / Forces…** (`dis-shr-contours`,
+needs results; dlgkit dialog `#shrDlg`): Case/Combo (`#shrCase`, kind
+tagged; Max/Min `#shrBound` for max/min sources), Type (`#shrType`
+Resultant Forces / Stresses), Component (`#shrComp`), Location (`#shrLoc`
+Top / Middle / Bottom / Layer k), Axes (`#shrAxes`), Contour averaging
+(`#shrAvg`), Range (`#shrRange` symmetric / min–max / user with
+`#shrUmin` `#shrUmax` in the component's display unit), Colours
+(`#shrBands` continuous or 6/10/16 bands), Palette (diverging / rainbow);
+OK · Cancel · Apply, "Clear Contours" (`#shrClear`).  The 3D view draws
+flat element cells (`none`) or bilinear / barycentric sub-cells from the
+corner values (averaged); legend `#shrLegend` in units.js units with the
+approximation notes.  View settings only (model untouched; remembered per
+browser in localStorage).  `__sky.shellRes = {open, show, clear, state,
+sources, contour}`.  `?mock=1` runs the same algorithm in JS (an RS case
+without shell forces gets an `|EQX/EQY| × 1.12` stand-in, flagged).
+Hooks: `viewer3d.js` (contour provider, item pass, self-drawing items —
+3 lines), `app.js` (import + init), `tables.js` (column quantities),
+`mock_tables.js` (catalogue + rows).
+
+Tests: `tests/test_shell_results.py` (cantilever plate `S11 = ±6M/t²`
+= 5625 kPa at x = 0.25 m, nodal averages = `M(x_node)`; membrane wall
+`F11 = 10 kN/m`, `S11 = 50 kPa` in every averaging mode; principal state
+(3, -1, 2) → `1 ± √8`, VM 5, 22.5°; uniform field exact under averaging on
+a mixed quad / triangle mesh with scrambled frames and flipped normals;
+OpenSees axis probes for all five element families; envelope / range /
+nested envelope max-min; RS stub (per-mode values CQC-combined with
+`modalcombo.cqc_rho` + `_combine_rows`) and `1.2D + E`, abs, srss; layered
+concrete / steel layers; tables; API).

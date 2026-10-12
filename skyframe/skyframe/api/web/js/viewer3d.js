@@ -164,6 +164,7 @@ export class Viewer3D {
   /** Per-quad values + symmetric range for the active contour selection,
       or null when unavailable (no results / not a static case). */
   _contourData() {
+    if (this.shellResExt && this.shellResExt.active()) return { ext: this.shellResExt, vals: [], vmax: 1 };   // A3 hook: shell force/stress contours (js/shellres.js)
     const r = this.results, c = this.contours;
     if (!c.on || !r || !r.shell_quads || !r.shell_quads.length) return null;
     const cd = r.cases && r.cases[c.caseName];
@@ -672,7 +673,8 @@ export class Viewer3D {
       items.push({ type: "cut", pts, z: zsum / cut.corners.length, cut });
     }
     // v0.4 — shell-force contour quads (colored by component value)
-    if (contour && this.results && this._nodeXYZ) {
+    if (contour && contour.ext) { try { contour.ext.items(items, P, this._nodeXYZ, this.results); } catch (e) { /* never break the render */ } }   // A3 hook
+    else if (contour && this.results && this._nodeXYZ) {
       this.results.shell_quads.forEach((q, i) => {
         const pts = [];
         let zsum = 0, ok = true;
@@ -705,6 +707,7 @@ export class Viewer3D {
     items.sort((a, b) => b.z - a.z);
 
     for (const it of items) {
+      if (it.draw) { try { it.draw(ctx); } catch (e) { ctx.globalAlpha = 1; } continue; }   // A3 hook: self-drawing items (js/shellres.js)
       if (it.type === "slab") {
         if (overlayActive) continue;  // declutter under overlays
         ctx.fillStyle = COLORS.slabFill;
