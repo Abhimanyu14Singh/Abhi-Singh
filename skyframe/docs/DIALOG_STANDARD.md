@@ -295,3 +295,74 @@ supports, new cases and P-Delta options.
 also used by the legacy grid editor, moves members and shells but not links and point
 springs. Changing a lower story's height can therefore leave a link disconnected, and
 Check Model reports it before the run.
+
+---
+
+## 7. Set Display Options (View › Set Display Options, Ctrl+W)
+
+### Audit of the display settings (before)
+
+Inventory taken from the View menu (`js/etabs.js`), `js/viewext.js`,
+`js/frameaxes_ui.js`, `js/wb_views.js`, `js/draw.js`, `js/elev.js` and the 3D
+toolbar, then checked in the app with Playwright (`?mock=1` and live).
+
+| # | Finding |
+|---|---|
+| 1 | **Only the 3D view had display options.** Hiding beams or turning on labels in Set Display Options changed nothing in Plan or Elevation (31 member elements still drawn in plan after hiding beams). There was no notion of a window. |
+| 2 | **Scattered toggles for one state.** Extruded view lived in 4 places (View menu, Alt+X, 3D "Extrude" chip, QAT "Extrude"); local axes in 3 (View › Show Local Axes, QAT "Axes", a checkbox in the dialog); selection-only and cut plane in 3 each. |
+| 3 | **Confusing names.** The 3D chip "Labels" turns on hover tooltips, while "Object labels" in the dialog draws names; "Reset Display Options" resets only 3D. |
+| 4 | **Missing against ETABS:** tendon visibility; per-object label sets (one "Object labels" switch drew both frames and shells); releases and insertion-point labels; colour by group / story / property; fill objects; shrink objects; joint size; line thickness; background; story labels; dimension-line and grid-bubble switches; Apply to all windows; Save as default; a shortcut (ETABS Ctrl+W). |
+| 5 | **Persistence** was `sessionStorage` only, lost with the browser session; named views kept the 3D options but nothing for plan / elevation. |
+| 6 | **Legacy shell.** The dialog used the old `analysisdlg` shell, one long form, footer Reset · OK · Cancel · Apply. |
+
+### The dialog (after)
+
+`js/dispopts.js` (UI and hooks) + `js/dispopts_core.js` (pure data: schema,
+normalise, sparse (de)serialise, 3D mapping, colour-by). dlgkit dialog
+`dpDisplayDlg`, size `lg`, four tabs:
+
+| Tab | Contents |
+|---|---|
+| Objects | Visibility: joints, beams, columns, braces, walls, floors, links, tendons, supports, springs, loads (All / None). Labels: Frames (labels, sections, local axes, releases, insertion points), Shells (labels, sections, local axes), Links (labels). |
+| Object View Options | Extrude frames / shells, fill objects, show edges, shrink objects (80 %), colour by object type / section / material / group / story / property type (section shape; shells slab / wall; links by type) with a live legend, shell transparency (%). |
+| Other | Grid lines, grid bubbles, story labels, dimension lines, background (theme / white / black / grey), joint size (px), line thickness (×). |
+| Show Only | Group, selected objects only; 3D window: story range, load pattern of the load display, section cut plane. |
+
+* **Per window.** A *Window* selector at the top defaults to the active window:
+  Plan, Elevation, 3D, or a plan / elevation pane of View › Windows (`w1`…`w4`;
+  a focused 3D pane targets the 3D view). Footer: **Apply to all windows**,
+  **Save as Default**, **Reset** (to the saved default), *Legacy dialog…* (3D),
+  then OK · Cancel · Apply.
+* **No duplicated state.** The 3D window *is* the existing `viewext` state:
+  Alt+X, View › Extruded View / Show Selection Only / Section Cut Plane /
+  Show Local Axes, the 3D chips and the QAT buttons keep working and show up in
+  the dialog. Options the 3D renderer did not know travel in `vx.dp` (sparse).
+  The View menu command `vx-display-options` and `__sky.vx.openDisplayOptions()`
+  open the new dialog.
+* **Plan / elevation** get the options through two hooks: `dpStatic` (after the
+  elements: visibility, group / selection filter, colour by, fill, line
+  thickness, shrink) and `dpLabels` (after the screen-space labels: bubbles,
+  story labels, joints, object labels, local axes, releases, insertion points).
+  Dimension lines and tendons are hidden by attribute-scoped CSS.
+* **Shortcuts.** Ctrl+W (ETABS) and Alt+W. Desktop browsers reserve Ctrl+W
+  for "close tab" and do not pass it to the page, so Alt+W is the dependable one.
+* **Toolbar.** A display strip (Extrude · Labels · Sections · Axes · Colour by ·
+  Display…) in the plan / elevation toolbar and after the 3D chips; it acts on
+  the active window. The 3D "Labels" chip is renamed "Hover info".
+* **Persistence.** View state only; the model is never written (verified
+  byte-identical through `GET /api/model` after edits and a run). Per-window
+  settings and the saved default: `localStorage["skyframe.dispopts.v1"]`
+  (`{"v":1,"windows":{win: sparse},"default"?: sparse}`, guarded by try/catch).
+  Named views carry the 3D options (`display`, incl. `dp`) and, for plan /
+  elevation views, `display.dp_windows` (only when not default).
+
+**Known limits.** 3D panes of View › Windows draw with the default display (the
+3D options apply to the main 3D view). In the 3D line view colour-by applies to
+frames; shrink applies to the line view, not to extruded solids. Loads and
+supports are drawn in the 3D window only.
+
+**Tests.** `tests/test_display_options.py` (node: schema, clamping, sparse
+(de)serialise, store round-trip, lossless 3D mapping, colour-by rules, release
+/ insertion / shrink helpers) and `tests/e2e/display_options.e2e.mjs`
+(Playwright: 46 checks in mock, 47 live; opt-in pytest wrapper with
+`SKYFRAME_E2E=1`).

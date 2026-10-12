@@ -79,6 +79,7 @@ import { mockValidateTendons as ptMockValidate } from "./mock_tendons.js";
 // Plot functions / story response plots / 3D force diagrams (Display menu)
 import { initPlotFn as pfInitPlotFn } from "./plotfn.js";
 import { initViewExt as vxInitViewExt } from "./viewext.js";   // View > Set Display Options + extruded 3D view
+import { initDisplayOptions as dpInitDisplayOptions } from "./dispopts.js";   // D2: View > Set Display Options (Ctrl+W) per window + display toolbar
 import { initFrameAxesUi as faInitFrameAxesUi } from "./frameaxes_ui.js";   // frame local-axis convention: Options > Convert, View > Show Local Axes, Extrude toolbar / Alt+X
 import { pfMockValidate as pfMockValidateModel } from "./mock_plotfn.js";
 // ETABS Edit / Select menus + Undo/Redo history (aliased import; js/editmenu.js)
@@ -8679,6 +8680,8 @@ async function boot() {
   try { wcInitWaveC(window.__sky); } catch (err) { console.error("Wave C init failed", err); }   // Wave C dialogs (js/wavec.js)
 
   try { wcInitWc(window.__sky); } catch (err) { console.error("Wave C init failed", err); }   // Wave C interface (js/wc_init.js)
+
+  try { dpInitDisplayOptions(window.__sky); } catch (err) { console.error("display options init failed", err); }   // D2: Set Display Options per window (js/dispopts.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)

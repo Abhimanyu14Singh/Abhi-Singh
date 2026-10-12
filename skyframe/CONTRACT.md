@@ -15267,3 +15267,24 @@ sourced.
 * a live analysis with the generated pattern and the imported function succeeds;
 * every panel has ≤ 14 entries;
 * zero console errors.
+
+## Display options in named views (D2, UI only)
+
+Display options are view state and are never part of the analysis model. The
+only place they reach the model file is the existing free-form ``display``
+object of a named view (``named_views[i].display``, see "Model templates,
+general grids, shell editing and drawing aids"):
+
+* 3D views: the 3D display options as before, plus an optional sparse
+  ``"dp"`` object with the newer options (``tendon``, ``shellName``,
+  ``shellAxes``, ``frameReleases``, ``frameInsertion``, ``shellSection``,
+  ``linkName``, ``fill``, ``shrink``, ``bubbles``, ``background``,
+  ``jointSize``, ``lineScale``, ``storyLabels``, ``dims``); absent = defaults.
+* Plan / elevation views: an optional ``"dp_windows": {"plan"|"elev": {...}}``
+  holding the sparse difference from the default display options
+  (``objects``, ``labels``, ``view``, ``other``, ``filter`` sections; schema
+  in ``js/dispopts_core.js``), written only when that window is not at its
+  defaults.
+
+No backend change: ``display`` is validated only for JSON-serialisability and
+size, so existing models round-trip byte-identically.

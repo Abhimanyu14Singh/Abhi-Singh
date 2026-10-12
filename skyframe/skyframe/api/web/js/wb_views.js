@@ -22,7 +22,7 @@ import { el as vEl, esc as vEsc, dkForm as vForm, dkGroup as vGroup, dkList as v
   uniqueName as vUnique } from "./dlgkit.js";
 
 const LAYOUTS = { 1: "Single Window", "2v": "Two Windows (Side by Side)", "2h": "Two Windows (Stacked)", 3: "Three Windows", 4: "Four Windows (2 × 2)" };
-const PANE_HOOKS = ["w8Static", "grpOverlay", "uhOverlay", "npOverlay", "w8Overlay", "w8SnapHook", "w8ToolHook"];
+const PANE_HOOKS = ["w8Static", "grpOverlay", "uhOverlay", "npOverlay", "w8Overlay", "w8SnapHook", "w8ToolHook", "dpStatic", "dpLabels"];   // D2: + display options
 
 export function initWbViews(sky) {
   const S = sky.store;
@@ -50,6 +50,7 @@ export function initWbViews(sky) {
       v.camera = { cx: r6(p.cx), cy: r6(p.cy), scale: r6(p.scale) };
     }
     if (sky.vx && sky.vx.opts) { try { v.display = clone(sky.vx.opts()); } catch { /* not JSON */ } }
+    if (sky.dispOpts && v.view !== "3d") { const dw = sky.dispOpts.captureView(v.view); if (dw) v.display = Object.assign(v.display || {}, { dp_windows: dw }); }   // D2: plan / elevation display options
     if (WIN.layout !== "1") v.display = Object.assign(v.display || {}, { wb_windows: { layout: WIN.layout, panes: WIN.panes.map(p => p.state()) } });
     return v;
   }
@@ -78,9 +79,11 @@ export function initWbViews(sky) {
     }
     const disp = v.display || {};
     if (sky.vx && sky.vx.set) {
-      const vxo = { ...disp }; delete vxo.wb_windows;
+      const vxo = { ...disp }; delete vxo.wb_windows; delete vxo.dp_windows;   // D2: per-window 2D display options travel separately
+      if (Object.keys(vxo).length && !("dp" in vxo)) vxo.dp = null;   // D2: a view saved without extras resets them
       if (Object.keys(vxo).length) { try { sky.vx.set(vxo); } catch (e) { console.warn("named view display", e); } }
     }
+    if (sky.dispOpts && v.view !== "3d") { try { sky.dispOpts.restoreView(v.view, disp.dp_windows); } catch (e) { console.warn("named view display", e); } }   // D2
     if (disp.wb_windows) setLayout(disp.wb_windows.layout, disp.wb_windows.panes);
     else if (WIN.layout !== "1") setLayout("1");
     if (sky.etabs && sky.etabs.refresh) sky.etabs.refresh();
@@ -231,7 +234,7 @@ export function initWbViews(sky) {
           onReadout: () => {},
         });
         const main = sky.elevEditor;
-        for (const h of ["grpOverlay", "uhOverlay", "npOverlay", "ptOverlay"]) if (main && main[h]) this.ed[h] = main[h];
+        for (const h of ["grpOverlay", "uhOverlay", "npOverlay", "ptOverlay", "dpStatic", "dpLabels"]) if (main && main[h]) this.ed[h] = main[h];   // D2: + display options
         this.ed.setTool(S.mode === "model" && S.view === "elev" ? (S.tool || "select") : "select");
         if (this.cam && [this.cam.cs, this.cam.cz, this.cam.scale].every(isFinite)) { Object.assign(this.ed, { cs: this.cam.cs, cz: this.cam.cz, scale: this.cam.scale }); this.ed._fitted = true; this.ed.refresh(); }
       } else {
