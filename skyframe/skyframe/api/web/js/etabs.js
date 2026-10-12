@@ -164,6 +164,7 @@ export function initEtabs(sky) {
         { label: "Divide Frames…", act: "edit-divide", fn: () => sky.edit && sky.edit.openDivide() },
         { label: "Join Frames", act: "edit-join", hint: "collinear members in the selection", fn: () => sky.edit && sky.edit.join() },
       ]},
+      { label: "Edit Shells", aliases: ["Edit Areas"], sub: [] },   // Wave B: divide · merge · chop · expand · reshape (js/wb_shells.js)
       SEP,   // Interactive Database Editing (js/dbedit.js) — model tables
       { label: "Interactive Database Editing…", act: "edit-dbedit", hint: "model tables", fn: () => sky.openDbEdit && sky.openDbEdit() },
     ]},
@@ -178,6 +179,8 @@ export function initEtabs(sky) {
       { label: "Show Selection Only", act: "vx-selonly", check: () => !!(sky.vx && sky.vx.isSelOnly()), fn: () => { if (sky.vx && !sky.vx.isSelOnly()) showResult("view3d"); sky.vx && sky.vx.toggleSelOnly(); } },
       { label: "Section Cut Plane View", act: "vx-cut", hint: "clip at a plane", check: () => !!(sky.vx && sky.vx.isCut()), fn: () => { if (sky.vx && !sky.vx.isCut()) showResult("view3d"); sky.vx && sky.vx.toggleCut(); } },
       { label: "Reset Display Options", act: "vx-reset", fn: () => sky.vx && sky.vx.reset() },
+      { label: "Named Views", sub: [] },   // Wave B: save / show named views (js/wb_views.js)
+      { label: "Windows", aliases: ["View Windows"], sub: [] },   // Wave B: 1–4 synchronised panes (js/wb_views.js)
       SEP,
       { label: "Model Explorer", act: "view-explorer", check: () => !document.querySelector(".workspace.explorer-collapsed"), fn: () => exHead && exHead.querySelector(".ex-collapse").click() },
       { label: "Quick-Access Toolbar", act: "help-toolbar", key: "Alt+Q", check: () => !!(sky.ux && sky.ux.toolbar && sky.ux.toolbar.isVisible()), fn: () => sky.ux && sky.ux.toolbar && sky.ux.toolbar.toggle() },
@@ -258,10 +261,12 @@ export function initEtabs(sky) {
         { label: "Point Spring", act: "draw-spring", key: "G", fn: () => drawTool("spring") },
         { label: "Line Spring", act: "draw-linespring", key: "K", fn: () => drawTool("linespring") },
       ]},
+      { label: "Quick Draw", sub: [] },   // Wave B: columns / beams / floors in a region (js/wb_draw.js)
       { label: "Tendon…", act: "draw-pt-tendon", hint: "PT · beams / slab", fn: () => { sky.openDrawTendon && sky.openDrawTendon(); syncStatus(); } },   // PT (js/tendons.js)
       SEP,
       { label: "Section Cut…", act: "draw-cut", fn: () => gotoLoads("ls-cuts") },
       { label: "Grid Lines…", act: "draw-grid", fn: () => sky.openGridEditor() },
+      { label: "Dimensions & References", aliases: ["Reference Points", "Dimension Lines"], sub: [] },   // Wave B (js/wb_draw.js)
       SEP,
       { label: "Erase Object / Add Opening", act: "draw-erase", key: "E", fn: () => drawTool("erase") },
     ]},

@@ -117,6 +117,7 @@ export async function buildTemplate(sky, id, p) {
   const S = sky.store;
   const tpl = UX_TEMPLATES.find(t => t.id === id);
   if (!tpl) throw new Error("Unknown template " + id);
+  if (tpl.build) return tpl.build(sky, p);   // Wave B structural templates (js/wb_templates.js)
   const concrete = id === "flatplate" || id === "core" || id === "frame2d";
   const q = {
     name: p.name || tpl.name, bays_x: p.baysX, bay_width_x: p.sx,

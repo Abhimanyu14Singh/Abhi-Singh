@@ -360,7 +360,9 @@ export class Viewer3D {
     systems.forEach((sys, si) => {
       const col = GRID3D_TINTS[si % GRID3D_TINTS.length];
       const lbl = GRID3D_LABEL_TINTS[si % GRID3D_LABEL_TINTS.length];
-      if (sys.kind === "radial") {
+      if (sys.kind === "general") {   // Wave B general grid: explicit lines (js/wb_shellgeom.js geometry)
+        for (const ln of sys.lines || []) { const T = gtf(sys), a = T(+ln.p1[0], +ln.p1[1]), b = T(+ln.p2[0], +ln.p2[1]); this.gridLines.push({ a, b, color: col }); this.gridLabels.push({ p: b, text: ln.label, color: lbl }); }
+      } else if (sys.kind === "radial") {
         const ox = sys.origin[0], oy = sys.origin[1], rot = sys.rotation || 0;
         const rMax = sys.radii[sys.radii.length - 1] || 1;
         const NSEG = 56;

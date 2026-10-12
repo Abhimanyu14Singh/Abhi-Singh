@@ -115,6 +115,8 @@ import { initModalX as mxInitModalX } from "./modalx.js";   // TH function tools
 
 import { initW8 as w8InitW8 } from "./w8_init.js";   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_*.js)
 import { mockValidateW8 as w8MockValidate } from "./mock_w8.js";   // W8 ?mock=1 validation
+import { initWb as wbInitWb } from "./wb_init.js";   // Wave B: templates · general grids · named views / windows · Edit Shells · quick draw · report templates (js/wb_*.js)
+import { wbMockValidate as wbMockValidateModel } from "./mock_wb.js";   // Wave B ?mock=1 validation
 
 /* ------------------------------------------------ state */
 const store = {
@@ -308,7 +310,8 @@ async function postModel(payload) {
       || c9MockValidateTowers(payload)   // C9 towers
       || c9fMockValidate(payload)   // C9 follow-ups: control_tower
       || relMockValidate(payload)   // end releases / partial fixity / joint local axes
-      || w8MockValidate(payload);   // W8 master/similar stories · curves · shell options
+      || w8MockValidate(payload)   // W8 master/similar stories · curves · shell options
+      || wbMockValidateModel(payload);   // Wave B named views · report sets · drawing aids · general grids
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -3107,7 +3110,7 @@ function renderGridSysList(systems) {
     const name = document.createElement("span");
     name.className = "gs-name"; name.textContent = sys.name;
     const kind = document.createElement("span");
-    kind.className = "gs-kind"; kind.textContent = sys.kind === "radial" ? "radial" : "ortho";
+    kind.className = "gs-kind"; kind.textContent = sys.kind === "radial" ? "radial" : sys.kind === "general" ? "general" : "ortho";   // Wave B general
     chip.append(name, kind);
     if (i === 0) { const p = document.createElement("span"); p.className = "gs-primary"; p.textContent = "primary"; p.title = "Legacy single grid"; chip.appendChild(p); }
     if (i > 0) {
@@ -3169,6 +3172,7 @@ function renderGridSysEditor(sys) {
   box.appendChild(meta);
 
   if (sys.kind === "orthogonal") box.appendChild(orthoLineEditor(sys));
+  else if (sys.kind === "general") { const p = document.createElement("p"); p.className = "muted"; p.textContent = `${(sys.lines || []).length} general grid lines — edit them with Define › Stories, Grids & Towers › General Grid…`; box.appendChild(p); }   // Wave B (js/wb_grid.js)
   else box.appendChild(radialEditor(sys));
 }
 
@@ -8592,6 +8596,7 @@ async function boot() {
   try { a8InitResults(window.__sky); } catch (err) { console.error("A8 results init failed", err); }   // spandrels · results export · report plus (js/a8results.js)
 
   try { w8InitW8(window.__sky); } catch (err) { console.error("W8 init failed", err); }   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_init.js)
+  try { wbInitWb(window.__sky); } catch (err) { console.error("Wave B init failed", err); }   // Wave B interface & modelling tools (js/wb_init.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)

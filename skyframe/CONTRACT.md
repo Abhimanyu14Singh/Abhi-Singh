@@ -12523,3 +12523,113 @@ unchanged: every new key is modelling metadata or an existing engine field.
 * Playwright, mock and live 90/90: every dialog opens from its menu, OK
   with defaults is byte-identical, the POST /api/model double echo is
   identical, kip-in inputs convert, live runs succeed, zero console errors.
+
+## Model templates, general grids, shell editing and drawing aids
+
+Interface and modelling productivity tools (Wave B). No existing analysis
+path changes: every default reproduces today's model JSON and results
+byte-identically (sha256 of `to_dict()` and of the full results JSON of
+representative frame and shell + RS models, base 224df75 vs. this change).
+
+### Model templates (`skyframe/core/templates.py`, `skyframe/api/wb_iface_api.py`)
+
+* `GET /api/model/templates` -> `[{id, label, params: {key: default}}]`.
+* `POST /api/model/template` `{template, params?, dry_run?}` ->
+  `{model, summary}`; the stored model is replaced unless `dry_run` (ETABS
+  frame-axis convention, like `/api/model/quick`). 400 on an unknown
+  template / parameter or an out-of-range value.
+* Templates `waffle`, `ribbed`, `two_way_beams`, `staggered_truss`,
+  `flat_slab_drop`. Common params `name, bays_x, bays_y, bay_x, bay_y,
+  stories, story_height, first_story_height, sdl, live, live_mass_factor,
+  mesh_size, code (asce7|ec8|is1893|none), SDS, SD1, R, Ie, ag, q,
+  ground_type, Z, soil`; per template `column, beam_b, beam_h, slab, depth,
+  top, rib_width, rib_spacing, drop_thickness, drop_width, panels`.
+* Every template sets `DEAD` (self weight 1 + SDL area loads), `LIVE`, the
+  mass source `{DEAD: 1, LIVE: live_mass_factor}` and, for a code, `EQX/EQY`
+  (`autolateral.generate`), function `RSF`
+  (`spectra_codes.make_spectrum_function`), RS cases `RSX/RSY` and the code
+  combinations (ASCE 7 LRFD / EN 1990 / IS 456).
+* Waffle / ribbed: one equivalent shell per bay (thickness = overall depth
+  D), T-section closed form (flange s x tf, web bw x (D - tf)): rib
+  direction f = A_T/(s D), m = I_T/(s D^3/12), v = bw/s; other direction
+  (ribbed) f = tf/D, m = (tf/D)^3; f12 = tf/D; m12 = sqrt(m11 m22)
+  (Huber); weight = mass = V/D.
+* Drop panels: the slab is tessellated by the grid lines and the panel
+  edges (default width min(bay)/3), so all regions share full edges.
+* Staggered truss: perimeter columns on the two long faces; story-deep
+  Warren trusses with verticals on grid line i in story s >= 1 when s + i is
+  odd; plain transverse beams where a level has no chord; one-way membrane
+  decks between transverse lines.
+
+### General grids (`skyframe/core/grid_general.py`)
+
+`GridSystem.kind == "general"` with `lines: [{label, p1: [x, y], p2: [x,
+y]}]` (local frame; origin / rotation apply). `to_dict` emits `lines` for
+general grids only. Snap points: end points (`"L1.1"`, `"L1.2"`) and
+crossings (`"L1-L2"`, exact parametric segment solve). `POST /api/grid`
+accepts `kind: "general"` + `lines`. At least one line; zero-length lines
+and duplicate labels are rejected.
+
+### Workspace keys (`skyframe/core/workspace.py`)
+
+Top-level model keys, each emitted only when non-empty, no analysis effect:
+`named_views [{name, view: plan|elev|3d, story?, elev_line?, camera,
+display?}]`, `report_templates [{name, tables, figures, cases, options?}]`,
+`table_sets [{name, tables}]`, `dimension_lines [{p1, p2, offset, story?,
+label?}]`, `reference_points [{name, point}]`, `reference_planes [{name,
+axis: x|y|z, coord}]`. Names are unique per key.
+
+### Edit ops (`skyframe/core/edit_shells.py`, `POST /api/edit/<op>`)
+
+Registered into `core.edit` (`ALL_EDIT_OPS`) with the same `{selection,
+params, model?, dry_run?}` -> `{model, summary}` shape and undo semantics:
+
+* `shell_divide` `{mode: "n", n1, n2}` | `{mode: "size", max_size}` ->
+  `divided: {uid: [pieces]}` (the first piece keeps the uid);
+* `shell_merge` (>= 2 coplanar shells, same kind / behavior / section,
+  identical area loads, one region without holes) -> `merged`;
+* `shell_chop` `{mode: grid|lines|frames|levels, lines?, z?}` -> `chopped`
+  (convex shells; concave ones are skipped with a warning);
+* `shell_expand` `{distance, edge?}` -> `expanded: {uid: {area_before,
+  area_after}}`;
+* `shell_reshape` `{mode: corners|move|insert|delete, ...}` -> `area`;
+* `ramp` `{p1, p2, width, story_from, story_to, section?, behavior?,
+  mesh_size?}` -> `slope, length, area`; story = the upper story; only the
+  two level edges join the rigid diaphragms (the engine slaves nodes on a
+  story level only);
+* `wall_stack` `{shape: straight|L|C|I|T|box, B, D, origin, rotation,
+  stories, section?, pier?, mesh_size?}` -> `pier, walls`;
+* `relabel` `{kinds?}` -> `renamed, count`: uid = `<label>-<story>`, label
+  numbers per plan position ordered by (y, x) per prefix C/B/D/W/F/L;
+  loads, groups, tendon hosts and pushover / TH `My` follow.
+
+Divide / merge / chop / expand refuse shells with openings. Pieces conserve
+the area exactly and every piece gets a copy of the parent's area loads.
+
+### .rtf report (`skyframe/io/rtf.py`)
+
+`POST /api/report/rtf` takes the `/api/report/docx` document and returns
+`{ok, mime: "application/rtf", filename, content_b64, size}`: RTF with
+heading styles + outline levels, TOC field, tables with repeated header
+rows, embedded PNG (`\pngblip`), `\uN?` escapes.
+
+### Frontend (`js/wb_*.js`, mock `js/mock_wb.js` + `js/wb_shellgeom.js`)
+
+File › New Model from Template… (+ start-screen cards); Define › Stories,
+Grids & Towers › General Grid…; View › Named Views ▸ and Windows ▸ (1–4
+panes, shared selection, independent cameras); Edit › Edit Shells ▸
+(divide, merge, chop, expand / shrink, vertex reshaper); Edit › Auto
+Relabel All…; Draw › Quick Draw ▸, Frames › Frames in 3D View, Floors &
+Walls › Ramp… / Wall Stack…, Dimensions & References ▸; Create Report
+template group + Download .rtf; Show Tables table sets.
+
+### Validation
+
+* `tests/test_wb_iface.py` (31): template DEAD reactions equal hand sums,
+  rib modifiers (D 0.40, tf 0.10, bw 0.15, s 0.90 -> f 0.375,
+  m 0.3359375), drop-panel area 256/9, general-grid crossings, workspace
+  round trips and 400s, exact areas for divide / chop / merge, divide ->
+  merge byte-identical, expand A + L d and (a + 2d)(b + 2d), ramp
+  diaphragm membership, wall-stack piers in the results, relabel leaves
+  base reactions unchanged, RTF content, HTTP endpoints.
+* Playwright in mock and live modes for every tool.

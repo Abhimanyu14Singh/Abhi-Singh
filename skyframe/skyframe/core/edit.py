@@ -1909,6 +1909,13 @@ def apply_edit(model_dict: dict, op: str, selection: Optional[dict] = None,
     return d, ctx.summary(op, extra)
 
 
+# Edit > Edit Shells / Draw Ramp / Wall Stacks / Auto Relabel
+# (skyframe.core.edit_shells registers its ops here)
+from skyframe.core import edit_shells as _eds  # noqa: E402
+_OPS.update(_eds.OPS)
+ALL_EDIT_OPS = EDIT_OPS + tuple(_eds.OPS)   # POST /api/edit/<op>
+
+
 def apply_edit_model(model, op: str, selection: Optional[dict] = None,
                      params: Optional[dict] = None):
     """:class:`BuildingModel` wrapper: returns ``(new_model, summary)``;
