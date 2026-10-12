@@ -14035,3 +14035,165 @@ unchanged.
   * live analysis succeeds; existing menus still work;
   * every panel has ≤ 14 entries;
   * zero console errors.
+
+## Wave C: distributed frame moments, frame piers, floor mesh "none", per-area edge constraints, beam LLR, static eccentricity overrides, diaphragm Fpx
+
+All new keys are written ONLY when set, so a legacy model's JSON and every
+legacy result are byte-identical. This was checked by hashing the model, the
+results and the LLR / pier tables of four representative models before and
+after the change.
+
+### Distributed frame moments, local 1 / 3 frame loads (`core/frame_loads_ext.py`, `engine/frame_dist_loads.py`)
+
+* `MemberLoad.moment_dist: "" | "uniform" | "trapezoid"` on `kind: "moment"`
+  (`""` = the legacy concentrated couple).  Distributed: `w` (and `w2`) in kN·m/m
+  over the fraction span `[a, b]`; `direction` in
+  `loads_ext.MEMBER_MOMENT_DIRECTIONS` (local_1/2/3 = local_x/y/z, or global_x/y/z;
+  right-hand rule).  Validation: `0 <= a <= b <= 1`; not projected;
+  `moment_dist` only on kind moment.
+* `MEMBER_LOAD_DIRECTIONS` gains `"local_1"` (axial, i → j) and `"local_3"`
+  (`"local_y"` stays local 2) for udl, trapezoid and point loads.
+* Engine: each segment gets the span record
+  `("mtrap", (mx1,my1,mz1), (mx2,my2,mz2), xa, xb)` and goes through the
+  exact fixed-end path.
+  * Consistent load = ∫ m(x) × the section-rotation field of the exact
+    homogeneous solution (Hermite, or the exact Timoshenko `mu` functions;
+    twist is linear).  3-point Gauss is exact here because the integrand is
+    cubic.
+  * Release condensation (`core/releases.py`) and auto-mesh segments apply
+    unchanged.
+  * Stations: the couple resultant ∫ m adds to T / M2 / M3; V and N are
+    unchanged.
+  * Deflections: ∫ m0 (ξ − s)²/2.  The Timoshenko shear term uses the
+    force-only moment, because a couple does not change Q.
+* Curved members split distributed moments per chord.  Nonlinear-static
+  stepping scales `mtrap` records.  The reaction balance and the applied-load
+  totals count local 1 / 3 loads.
+* DB edit: `frame_moment_loads` (Frame Loads - Moment) and
+  `frame_distributed_moments` (Frame Loads - Distributed Moment, quantity
+  `line_moment` kN·m/m).
+* Pinned in `tests/test_wavec_frame_loads.py`:
+  * uniform torque t on a cantilever: T(x) = t(L − x) and tip twist
+    tL²/(2GJ), also when auto-meshed;
+  * fixed–fixed beam, uniform m about local 3: V = m, end moments 0;
+  * cantilever: |M3| = m(L − x), tip θ = mL²/(2EI), δ = mL³/(3EI);
+  * simply supported beam, trapezoidal m: |M3| = m0x/2 − m0x²/(2L);
+  * propped (Mj or Mi released): M3 ≡ 0, prop reaction = m;
+  * Timoshenko fixed–fixed: end moments mLφ/(2(1+φ));
+  * axial local-1 load: N(x) = w(L − x), u = wL²/(2EA);
+  * local-3 udl: tip deflection wL⁴/(8EI22).
+
+### Frame pier labels (`core/frame_piers.py`, `engine/frame_piers.py`)
+
+* `FrameMember.pier` applies to columns and inclined frames only.
+  Horizontal beams are refused because they are spandrels.
+  `BuildingModel.pier_labels` holds the defined labels.  Frames and walls
+  sharing a label form one pier per story.
+* `results["piers"][case][label][story] = {P, V, M}`, with the same
+  conventions as walls:
+  * each labelled frame crossing the story-bottom elevation is cut there
+    from its station forces;
+  * P = ΣF_z (compression positive), V = −ΣF·ĥ,
+    M = Σ(s − s̄)F_z + M·(ĥ × ẑ);
+  * ĥ and s̄ come from the label's first wall cut on that story when the
+    pier has walls.  Otherwise they come from the plan line through the
+    columns (pointing toward +X or +Y) and the area-weighted column
+    centroid.  A single column uses its local-2 axis (V = V2, M = M3).
+  * Computed for static cases and additive combos; live-load reduction
+    picks up frame piers.
+* DB edit: `pier_assignments` (Pier Label Assignments, columns and walls).
+* Pinned:
+  * two-column portal: V = F, P = ΣN, M = Fh;
+  * wall plus boundary column: V = F, M = Fh about the wall centroid;
+  * multistory moments and combos.
+
+### Floor auto mesh options: no auto mesh and DB columns (`core/shellopts.py`, `core/wavec_tables.py`)
+
+* `floor_mesh.mode` gains `"none"` (ETABS No Auto Mesh).
+  * A 4-corner slab becomes ONE element.
+  * A polygon slab gets the coarsest conforming mesh: lines only through its
+    vertices and the in-plane frame, link, support and load points.
+  * `"none"` cannot be combined with `max_size`, `mesh_divisions`, or
+    openings on 4-corner slabs.  The mesh study leaves these slabs alone.
+* `shell_objects` gains these columns:
+  * Floor Mesh (blank = no options);
+  * Floor Max Size and Mesh at Beams / Walls / Grids, stored only while a
+    mode is set;
+  * Edge Constraint (model | yes | no).
+
+### Per-object auto edge constraints (`core/edge_constraints_ext.py`)
+
+* `ShellRegion.edge_constraint: null | true | false` (null = the model
+  switch).
+* A hanging-node chain is built when the area that owns the edge is
+  effectively on, or when any area owning a hanging node is explicitly on.
+* With no override this is exactly the model-wide v0.22 zipper.
+* Pinned against the v0.22 tip deflections: 1.218739e-4 tied, 1.526269e-4
+  untied.
+
+### Live-load reduction for beams (`core/llr_beams.py`)
+
+* `llr_settings.apply_to` may include `"beams"`; the default is unchanged.
+  Optional `beam_params {KLL}` (default 2) and `beam_areas {uid: m²}`.
+* Tributary area At = L × (half the spacing to the nearest overlapping
+  parallel beam on each side, or the full distance to the floor bounding box
+  where there is none); n = 1.
+* Factors:
+  * ASCE 7: 0.25 + 4.57/√(KLL At), limited to [0.5, 1];
+  * NBCC: as for columns;
+  * EC1: αA;
+  * IS 875 §3.2.2: 5 % per 50 m² (at most 25 %);
+  * user curve.
+* Beams appear in the factor and reduced-force tables (every station) and in
+  `apply_to_results`.
+
+### Static seismic eccentricity overrides (`core/static_ecc.py`)
+
+* `LoadPattern.ecc_overrides {story | "story/diaphragm" | "story/(free)":
+  ratio | {"length": e}}`.
+  * A ratio in [0, 0.5] replaces |ecc|: Mz = F·r·B⊥.
+  * A length gives Mz = F·e.
+  * The sign comes from the pattern's ecc / ecc_y.
+  * Overrides are active only with accidental torsion on.
+* Honoured on the rigid-master, semi-rigid slab and named-diaphragm paths.
+* DB edit: `load_pattern_ecc_overrides`.
+
+### Diaphragm design forces (ASCE 7 12.10) (`core/fpx.py`)
+
+* §12.10.1.1: Fpx = ΣF_i/Σw_i·w_px, limited to [0.2, 0.4]·SDS·Ie·w_px.
+* §12.10.3 alternative: Cpx/Rs·w_px ≥ 0.2 SDS Ie w_px, with Cp0, Cpi, Cpn,
+  Γm1, Γm2 and Cs2.  These coefficients were implemented from memory of the
+  standard and need to be checked against it.
+* `BuildingModel.fpx_settings {SDS, Ie, patterns?, method?, weights?, wpx?,
+  Rs?, Cs?, Omega0?, zs?, SD1?}`.
+* Results table `diaphragm_design_forces`.
+* `generate_patterns` writes one story-force pattern `<src>_Fpx_<story>` per
+  level and copies the source's accidental-torsion settings.
+
+### Wave C endpoints (`api/wavec_api.py`)
+
+* ``POST /api/fpx`` body ``{pattern?, SDS?, Ie?, method?, weights?, wpx?, model?}`` -> ``{"reports": [...]}`` (read only).
+* ``POST /api/pattern/fpx`` body ``{pattern, SDS, Ie?, prefix?, copy_ecc?}`` -> ``{"model", "patterns", "report"}`` (writes the current model).
+* ``POST /api/llr/beams`` body ``{settings?, model?}`` -> ``{"code", "beams": {uid: {At, A1, n, R, L, w_left, w_right}}}``.
+* ``POST /api/pattern/ecc-torques`` body ``{pattern, model?}`` -> ``{"rows": [{story, fx, fy, mz_x, mz_y, override}]}``.
+
+### Wave C UI (`js/wavec.js`, `js/mock_wavec.js`)
+
+* New acts:
+  * `def-wc-piers`: Define › Groups, Cuts & Labels › Pier Labels…
+  * `def-wc-ecc`: Define › Auto Lateral Loads › Eccentricity Overrides…
+  * `def-wc-fpx`: Define › Auto Lateral Loads › Diaphragm Design Forces (Fpx)…
+  * `asn-wc-fpier`: Assign › Frame › Pier Label…
+  * `asn-wc-spier`: Assign › Shell › Pier Label…
+  * `asn-wc-floormesh`: Assign › Shell › Floor Auto Mesh Options…
+  * `asn-wc-edge`: Assign › Shell › Auto Edge Constraints…
+  * `asn-wc-fmoment`: Assign › Frame Loads › Distributed Moments…
+* Live Load Reduction Factors (`des-lc-llr`) gains Beams and a beam KLL.
+  The Distributed frame load dialog gains Local 1 / Local 3.
+* Test hook: `__sky.waveC = {openPierLabels, …}`.
+* Mock support:
+  * Fpx, beam LLR and eccentricity-torque ports;
+  * frame pier forces in mock results;
+  * POST /api/model checks;
+  * the new DB tables and columns;
+  * the mock Diaphragm Design Forces table.

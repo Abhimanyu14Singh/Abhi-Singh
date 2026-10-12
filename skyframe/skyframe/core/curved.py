@@ -347,7 +347,8 @@ def _chord_loads(ml, n: int, ratio: float, chords: List[str]):
     from .model import MemberLoad
     out = []
     kind = ml.kind
-    if kind in ("point", "moment"):
+    mdist = getattr(ml, "moment_dist", "") or ""   # Wave C distributed moment
+    if kind == "point" or (kind == "moment" and not mdist):
         a = min(max(float(ml.a), 0.0), 1.0)
         k = min(n - 1, int(math.floor(a * n)))
         t = min(max(a * n - k, 0.0), 1.0)
@@ -355,7 +356,7 @@ def _chord_loads(ml, n: int, ratio: float, chords: List[str]):
         return out
     a, b = float(ml.a), float(ml.b)
     w1 = float(ml.w)
-    w2 = float(ml.w) if kind == "udl" else float(ml.w2)
+    w2 = float(ml.w) if kind == "udl" or mdist == "uniform" else float(ml.w2)
     f = 1.0 if getattr(ml, "projected", False) else ratio
 
     def w_at(s):
@@ -369,6 +370,11 @@ def _chord_loads(ml, n: int, ratio: float, chords: List[str]):
             continue
         t0 = min(max((lo - s0) * n, 0.0), 1.0)
         t1 = min(max((hi - s0) * n, 0.0), 1.0)
+        if mdist:                                   # Wave C: per chord piece
+            out.append(dataclasses.replace(
+                ml, member_uid=chords[k], w=w_at(lo) * f, w2=w_at(hi) * f,
+                a=t0, b=t1, moment_dist="trapezoid"))
+            continue
         if kind == "udl":
             out.append(MemberLoad(chords[k], "udl", w1 * f, 0.0, t0, t1,
                                   ml.direction,

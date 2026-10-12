@@ -36,7 +36,8 @@ import { fuMockAugment as c9fMockAugment } from "./mock_towers_fu.js";   // C9 f
 import { rsxMockAugment } from "./mock_rs_ext.js";   // RS ext: U3 / angle / CQC3 / ABS / ecc / RS shell forces
 import { poxMockAugment as poxMockAugmentResults } from "./mock_pomethods.js";   // pushover ATC-40 / FEMA 440 / N2 (js/mock_pomethods.js)
 
-import { tdMockAugment as tdMockAugmentResults } from "./mock_timedep.js";   // step creep time history + tendon elements
+import { tdMockAugment as tdMockAugmentResults } from "./mock_timedep.js";
+import { wcMockAugment as wcMockAugmentResults } from "./mock_wavec.js";   // Wave C frame pier forces   // step creep time history + tendon elements
 const G = 9.80665;
 
 function mulberry32(seed) {
@@ -3336,6 +3337,7 @@ export function mockResults(model) {
   poxMockAugmentResults(model, r);                // pushover performance methods (js/mock_pomethods.js)
 
   tdMockAugmentResults(model, r);                 // step creep time history + tendon elements (js/mock_timedep.js)
+  wcMockAugmentResults(model, r);                 // Wave C frame pier forces (js/mock_wavec.js)
   return r;
 }
 

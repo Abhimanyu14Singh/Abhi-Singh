@@ -83,6 +83,8 @@ def member_load_to_dict(ml) -> dict:
     d = asdict(ml)
     if not d.get("projected"):
         d.pop("projected", None)
+    if not d.get("moment_dist"):                 # Wave C (frame_loads_ext)
+        d.pop("moment_dist", None)
     return d
 
 

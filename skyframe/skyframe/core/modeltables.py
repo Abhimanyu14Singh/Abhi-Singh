@@ -63,6 +63,7 @@ QUANTITIES: Dict[str, str] = {
     "force": "kN",
     "moment": "kN*m",
     "line_force": "kN/m",
+    "line_moment": "kN*m/m",      # Wave C distributed frame moments
     "pressure": "kPa",
     "stress": "kPa",
     "modulus": "kPa",
@@ -1862,6 +1863,8 @@ def _build_catalogue() -> List[Table]:
         new_obj=lambda d: {"member_uid": "", "kind": "point", "w": 0.0,
                            "w2": 0.0, "a": 0.5, "b": 1.0,
                            "direction": "gravity"}))
+    from .frame_loads_ext import modeltables as _wc_fle_tables  # Wave C
+    T.extend(_wc_fle_tables(G_LOAD))   # frame moment / distributed moments
     T.append(PatternListTable(
         "area_loads", "Shell Loads - Uniform", G_LOAD, [
             pat_col,
@@ -2016,6 +2019,8 @@ def _build_catalogue() -> List[Table]:
 
     from .props_tables import extend_catalogue as _wbp_extend
     _wbp_extend(T)       # Wave B: ortho / slab / spring props (props_tables)
+    from .wavec_tables import extend as _wc_extend
+    _wc_extend(T)        # Wave C: floor mesh / edge / pier / ecc (wavec_tables)
     return T
 
 

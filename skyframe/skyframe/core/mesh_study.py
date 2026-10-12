@@ -198,6 +198,8 @@ def refine_model(model: BuildingModel, level: int) -> BuildingModel:
     for r in new.shells:
         if r.behavior != "shell":
             continue                    # membrane slabs are never meshed
+        if (getattr(r, "floor_mesh", None) or {}).get("mode") == "none":
+            continue                    # Wave C: no auto mesh (as drawn)
         if _structured(r):
             nx, ny = _base_divisions(r)
             r.mesh_divisions = {"n1": f * nx, "n2": f * ny}

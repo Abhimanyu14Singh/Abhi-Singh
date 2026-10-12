@@ -38,7 +38,14 @@ sets (:mod:`skyframe.core.polymesh`):
   their ends but never cut cells (a pure rectangular mesh clipped only by
   the outline and openings);
 * ``max_size`` replaces ``mesh_size`` as the maximum element size
-  (``mesh_divisions`` wins over it).
+  (``mesh_divisions`` wins over it);
+* ``mode "none"`` (Wave C, ETABS "No Auto Mesh -- use the object as
+  drawn"): a 4-corner slab is ONE quad element (its corners); a polygon
+  slab gets the coarsest conforming mesh -- cells only between the u / v
+  lines through its own vertices, opening vertices and the in-plane
+  points of frames / links / supports / joint loads (no beam, wall or
+  grid lines, no subdivision).  Not combinable with ``mesh_divisions``,
+  ``max_size`` or openings on a 4-corner slab.
 
 Joint patterns / shell load sets (BuildingModel)
 ------------------------------------------------
@@ -57,7 +64,9 @@ import copy
 import math
 from typing import Optional, Tuple
 
-FLOOR_MESH_MODES = ("default", "rectangular", "cookie_cut")
+FLOOR_MESH_MODES = ("default", "rectangular", "cookie_cut",
+                    "none")            # Wave C: "none" = no auto mesh
+NO_MESH_STEP = 1.0e9                   # "none": one interval per line pair
 _FM_FLAGS = ("at_beams", "at_walls", "at_grids")
 
 
@@ -120,6 +129,8 @@ def normalize_floor_mesh(d) -> Optional[dict]:
 
 def structured_divisions(region, lx: float, ly: float) -> Tuple[int, int]:
     """(nx, ny) of the 4-corner structured mesher."""
+    if no_auto_mesh(region):                  # Wave C: object as drawn
+        return 1, 1
     md = getattr(region, "mesh_divisions", None)
     if md is None:
         return (max(1, round(lx / region.mesh_size)),
@@ -132,9 +143,17 @@ def structured_divisions(region, lx: float, ly: float) -> Tuple[int, int]:
 
 
 def uses_polygon_mesher(region) -> bool:
-    """A 4-corner slab with floor_mesh options takes the polygon mesher."""
-    return (getattr(region, "floor_mesh", None) is not None
-            and region.behavior == "shell")
+    """A 4-corner slab with floor_mesh options takes the polygon mesher
+    (except mode "none": the structured mesher with one cell)."""
+    fm = getattr(region, "floor_mesh", None)
+    if fm is not None and fm.get("mode") == "none":     # Wave C as drawn
+        return False
+    return fm is not None and region.behavior == "shell"
+
+
+def no_auto_mesh(region) -> bool:
+    fm = getattr(region, "floor_mesh", None)
+    return fm is not None and fm.get("mode") == "none"
 
 
 def floor_flags(region) -> dict:
@@ -142,6 +161,9 @@ def floor_flags(region) -> dict:
     if fm is None:
         return {"mode": "default", "at_beams": True, "at_walls": True,
                 "at_grids": True}
+    if fm.get("mode") == "none":              # Wave C: no auto mesh
+        return {"mode": "rectangular", "at_beams": False,
+                "at_walls": False, "at_grids": False}
     return {k: fm.get(k, True) for k in _FM_FLAGS} | {
         "mode": fm.get("mode", "default")}
 
@@ -149,6 +171,8 @@ def floor_flags(region) -> dict:
 def polygon_steps(region, ulo: float, uhi: float, vlo: float,
                   vhi: float) -> Tuple[float, float]:
     """(hu, hv) maximum interval steps of the polygon mesher."""
+    if no_auto_mesh(region):                  # Wave C: object as drawn
+        return NO_MESH_STEP, NO_MESH_STEP
     h = float(region.mesh_size)
     fm = getattr(region, "floor_mesh", None)
     if fm is not None and fm.get("max_size"):
@@ -249,6 +273,14 @@ def validate_model(model) -> None:
             raise ValueError(f"{tag}: {exc}") from None
         if r.floor_mesh is not None and r.kind != "slab":
             raise ValueError(f"{tag}: floor_mesh applies to slabs only")
+        if no_auto_mesh(r):                   # Wave C: object as drawn
+            if r.mesh_divisions is not None or r.floor_mesh.get("max_size"):
+                raise ValueError(f"{tag}: floor_mesh mode 'none' (no auto "
+                                 "mesh) excludes mesh_divisions / max_size")
+            if len(r.corners) == 4 and getattr(r, "openings", None):
+                raise ValueError(f"{tag}: floor_mesh mode 'none' (no auto "
+                                 "mesh) needs a 4-corner slab without "
+                                 "openings")
         if ((r.floor_mesh is not None or r.mesh_divisions is not None)
                 and r.behavior != "shell"):
             raise ValueError(f"{tag}: mesh options need shell behavior "

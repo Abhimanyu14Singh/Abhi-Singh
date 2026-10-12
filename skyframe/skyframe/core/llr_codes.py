@@ -1,4 +1,5 @@
-"""Live-load reduction by code, applied to frame (column) and pier output —
+"""Live-load reduction by code, applied to frame (column; beams with
+``apply_to`` "beams", core.llr_beams) and pier output —
 CONTRACT "Code spectra, design combinations, pattern types and live-load
 reduction".
 
@@ -86,7 +87,8 @@ def normalize_settings(s: Optional[dict]) -> dict:
     if not isinstance(s, dict):
         raise ValueError("llr_settings must be an object")
     bad = [k for k in s if k not in ("code", "params", "kinds", "apply_to",
-                                     "pier_areas")]
+                                     "pier_areas", "beam_params",
+                                     "beam_areas")]   # + Wave C beams
     if bad:
         raise ValueError(f"llr_settings: unknown key(s) {bad}")
     code = s.get("code", "asce7_16")
@@ -138,16 +140,24 @@ def normalize_settings(s: Optional[dict]) -> dict:
         raise ValueError("llr_settings.kinds must be a list of pattern kinds")
     apply_to = s.get("apply_to", ["columns", "piers"])
     if (not isinstance(apply_to, list)
-            or not set(apply_to) <= {"columns", "piers"}):
-        raise ValueError("llr_settings.apply_to must list columns|piers")
+            or not set(apply_to) <= {"columns", "piers", "beams"}):
+        raise ValueError("llr_settings.apply_to must list "
+                         "columns|piers|beams")
     pa = s.get("pier_areas") or {}
     if not isinstance(pa, dict) or not all(_num(v) and v > 0
                                            for v in pa.values()):
         raise ValueError("llr_settings.pier_areas must map pier -> area > 0")
+    from .llr_beams import normalize_params as _wc_beam_params  # Wave C
+    ba = s.get("beam_areas") or {}
+    if not isinstance(ba, dict) or not all(_num(v) and v > 0
+                                           for v in ba.values()):
+        raise ValueError("llr_settings.beam_areas must map beam -> area > 0")
     return {"code": code, "params": p,
             "kinds": list(kinds) if kinds else ["reducible_live"],
             "kinds_given": kinds is not None, "apply_to": list(apply_to),
-            "pier_areas": {k: float(v) for k, v in pa.items()}}
+            "pier_areas": {k: float(v) for k, v in pa.items()},
+            "beam_params": _wc_beam_params(s.get("beam_params")),
+            "beam_areas": {k: float(v) for k, v in ba.items()}}
 
 
 # --------------------------------------------------------------------------- #
@@ -217,6 +227,12 @@ def _pier_labels(model, results: Optional[dict]) -> Dict[str, List[str]]:
             lst = out.setdefault(lab, [])
             if r.story and r.story not in lst:
                 lst.append(r.story)
+    for m in getattr(model, "members", []) or []:      # Wave C frame piers
+        lab = getattr(m, "pier", "") or ""
+        if lab:
+            lst = out.setdefault(lab, [])
+            if m.story and m.story not in lst:
+                lst.append(m.story)
     return out
 
 
@@ -267,8 +283,11 @@ def element_factors(model, settings: Optional[dict] = None,
                     piers.setdefault(lab, {})[s] = {
                         "At": At, "A1": A1, "n": n,
                         "R": float(reduction_factor(code, prm, At, n))}
-    return {"code": code, "columns": cols, "piers": piers,
-            "warnings": warns}
+    out = {"code": code, "columns": cols, "piers": piers, "warnings": warns}
+    if "beams" in st["apply_to"]:                       # Wave C beams
+        from .llr_beams import element_factors as _wc_beam_factors
+        out["beams"] = _wc_beam_factors(model, st)
+    return out
 
 
 def reducible_cases(model, settings: Optional[dict] = None):
@@ -335,7 +354,9 @@ def apply_to_results(results, model, settings: Optional[dict] = None
     warns += fac["warnings"]
     out: Dict[str, Any] = {"code": fac["code"], "live_cases": live,
                            "factors": {"columns": fac["columns"],
-                                       "piers": fac["piers"]},
+                                       "piers": fac["piers"],
+                                       **({"beams": fac["beams"]}
+                                          if "beams" in fac else {})},
                            "cases": {}, "combos": {}, "piers": {},
                            "live_factor": {}, "skipped": [],
                            "warnings": warns}
@@ -357,7 +378,8 @@ def apply_to_results(results, model, settings: Optional[dict] = None
                 continue
             out["live_factor"][name] = lf
             mf_out, st_out = {}, {}
-            for uid, info in fac["columns"].items():
+            for uid, info in {**fac["columns"],
+                              **fac.get("beams", {})}.items():  # + beams
                 if info["R"] == 1.0:
                     continue
                 mf = (block.get("member_forces") or {}).get(uid)
@@ -454,6 +476,10 @@ def _t_factors(c) -> List[dict]:
             rows.append({"story": s, "element": "Pier", "name": p,
                          "code": lab, "at": i["At"], "n": i["n"],
                          "rll": i["R"]})
+    for uid, i in (f.get("beams") or {}).items():        # Wave C beams
+        rows.append({"story": _story_of(model, uid), "element": "Beam",
+                     "name": uid, "code": lab, "at": i["At"], "n": i["n"],
+                     "rll": i["R"]})
     return rows
 
 
@@ -486,6 +512,20 @@ def _t_forces(c) -> List[dict]:
                              "T": float(st["T"][idx]),
                              "M2": float(st["M2"][idx]),
                              "M3": float(st["M3"][idx])})
+        for uid, info in (red["factors"].get("beams") or {}).items():
+            st = blk["member_stations"].get(uid) or \
+                (cd.get("member_stations") or {}).get(uid)
+            if not st or not st.get("x"):               # Wave C beams:
+                continue                                # every station
+            for idx in range(len(st["x"])):
+                rows.append({"story": _story_of(model, uid),
+                             "element": "Beam", "name": uid,
+                             "case": name, "case_type": ctype,
+                             "station": float(st["x"][idx]),
+                             "rll": info["R"],
+                             **{k2: float(st[k1][idx]) for k1, k2 in (
+                                 ("N", "P"), ("V2", "V2"), ("V3", "V3"),
+                                 ("T", "T"), ("M2", "M2"), ("M3", "M3"))}})
         src = (c.R.get("piers") or {}).get(name) or {}
         rp = red["piers"].get(name) or {}
         for lab, by in src.items():

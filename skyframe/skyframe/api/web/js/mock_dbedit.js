@@ -16,10 +16,11 @@ const clone = o => JSON.parse(JSON.stringify(o));
 import { mdbW8Extend } from "./mock_w8.js";   // W8 DB-edit coverage tables
 import { wbMockTables as mdbWbTables } from "./mock_wbdamp.js";   // wave B: material damping / freq-dependent link tables
 
-import { tdMdbExtend } from "./mock_timedep.js";   // time-dependent materials table + tendon element columns
+import { tdMdbExtend } from "./mock_timedep.js";
+import { wcMdbExtend as mdbWcExtend } from "./mock_wavec.js";   // Wave C DB-edit tables / columns   // time-dependent materials table + tendon element columns
 const QUANTITIES = {
   none: "", length: "m", dim: "m", area: "m^2", inertia: "m^4", force: "kN", moment: "kN*m",
-  line_force: "kN/m", pressure: "kPa", stress: "kPa", modulus: "kPa", unit_weight: "kN/m^3",
+  line_force: "kN/m", line_moment: "kN*m/m", pressure: "kPa", stress: "kPa", modulus: "kPa", unit_weight: "kN/m^3",
   mass: "tonne", mass_density: "tonne/m^3", mass_per_length: "tonne/m", mass_per_area: "tonne/m^2",
   stiffness: "kN/m", rot_stiffness: "kN*m/rad", line_spring: "kN/m/m", thermal_coeff: "1/degC",
   period: "s", angle_deg: "deg",
@@ -463,7 +464,7 @@ const MATERIAL_TYPES = ["steel", "concrete", "rebar", "tendon", "masonry", "alum
 const LINK_TYPES = ["elastic", "damper", "gap", "hook", "isolator", "fp_isolator", "triple_fp", "multilinear",
   "multilinear_takeda", "multilinear_pivot", "multilinear_kinematic", "friction_spring", "rubber_isolator_bouc_wen",
   "plastic_wen", "brb", "damper_bilinear", "tc_fp_isolator"];   // + wave B link types (js/linkext.js)
-const ML_DIRS = ["gravity", "local_y", "global_x", "global_y", "global_z"];
+const ML_DIRS = ["gravity", "local_y", "global_x", "global_y", "global_z", "local_1", "local_3"];   // + Wave C local 1 / 3
 const AREA_DIRS = ["gravity", "global_x", "global_y", "global_z", "local_1", "local_2", "local_3"];
 const GEOM = ["linear", "pdelta", "corotational"];
 const PATTERN_KINDS = ["dead", "live", "quake", "wind", "other", "notional", "prestress"];
@@ -664,7 +665,8 @@ function buildCatalogue() {
   ], W8H), W8H);
 }
 let CAT = null;
-const catalogue = () => (CAT = CAT || [...buildCatalogue(), ...mdbRelTables({ obj, col, G }),
+const catalogue = () => (CAT = CAT || [...mdbWcExtend(buildCatalogue(), { col, names, plist, G, E, parseCell, RowErr }),   // + Wave C (js/mock_wavec.js)
+  ...mdbRelTables({ obj, col, G }),
   ...mdbWbTables({ col, obj, names, G, E, parseCell, clone })]);   // + wave B tables (js/mock_wbdamp.js)   // + end releases / joint axes (js/mock_releases.js)
 const table = key => catalogue().find(t => t.key === key);
 

@@ -202,6 +202,10 @@ from skyframe.engine import parallel as _par        # parallel solve families
 from skyframe.engine import towers as _tw          # C9 multiple towers
 from skyframe.engine import towers_ext as _twx     # C9 follow-ups
 from skyframe.engine import releases_eng as _rle   # end releases/joint axes
+from skyframe.engine import frame_dist_loads as _fdl  # Wave C dist. moments
+from skyframe.core import edge_constraints_ext as _ece  # Wave C per-area zip
+from skyframe.engine import frame_piers as _fpe   # Wave C frame pier forces
+from skyframe.core import static_ecc as _secc     # Wave C ecc overrides
 
 from skyframe.engine import modal_cases as _mcx    # named modal cases / Ritz
 from skyframe.core.frame_axes import member_local_axes as _fa_member_local_axes  # noqa: E501
@@ -813,6 +817,8 @@ def _consistent_load(records: Sequence[SpanLoad], L: float,
             f[4] += my * e2
             f[8] += my * e1
             f[10] += my * e4
+        elif rec[0] == "mtrap":               # Wave C distributed moment
+            f += _fdl.consistent(rec, L, phi_y, phi_z)
         else:
             w1, w2, xa, xb = rec[1], rec[2], rec[3], rec[4]
             span = xb - xa
@@ -885,6 +891,8 @@ def _defl_double_integral(V_i: float, M_i: float,
             x0 = rec[2]
             if xi > x0:
                 val += m0 * (xi - x0) ** 2 / 2.0
+        elif rec[0] == "mtrap":               # Wave C distributed moment
+            val += _fdl.defl_term(rec, comp, xi)
         else:
             w1, w2 = rec[1][comp], rec[2][comp]
             xa, xb = rec[3], rec[4]
@@ -919,6 +927,8 @@ def _bending_moment(V_i: float, M_i: float, records: Sequence[SpanLoad],
             m0 = -rec[1][2] if comp == 1 else rec[1][1]
             if xi > rec[2]:
                 val += m0
+        elif rec[0] == "mtrap":               # Wave C: Q unchanged (0)
+            val += _fdl.bending_term(rec, comp, xi)
         else:
             w1, w2 = rec[1][comp], rec[2][comp]
             xa, xb = rec[3], rec[4]
@@ -964,6 +974,11 @@ def _section_forces(fi: Sequence[float], records: Sequence[SpanLoad],
                 mx += rec[1][0]
                 my += rec[1][1]
                 mz += rec[1][2]
+        elif rec[0] == "mtrap":               # Wave C distributed moment
+            dmx, dmy, dmz = _fdl.section_terms(rec, x)
+            mx += dmx
+            my += dmy
+            mz += dmz
         else:
             w1, w2, xa, xb = rec[1], rec[2], rec[3], rec[4]
             q = min(x, xb)
@@ -2082,12 +2097,13 @@ class OpenSeesEngine:
         # for static cases + additive combos (pure post-processing of the
         # shell nodal forces captured at solve time).
         piers: Dict[str, Dict[str, Dict[str, Dict[str, float]]]] = {}
-        if self._piers_enabled():
+        if self._piers_enabled() or _fpe.enabled(model):   # + Wave C frames
             pier_src = dict(cases)
             for cname, cb in run_combos.items():
                 if combos[cname].minima is None:
                     pier_src[cname] = combos[cname]
             piers = self._compute_piers(asm, pier_src)
+            piers = _fpe.add(self, asm, pier_src, piers)  # Wave C frame piers
         # spandrel forces: vertical end cuts (engine/spandrels.py; only
         # when labels exist -> legacy results unchanged)
         spandrels = (_spd_eng.compute(self, asm, pier_src)
@@ -3426,8 +3442,9 @@ class OpenSeesEngine:
             # regular placeholder — plate-rotation coupling along the edge
             # is not part of the interpolation tie).  Elements only — no
             # MP constraints, so no constraint chains (the v0.19 lesson).
-            if getattr(model, "edge_constraints", False):
-                for ruid, na, nb, hangs in edge_tie_chains(mesh):
+            if _ece.active(model):              # Wave C: + per-area switch
+                for ruid, na, nb, hangs in _ece.filter_chains(
+                        model, mesh, edge_tie_chains(mesh)):
                     region = regions[ruid]
                     ssec = model.shell_sections[region.section]
                     mat = model.materials[ssec.material]
@@ -4769,6 +4786,9 @@ class OpenSeesEngine:
             if member is None:
                 raise ValueError(f"Member load references unknown member "
                                  f"{ml.member_uid!r}")
+            if getattr(ml, "moment_dist", ""):      # Wave C dist. moment
+                _fdl.apply(self, asm, member, ml, scale)
+                continue
             pf = _proj_f(member, ml)                # v1.16 projected (1.0)
             self._apply_member_load(asm, member, ml.kind, ml.w * scale * pf,
                                     ml.w2 * scale * pf, ml.a, ml.b,
@@ -4810,12 +4830,17 @@ class OpenSeesEngine:
             lx, ly = _tw.story_extents(self, sf.story, lx0, ly0)  # C9 tower
             fx, fy = sf.fx * scale, sf.fy * scale
             if _dgm.apply_story_force(self, asm, sf, fx, fy, acc_tors, ecc,
-                                      ecc_y=ecc_y):
+                                      ecc_y=ecc_y,
+                                      ecc_fn=_secc.engine_fn(pat, ecc,
+                                                             ecc_y)):
                 continue                              # named diaphragms
             if sf.story in asm.masters:
                 # v0.8 accidental torsion (§12.8.4.2): fx -> Mz = fx*ecc*Ly,
                 # fy -> Mz = fy*ecc*Lx, applied at the master's rz dof.
                 mz = (fx * ecc * ly + fy * ecc_y * lx) if acc_tors else 0.0
+                if acc_tors and _secc.has_overrides(pat):   # Wave C
+                    mz = sum(_secc.torques(pat, sf.story, None, fx, fy, lx,
+                                           ly, ecc, ecc_y))
                 ops.load(asm.masters[sf.story], fx, fy, 0.0, 0.0, 0.0, mz)
                 continue
             nodes = asm.story_nodes.get(sf.story)
@@ -4854,6 +4879,9 @@ class OpenSeesEngine:
                 iw_x = sum(wi * (x - x_bar) ** 2 for wi, x in zip(w, xs))
                 mz_x = fx * ecc * ly
                 mz_y = fy * ecc_y * lx
+                if _secc.has_overrides(pat):              # Wave C
+                    mz_x, mz_y = _secc.torques(pat, sf.story, None, fx, fy,
+                                               lx, ly, ecc, ecc_y)
                 if mz_x != 0.0:
                     if iw_y > 1e-12:
                         mu = mz_x / iw_y
@@ -4951,6 +4979,10 @@ class OpenSeesEngine:
         if direction == "local_y":
             comps: Vec3 = (0.0, 1.0, 0.0)
             dvec = yax
+        elif direction in ("local_1", "local_3"):   # Wave C local 1 / 3
+            comps = ((1.0, 0.0, 0.0) if direction == "local_1"
+                     else (0.0, 0.0, 1.0))
+            dvec = xax if direction == "local_1" else zax
         else:
             dvec = {"gravity": (0.0, 0.0, -1.0), "global_x": (1.0, 0.0, 0.0),
                     "global_y": (0.0, 1.0, 0.0),
@@ -5959,6 +5991,9 @@ class OpenSeesEngine:
                 return -w_total                           # global +Z
             if direction == "local_y":
                 return -w_total * yax[2]
+            if direction in ("local_1", "local_3"):      # Wave C local 1 / 3
+                xa_, _, za_, _, _ = _local_axes(m)
+                return -w_total * (xa_ if direction == "local_1" else za_)[2]
             return 0.0                                    # global_x / global_y
 
         for pname, scale in patterns.items():

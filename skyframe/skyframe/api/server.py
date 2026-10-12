@@ -2394,6 +2394,10 @@ def create_app() -> Flask:
     from skyframe.api.interop_api import register as _iop_register
     _iop_register(app, _state)
 
+    # Wave C: Fpx diaphragm forces · beam LLR · static ecc (wavec_api)
+    from skyframe.api.wavec_api import register as _wc_register
+    _wc_register(app, _state)
+
     return app
 
 

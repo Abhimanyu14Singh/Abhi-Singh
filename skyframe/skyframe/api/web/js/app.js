@@ -118,7 +118,9 @@ import { initA8Results as a8InitResults } from "./a8results.js";   // A8: spandr
 import { initModalX as mxInitModalX } from "./modalx.js";   // TH function tools · named mass sources · modal cases (js/modalx.js)   // File › Import ▸ / Export ▸ E2K · IFC · DXF · Excel (js/exchange.js)
 import { initPoMethods as poxInitPoMethods } from "./pomethods.js";   // pushover ATC-40 / FEMA 440 / N2 + ADRS (js/pomethods.js)
 
-import { initW8 as w8InitW8 } from "./w8_init.js";   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_*.js)
+import { initW8 as w8InitW8 } from "./w8_init.js";
+import { initWaveC as wcInitWaveC } from "./wavec.js";   // Wave C: piers · floor mesh · edge · dist. moments · ecc · Fpx (js/wavec.js)
+import { wcMockValidate as wcMockValidateModel } from "./mock_wavec.js";   // Wave C mock checks   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_*.js)
 import { mockValidateW8 as w8MockValidate } from "./mock_w8.js";   // W8 ?mock=1 validation
 import { initWaveBLinks as wbInitLinks, wbMockValidateModel as wbMockValidate } from "./wb_links.js";   // wave B: Wen / BRB / bilinear damper / T-C isolator links, freq-dependent links, damping options (js/wb_links.js)
 import { wbMockAugment as wbMockAugmentResults } from "./mock_wbdamp.js";   // wave B ?mock=1 results (composite ζ, freq-dependent-link note)
@@ -328,6 +330,7 @@ async function postModel(payload) {
       || c9MockValidateTowers(payload)   // C9 towers
       || c9fMockValidate(payload)   // C9 follow-ups: control_tower
       || relMockValidate(payload)   // end releases / partial fixity / joint local axes
+      || wcMockValidateModel(payload)   // Wave C fields (js/mock_wavec.js)
       || w8MockValidate(payload)   // W8 master/similar stories · curves · shell options
       || wbMockValidate(payload)   // wave B link types · link_freq_props · material_damping
       || tdMockValidateModel(payload)   // time-dependent materials · step creep · tendon elements (js/mock_timedep.js)
@@ -8632,6 +8635,7 @@ async function boot() {
   try { wbInitWaveB(window.__sky); } catch (err) { console.error("Wave B init failed", err); }   // Irregularity Checks · joint-local reactions (js/waveb.js)
 
   try { wbInitWb(window.__sky); } catch (err) { console.error("Wave B init failed", err); }   // Wave B interface & modelling tools (js/wb_init.js)
+  try { wcInitWaveC(window.__sky); } catch (err) { console.error("Wave C init failed", err); }   // Wave C dialogs (js/wavec.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)
