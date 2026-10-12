@@ -63,6 +63,7 @@ import math
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import edit as _ed
+from . import shell_holes as _shh  # Wave C: shells with openings
 
 _TOL = 1e-9
 SHELL_OPS = ("shell_divide", "shell_merge", "shell_chop", "shell_expand",
@@ -309,7 +310,6 @@ def op_shell_divide(ctx, sel, params):
     mode = params.get("mode", "n")
     divided = {}
     for s in shells:
-        _no_openings(s)
         c = [list(map(float, p)) for p in s["corners"]]
         if mode == "n":
             n1 = _ed._num(params, "n1", 2, integer=True, lo=1, hi=100)
@@ -336,7 +336,9 @@ def op_shell_divide(ctx, sel, params):
                 raise ValueError(f"shell {s['uid']}: only 4-corner or convex "
                                  "polygon shells can be divided")
             pieces = divide_polygon(c, n1, n2)
-        divided[s["uid"]] = _replace_pieces(ctx, s, pieces)
+        divided[s["uid"]] = (_shh.replace_with_openings(ctx, s, pieces)   # Wave C
+                             if s.get("openings") else
+                             _replace_pieces(ctx, s, pieces))
     ns = _ed._new_sel()
     ns["shells"] = [u for v in divided.values() for u in v]
     return {"divided": divided, "new_selection": ns}
@@ -411,7 +413,6 @@ def op_shell_merge(ctx, sel, params):
     n0 = _unit(newell(s0["corners"]))
     polys = []
     for s in shells:
-        _no_openings(s)
         for key in ("kind", "behavior", "section"):
             if s.get(key) != s0.get(key):
                 raise ValueError(f"shell_merge: {s['uid']} has a different "
@@ -430,10 +431,22 @@ def op_shell_merge(ctx, sel, params):
             raise ValueError(f"shell_merge: {s['uid']} carries different "
                              f"area loads than {s0['uid']} — make them equal "
                              "first")
-    merged = merge_polygons(polys)
-    a_sum = sum(area(p) for p in polys)
-    if abs(area(merged) - a_sum) > 1e-9 * max(1.0, a_sum):
-        raise ValueError("shell_merge: shells overlap")
+    holes = None
+    if any(s.get("openings") for s in shells):     # Wave C: keep openings
+        merged, holes = _shh.merge_with_openings(shells, polys)
+    else:
+        try:
+            merged = merge_polygons(polys)
+        except ValueError as exc:                  # Wave C: a ring of shells
+            if "without holes" not in str(exc):    # -> one shell + opening
+                raise
+            merged, holes = _shh.merge_with_openings(shells, polys)
+            if not holes:
+                raise
+        a_sum = sum(area(p) for p in polys)
+        if holes is None and abs(area(merged) - a_sum) > 1e-9 * max(
+                1.0, a_sum):
+            raise ValueError("shell_merge: shells overlap")
     c0k = _ed._key(s0["corners"][0])
     ks = [_ed._key(p) for p in merged]
     if c0k in ks:
@@ -441,6 +454,8 @@ def op_shell_merge(ctx, sel, params):
         merged = merged[i:] + merged[:i]
     merged = [_ed._clean(p) for p in merged]
     s0["corners"] = merged
+    if holes is not None:
+        s0["openings"] = _shh.openings_for(merged, holes)   # Wave C
     ctx.mark_modified("shells", s0["uid"])
     gone = [s["uid"] for s in shells[1:]]
     for u in gone:
@@ -521,7 +536,6 @@ def op_shell_chop(ctx, sel, params):
         raise ValueError("shell_chop: mode must be grid|lines|frames|levels")
     chopped = {}
     for s in shells:
-        _no_openings(s)
         c = [list(map(float, p)) for p in s["corners"]]
         if not is_convex(c):
             ctx.warnings.append(f"shell {s['uid']}: concave shells are not "
@@ -539,7 +553,9 @@ def op_shell_chop(ctx, sel, params):
                     nxt.append(pc)
             pieces = nxt
         if len(pieces) > 1:
-            chopped[s["uid"]] = _replace_pieces(ctx, s, pieces)
+            chopped[s["uid"]] = (_shh.replace_with_openings(ctx, s, pieces)
+                                 if s.get("openings") else   # Wave C
+                                 _replace_pieces(ctx, s, pieces))
     if not chopped:
         ctx.warnings.append("shell_chop: no shell was crossed by a cutting "
                             "plane")
@@ -579,7 +595,7 @@ def op_shell_expand(ctx, sel, params):
     dist = _ed._num(params, "distance")
     out = {}
     for s in shells:
-        _no_openings(s)
+        holes = _shh.holes3(s)                     # Wave C: openings stay put
         c = [list(map(float, p)) for p in s["corners"]]
         if params.get("edge") is None:
             edges = list(range(len(c)))
@@ -592,6 +608,9 @@ def op_shell_expand(ctx, sel, params):
         if a < 1e-9 or _dot(newell(nc), newell(c)) <= 0:
             raise ValueError(f"shell_expand: {s['uid']} would collapse")
         s["corners"] = [_ed._clean(p) for p in nc]
+        if holes:                                  # Wave C
+            s["openings"] = _shh.openings_for(s["corners"], holes)
+            _shh.check_inside(s, "shell_expand")
         ctx.mark_modified("shells", s["uid"])
         out[s["uid"]] = {"area_before": area(c), "area_after": a}
     ns = _ed._new_sel()
@@ -608,6 +627,7 @@ def op_shell_reshape(ctx, sel, params):
         raise ValueError("shell_reshape: select exactly one shell")
     s = shells[0]
     c = [list(map(float, p)) for p in s["corners"]]
+    holes = _shh.holes3(s)                         # Wave C: openings stay put
     mode = params.get("mode", "corners")
     if mode == "corners":
         cs = params.get("corners")
@@ -633,12 +653,14 @@ def op_shell_reshape(ctx, sel, params):
     else:
         raise ValueError("shell_reshape: mode must be corners|move|insert|"
                          "delete")
+    if params.get("on_plane"):                     # Wave C: elevation / 3D
+        c = _shh.project_on_plane(s, c)
     if len({_ed._key(p) for p in c}) != len(c):
         raise ValueError("shell_reshape: duplicate corners")
-    if len(c) != len(s["corners"]) and s.get("openings"):
-        raise ValueError("shell_reshape: remove the openings before adding "
-                         "or deleting corners")
     s["corners"] = [_ed._clean(p) for p in c]
+    if holes:                                      # Wave C
+        s["openings"] = _shh.openings_for(s["corners"], holes)
+        _shh.check_inside(s, "shell_reshape")
     st = ctx.story_for([p[2] for p in c])
     if st is not None:
         s["story"] = st

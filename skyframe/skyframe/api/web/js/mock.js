@@ -5,6 +5,7 @@ import { designerProps, blankMaterial,                  // v0.21 — shoelace pr
   allAnalysisCases, MODAL_CASE, normalizeActiveDof,       // v1.13 — cases to run / DOF
   ssFamily, ssStrengths, ssDefaultParams, normalizeSsPoints } from "./modeledit.js";
 import { allUnitsTables } from "./units.js";              // v1.13 — GET /api/units mirror
+import { orthoGrid as mkOrthoGrid } from "./wc_gridgeom.js";   // Wave C general primary grid
 import { mockFrequencyResults, augmentMockResults as augmentCaseResults } from "./mock_cases.js";  // load-case parity (SS / PSD / DI / pushover)
 
 // Check Model + stability diagnostics mocks (POST /api/check, /api/check/stability)
@@ -609,7 +610,7 @@ function _mockResultsAll(model) {
       node_disp[t] = dirX ? [d, 0, 0, 0, rot, 0] : [0, d, 0, -rot, 0, 0];
     }
     // reactions: base shear split between supports; overturning via axial couple
-    const xs = model.grid.x_lines, ys = model.grid.y_lines;
+    const xs = mkOrthoGrid(model).x_lines, ys = mkOrthoGrid(model).y_lines;   // Wave C general primary grid
     const cx = (xs[0] + xs[xs.length - 1]) / 2, cy = (ys[0] + ys[ys.length - 1]) / 2;
     const Mot = storyOrder.reduce((a, s, i) => a + storyF[i] * storyElev[s], 0);
     const span = dirX ? (xs[xs.length - 1] - xs[0] || 1) : (ys[ys.length - 1] - ys[0] || 1);
@@ -938,7 +939,7 @@ function _mockResultsAll(model) {
   const N = model.num_modes || 6;
   const T1 = 0.075 * Math.pow(H, 0.85) * 1.35;
   const periods = [], frequencies = [], participation = [], shapes = {};
-  const xs2 = model.grid.x_lines, ys2 = model.grid.y_lines;
+  const xs2 = mkOrthoGrid(model).x_lines, ys2 = mkOrthoGrid(model).y_lines;   // Wave C general primary grid
   const cx = (xs2[0] + xs2[xs2.length - 1]) / 2, cy = (ys2[0] + ys2[ys2.length - 1]) / 2;
   for (let m = 1; m <= N; m++) {
     const order = Math.ceil(m / 3);          // 1st, 2nd… vertical order

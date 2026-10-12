@@ -133,7 +133,10 @@ import { initWbProps as wbInitProps } from "./wb_init.js";   // Wave B ortho / s
 import { wbMockValidate as wbMockValidateProps } from "./mock_wb.js";   // Wave B ?mock=1 validation
 
 import { initWb as wbInitWb } from "./wbi_init.js";   // Wave B: templates · general grids · named views / windows · Edit Shells · quick draw · report templates (js/wb_*.js)
-import { wbMockValidate as wbMockValidateIface } from "./mock_wbi.js";   // Wave B ?mock=1 validation
+import { wbMockValidate as wbMockValidateIface } from "./mock_wbi.js";
+import { initWc as wcInitWc } from "./wc_init.js";   // Wave C: general grids (primary / elevation / 3D) · explorer context menu · shells with openings · elevation & 3D snaps · per-quantity units · auto-save · model lock (js/wc_*.js)
+import { orthoGrid as wcOrthoGrid, parseElev as wcParseElev } from "./wc_gridgeom.js";   // Wave C: general primary grid · general-line elevations
+import { wcMockValidate as wcMockValidateModel } from "./mock_wc.js";   // Wave C ?mock=1 validation (units overrides)   // Wave B ?mock=1 validation
 
 /* ------------------------------------------------ state */
 const store = {
@@ -332,7 +335,8 @@ async function postModel(payload) {
       || wbMockValidate(payload)   // wave B link types · link_freq_props · material_damping
       || tdMockValidateModel(payload)   // time-dependent materials · step creep · tendon elements (js/mock_timedep.js)
       || wbMockValidateProps(payload)   // Wave B properties (js/mock_wb.js)
-      || wbMockValidateIface(payload);   // Wave B named views · report sets · drawing aids · general grids (js/mock_wbi.js)
+      || wbMockValidateIface(payload)   // Wave B named views · report sets · drawing aids · general grids (js/mock_wbi.js)
+      || wcMockValidateModel(payload);   // Wave C per-quantity units (js/mock_wc.js)
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -1299,6 +1303,7 @@ function syncShellLegend() {
    ================================================================ */
 function elevPlane() {
   if (!store.elevLine) return null;
+  if (store.elevLine.startsWith("g:")) return wcParseElev(store.elevLine);   // Wave C general-line elevation
   const [axis, idx] = store.elevLine.split(":");
   return { axis, index: parseInt(idx, 10) };
 }
@@ -1306,7 +1311,7 @@ function elevPlane() {
 function rebuildElevSelect() {
   const sel = $("elevLineSelect");
   sel.textContent = "";
-  const g = store.model && store.model.grid;
+  const g = store.model && wcOrthoGrid(store.model);   // Wave C: orthogonal lines even when a general grid is primary
   if (!g) return;
   const mk = (label, axis, lines, labels) => {
     const grp = document.createElement("optgroup");
@@ -1321,6 +1326,7 @@ function rebuildElevSelect() {
   };
   mk("X lines", "x", g.x_lines, g.x_labels);
   mk("Y lines", "y", g.y_lines, g.y_labels);
+  if (window.__sky && window.__sky.wc && window.__sky.wc.elevOptions) window.__sky.wc.elevOptions(sel);   // Wave C general grid lines
   const all = [...sel.querySelectorAll("option")].map(o => o.value);
   if (!store.elevLine || !all.includes(store.elevLine)) store.elevLine = all[0] || null;
   if (store.elevLine) sel.value = store.elevLine;
@@ -1428,6 +1434,7 @@ function stepStory(dir) {
 function syncStoryBadges() {
   if (store.view === "elev") {                     // v0.5 elevation badge
     const pl = elevEditor && elevEditor.plane();
+    if (pl && pl.dir) { $("planStoryBadge").innerHTML = `<b>Grid line ${esc(pl.label)}</b> · general elevation`; return; }   // Wave C
     $("planStoryBadge").innerHTML = pl
       ? `<b>${pl.axis === "x" ? "X" : "Y"}-line ${esc(pl.label)}</b> · elevation @ ${esc(pl.axis)} = ${U.fmtU("length", pl.coord, 1)}`
       : "";
@@ -3540,6 +3547,23 @@ function adoptModel(modelDict, fileName) {
   document.dispatchEvent(new CustomEvent("sky:model-replaced"));   // Edit: new model → reset undo history (js/history.js)
 }
 
+/** Wave C — Analyze › Unlock Model: drop the analysis results (js/wc_lock.js). */
+function clearResults() {
+  if (!store.results) return false;
+  store.results = null;
+  store.overlay = { deformed: false, modal: false, modeIndex: 0, scaleMult: 1 };
+  store.steelResult = null; store.concreteResult = null; store.wallResult = null; store.punchResult = null;
+  store.compositeResult = null; store.slabResult = null; store.vibResult = null; store.crackedResult = null;
+  viewer.setResults(null);
+  rebuildCaseSelect();
+  setResultsAvailable(false);
+  syncOverlayUI();
+  renderSummary();
+  setStatus("ready", "Ready");
+  document.dispatchEvent(new CustomEvent("sky:results-changed"));
+  return true;
+}
+
 /* ---- tiny promise-based confirm modal */
 let confirmResolve = null;
 function askConfirm(title, msg, okLabel = "OK") {
@@ -3980,7 +4004,7 @@ function renderSummary() {
   $("modelSummary").hidden = false;
   $("sum-stories").textContent = m.stories.length;
   $("sum-members").textContent = m.members.length;
-  const g = m.grid;
+  const g = wcOrthoGrid(m);   // Wave C general primary grid
   $("sum-footprint").textContent = g ?
     `${U.fmt("length", g.x_lines[g.x_lines.length - 1] - g.x_lines[0], 0)} × ${U.fmtU("length", g.y_lines[g.y_lines.length - 1] - g.y_lines[0], 0)}` : "—";
   const H = m.stories.length ? m.stories[m.stories.length - 1].elevation : 0;
@@ -4230,7 +4254,7 @@ function renderCmCrBlock() {
 /** SVG markup: story footprint outline + CM (filled circle), CR (target
     cross) and the eccentricity vector between them. */
 function cmcrPlanSvg(cc) {
-  const g = store.model.grid;
+  const g = wcOrthoGrid(store.model);   // Wave C general primary grid
   const x0 = g.x_lines[0], x1 = g.x_lines[g.x_lines.length - 1];
   const y0 = g.y_lines[0], y1 = g.y_lines[g.y_lines.length - 1];
   const W = 300, H = 220, P = 26;
@@ -5194,7 +5218,7 @@ function renderTakedownTab() {
 
 /** Bubble plan: support points sized & coloured by |FZ|, over the model grid. */
 function takedownBubbleSvg(rows) {
-  const g = store.model.grid;
+  const g = wcOrthoGrid(store.model);   // Wave C general primary grid
   if (!g) return "";
   const x0 = g.x_lines[0], x1 = g.x_lines[g.x_lines.length - 1];
   const y0 = g.y_lines[0], y1 = g.y_lines[g.y_lines.length - 1];
@@ -8559,6 +8583,7 @@ async function boot() {
     closeDialog: DLG.closeDialog, caseRunStatus: DLG.caseRunStatus,
     notRunEntries, syncRunStatusBadge, fetchMaterialCurve, fetchUnitsTable,
     mockMaterialCurve, keepSetup, markDirty,
+    clearResults,   // Wave C model lock (js/wc_lock.js)
   };
 
   AS.initAssign(window.__sky);                   // Assign dialogs → __sky.assign / open* (additive)
@@ -8632,6 +8657,7 @@ async function boot() {
   try { wbInitWaveB(window.__sky); } catch (err) { console.error("Wave B init failed", err); }   // Irregularity Checks · joint-local reactions (js/waveb.js)
 
   try { wbInitWb(window.__sky); } catch (err) { console.error("Wave B init failed", err); }   // Wave B interface & modelling tools (js/wb_init.js)
+  try { wcInitWc(window.__sky); } catch (err) { console.error("Wave C init failed", err); }   // Wave C interface (js/wc_init.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)

@@ -13,6 +13,7 @@ export const WB_SHELL_OPS = ["shell_divide", "shell_merge", "shell_chop", "shell
 export const WALL_SHAPES = ["straight", "L", "C", "I", "T", "box"];
 export const RELABEL_KINDS = ["column", "beam", "brace", "wall", "slab", "link"];
 const PREFIX = { column: "C", beam: "B", brace: "D", wall: "W", slab: "F", link: "L" };
+import WCH from "./wc_shellholes.js";   // Wave C: Edit Shells on shells with openings (port of core/shell_holes.py)
 const TOL = 1e-9;
 const MAX_PIECES = 400;
 
@@ -275,7 +276,6 @@ function opShellDivide(ctx, sel, params) {
   const mode = params.mode || "n";
   const divided = {};
   for (const s of shells) {
-    noOpenings(s);
     const c = s.corners.map(p => p.map(Number));
     let n1, n2;
     if (mode === "n") { n1 = num(params, "n1", 2, { integer: true, lo: 1, hi: 100 }); n2 = num(params, "n2", 2, { integer: true, lo: 1, hi: 100 }); }
@@ -297,7 +297,7 @@ function opShellDivide(ctx, sel, params) {
       if (!isConvex(c)) throw new Error(`shell ${s.uid}: only 4-corner or convex polygon shells can be divided`);
       pieces = dividePolygon(c, n1, n2);
     }
-    divided[s.uid] = replacePieces(ctx, s, pieces);
+    divided[s.uid] = (s.openings || []).length ? WCH.replaceWithOpenings(ctx, s, pieces, replacePieces) : replacePieces(ctx, s, pieces);   // Wave C
   }
   const ns = newSel(); ns.shells = Object.values(divided).flat();
   return { divided, new_selection: ns };
@@ -346,7 +346,6 @@ function opShellMerge(ctx, sel) {
   const s0 = shells[0], n0 = unit(newell(s0.corners));
   const polys = [];
   for (const s of shells) {
-    noOpenings(s);
     for (const key of ["kind", "behavior", "section"])
       if (s[key] !== s0[key]) throw new Error(`shell_merge: ${s.uid} has a different ${key} than ${s0.uid}`);
     let c = s.corners.map(p => p.map(Number));
@@ -358,12 +357,18 @@ function opShellMerge(ctx, sel) {
     if (loadsSig(ctx.d, s.uid) !== loadsSig(ctx.d, s0.uid))
       throw new Error(`shell_merge: ${s.uid} carries different area loads than ${s0.uid} — make them equal first`);
   }
-  let merged = mergePolygons(polys);
-  const aSum = polys.reduce((a, p) => a + polyArea(p), 0);
-  if (Math.abs(polyArea(merged) - aSum) > 1e-9 * Math.max(1, aSum)) throw new Error("shell_merge: shells overlap");
+  let merged, holes = null;   // Wave C: openings kept / a ring of shells → one shell + opening
+  if (shells.some(s => (s.openings || []).length)) [merged, holes] = WCH.mergeWithOpenings(shells, polys);
+  else {
+    try { merged = mergePolygons(polys); }
+    catch (e) { if (!/without holes/.test(e.message)) throw e; [merged, holes] = WCH.mergeWithOpenings(shells, polys); if (!holes.length) throw e; }
+    const aSum = polys.reduce((a, p) => a + polyArea(p), 0);
+    if (holes === null && Math.abs(polyArea(merged) - aSum) > 1e-9 * Math.max(1, aSum)) throw new Error("shell_merge: shells overlap");
+  }
   const ks = merged.map(pkey), i0 = ks.indexOf(pkey(s0.corners[0]));
   if (i0 >= 0) merged = merged.slice(i0).concat(merged.slice(0, i0));
   s0.corners = merged.map(clean);
+  if (holes !== null) s0.openings = WCH.openingsFor(s0.corners, holes);   // Wave C
   ctx.markModified("shells", s0.uid);
   const gone = shells.slice(1).map(s => s.uid);
   for (const u of gone) replaceUidRefs(ctx.d, "shells", u, [s0.uid]);
@@ -503,7 +508,6 @@ function opShellChop(ctx, sel, params) {
   } else throw new Error("shell_chop: mode must be grid|lines|frames|levels");
   const chopped = {};
   for (const s of shells) {
-    noOpenings(s);
     const c = s.corners.map(p => p.map(Number));
     if (!isConvex(c)) { ctx.warnings.push(`shell ${s.uid}: concave shells are not chopped`); continue; }
     let pieces = [c];
@@ -516,7 +520,7 @@ function opShellChop(ctx, sel, params) {
       }
       pieces = nxt;
     }
-    if (pieces.length > 1) chopped[s.uid] = replacePieces(ctx, s, pieces);
+    if (pieces.length > 1) chopped[s.uid] = (s.openings || []).length ? WCH.replaceWithOpenings(ctx, s, pieces, replacePieces) : replacePieces(ctx, s, pieces);   // Wave C
   }
   if (!Object.keys(chopped).length) ctx.warnings.push("shell_chop: no shell was crossed by a cutting plane");
   const ns = newSel(); ns.shells = Object.values(chopped).flat();
@@ -541,13 +545,14 @@ function opShellExpand(ctx, sel, params) {
   const dist = num(params, "distance");
   const out = {};
   for (const s of shells) {
-    noOpenings(s);
+    const holes = WCH.holes3(s);   // Wave C: openings stay put
     const c = s.corners.map(p => p.map(Number));
     const edges = params.edge == null ? c.map((_, i) => i) : [num(params, "edge", undefined, { integer: true, lo: 0, hi: c.length - 1 })];
     const nc = offsetEdges(c, dist, edges);
     const a = polyArea(nc);
     if (a < 1e-9 || dot(newell(nc), newell(c)) <= 0) throw new Error(`shell_expand: ${s.uid} would collapse`);
     s.corners = nc.map(clean);
+    if (holes.length) { s.openings = WCH.openingsFor(s.corners, holes); WCH.checkInside(s, "shell_expand"); }   // Wave C
     ctx.markModified("shells", s.uid);
     out[s.uid] = { area_before: polyArea(c), area_after: a };
   }
@@ -561,6 +566,7 @@ function opShellReshape(ctx, sel, params) {
   if (shells.length !== 1) throw new Error("shell_reshape: select exactly one shell");
   const s = shells[0];
   let c = s.corners.map(p => p.map(Number));
+  const holes = WCH.holes3(s);   // Wave C: openings stay put
   const mode = params.mode || "corners";
   if (mode === "corners") {
     if (!Array.isArray(params.corners) || params.corners.length < 3) throw new Error("shell_reshape: 'corners' needs >= 3 points");
@@ -576,9 +582,10 @@ function opShellReshape(ctx, sel, params) {
     if (c.length <= 3) throw new Error("shell_reshape: a shell keeps at least 3 corners");
     c.splice(num(params, "index", undefined, { integer: true, lo: 0, hi: c.length - 1 }), 1);
   } else throw new Error("shell_reshape: mode must be corners|move|insert|delete");
+  if (params.on_plane) c = WCH.projectOnPlane(s, c);   // Wave C: elevation / 3D reshaper
   if (new Set(c.map(pkey)).size !== c.length) throw new Error("shell_reshape: duplicate corners");
-  if (c.length !== s.corners.length && (s.openings || []).length) throw new Error("shell_reshape: remove the openings before adding or deleting corners");
   s.corners = c.map(clean);
+  if (holes.length) { s.openings = WCH.openingsFor(s.corners, holes); WCH.checkInside(s, "shell_reshape"); }   // Wave C
   const st = ctx.storyFor(c.map(p => p[2]));
   if (st !== null) s.story = st;
   ctx.markModified("shells", s.uid);

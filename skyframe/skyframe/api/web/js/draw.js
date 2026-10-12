@@ -3,6 +3,7 @@
    Owns only view + interaction; model mutations happen in app.js via
    the onDraw / onErase / onSelect callbacks. */
 
+import { orthoGrid as dwOrthoGrid } from "./wc_gridgeom.js";   // Wave C general primary grid
 import { linkGlyphPath, lineSpringGlyphPath } from "./elev.js";
 import U from "./units.js";   // v1.13 — cursor readout in display units
 import { springKey, lineSpringKey, anyThermalMember, onFoundation, axialLimit,
@@ -153,7 +154,7 @@ export class PlanEditor {
 
   fit() {
     const m = this.opts.getModel();
-    const g = m && m.grid;
+    const g = m && dwOrthoGrid(m);   // Wave C: general primary grid (js/wc_gridgeom.js)
     if (!g || !g.x_lines.length) return;
     const x0 = g.x_lines[0], x1 = g.x_lines[g.x_lines.length - 1];
     const y0 = g.y_lines[0], y1 = g.y_lines[g.y_lines.length - 1];
@@ -580,7 +581,7 @@ export class PlanEditor {
 
   /** Grid cell containing a world point, or null. */
   cellAt(w) {
-    const g = this.opts.getModel()?.grid;
+    const g = dwOrthoGrid(this.opts.getModel());   // Wave C: general primary grid
     if (!g) return null;
     const xi = g.x_lines.findIndex((x, i) => i < g.x_lines.length - 1 &&
       w.x >= x && w.x <= g.x_lines[i + 1]);

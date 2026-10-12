@@ -25,6 +25,7 @@ import math
 from typing import Dict, List, Optional, Tuple
 
 from skyframe.io import e2k_ext as _e2kx
+from skyframe.io import e2k_ggrid as _e2kgg   # Wave C general grids
 from skyframe.io.e2k import _kv, _num, _Tok, _tokenize
 from skyframe.io.exchange_common import G_SI, Units, apply_patches
 
@@ -285,7 +286,9 @@ def read_e2k(text: str, units=("KN", "M"),
         typ = (kv["TYPE"].text.upper() if "TYPE" in kv else "CARTESIAN")
         grids[t[1].text] = {
             "name": t[1].text,
-            "kind": "radial" if typ.startswith("CYL") else "orthogonal",
+            "kind": ("radial" if typ.startswith("CYL") else "general"
+                     if _e2kgg.is_general_type(typ)   # Wave C general grids
+                     else "orthogonal"),
             "origin": [r.si(kv.get("UX"), "length") or 0.0,
                        r.si(kv.get("UY"), "length") or 0.0],
             "rotation": _num(kv.get("ROTATION")) or 0.0,
@@ -299,6 +302,9 @@ def read_e2k(text: str, units=("KN", "M"),
             "rotation": 0.0, "x_lines": [], "y_lines": [], "radii": [],
             "theta_deg": []})
         dirn = kv["DIR"].text.upper() if "DIR" in kv else "X"
+        if dirn.startswith("GEN"):                 # Wave C (io/e2k_ggrid)
+            _e2kgg.read_line(r, g, kv, t)
+            continue
         if dirn == "T":
             v = _num(kv.get("COORD"))
         else:

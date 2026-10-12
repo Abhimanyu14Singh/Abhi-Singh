@@ -41,6 +41,8 @@
    thermal_coeff, rotation, frequency, period, strain, none. Unitless kinds
    (rotation, frequency, period, strain, none) are never scaled. */
 
+import { unitRow as wcUnitRow } from "./wc_unitcat.js";   // Wave C per-quantity units (js/wc_units.js)
+
 const KIP = 4.4482216152605;     // kN
 const TONF = 9.80665;            // kN
 const FT = 0.3048;               // m
@@ -109,6 +111,22 @@ export const QUANTITY_KINDS = Object.keys(KINDS);
 
 let current = DEFAULT_UNITS;
 const listeners = new Set();
+/* Wave C — per-quantity overrides of the CURRENT set (model.display_units_custom
+   {kind: label}) and decimal places (model.display_decimals {kind: n}).
+   Applied only to the current set, so explicit setName calls (tables of all
+   sets, the kN-m reference in dec()) are unchanged. */
+let custom = { units: {}, decimals: {} };
+const ovr = (kind, setName) => (setName === current && custom.units[kind] ? wcUnitRow(kind, custom.units[kind]) : null);
+const tempF = (setName) => { const o = ovr("temp", setName); return o ? o.label === "°F" : unitSet(setName).temp === "F"; };
+/** Set the per-quantity overrides; listeners fire only on a real change. */
+export function setCustom(units, decimals, { silent = false } = {}) {
+  const nu = { units: { ...(units || {}) }, decimals: { ...(decimals || {}) } };
+  if (JSON.stringify(nu) === JSON.stringify(custom)) return false;
+  custom = nu;
+  if (!silent) for (const fn of [...listeners]) { try { fn(current); } catch (e) { console.error(e); } }
+  return true;
+}
+export function getCustom() { return { units: { ...custom.units }, decimals: { ...custom.decimals } }; }
 
 /** Valid set name (anything else falls back to the kN-m default). */
 export const normalizeUnits = name => UNIT_SETS[name] ? name : DEFAULT_UNITS;
@@ -127,6 +145,8 @@ export function setUnits(name, { silent = false } = {}) {
 export function onUnitsChange(fn) { listeners.add(fn); return () => listeners.delete(fn); }
 
 const spec = (kind, setName = current) => {
+  const o = ovr(kind, setName);                  // Wave C per-quantity unit
+  if (o) return [o.si, o.label];
   const k = KINDS[kind] || KINDS.none;
   return k(unitSet(setName));
 };
@@ -135,12 +155,12 @@ const spec = (kind, setName = current) => {
 export function factor(kind, setName = current) { return 1 / spec(kind, setName)[0]; }
 export function label(kind, setName = current) { return spec(kind, setName)[1]; }
 export const isIdentity = (kind, setName = current) =>
-  spec(kind, setName)[0] === 1 && !(kind === "temp" && unitSet(setName).temp === "F");
+  spec(kind, setName)[0] === 1 && !(kind === "temp" && tempF(setName));
 
 export function toDisplay(kind, si, setName = current) {
   if (si == null || si === "" || !isFinite(si)) return si;
   const v = +si;
-  if (kind === "temp" && unitSet(setName).temp === "F") return v * 1.8 + 32;
+  if (kind === "temp" && tempF(setName)) return v * 1.8 + 32;
   const k = spec(kind, setName)[0];
   return k === 1 ? v : v / k;
 }
@@ -148,7 +168,7 @@ export function toDisplay(kind, si, setName = current) {
 export function fromDisplay(kind, v, setName = current) {
   if (v == null || v === "" || !isFinite(v)) return v;
   const x = +v;
-  if (kind === "temp" && unitSet(setName).temp === "F") return (x - 32) / 1.8;
+  if (kind === "temp" && tempF(setName)) return (x - 32) / 1.8;
   const k = spec(kind, setName)[0];
   return k === 1 ? x : x * k;
 }
@@ -157,6 +177,7 @@ export function fromDisplay(kind, v, setName = current) {
     kN-m set uses: scaled by the order of magnitude of the relative factor
     (kN → N drops 3 decimals, kN → kip adds 1, mm → in adds 1 …). */
 export function dec(kind, baseDec = 1, setName = current) {
+  if (setName === current && custom.decimals[kind] != null) return custom.decimals[kind];   // Wave C
   const rel = factor(kind, setName) / factor(kind, DEFAULT_UNITS);
   if (!isFinite(rel) || rel <= 0 || rel === 1) return baseDec;
   // floor (not round): never show fewer significant digits than the kN-m view
@@ -257,7 +278,7 @@ export function readStatic(inp) {
 /* Default export: a namespace object so callers can write U.fmt(...). */
 const U = {
   UNIT_SETS, UNIT_SET_NAMES, DEFAULT_UNITS, QUANTITY_KINDS,
-  normalizeUnits, getUnits, unitSet, setUnits, onUnitsChange, factor, label,
+  normalizeUnits, getUnits, unitSet, setUnits, onUnitsChange, factor, label, setCustom, getCustom,
   isIdentity, toDisplay, fromDisplay, dec, fmt, fmtU, sci, inputValue, parse,
   step, csvTag, unitsTable, allUnitsTables, applyStatic, readStatic,
 };

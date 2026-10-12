@@ -13754,7 +13754,7 @@ params, model?, dry_run?}` -> `{model, summary}` shape and undo semantics:
   numbers per plan position ordered by (y, x) per prefix C/B/D/W/F/L;
   loads, groups, tendon hosts and pushover / TH `My` follow.
 
-Divide / merge / chop / expand refuse shells with openings. Pieces conserve
+Divide / merge / chop / expand keep openings (Wave C, see the Wave C section). Pieces conserve
 the area exactly and every piece gets a copy of the parent's area loads.
 
 ### .rtf report (`skyframe/io/rtf.py`)
@@ -14035,3 +14035,110 @@ unchanged.
   * live analysis succeeds; existing menus still work;
   * every panel has ≤ 14 entries;
   * zero console errors.
+
+## Wave C interface: general grids, explorer, shells with openings, snapping, units, auto-save, model lock
+
+Interface parity pass (ETABS). Every default reproduces today's model JSON,
+E2K text and results byte-identically (sha256 of `to_dict()`, of the full
+results JSON and of the `extensions=False` E2K of a frame + slab-with-opening
++ radial-grid model: base 62cb872 vs. this change, identical). Backend:
+`core/shell_holes.py`, `core/snapgeom_ext.py`, `core/units_custom.py`,
+`io/e2k_ggrid.py`, `api/wc_iface_api.py` (hooks: `core/edit_shells.py`,
+`core/model.py` 5 lines, `io/e2k_write.py` / `io/e2k_read.py` 3 lines each,
+`api/server.py` 3 lines). Frontend: `js/wc_*.js`, `js/mock_wc.js`, `wc.css`.
+
+### General grids
+* E2K: a `kind: "general"` system is written as
+  `GRIDSYSTEM "<name>"  TYPE "GENERAL"  BUBBLESIZE 1.25 [UX UY ROTATION]` and
+  one `GRID "<name>"  LABEL "<label>"  DIR "GENERAL"  X1 Y1 X2 Y2  VISIBLE
+  "Yes"  BUBBLELOC "End"` per line (local frame, file length units). The
+  reader accepts `DIR "GEN…"` lines / `TYPE "GEN…"` systems, so export ->
+  import reproduces the system (exact in kN-m, 1e-12 otherwise) without
+  `$SF` lines; system order (the primary first) is kept.
+* Primary: any system may be `grid_systems[0]` (= `grid`), general
+  included. `POST /api/grid/primary {name}` -> model dict (404 unknown).
+  Analysis is unchanged (take-down grid labels need an orthogonal primary
+  and are "" otherwise, as before for radial grids). UI: Define › Stories,
+  Grids & Towers › Primary Grid System…; legacy consumers of
+  `model.grid.x_lines` use `js/wc_gridgeom.js orthoGrid()` (the first
+  orthogonal system, else the bounding 2 x 2 grid of all lines).
+* Elevations along general lines (selector value `g:<system>:<label>`):
+  oblique plane, `s = (p - a)·u`, ticks at crossing grid lines.
+* Draw › Dimensions & References › General Grid Line works in plan,
+  elevation (two clicks on the plane; the line follows its plan trace) and
+  3D (two snapped 3D points; the line joins their plan projections).
+
+### Model Explorer
+Definition categories get child nodes; right-click (Shift+F10) opens a
+menu per node type — Modify/Show… (the existing menu act + the item's
+Modify/Show sub-dialog), Rename… / Delete (modeledit / groups_model
+helpers; used items are refused naming their users), Select / Show
+Objects Using It, Run / Do Not Run and Show Deformed Shape for cases,
+Set as Primary for grid systems. Each change is one undo step.
+
+### Edit Shells with openings
+Divide, chop, merge, expand / shrink and the reshaper accept shells with
+`openings` (replaces "refuse shells with openings"). Openings are absolute
+3D polygons; pieces = cell minus openings (boundary sub-segments with the
+region on the left, traced with the clockwise turning rule; CCW loops =
+pieces, CW loops = holes). An opening crossed by a cut becomes notches of
+the neighbouring pieces; one inside a piece stays an opening of it. Merge
+= union minus openings: a ring of shells becomes one shell with an
+opening. Expand / reshape keep openings in place and refuse when one would
+leave the outline (400 "the openings must stay inside the shell"). Records:
+`{u0,v0,u1,v1}` when the piece is a parallelogram and the hole an aligned
+rectangle, else `{u0:0,v0:0,u1:1,v1:1,polygon}`. The net area is conserved
+exactly (to the 1e-9 m point cleaning). `shell_reshape` takes
+`on_plane: true` (orthogonal projection of every corner onto the shell's
+plane: elevation / 3D reshaper). Mirror: `js/wc_shellholes.js`.
+
+### Snapping
+Elevation: joint / mid / intersection / perpendicular / extension /
+parallel snaps on the in-plane frames, links and wall edges, before the
+tick x level snap (the beam tool accepts only snaps on a level). 3D: the
+same kinds by exact camera rays (line/ray Gram solve, 3D segment closest
+points); used by Frames in 3D View and the Wave C 3D tools. Extension (the
+foot on a segment's line beyond an end, gap <= max) and parallel (from the
+first click, parallel to a segment) rank after the W8 kinds. Preferences
+are per browser (`sky.wc.snap`), never model data. `core/snapgeom_ext.py`
+mirrors `js/wc_snapgeom.js`.
+
+### Units
+Optional model keys (display only, emitted only when non-empty):
+`display_units_custom {kind: label}` (labels from `GET /api/units/catalog`
+-> `{kinds: {kind: [{label, si}]}, quantity_kinds, max_decimals: 10}`,
+SI = display x si; °F affine) and `display_decimals {kind: 0..10}`. 400 on
+an unknown kind / label or bad decimals. `js/units.js` applies them to the
+current set (`setCustom`), so every input, table, CSV and report follows.
+
+### Auto-save
+`POST /api/autosave {model, file_name?, reason?}` -> `{ok, saved_at, hash,
+versions}` (validated, ring of 5 in `<models dir>/.autosave/`, working
+model untouched); `GET /api/autosave` -> `{exists, keep, current_hash,
+versions: [{version, saved_at, file_name, reason, hash, stories, members,
+shells}]}`; `POST /api/autosave/recover {version? = 0}` -> `{model, hash,
+saved_hash, saved_at, file_name}` (working model replaced; `hash ==
+saved_hash`); `DELETE /api/autosave` -> `{ok, removed}`. hash = sha256 of
+`json.dumps(to_dict(), sort_keys=True, separators=(",", ":"))`. UI:
+Options › Auto Save… (interval, Save Now, Recover…), recovery prompt on
+reopen when the newest auto-save differs from the opened model; saving
+clears it. Mock: localStorage.
+
+### Model lock
+Frontend state (ETABS lock): locked after a run (Options › Lock Model
+After Run, default on) or by Analyze › Lock / Unlock Model. Edit / Draw /
+Assign commands and draw tools prompt first; any other edit reaching the
+model while locked prompts afterwards. Unlock deletes the results
+(`__sky.clearResults`); Cancel runs nothing / undoes the edit.
+
+### Validation
+`tests/test_wc_iface.py` (20): net area 20 m^2 of a 6 x 4 slab with a
+2 x 2 opening conserved by divide (4 variants) / chop / merge, divide ->
+merge restores the parametric opening, ring merge -> opening (32 m^2),
+expand 7 x 5 - 4 = 31, reshape keeps the polygon opening, `on_plane`
+projection keeps a wall planar ((7, 0.3, 4) -> (7, 0, 4)), E2K general
+grid round trips (kN-m exact, kip-ft 1e-12), general-primary analysis =
+orthogonal-primary base reactions, snap closed forms, unit catalogue
+(psi 6.894757293168361 kPa, kip·ft 1.3558179483314004 kN·m), units round
+trip with SI byte identity, auto-save recovery hash identity, JS mirror =
+Python. Playwright mock 51/51, live 53/53.

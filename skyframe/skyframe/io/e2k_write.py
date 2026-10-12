@@ -24,6 +24,7 @@ from skyframe.io.exchange_common import (
     G_SI, Units, diff_patches, fmt, model_dict, q, summarize_patches)
 
 from skyframe.io import e2k_ext as _e2kx  # noqa: E402  (Wave B records)
+from skyframe.io import e2k_ggrid as _e2kgg  # noqa: E402  (Wave C general grids)
 
 __all__ = ["export_e2k", "INCLUDE_KEYS", "STEEL_DB_FILES", "SHAPE_NAMES"]
 
@@ -361,6 +362,8 @@ class _Writer:
         self.sec("GRIDS")
         for g in grids:
             typ = "CYLINDRICAL" if g.kind == "radial" else "CARTESIAN"
+            if g.kind == "general":                   # Wave C (io/e2k_ggrid)
+                typ = _e2kgg.GENERAL_TYPE
             extra = ""
             if g.origin[0] or g.origin[1]:
                 extra += (f"  UX {self.n(g.origin[0], 'length')}"
@@ -369,7 +372,9 @@ class _Writer:
                 extra += f"  ROTATION {fmt(g.rotation)}"
             self.rec(f"GRIDSYSTEM {q(g.name)}  TYPE {q(typ)}  "
                      f"BUBBLESIZE 1.25{extra}")
-            if g.kind == "radial":
+            if g.kind == "general":                   # Wave C (io/e2k_ggrid)
+                _e2kgg.write_lines(self, g)
+            elif g.kind == "radial":
                 for i, r in enumerate(g.radii):
                     self.rec(f"GRID {q(g.name)}  LABEL {q(f'R{i + 1}')}  "
                              f"DIR \"R\"  COORD {self.n(r, 'length')}  "
