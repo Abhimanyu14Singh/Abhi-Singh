@@ -205,3 +205,78 @@ Each entry says where it lives.
   laws (Hognestad / bilinear) for every model.
 - SQLite remains the Access substitute by decision (docs/INTEROP.md); confirm
   the ODBC link/import in a real Access install.
+
+## Wave C: regional codes, spectra and libraries (values entered from memory)
+No copy of these standards was reachable from the build environment. Every
+value below was typed from memory and must be checked against the standard
+before it is relied on. Each one can be overridden by an explicit parameter.
+- **EC8 national annexes** (`core/seismic_codes_wavec.EC8_NA`, used by the
+  `ec8_na` generator and spectrum):
+  - UK, Italy, Greece and Spain store the EN 1998-1 recommended S / TB / TC / TD.
+    The Spanish values are a placeholder; NCSE-02 governs in Spain.
+  - Germany: the DIN 4149 subsoil-class table (A-R ... C-S).
+  - France: the national Type 2 table and the agR zone values 0.4 / 0.7 / 1.1 /
+    1.6 / 3.0 m/s².
+  - Portugal: the Type 1 / Type 2 Smax, TB, TC, TD values, the ag-dependent S
+    rule and the importance factors 0.65 / 1.0 / 1.45 / 1.95.
+  - Romania: the P100-1/2013 control-period zones TC = 0.7 / 1.0 / 1.6 s, with
+    TB = 0.2 TC and TD = 3 / 3 / 2 s.
+  - All annexes: beta = 0.2 and the importance-factor lists.
+- **Legacy IBC / UBC**:
+  - ASCE 7-05/7-10 Tables 11.4-1/2 (Fa, Fv) and Table 12.8-2 (Ct, x).
+  - The edition rule for the minimum Cs: 0.01 for IBC 2006 / ASCE 7-05 as first
+    published, and 0.044 SDS Ie for IBC 2009 (ASCE 7-05 Supplement 2) and IBC
+    2012.
+  - UBC 97 Tables 16-Q / 16-R (Ca, Cv) and the Ct values.
+- **Italian NTC 2018**:
+  - Table 3.2.IV SS / CC expressions, Table 3.2.V ST, TD = 4 ag + 1.6, the
+    design floor 0.2 ag and C1 0.085 / 0.075 / 0.050.
+  - Wind: Table 3.3.I zones (vb0, a0, ks), Table 3.3.II categories (kr, z0, zmin),
+    cr(TR), and the wall cp of +0.8 / -0.4.
+- **BS 6399-2**:
+  - Table 5 front / rear Cpe (+0.8 to +0.6 and -0.3 to -0.1 over D/H = 1 to 4)
+    and the 0.85 divergence factor for H/D <= 1.
+  - Sb (Table 4) is not tabulated in SkyFrame; the user enters it.
+- **API 4F**: F = 0.00338 Ki V² Cs A, the 1/8 elevation exponent, z_ref = 10 m
+  and the Cs default of 1.5.
+- **Code spectra**:
+  - KDS 41 17 00 TL = 5 s.
+  - NSCP 2015 response spectrum shape (UBC form: Ts = Cv / 2.5 Ca, T0 = 0.2 Ts).
+  - The TSC / NSCP / NTC-CDMX coefficient tables reuse the existing generators'
+    tables, which are already flagged above.
+- **USGS design-maps lookup**: the response key names (`ss`, `s1`, `sds`, `sd1`,
+  `tl`, `pgam`, `multiPeriodDesignSpectrum{periods, ordinates}`) are from memory.
+  The service was unreachable here (proxy 403), so only a mocked response was
+  tested.
+- **Material libraries** (`data/materials/{gb,csa,jis,ks,gost}.json`, all
+  records carry `from_memory`):
+  - GB: GB/T 1591-2018 / GB/T 700 grades, GB 50010 fck and Ec tables, and
+    HPB / HRB rebar.
+  - CSA: G40.21 260W / 300W / 350W, Ec = 4500 sqrt(f'c), and G30.18 rebar.
+  - JIS: SS400 / SN / SM / STKR / BCR F-values and fu, the AIJ concrete E
+    formula and unit weights, and SD rebar.
+  - KS: SS / SM / SN 275-460 grades, KDS Ec = 8500 cbrt(fcm) with the delta-f
+    rule, and SD400-600.
+  - GOST / SP: C245-C390 Ryn / Run, SP 63 Rb,n and Eb tables, and A240 / A400 /
+    A500 with the tensile strengths 373 / 590 / 600 MPa.
+  - Concrete `fc`: GB uses fck (axial) and GOST uses Rb,n (prism). Neither is a
+    cylinder strength.
+- **Not from memory (sourced)**:
+  - NBCC 2020 Table 4.1.8.11 (Mv / J), the 4.1.8.11 rules and Table 4.1.8.4.-C
+    were transcribed from the Ontario 2024 Building Code Compendium (O. Reg.
+    163/24) as published in negarghasemi/tmp-bc-kb-2026-05-26 @3abd8ad. That
+    text reproduces the NBCC 2020 provisions. It is not checked against the
+    NBCC 2020 print.
+  - The steel tables are sourced (docs/SECTION_SOURCES.md, "Wave C").
+- **Steel table licences and gaps**:
+  - The JIS table (JFE handbook CSV, z-ichinohe/jfe_binran_csv) and the KS
+    table (hnanmal/mQ Revit type catalogue) come from repositories that state
+    no licence. Only factual dimension and property values were taken. Review
+    this before redistributing.
+  - GB/T 11263 H-shapes are **not included**. No reliable open transcription
+    was found: the only candidates were unlicensed or contradicted the
+    standard, e.g. HW100x100 Ix 406 against 378 cm⁴.
+  - In 21 CISC rows the source gives no root radius, so the AISC twin is not
+    matched and dims.r = 0. Their exact-outline gate is 3 % on A.
+  - CISC `mass` is the designation mass, which is rounded (up to 3 % from
+    A x 7850).

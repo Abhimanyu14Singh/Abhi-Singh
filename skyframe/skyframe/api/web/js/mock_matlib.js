@@ -12,6 +12,7 @@
    mass_density ÷ 1000; G / mass_per_volume / Fye / Fue echoes). */
 
 export const ML_STANDARD_IDS = ["astm_aci", "eurocode", "is", "bs", "as_nzs"];
+ML_STANDARD_IDS.push("gb", "csa", "jis", "ks", "gost");   // Wave C hook: regional libraries (data/materials/*.json)
 export const ML_KINDS = ["steel", "concrete", "rebar", "tendon", "aluminum", "cold_formed"];
 const ML_KIND_TO_TYPE = { steel: "steel", concrete: "concrete", rebar: "rebar", tendon: "tendon", aluminum: "aluminum", cold_formed: "coldformed" };
 const ML_KIND_COLOR = { steel: "#3b6ea5", concrete: "#8a8f98", rebar: "#c0603a", tendon: "#9a7bce", aluminum: "#9aa3ad", cold_formed: "#5a8fa5" };

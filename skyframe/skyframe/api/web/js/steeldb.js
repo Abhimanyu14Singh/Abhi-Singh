@@ -25,6 +25,7 @@ import { mlMaterials as sdbMlMaterials, mlImportInto as sdbMlImportInto } from "
    material yet: database id -> [material standard, grade] */
 const SDB_AUTO_MAT = { aisc: ["astm_aci", "A992"], eurocode: ["eurocode", "S355"], is808: ["is", "E250"],
   bs: ["bs", "S355-t16"], as_nzs: ["as_nzs", "300-AS3679.1"] };
+Object.assign(SDB_AUTO_MAT, { cisc: ["csa", "350W"], jis: ["jis", "SN490B"], ks: ["ks", "SM355"], gost: ["gost", "C345"] });   // Wave C hook
 const SDB_AUTO = "__auto_steel__";
 
 const MAX_ROWS = 400;

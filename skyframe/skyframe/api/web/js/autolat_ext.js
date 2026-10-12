@@ -14,6 +14,9 @@
 import { WBX_WIND as wbxWind, WBX_DEFAULT_NAME as wbxDefaultName, WBX_SPEC as wbxSpec,
   WBX_NTC_SPEC as wbxNtcSpec, WBX_COEF_ROWS as wbxCoefRows, WBX_NTC_COEF as wbxNtcCoef,
   WBX_NOTES as wbxNotes, WBX_NTC_NOTE as wbxNtcNote } from "./waveb_alx.js";
+// Wave C hook: EC8 NA / NBCC 2020 / IBC / UBC / NTC seismic + BS 6399 / API 4F / NTC wind (js/wavec_alx.js)
+import { WVC_SEISMIC as wvcSeismic, WVC_WIND as wvcWind, WVC_DEFAULT_NAME as wvcDefaultName, WVC_SPEC as wvcSpec,
+  WVC_COEF_ROWS as wvcCoefRows, WVC_NOTES as wvcNotes } from "./wavec_alx.js";
 
 const ALX_SEISMIC = [
   ["nzs1170_5", "NZS 1170.5:2004"],
@@ -23,6 +26,7 @@ const ALX_SEISMIC = [
   ["kds41", "KDS 41 17 00:2019"],
   ["nscp2015", "NSCP 2015"],
   ["ntc_cdmx", "Mexico CDMX NTC-Sismo"],
+  ...wvcSeismic,                                    // Wave C hook
 ];
 const ALX_WIND = [
   ["asce7_16_wind", "ASCE 7-16 Wind"],
@@ -31,6 +35,7 @@ const ALX_WIND = [
   ["as1170_2_wind", "AS/NZS 1170.2 Wind"],
   ["gb50009_wind", "GB 50009 Wind"],
   ...wbxWind,                                       // Wave B hook: TS 498 / KDS / CFE wind
+  ...wvcWind,                                       // Wave C hook: BS 6399 / API 4F / NTC wind
 ];
 export const ALX_OPTIONS = [...ALX_SEISMIC, ...ALX_WIND];
 export const ALX_WIND_CODES = new Set(["asce7_22_wind", ...ALX_WIND.map(o => o[0])]);
@@ -40,6 +45,7 @@ export const ALX_DEFAULT_NAME = {
   asce7_16_wind: "WIND16", en1991_wind: "WINDEN", is875_wind: "WINDIS",
   as1170_2_wind: "WINDAS", gb50009_wind: "WINDGB",
   ...wbxDefaultName,                                // Wave B hook
+  ...wvcDefaultName,                                // Wave C hook
 };
 
 const STRUCT_SEL = [["steel_mrf", "Steel MRF"], ["concrete_mrf", "Concrete MRF"], ["ebf", "Steel EBF"], ["other", "Other"]];
@@ -198,6 +204,7 @@ export const ALX_SPEC = {
     ["beta_z", "β<sub>z</sub> (override)", "none", null, { opt: true }],
   ],
   ...wbxSpec,                                       // Wave B hook: TS 498 / KDS / CFE wind
+  ...wvcSpec,                                       // Wave C hook
 };
 ALX_SPEC.ntc_cdmx.push(...wbxNtcSpec);              // Wave B hook: NTC T > Tb distribution
 /** Extra keys appended to the v1.16 ASCE 7-22 wind spec. */
@@ -217,6 +224,7 @@ export const ALX_COEF_ROWS = {
   as1170_2_wind: [["Vdes_h", "V<sub>des</sub>(h)", "velocity"], ["qh", "q<sub>h</sub>", "pressure"], ["cpe_leeward", "C<sub>p,e</sub> leeward", "none"], ["width", "Facade width", "length"]],
   gb50009_wind: [["mu_s", "μ<sub>s</sub>", "none"], ["width", "Facade width", "length"]],
   ...wbxCoefRows,                                   // Wave B hook
+  ...wvcCoefRows,                                   // Wave C hook
 };
 ALX_COEF_ROWS.ntc_cdmx.push(...wbxNtcCoef);         // Wave B hook: q, k1, k2 (T > Tb)
 /** Extra summary rows shown for the extended ASCE 7-22 wind. */
@@ -236,6 +244,7 @@ const NOTES = {
   as1170_2_wind: "V<sub>des</sub> = V<sub>R</sub>M<sub>d</sub>M<sub>z,cat</sub>M<sub>s</sub>M<sub>t</sub>; p = 0.5ρV<sub>des</sub>²C<sub>fig</sub>C<sub>dyn</sub>.",
   gb50009_wind: "w<sub>k</sub> = β<sub>z</sub>μ<sub>s</sub>μ<sub>z</sub>w<sub>0</sub> (Eq. 8.1.1-1); β<sub>z</sub> from T<sub>1</sub> per §8.4.3.",
   ...wbxNotes,                                      // Wave B hook
+  ...wvcNotes,                                      // Wave C hook
 };
 NOTES.ntc_cdmx += wbxNtcNote;                       // Wave B hook
 const CASE_NOTE = "Cases 2 and 4 set the pattern's accidental torsion to ± e/B automatically (leave Eccentricity at None). " +

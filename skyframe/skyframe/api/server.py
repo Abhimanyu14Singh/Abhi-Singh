@@ -2392,6 +2392,10 @@ def create_app() -> Flask:
     from skyframe.api.wb_iface_api import register as _wbi_register
     _wbi_register(app, _state)
 
+    # Wave C: EC8 NA presets, spectrum file import, USGS lookup (wavec_api)
+    from skyframe.api.wavec4_api import register as _wvc_register
+    _wvc_register(app, _state)
+
     # Interop/extensibility: /api/v1 + OpenAPI · plugins · SAP2000/SAFE/SDNF/CIS2/IDEA
     from skyframe.api.openapi import register as _oas_register
     _oas_register(app, _state)

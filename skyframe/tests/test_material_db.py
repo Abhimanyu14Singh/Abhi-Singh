@@ -52,12 +52,16 @@ def all_records():
 # --------------------------------------------------------------------------- #
 def test_standards_listing():
     st = mdb.standards()
-    assert [s["id"] for s in st] == ["astm_aci", "eurocode", "is", "bs", "as_nzs"]
+    assert [s["id"] for s in st] == ["astm_aci", "eurocode", "is", "bs", "as_nzs",
+                                     "gb", "csa", "jis", "ks", "gost"]   # Wave C
     for s in st:
         assert s["count"] == sum(s["kinds"].values()) > 10
         assert set(s["kinds"]) <= set(mdb.KINDS)
-    # every standard has steel, concrete, rebar, tendon and cold-formed
-    for s in st:
+    # Wave C regional libraries: steel, concrete and rebar
+    for s in st[5:]:
+        assert {"steel", "concrete", "rebar"} <= set(s["kinds"]), s["id"]
+    # every v1.21 standard has steel, concrete, rebar, tendon and cold-formed
+    for s in st[:5]:
         assert {"steel", "concrete", "rebar", "tendon", "cold_formed"} <= set(s["kinds"]), s["id"]
     assert "aluminum" in st[0]["kinds"] and "aluminum" in st[1]["kinds"]
 
