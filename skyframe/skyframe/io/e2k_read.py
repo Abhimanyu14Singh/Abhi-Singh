@@ -1069,7 +1069,7 @@ def read_e2k(text: str, units=("KN", "M"),
                 f = spec_fn.get(fn)
                 rs_cases[name] = {
                     "name": name, "direction": "Y" if acc in ("U2", "UY")
-                    else "X",
+                    else ("Z" if acc in ("U3", "UZ") else "X"),  # RS U3
                     "spectrum": [] if f else [[0.0, 0.0]],
                     "function": fn if f else "",
                     "scale": sf / g_file,

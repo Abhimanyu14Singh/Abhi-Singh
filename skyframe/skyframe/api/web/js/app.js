@@ -728,7 +728,7 @@ async function createRsDirectional(params) {
     try {
       await codeToolLive("/api/case/rs-directional", params);
       toast("Directional RS combination created",
-        `“${params.name}” · ${params.method === "SRSS" ? "SRSS" : "100/30"} via POST /api/case/rs-directional`, "info", 5000);
+        `“${params.name}” · ${({ SRSS: "SRSS", CQC3: "CQC3", ABS: "Absolute" })[params.method] || "100/30"} via POST /api/case/rs-directional`, "info", 5000);
       return store.model;
     } catch (e) { console.warn("RS-directional endpoint unavailable, computing locally:", e.message); }
   }

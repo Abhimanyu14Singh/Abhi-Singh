@@ -19,6 +19,7 @@
 import * as dcME from "./modeledit.js";
 import dcU from "./units.js";
 import * as dcCX from "./combo_refs.js";
+import { rsxDirOptions as dcRsxDirs, rsxGroups as dcRsxGroups } from "./rs_ext.js";   // RS ext: U3 / angle / multi-dir / CQC3 / ecc
 import {
   el, esc, clone, isNum, dkForm, dkGroup, dkAdvanced, dkTabs, dkList, dkNote, dkDialog,
   dkDraft, dkCommit, uniqueName,
@@ -263,7 +264,7 @@ export function editRsCase(sky, D, name, { copyOf, done } = {}) {
       F.readout("Load Case Type", () => "Response Spectrum"),
     ]),
     dkGroup("Loads Applied", [
-      F.select(c, "direction", [["X", "U1 (global X)"], ["Y", "U2 (global Y)"]], { label: "Load Direction", id: "dcRsDir" }),
+      F.select(c, "direction", dcRsxDirs, { label: "Load Direction", id: "dcRsDir" }),   // RS ext: + U3
       F.select(c, "function", [["", "(inline spectrum)"], ...fns.map(f => [f, f])], { label: "Function", id: "dcRsFn",
         hint: fns.length ? "" : "No spectrum functions yet — Define › Functions, or keep the inline spectrum." }),
       F.num(c, "scale", { label: "Scale Factor", id: "dcRsScale", hint: "multiplies the spectrum (Sa is in g)" }),
@@ -272,6 +273,7 @@ export function editRsCase(sky, D, name, { copyOf, done } = {}) {
       F.select(c, "combo_method", RS_METHODS, { label: "Modal Combination Method", id: "dcRsMethod" }),
       F.num(c, "damping", { label: "Modal Damping Ratio", min: 0, lt: 1, id: "dcRsDamp" }),
     ]),
+    ...dcRsxGroups(F, c, D),   // RS ext: directions & angle / directional combination / eccentricity (js/rs_ext.js)
     adv,
   ];
   return dkDialog({

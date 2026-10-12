@@ -1130,6 +1130,8 @@ export class LoadsEditor {
         <select id="rsDirMethod">
           <option value="100_30"${s.method === "100_30" ? " selected" : ""}>100/30</option>
           <option value="SRSS"${s.method === "SRSS" ? " selected" : ""}>SRSS</option>
+          <option value="CQC3"${s.method === "CQC3" ? " selected" : ""}>CQC3</option>
+          <option value="ABS"${s.method === "ABS" ? " selected" : ""}>Absolute</option>
         </select></label>
       <button class="btn btn-small" id="rsDirCreate">Create</button>`;
     card.appendChild(fields);
@@ -1172,7 +1174,7 @@ export class LoadsEditor {
         const label = document.createElement("span");
         label.className = "rs-dir-label";
         label.innerHTML = `<b>${esc(name)}</b> <span class="muted">` +
-          `${esc(rc.name_x || "—")} + ${esc(rc.name_y || "—")} · ${esc(rc.method === "SRSS" ? "SRSS" : "100/30")}</span>`;
+          `${esc(rc.name_x || "—")} + ${esc(rc.name_y || "—")} · ${esc({ SRSS: "SRSS", CQC3: "CQC3", ABS: "Absolute" }[rc.method] || "100/30")}</span>`;   // RS ext
         row.appendChild(label);
         row.appendChild(this._delBtn(null, `RS combo ${name}`, () => {
           if (ME.deleteRsCombo(m, name)) this._mutated();
@@ -1206,7 +1208,7 @@ export class LoadsEditor {
       return w;
     };
     const dir = document.createElement("select");
-    dir.innerHTML = `<option value="X">X</option><option value="Y">Y</option>`;
+    dir.innerHTML = `<option value="X">X</option><option value="Y">Y</option><option value="Z">Z (U3)</option>`;   // RS ext: U3
     dir.value = rc.direction;
     dir.addEventListener("change", () => { rc.direction = dir.value; this._mutated(false); });
     head.appendChild(mkField("direction", dir));

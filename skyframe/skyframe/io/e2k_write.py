@@ -1132,7 +1132,8 @@ class _Writer:
             fn = rs.function or self.fn_name.get(("rs", rs.name), "")
             self.rec(f"LOADCASE {q(rs.name)}  TYPE  \"Response Spectrum\"  "
                      f"MODALCASE  {q(MODAL_CASE)}")
-            acc = "U1" if rs.direction == "X" else "U2"
+            acc = {"X": "U1", "Y": "U2", "Z": "U3"}.get(rs.direction,
+                                                        "U2")  # RS ext U3
             self.rec(f"LOADCASE {q(rs.name)}  ACCEL  {q(acc)}  FUNC  {q(fn)}"
                      f"  SF  {fmt(rs.scale * g_file)}")
             self.rec(f"LOADCASE {q(rs.name)}  MODALCOMBO  "

@@ -322,6 +322,7 @@ def prefetch_rs(eng, names: Sequence[str]) -> None:
     floats)."""
     from skyframe.engine import modalcombo as _mc
     from skyframe.engine import modal_condensed as _mcd
+    from skyframe.core import rs_ext as _crx
     model = eng.model
     asm = eng._asm
     n_lanes = lanes(model, asm)
@@ -332,7 +333,8 @@ def prefetch_rs(eng, names: Sequence[str]) -> None:
     n_massed = asm.free_massed_dofs()
     for name in todo:
         rs = model.rs_cases[name]
-        if not _mc.is_legacy(rs):
+        if not _mc.is_legacy(rs) or _crx.is_extended(rs) \
+                or _crx.has_ecc(rs):           # RS ext: solves -> serial
             return
         n = min((rs.num_modes if rs.num_modes > 0 else None)
                 or model.num_modes, n_massed)
