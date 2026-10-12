@@ -53,3 +53,16 @@ Each entry says where it lives.
   monotonic curve (use multi-step nonlinear static). Composite damping ratios
   are applied by mode index to FNA's linearised model (exact without device
   links). Mock composite preview uses volume shares, not strain energy.
+
+## Added in Wave B loose ends
+- Mexican NTC-Sismo long-period distribution (T > Tb) is now the two-term reduced
+  form (`kh1 = [1-0.5r(1-q)]Sw/Swh`, `kh2 = 0.75r(1-q)Sw/Swh^2`, `q=(Tb/T)^r`,
+  r = 2) from memory of NTC-2004 8.2 - check against the 2017/2020 text.
+  `long_period="linear"` restores the simple w*h rule.
+- KDS 41 wind K_zr / alpha table and default gust factor G_D = 2.0; CFE wind
+  alpha / delta / c by terrain category - from memory, verify.
+- E2K: `PARTIALFIXITY` value format and `ANGLEA/B/C` joint-axis keywords are
+  SkyFrame spellings, not verified against a real ETABS file.
+- EC8 stiffness/mass "gradual change" check uses a +-25 % judgement band
+  (editable); EC8 4.2.3.2(6) torsional-radius criterion reported n/a.
+- Weak-story strength estimate is nominal (no reinforcement); user overrides.
