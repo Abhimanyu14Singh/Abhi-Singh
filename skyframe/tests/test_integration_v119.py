@@ -107,3 +107,28 @@ def test_rs_tower_story_shear_independent_of_solver(solver):
     for p in "AB":
         tot += b.story[f"{p}1"]["shear_x"]
     assert _close(tot, b.base["FX"], 1e-7)
+
+
+def test_rs_named_eigen_modal_case_with_ecc_angle_cqc3_matches_default():
+    """A5 named modal case x A1 RS extensions: an RS case referencing an
+    eigen modal case identical to MODAL gives the same result with
+    eccentricity, angle and CQC3 directional combination."""
+    from skyframe.core.builder import quick_building
+    sp = [[0.0, 0.4], [0.5, 1.0], [1.0, 0.5], [3.0, 0.2]]
+
+    def build(named):
+        m = quick_building()
+        m.modal_cases = {"M2": {"type": "eigen", "num_modes": m.num_modes}}
+        m.add_rs_case("R", "X", spectrum=sp, angle=30.0, ecc=0.05,
+                      loads=[{"dir": "X"}, {"dir": "Y", "scale": 0.3}],
+                      dir_combo="CQC3")
+        if named:
+            m.rs_cases["R"].modal_case = "M2"
+        m.validate()
+        return OpenSeesEngine(m).run_response_spectrum("R")
+
+    a, b = build(False), build(True)
+    for k in ("FX", "FY", "MZ"):
+        assert _close(b.base[k], a.base[k], 1e-9, 1e-9), k
+    for s, row in a.story.items():
+        assert _close(b.story[s]["shear_x"], row["shear_x"], 1e-9, 1e-9)
