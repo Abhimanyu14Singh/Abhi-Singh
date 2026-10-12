@@ -14196,3 +14196,37 @@ Response:
   references and an animated 3D mode-shape viewer.
 * The Buckling case dialog's Advanced group gains the Formulation, Include
   shells and Include links fields. Only touched fields are written.
+
+## Draw Walls (plan view)
+
+UI-only (no new JSON keys). Draw › Floors & Walls › Draw Walls (`draw-wall`,
+key W), Quick Draw Walls (`draw-wd-quick`), Walls Along Beams
+(`draw-wd-beams`) and Draw › Quick Draw › Walls on Grid Lines
+(`draw-wd-qwall`) create ordinary `ShellRegion` walls, exactly the object
+`modeledit.addWall` writes:
+
+```
+{"uid": "W<n>", "kind": "wall", "behavior": "shell", "section": <shell section>,
+ "corners": [[x1, y1, zb + bottom], [x2, y2, zb + bottom],
+             [x2, y2, zt + top],    [x1, y1, zt + top]],
+ "mesh_size": 1.0, "story": <story>, "openings": [],
+ "pier"?: <label>, "spandrel"?: <label>}
+```
+
+* `zb` / `zt` are the story's bottom and top levels; bottom / top offsets
+  default to 0, so a default wall is identical to the old wall tool's.
+  `pier` / `spandrel` are written only when chosen in the properties box
+  (Auto pier = next free `P<k>`, one label per drawn polyline / batch).
+* Plan geometry (`js/walldraw_geom.js`, mirrored by
+  `skyframe/core/walldraw_geom.py`): alignment Left / Centre / Right offsets
+  the centre line by +t/2 / 0 / -t/2 to the left of the drawing direction
+  (plus an extra signed offset); polylines are mitred (neighbouring offset
+  lines intersected, parallel neighbours fall back to the perpendicular
+  offset); "split at grid lines" breaks a segment where a non-parallel grid
+  line crosses it strictly inside. Coordinates are rounded to 1e-9 m.
+* Story scope: One / Similar / All stories, the same scope as the plan
+  "Apply to" selector (similar group = master + every story similar to it).
+  A wall whose corner set (any order) already exists on that story is
+  skipped. One finished polyline or quick-draw batch is one undo step.
+* Typed input while drawing (display units): `L` along the cursor, `L<A`
+  polar (degrees CCW from +X), `@dx,dy` relative, `x,y` absolute.

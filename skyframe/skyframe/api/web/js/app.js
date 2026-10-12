@@ -120,7 +120,8 @@ import { initA8Results as a8InitResults } from "./a8results.js";   // A8: spandr
 import { initModalX as mxInitModalX } from "./modalx.js";   // TH function tools · named mass sources · modal cases (js/modalx.js)   // File › Import ▸ / Export ▸ E2K · IFC · DXF · Excel (js/exchange.js)
 import { initPoMethods as poxInitPoMethods } from "./pomethods.js";   // pushover ATC-40 / FEMA 440 / N2 + ADRS (js/pomethods.js)
 
-import { initW8 as w8InitW8 } from "./w8_init.js";   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_*.js)
+import { initW8 as w8InitW8 } from "./w8_init.js";
+import { initWallDraw as wdInitWallDraw } from "./walldraw.js";   // D1 Draw Walls / Quick Draw Walls in plan (js/walldraw.js)   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_*.js)
 import { mockValidateW8 as w8MockValidate } from "./mock_w8.js";   // W8 ?mock=1 validation
 import { initWaveBLinks as wbInitLinks, wbMockValidateModel as wbMockValidate } from "./wb_links.js";   // wave B: Wen / BRB / bilinear damper / T-C isolator links, freq-dependent links, damping options (js/wb_links.js)
 import { wbMockAugment as wbMockAugmentResults } from "./mock_wbdamp.js";   // wave B ?mock=1 results (composite ζ, freq-dependent-link note)
@@ -8635,6 +8636,7 @@ async function boot() {
   try { wbInitWaveB(window.__sky); } catch (err) { console.error("Wave B init failed", err); }   // Irregularity Checks · joint-local reactions (js/waveb.js)
 
   try { wbInitWb(window.__sky); } catch (err) { console.error("Wave B init failed", err); }   // Wave B interface & modelling tools (js/wb_init.js)
+  try { wdInitWallDraw(window.__sky); } catch (err) { console.error("wall draw init failed", err); }   // D1 Draw Walls (js/walldraw.js) — before the UX pass reads the menus
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)

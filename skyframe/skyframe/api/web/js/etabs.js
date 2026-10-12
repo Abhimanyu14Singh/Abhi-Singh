@@ -250,7 +250,7 @@ export function initEtabs(sky) {
       ]},
       { label: "Floors & Walls", aliases: ["Shells", "Floor/Wall"], sub: [
         { label: "Rectangular Floor", act: "draw-slab", key: "S", fn: () => drawTool("slab") },
-        { label: "Wall", act: "draw-wall", key: "W", fn: () => drawTool("wall") },
+        { label: "Draw Walls", act: "draw-wall", key: "W", hint: "polyline · floating options", fn: () => drawTool("wall") },   // D1 (js/walldraw.js)
         SEP,   // G2 — polygon floors / walls / openings (js/polydraw.js)
         { label: "Floor (Polygon, Plan)", act: "draw-polyfloor", fn: () => { sky.polyDraw && sky.polyDraw.start("slab"); syncStatus(); } },
         { label: "Wall (Polygon, Elevation)", act: "draw-polywall", fn: () => { sky.polyDraw && sky.polyDraw.start("wall"); syncStatus(); } },
