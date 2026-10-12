@@ -6,6 +6,8 @@
 
 import { WBX_MOCK_COMPUTE as wbxMockCompute, WBX_MOCK_PARAMS as wbxMockParams, WBX_MOCK_DEFAULT_NAME as wbxMockDefaultName,
   WBX_NTC_KEYS as wbxNtcKeys, wbxWrapNtc } from "./mock_waveb_alx.js";   // Wave B hook
+import { WVC_MOCK_COMPUTE as wvcMockCompute, WVC_MOCK_PARAMS as wvcMockParams, WVC_MOCK_DEFAULT_NAME as wvcMockDefaultName,
+  WVC_MOCK_WIND as wvcMockWind } from "./mock_wavec_alx.js";   // Wave C hook
 
 const G = 9.80665;
 const FT = 0.3048, MPH = 0.44704;
@@ -407,6 +409,10 @@ Object.assign(ALX_MOCK_PARAMS, wbxMockParams);
 ALX_MOCK_PARAMS.ntc_cdmx.push(...wbxNtcKeys);
 Object.assign(ALX_MOCK_DEFAULT_NAME, wbxMockDefaultName);
 for (const k of Object.keys(wbxMockCompute)) ALX_MOCK_WIND.add(k);
+// Wave C hook: regional seismic / wind codes (js/mock_wavec_alx.js)
+Object.assign(ALX_MOCK_PARAMS, wvcMockParams);
+Object.assign(ALX_MOCK_DEFAULT_NAME, wvcMockDefaultName);
+for (const k of wvcMockWind) ALX_MOCK_WIND.add(k);
 
 /** {code: fn(model, params)}; `legacy22` = the v1.16 mock ASCE 7-22 wind,
     used when none of the v1.19 keys asks for something new. */
@@ -428,6 +434,7 @@ export function alxMockCompute(legacy22) {
     },
     en1991_wind: en, is875_wind: is875, as1170_2_wind: as2, gb50009_wind: gb9,
     ...wbxMockCompute,                                // Wave B hook: TS 498 / KDS / CFE wind
+    ...wvcMockCompute,                                // Wave C hook
   };
 }
 /** autolateral.generate case_torsion mirror → [ecc, ecc_y|null]. */

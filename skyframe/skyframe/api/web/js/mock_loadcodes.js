@@ -15,6 +15,7 @@
    (the backend uses the half-bay rule) — plausible, not exact. SI. */
 
 import { LC_SPECTRA_CATALOGUE as lcSpecCat, LC_COMBO_CATALOGUE as lcComboCat } from "./mock_loadcodes_data.js";
+import { WVC_SPEC_BUILD as wvcSpecBuild } from "./mock_wavec_spectra.js";   // Wave C hook: TSC / KDS / NSCP / NTC / EC8-NA spectra
 
 export const LC_MPRS_PERIODS = [0.0, 0.01, 0.02, 0.03, 0.05, 0.075, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5,
   0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 7.5, 10.0];
@@ -211,6 +212,8 @@ const BUILD = {
     return [f, [0, 0.1, Tg, 5 * Tg, 6.0], { alpha_max: amax, Tg, gamma, eta1, eta2, plateau: eta2 * amax }];
   },
 };
+
+Object.assign(BUILD, wvcSpecBuild);   // Wave C hook (js/mock_wavec_spectra.js)
 
 function sample(fn, corners, tMax) {
   const ts = new Set();

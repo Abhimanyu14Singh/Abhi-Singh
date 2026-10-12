@@ -40,6 +40,9 @@ from skyframe.core.model import Material
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "materials"
 
 STANDARD_IDS = ("astm_aci", "eurocode", "is", "bs", "as_nzs")
+# Wave C hook: Chinese / Canadian / Japanese / Korean / Russian libraries
+# (data/materials/{gb,csa,jis,ks,gost}.json, tools/build_wavec_materials.py)
+STANDARD_IDS += ("gb", "csa", "jis", "ks", "gost")
 KINDS = ("steel", "concrete", "rebar", "tendon", "aluminum", "cold_formed")
 KIND_TO_TYPE = {"steel": "steel", "concrete": "concrete", "rebar": "rebar",
                 "tendon": "tendon", "aluminum": "aluminum",

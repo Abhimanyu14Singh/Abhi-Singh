@@ -798,3 +798,8 @@ def validate_source(fn) -> None:
         normalize_params(src["code"], src.get("params") or {})
     except ValueError as exc:
         raise ValueError(f"Spectrum function {fn.name}: {exc}") from None
+
+
+# Wave C hook: TSC 2018 / KDS 41 / NSCP 2015 / NTC CDMX / NTC 2018 / EC8+NA
+# spectra (skyframe.core.spectra_codes_wavec registers into CODES)
+from . import spectra_codes_wavec as _scw  # noqa: E402,F401

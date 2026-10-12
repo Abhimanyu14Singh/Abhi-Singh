@@ -33,6 +33,7 @@ import { editCompositeSection as dsWbEditComposite, ccIs as dsWbCcIs } from "./w
 import { wbOrthoSymOptions as dsWbSymOpts, wbOrthoSymWrite as dsWbSymWrite, wbOrthoGroup as dsWbOrthoGroup } from "./wb_ortho.js";   // Wave B orthotropic materials
 import { wbShellTypeFields as dsWbShellType } from "./wb_slab.js";   // Wave B slab property types / CLT
 import { LC_PAT_TYPES as dsLcPatTypes, lcOpenSpectrumFromCode as dsLcSpecFromCode, lcHasSource as dsLcHasSource } from "./loadcodes.js";   // code spectra + pattern types (js/loadcodes.js)
+import { wvcOpenSpectrumFile as dsWvcSpecFile, wvcOpenUsgs as dsWvcUsgs } from "./wavec.js";   // Wave C: RS from file · USGS lookup
 
 const G = 9.80665;
 const eff = (o, k, d = 1) => (o && o[k] != null && isFinite(o[k])) ? +o[k] : d;
@@ -618,6 +619,8 @@ export function openFunctions(sky, { tab = "rs", select } = {}) {
     actions: [
       { label: "Add New Function…", id: "dsRsFnAdd", fn: () => editRs(null) },
       { label: "Add From Code…", id: "dsRsFnCode", title: "ASCE 7 · EC8 · IS 1893 · NBCC · NZS · AS · GB", fn: () => dsLcSpecFromCode(sky, D, { done: nm => { rsList.select(nm); } }) },   // js/loadcodes.js
+      { label: "Add From File…", id: "dsRsFnFileBtn", fn: () => dsWvcSpecFile(sky, D, { done: nm => { if (nm) rsList.select(nm); } }) },   // Wave C (js/wavec.js)
+      { label: "USGS Site Lookup…", id: "dsRsFnUsgsBtn", fn: () => dsWvcUsgs(sky, D, { done: nm => { if (nm) rsList.select(nm); } }) },   // Wave C (js/wavec.js)
       { label: "Add Copy…", id: "dsRsFnCopy", needsSel: true, fn: k => editRs(null, k) },
       { label: "Modify/Show…", id: "dsRsFnModify", needsSel: true, fn: k => editRs(k) },
       { label: "Delete", id: "dsRsFnDelete", needsSel: true, fn: k => {

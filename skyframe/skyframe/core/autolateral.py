@@ -741,3 +741,10 @@ from . import seismic_codes_ext as _sx, wind_codes_ext as _wx  # noqa: E402
 
 _register_ext(_sx)
 _register_ext(_wx)
+
+# Wave C hook: EC8 NA / NBCC 2020 / IBC legacy / UBC 97 / NTC 2018 seismic,
+# BS 6399 / API 4F / NTC 2018 wind (seismic_codes_wavec, wind_codes_wavec)
+from . import seismic_codes_wavec as _sxc, wind_codes_wavec as _wxc  # noqa: E402,E501
+
+_register_ext(_sxc)
+_register_ext(_wxc)

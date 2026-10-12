@@ -37,7 +37,10 @@ def test_catalogue_lists_every_code_with_defaults():
     cat = {c["code"]: c for c in sc.catalogue()}
     assert set(cat) == {"asce7_16", "asce7_22_mprs", "asce7_22_two_period",
                         "ec8", "is1893_2016", "nbcc_2020", "nzs1170_5",
-                        "as1170_4", "gb50011"}
+                        "as1170_4", "gb50011",
+                        # Wave C (core/spectra_codes_wavec)
+                        "tsc2018", "kds41", "nscp2015", "ntc_cdmx",
+                        "ntc2018", "ec8_na"}
     for c in cat.values():
         keys = [p["key"] for p in c["params"]]
         assert len(keys) == len(set(keys)) and "T_max" in keys
@@ -579,7 +582,7 @@ def client():
 
 def test_api_spectra_and_combos(client):
     cat = client.get("/api/codes/spectra").get_json()
-    assert len(cat["codes"]) == 9 and len(cat["mprs_periods"]) == 22
+    assert len(cat["codes"]) == 9 + 6 and len(cat["mprs_periods"]) == 22  # + Wave C
     pv = client.post("/api/function/spectrum-code/preview",
                      json={"code": "gb50011", "params": {}}).get_json()
     assert pv["summary"]["plateau"] == A(0.16)

@@ -14035,3 +14035,95 @@ unchanged.
   * live analysis succeeds; existing menus still work;
   * every panel has ≤ 14 entries;
   * zero console errors.
+
+## Wave C: regional seismic / wind generators, code spectra, spectrum file import, USGS lookup and regional material / steel libraries
+
+All additions are opt-in. A model that does not use them is byte-identical: no model
+field was added, and the default results JSON hash is unchanged. Values entered from
+memory are listed in docs/REVIEW_FLAGS.md ("Wave C").
+
+**Auto-lateral generators.** These are new `code` values of the existing
+`POST /api/pattern/auto-lateral(/preview)` and `autolateral.compute / generate`.
+Every one returns the usual `{code, direction, T, W, V, <coefficients>, stories:
+[{story, h, w, F}]}` summary. The seismic codes are in `core/seismic_codes_wavec.py`
+and the wind codes in `core/wind_codes_wavec.py`; both are registered with
+`autolateral._register_ext`.
+
+| code | clause / model | keys (defaults) |
+|---|---|---|
+| `ec8_na` | EN 1998-1 §4.3.3.2 using the national-annex preset `EC8_NA[annex]` (UK, IT, DE, FR, ES, PT, GR, RO). The preset gives S/TB/TC/TD by ground type, the default spectrum type, β, and the PT ag-dependent S. | `annex, ag, q, ground_type="B", spectrum_type=None ("1"/"2" accepted), gamma_I=1, T1, structure="other", distribution, mode_shape, S, TB, TC, TD, beta, weights, direction`. Extra keys in the summary: `annex, ground_type, spectrum_type, beta, preset_from_memory`. |
+| `nbcc2020` | NBCC 2020 4.1.8.11. S(T) from Table 4.1.8.4.-C, linear or log-log. Table 4.1.8.11 gives Mv and J, interpolated by the spectral ratio S(0.2)/S(5.0) and by Ta (Notes 1–8). Floors are S(2.0)Mv, or S(4.0)Mv for walls; the cap max(2/3 S(0.2), S(0.5)) applies when Rd ≥ 1.5 or Rd is not given. Ft = 0.07TaV ≤ 0.25V. Each row also carries `J` and `M` (Mx = Jx ΣF(h−hx)). | `Sa02, Sa05, Sa10, Sa20, Sa50, Sa100, RdRo, Rd, IE=1, system="concrete_mf" (steel_mf, concrete_mf, other_mf, braced, walls, other), table_system (mrf, coupled_walls, braced, walls, other), T, interp="linear", cap=true`. Summary: `Ta_formula, S_Ta, S02, ratio, Mv, J, SMv, V_min, V_max, cap_applied, Ft, M0, table_system`. |
+| `ibc2006` / `ibc2009` / `ibc2012` | ASCE 7-05, ASCE 7-05 + Supplement 2, and ASCE 7-10 §12.8, with Fa and Fv from Tables 11.4-1/2. The minimum Cs is 0.01 for 2006 and max(0.044 SDS Ie, 0.01) otherwise; for S1 ≥ 0.6 it is also ≥ 0.5 S1/(R/Ie). | `Ss, S1, R, Ie=1, site="D", TL=8, Fa, Fv, T, structure` |
+| `ubc97` | UBC 1997 §1630.2 with Tables 16-Q/16-R. | `R, Z=0.4 (0.075, 0.15, 0.2, 0.3, 0.4), soil="SD", I, Na, Nv, Ca, Cv, T, structure` |
+| `ntc2018` | NTC 2018 §7.3.3.2 with the §3.2.3 spectrum: S = SS·ST, TC = CC·Tc*, TB = TC/3, TD = 4ag + 1.6. Sd uses η = 1/q and Sd ≥ 0.2 ag. λ = 0.85 when T1 < 2TC and there are ≥ 3 storeys. | `ag, F0, Tc_star, q=1.5, soil="B", topography="T1", T1, structure` |
+| `bs6399_wind` | BS 6399-2. Ve = Vb·Sa·Sd·Ss·Sp·Sb and qs = 0.613 Ve². Front and rear Cpe come from Table 5 (D/H); the divergence factor is 0.85 at H/D ≤ 1 and 1 at H/D ≥ 5. p = div·qs(Cpe,f + \|Cpe,r\|)Ca(1 + Cr). | `Vb, Sb=1.0 (number or [[He, Sb], ...]), Sa, Sd, Ss, Sp, Ca, Cr=0, cpe_front, cpe_rear, divergence` |
+| `api4f_wind` | API 4F. F = 0.00338·Ki·Vz²·Cs·A (lbf, kn, ft²), equal to 0.61155·Ki·Vz²·Cs·A in N; Vz = Vref·(max(z, z_ref)/z_ref)^α. | `Vref, Cs=1.5, Ki=1, alpha=0.125, z_ref=10` |
+| `ntc2018_wind` | NTC 2018 §3.3. vb = vb0·ca (zone, altitude); vr = vb·cr(TR); qr = ½ρvr²; ce(z) uses categories I–V; p = qr·cd(cp,w·ce(z) + \|cp,l\|·ce(h)). | `zone=3, a_s=0, category="III", TR=50, vb, ct=1, cd=1, rho=1.25, cp_windward=0.8, cp_leeward=-0.4` |
+
+**Code spectra.** These are new `code` values of `GET /api/codes/spectra`,
+`POST /api/function/spectrum-code(/preview)` and `spectra_codes.spectrum(...)`, defined
+in `core/spectra_codes_wavec.py`:
+
+* `tsc2018`: TBDY 2018 elastic Sae and reduced SaR = Sae/Ra.
+* `kds41`: two-period form with T0 = 0.2Ts and TL = 5.
+* `nscp2015`: Ca(1 + 1.5T/T0) / 2.5Ca / Cv/T.
+* `ntc_cdmx`: a(T) or a/(Q′R).
+* `ntc2018`: elastic, or design with η = 1/q and the 0.2ag floor.
+* `ec8_na`: elastic or design, with the NA preset. `spectrum_type` is "na", 1 or 2.
+
+The catalogue schema is unchanged; `js/mock_loadcodes_data.js` mirrors it.
+
+**Endpoints** (`api/wavec_api.py`):
+
+* `GET /api/codes/ec8-annexes` -> `{annexes: [{annex, label, note, default_type, beta, S_rule, importance, zones_ms2, zones_g, spectra: {type: {ground: [S, TB, TC, TD]}}, from_memory: true}]}`.
+* `POST /api/function/spectrum-file/preview` `{text, period_units?: "s"|"Hz", value_units?: "g"|"m/s2"|"cm/s2"|"mm/s2"|"ft/s2"|"in/s2", skip_lines?, scale?}` -> `{points: [[T, Sa_g]], n, damping|null, header_lines, period_units, value_units, scale}`.
+  * Comments (`#`, `//`, `!`, `;;`) are ignored.
+  * Separators are `,`, `;`, tab or space.
+  * Leading non-numeric lines are header lines.
+  * A `damping 5%` or `damping 0.05` line sets `damping`.
+  * Hz values are converted with T = 1/f, and the points are sorted.
+  * Duplicates, negative values and non-numeric lines after the data return 400.
+* `POST /api/function/spectrum-file` `{name, text, ..., damping?}` -> the model. It adds or replaces `spectrum_functions[name]`. The damping used is the given value, else the file's, else 0.05. `source` stays null.
+* `POST /api/usgs/designmaps` `{latitude, longitude, edition?: "asce7-22"|"asce7-16", site_class?, risk_category?}` -> `{ok: true, edition, values: {SS, S1, SMS, SM1, SDS, SD1, TL, PGA_M, Fa?, Fv?, SDC?}, spectra: {mprs_design?, mprs_mcer?, two_period_design?, ...}, mprs_pairs?: [[T, Sa]], url, latitude, longitude, site_class, risk_category}`.
+  * When the service is unreachable or answers badly, the response is **200** `{ok: false, error, manual: true}`. The message ends "enter … by hand".
+  * Bad input returns 400.
+  * The service URL is `https://earthquake.usgs.gov/ws/designmaps/<edition>.json`, queried with an 8 s timeout (`core/usgs_lookup.py`).
+
+**Material libraries.** `material_db.STANDARD_IDS` now also has `gb, csa, jis, ks,
+gost`, so `GET /api/material_db/*` serves them. The data files are
+`data/materials/<id>.json`, built by `tools/build_wavec_materials.py`. Each holds steel,
+concrete and rebar records in the v1.21 record format, and every source ends
+"[entered from memory …]". The file-level `from_memory` is true.
+
+**Steel databases.** The new files are `data/steel/cisc.json` (281 W), `jis.json`
+(85 H), `ks.json` (79 H) and `gost.json` (91 GOST 26020 I-beams). `steel_db` picks
+them up by directory listing. The sources and computed keys are in
+docs/SECTION_SOURCES.md "Wave C". GB/T 11263 is not included because it could not be
+sourced.
+
+**UI.**
+
+* Define › Auto Lateral Loads lists the 10 new generators (`js/wavec_alx.js`; mock
+  `js/mock_wavec_alx.js`).
+* Define › Functions ›
+  * **Response Spectrum From File…** (`def-wvc-rsfile`, dialog `dsRsFnFile`);
+  * **USGS Seismic Site Lookup…** (`def-wvc-usgs`, `dsRsFnUsgs`). When the service is
+    unreachable the dialog shows the message and keeps the manual SDS/SD1 entry. It
+    writes `asce7_22_mprs` (USGS ordinates) or `asce7_22_two_period`.
+* Define Functions also has the buttons "Add From File…" and "USGS Site Lookup…".
+* The new code spectra are in "Add From Code…".
+* The material library and Import from Database list the new standards.
+
+**Verification.** Playwright ran 70/70 checks across ?mock=1 and live:
+
+* the generators preview and generate (UBC 97 V = 362.353 kN);
+* kip-in display works;
+* OK with defaults is byte-identical in both new dialogs;
+* the file import gives the values in g and the damping from the file;
+* USGS offline returns the graceful message, and the manual function is written;
+* the 6 code spectra are committed;
+* the standards are listed;
+* the POST /api/model round trip is identical;
+* a live analysis with the generated pattern and the imported function succeeds;
+* every panel has ≤ 14 entries;
+* zero console errors.

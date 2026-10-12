@@ -124,6 +124,7 @@ import { initWaveBLinks as wbInitLinks, wbMockValidateModel as wbMockValidate } 
 import { wbMockAugment as wbMockAugmentResults } from "./mock_wbdamp.js";   // wave B ?mock=1 results (composite ζ, freq-dependent-link note)
 
 import { initWaveB as wbInitWaveB } from "./waveb.js";   // Wave B: Irregularity Checks · joint-local reactions (js/waveb.js)
+import { initWaveC as wvcInitWaveC } from "./wavec.js";   // Wave C: RS function from file · USGS site lookup (js/wavec.js)
 import { wbMockGroupedApplies as wbMockGrouped, wbMockAsce7Grouped as wbMockAsce7 } from "./mock_waveb.js";   // Wave B ?mock=1 grouped ASCE 7 combos
 
 import { initTimeDep as tdInitTimeDep } from "./timedep.js";   // time-dependent materials · step creep · tendon elements (js/timedep.js)
@@ -8630,6 +8631,7 @@ async function boot() {
   try { poxInitPoMethods(window.__sky); } catch (err) { console.error("pushover methods init failed", err); }   // pushover performance methods + ADRS (js/pomethods.js)
 
   try { wbInitWaveB(window.__sky); } catch (err) { console.error("Wave B init failed", err); }   // Irregularity Checks · joint-local reactions (js/waveb.js)
+  try { wvcInitWaveC(window.__sky); } catch (err) { console.error("Wave C init failed", err); }   // RS from file · USGS lookup (js/wavec.js)
 
   try { wbInitWb(window.__sky); } catch (err) { console.error("Wave B init failed", err); }   // Wave B interface & modelling tools (js/wb_init.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus

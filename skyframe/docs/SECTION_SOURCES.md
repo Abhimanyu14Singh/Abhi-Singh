@@ -376,3 +376,85 @@ transcriptions used carry these licences:
 
 Review that mix before redistributing the installer commercially. Every value can be
 traced back to the primary publication through the per-shape `src` id.
+
+---
+
+## Wave C regional tables: CISC, JIS, KS and GOST
+
+The files are `skyframe/skyframe/data/steel/cisc.json`, `jis.json`, `ks.json` and
+`gost.json`. The spec is the same. They are built by
+`tools/build_wavec_steel_db.py --src <folder>` from the raw files at the commits
+below, and the builder prints the SHA-256 of each source file. They are validated by
+`skyframe/tests/test_wavec_libraries.py`, which spot-checks 11 to 18 designations per
+table against the source values and pins every computed property to the exact outline.
+
+| File | Shapes | Families | Source (`src`) | Licence |
+|---|---:|---|---|---|
+| `cisc.json` | 281 | W | `CISC-SST9.2`: CISC Structural Section Tables v9.2, W shapes, transcribed in **rpakishore/steelsections-cisc** @ `929bf04` `src/cisc_sections/data/cisc_9.2/W.csv` (SHA-256 `e74d053a…`) | Apache-2.0 |
+| `jis.json` | 85 | H wide (HW) 32, H medium (HM) 29, H narrow (HN) 24 | `JFE`: JFE Steel H-shape handbook table (JIS G 3192 sizes), transcribed in **z-ichinohe/jfe_binran_csv** @ `7f4e0d1` `5. 断面性能表/5-1. H形鋼.csv` (SHA-256 `f854a1c6…`). The JFE "SH" fixed-outer-size series is excluded. | **none stated** |
+| `ks.json` | 79 | H (KS D 3502) | `KS-MQ`: KS D 3502 H-section type catalogue in **hnanmal/mQ** @ `9e7a8bc` `etc/testPjt/Steel Family_2024_0614/Column/KSD/Steel Column_H_KSD3502.txt` (SHA-256 `cfe70d1e…`). The dimensions of 17 sizes were cross-checked against **OpenAEC-Foundation/open-pdf-studio-library** @ `46f844f` `collections/ks-steel-shapes/parametric.json` (MIT); all 17 agree. | **none stated** (cross-check MIT) |
+| `gost.json` | 91 | GOST Б 37, Ш 26, К 18, Д 10 | `GOST-CALCX`: GOST 26020-83 dimensions, A and mass from **vkorotenko/calcxactive** @ `9599e47` `src/typos/data26020.js` (MIT). `GOST-KUVBUR`: the full series Б property table from **kuvbur/gdl_macro** @ `026532c` `hsf/metall/sortament/дв_Двутавр_Б_по_ГОСТ_26020-83.txt` (MIT). | MIT |
+
+Cross-check only: **cslotboom/limitstates** @ `08f466e` `cisc_12_w.csv` (CISC SST 12,
+GPL-3.0). Common W designations agree within 1.6 % on A, I and Z. J differs by up to
+8.9 % between the 9.2 and 12 editions.
+
+### Computed values (listed per record in `computed`)
+
+* **Exact rolled-I outline.** The outline has two flanges, a web and four root
+  spandrels; each spandrel is an r × r square minus a quarter disc. A, I33, I22, S and
+  Z are integrated in closed form (`exact_I`). Checked against the EN 10365 values in
+  `eurocode.json` (IPE300, IPE600, HEA200, HEB300, HEM400), they agree within 0.05 %.
+* **J:** El Darwish & Johnston (1965), the SCI P363 formula. It is within 3.1 % of the
+  ArcelorMittal It.
+* **Cw:** I22 (h − tf)² / 4.
+* **Shear areas:** As2 = d·tw, As3 = 5/3·bf·tf.
+* **x0 / y0:** 0, because the sections are doubly symmetric.
+* **r:** sqrt(I/A) where the source prints no radius.
+* **CISC:** the tables give A, I, S, Z, r, J and Cw. `dims.r` comes from the identical
+  ASTM A6 shape in `aisc.json` (kdes − tf). The match requires d and bf within 1.5 mm
+  and tw and tf within 0.5 mm, and it is listed in `computed_dims`. For 21 shapes no
+  AISC twin matches, so r = 0.
+* **JIS:** the table gives A, I, i, Z (elastic) and Zp (plastic). J, Cw and the shear
+  areas are computed.
+* **KS:** the table gives A, I, S, Z and the nominal weight. J, Cw, r and the shear
+  areas are computed; the catalogue's own J and Cw values are not used.
+* **GOST Б:** the table gives A, Iy, Wy, iy, Iz, Wz and iz, plus Z33 = 2·Sy (Sy is
+  the printed half-section static moment). Z22, J and Cw are computed.
+* **GOST Ш, К and Д:** only dimensions, A and mass are published. Every other section
+  property is computed from the outline. The printed A is reproduced within 0.34 %.
+
+### Gates
+
+* **Exact geometry:** the tabulated A must be within 2 % and I within 3 % of the
+  outline (3 % and 4.5 % when no root radius is known).
+  * Worst cases: CISC A 2.3 % (W1000x272, r unknown); JIS 0.45 %; KS 1.6 %; GOST
+    0.34 %.
+  * Dropped: KS H-350x357x19x19, whose catalogue A is 3.5 % off its own dimensions.
+* **Mass (A × 7850):** JIS 0.5 %, KS 0.5 %, GOST 0.7 %. CISC is 3 %, because the
+  designation mass is rounded.
+
+### Corrections between the two GOST sources
+
+Each one was resolved by an exact relation:
+
+* **14Б2:** r is 7 mm (kuvbur), not 9, because 7 reproduces the tabulated A.
+* **14Б1:** the mass is 10.5 kg/m (kuvbur), not 10.05.
+* **30Б2:** calcx has A 46.92 and m 46.67. kuvbur has A 46.67 and m 36.6, and its
+  values agree with the outline and with A × 7850.
+* **90Б1:** h is 893 mm (kuvbur), not 898, because 893 matches the table's own
+  Wy = Iy/(h/2).
+
+### Not included
+
+**GB/T 11263 H-shapes.** No reliable open transcription was found. The candidates were
+unlicensed and had values that contradict the standard; for example, HW100x100 is
+printed with Ix = 406 cm⁴ against the standard's 378. A 16-row "representative" MIT
+table was not complete enough to use. The gap is recorded in docs/REVIEW_FLAGS.md
+("Wave C").
+
+### Licences
+
+Apache-2.0 (CISC) and MIT (GOST). The JIS and KS repositories state no licence. Only
+factual table values were taken from them, but review this before commercial
+redistribution.
