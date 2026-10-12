@@ -199,15 +199,16 @@ def validate_laminate(ssec, materials) -> None:
                              f"material {la.get('material')!r} is not "
                              "defined")
         ang = la.get("angle", 0.0)
-        if not (_finite(ang) and (abs(ang) < 1e-9 or _is90(ang))):
+        # Wave C (core.aniso): any finite layer angle
+        if not _finite(ang):
             raise ValueError(f"Shell section {nm}: laminate layer {i} angle "
-                             "must be 0 or 90 (deg)")
+                             "must be a finite angle (deg)")
     if getattr(ssec, "layered", None):
         raise ValueError(f"Shell section {nm}: laminate and layered are "
                          "exclusive")
-    _, B, _, _ = laminate_resultants(lam, materials)
+    from skyframe.core.aniso import laminate_abd    # Wave C: any angle
+    A, B, _, _ = laminate_abd(lam, materials)
     scale = max(abs(B).max(), 1e-30)
-    A, _, _, _ = laminate_resultants(lam, materials)
     h = sum(float(la["t"]) for la in lam["layers"])
     if scale > 1e-9 * abs(A).max() * h:
         raise ValueError(f"Shell section {nm}: the laminate is not symmetric "

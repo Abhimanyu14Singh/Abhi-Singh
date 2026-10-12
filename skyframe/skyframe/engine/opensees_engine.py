@@ -4474,6 +4474,12 @@ class OpenSeesEngine:
         args: List[float] = []
         for la in ssec.layered["layers"]:
             mat = model.materials[la["material"]]
+            if la["kind"] not in ("concrete", "steel"):   # Wave C any mat
+                from skyframe.engine import aniso_sections as _wcs
+                a_, mtag, nd_tag = _wcs.layer_args(
+                    la, ssec, model.materials, mtag, nd_tag, SHELL_SUBLAYERS)
+                args.extend(a_)
+                continue
             E_eff = mat.E * ssec.mod
             t_sub = float(la["t"]) / SHELL_SUBLAYERS
             if la["kind"] == "concrete":

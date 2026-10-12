@@ -5,6 +5,7 @@
    backend otherwise round-trips the model unchanged (POST /api/model). */
 
 import { orthoProblem as mwbOrtho } from "./wb_ortho.js";
+import { wc9MockValidate as mwbWc9Validate } from "./wc9_aniso.js";   // Wave C anisotropic / material angle
 import { slabProblem as mwbSlab, weightThickness as mwbWeightT } from "./wb_slab.js";
 import { wspProblem as mwbSpring } from "./wb_springs.js";
 import { ccCheck as mwbCc, CC_TYPES as mwbCcTypes } from "./wb_composite.js";
@@ -14,6 +15,7 @@ const SLAB_TYPES = ["ribbed", "waffle", "deck_filled", "deck_unfilled", "deck_so
 /** First problem (backend wording) or "" — chained into app.js postModel. */
 export function wbMockValidate(m) {
   if (!m || typeof m !== "object") return "";
+  const wc9e = mwbWc9Validate(m); if (wc9e) return wc9e;   // Wave C
   const mats = m.materials || {};
   for (const [n, mt] of Object.entries(mats)) {
     if (mt.symmetry === "orthotropic") { const e = mwbOrtho(mt); if (e) return `Material '${n}': ${e}`; }

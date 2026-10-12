@@ -2,7 +2,8 @@
 report writer; registered by ``create_app`` with one line (CONTRACT
 "Results tables export, spandrels and Word report").
 
-* ``POST /api/tables/export/<fmt>`` (fmt = ``xlsx`` | ``sqlite``), body
+* ``POST /api/tables/export/<fmt>`` (fmt = ``xlsx`` | ``sqlite`` |
+  ``csv`` - Wave C: the CSV folder as a ZIP, :mod:`skyframe.io.results_csv`), body
   ``{tables?: [keys], cases?: [names], units?: "kN-m", skip_empty?: bool,
   results?: <analyze dict>}`` -> ``{ok: true, filename, mime, content_b64,
   report}``.  Tables are computed from the STORED results of the last
@@ -27,6 +28,7 @@ EXPORT_MIME = {
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml."
             "sheet",
     "sqlite": "application/vnd.sqlite3",
+    "csv": "application/zip",          # Wave C: CSV folder (io.results_csv)
 }
 
 
@@ -61,7 +63,7 @@ def register(app, state: Dict[str, Any]) -> None:
         body = _body()
         if fmt not in EXPORT_MIME:
             return jsonify({"error": f"unknown format {fmt!r} "
-                                     "(xlsx | sqlite)"}), 400
+                                     "(xlsx | sqlite | csv)"}), 400
         keys, cases = body.get("tables"), body.get("cases")
         for lab, v in (("tables", keys), ("cases", cases)):
             if v is not None and (not isinstance(v, list) or not all(
@@ -79,13 +81,18 @@ def register(app, state: Dict[str, Any]) -> None:
             res, ctx = _results(model, body)
             fn = (RX.export_results_xlsx if fmt == "xlsx"
                   else RX.export_results_sqlite)
+            if fmt == "csv":                         # Wave C CSV folder
+                from skyframe.io.results_csv import export_results_csv_zip
+                fn = export_results_csv_zip
             data, rep = fn(model, res, ctx, keys=keys, cases=cases,
                            units=units,
                            skip_empty=bool(body.get("skip_empty")))
         except (ValueError, KeyError, TypeError, RuntimeError) as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify({"ok": True, "mime": EXPORT_MIME[fmt],
-                        "filename": _fname(model, f"_results.{fmt}"),
+                        "filename": _fname(model, "_results.zip"
+                                           if fmt == "csv" else
+                                           f"_results.{fmt}"),
                         "content_b64": base64.b64encode(data).decode("ascii"),
                         "report": rep})
 

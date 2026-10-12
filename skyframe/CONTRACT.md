@@ -14035,3 +14035,149 @@ unchanged.
   * live analysis succeeds; existing menus still work;
   * every panel has ≤ 14 entries;
   * zero console errors.
+
+
+## Anisotropic shells, material angle, Section Designer moment-curvature, layered shells with any material, results CSV folder
+
+Wave C (C9).  Every field below is optional and omitted while unset, so a
+model without them saves and analyses byte-identically (results-hash check
+of two templates, a CLT plate and an orthotropic plate before / after).
+
+### Model fields
+
+| object | field | meaning |
+|---|---|---|
+| `Material` | `symmetry: "anisotropic"` + `aniso: {Q11, Q22, Q12, Q16, Q26, Q66, G13, G23}` (kPa) | user plane-stress matrix in the MATERIAL axes (engineering γ12), positive definite; Q11 / Q22 / Q66 / G13 / G23 > 0.  `E` / `nu` stay the frame values, `G` (frames) = `Q66`.  `ortho` and `aniso` are exclusive |
+| `Material` | `material_angle` (deg) | default material angle of every shell section of the material |
+| `ShellSection` | `material_angle` (deg) | overrides the material's; rejected on ribbed / waffle / deck / drop types and on layered sections (layers carry `angle`) |
+| `ShellSection.laminate.layers[].angle` | any finite angle (was 0 / 90); a layer material may be anisotropic; the lay-up must stay symmetric (B = 0) |
+| `ShellSection.layered.layers[].kind` | adds `"elastic"` (any material), `"orthotropic"` (orthotropic / anisotropic material), `"timber"` (orthotropic material), `"user"` (material with a `stress_strain` law, smeared uniaxial along `angle`); `angle` (deg) allowed on every new kind; steel keeps 0 / 90, concrete none |
+
+The material angle runs from the shell ELEMENT local axis 1 to material
+axis 1, positive about local 3: `Qbar = T^T Q T`,
+`T = [[c², s², cs], [s², c², −cs], [−2cs, 2cs, c² − s²]]` (90° = 1 ↔ 2
+swap exactly).  Transverse shear rotates as `G13bar = G13 c² + G23 s²`,
+`G23bar = G13 s² + G23 c²`; the cross term `(G13 − G23) cs` is NOT carried
+(OpenSees plate fibres have uncoupled transverse shear; zero at 0 / 90° or
+G13 = G23).
+
+### Engine (exact in-plane and bending stiffness)
+
+`skyframe.core.aniso` / `skyframe.engine.aniso_sections` (one hook in
+`engine.shell_elements.build_section`, one in
+`OpenSeesEngine._layered_shell_section`).  Sections for which
+`aniso.needs_general` is False (every legacy section) never reach them.
+
+* homogeneous anisotropic / rotated orthotropic shells and general
+  laminates: `A = h Qbar`, `D = h³/12 Qbar` (laminate: CLT about the
+  mid-surface, shear `5/6 Σ t G`), then the ETABS modifiers as the
+  congruence `diag(√k) M diag(√k)` (Wave B rule extended to the 16 / 26
+  entries), `mod`, shell-type factors and the cracked scale.  Without
+  normal-shear coupling the Wave B 3-layer skin / core stack is used;
+  otherwise an 11-slice PALINDROMIC LayeredShell: ElasticOrthotropic +
+  PlateFiber slices at k = 0, 5, 10 carry the 11 / 22 / 12 / 66 entries and
+  the shear, PlateRebar fibre slices at 30° (k = 1, 3, 7, 9) and 60°
+  (k = 2, 4, 6, 8) carry the 16 / 26 coupling (PlateRebar tangent
+  `E m mᵀ`, `m = [c², s², cs]` — probed).  Mirror slices share parameters;
+  the two-equation (membrane, second moment) solve per entry is exact
+  under LayeredShell's mid-plane rule.  Individual slices may be negative.
+* layered sections with a new kind: LINEAR builds use the REAL stack —
+  every layer (concrete / steel included) at its initial elastic stiffness,
+  each realised exactly about its own centre (continuum `t³/12`):
+  rank-one steel / user layers as 3 PlateRebar slices `1.125E | 0.75E |
+  1.125E`, uncoupled layers as 3 orthotropic slices with the same weights,
+  coupled layers as the 11-slice stack; shear `Σ t G` (no 5/6, as the
+  legacy layers).  NONLINEAR builds keep the legacy concrete / steel laws
+  (4 sublayers) and add: elastic / orthotropic / timber at 0 / 90° (or
+  isotropic) = one ElasticOrthotropic + PlateFiber split in 4; otherwise
+  the 11-slice stack; user = the material law (E·mod) as PlateRebar at
+  the layer angle split in 4.  Only `mod` applies (f / m / v modifiers are
+  ignored, as for nonlinear layered sections).  Self-weight / mass keep
+  the legacy rule (section material × Σt).
+* layer stresses (`shell_results`, `location = "layer:<i>"`) of such a
+  section are EXACT in linear runs: `[ε; κ] = [[A, B], [B, D]]⁻¹ [N; M]`
+  (continuum, layers bottom → top), `σ = Q_layer (ε + z κ)`.
+
+### Section Designer moment-curvature
+
+`skyframe.core.moment_curvature.moment_curvature(ds, materials, P=0,
+angle=0, concrete="simple", steel="simple", params=None, n_strips=200,
+n_steps=60)`; `POST /api/sections/designer/mc` body `{name | section, P?,
+angle?, concrete?, steel?, params?, n_strips?, n_steps?}` →
+
+```
+{name, P (kN, compression +), angle (deg), concrete, steel,
+ params: {eps_c0, eps_cu, fcc_ratio, eps_cu_conf, eps_su, eps_sh, b, ft},
+ points: [{phi (1/m), M (kN-m), M_perp, eps0, eps_c, eps_s, na_depth (m|null)}],
+ yield: <point>|null, ultimate: <point>, idealized: {Mp, phi_y, phi_u, k_e,
+ ductility, area}|null, limit: "concrete crushing"|"steel rupture"|...,
+ laws: {material: {kind, label, eps_limit}}, centroid, depth, units,
+ rows: [<point> + {step, event}]}
+```
+
+Plane sections `ε(v) = ε0 − φ (v − vc)`, `v = z cos a + y sin a` (angle
+0 = bending about axis 3, +z face in compression); polygons cut into equal
+bands (exact clipped areas, midpoint stress), holes with the base law,
+rebar as points (displaced concrete not deducted, as the PMM surface);
+`ε0` from `Σ σA = −P` (bracketed bisection); `M = −Σ σA (v − vc)`.
+Models: concrete `simple` (Hognestad parabola to εc0, linear to 0.85 f'c at
+εcu), `mander`, `mander_confined` (f'cc = k f'c, εcc = εc0 (1 + 5(k − 1)),
+ultimate `eps_cu_conf`), `park` (Kent-Park), `material`; steel `simple`
+(bilinear b), `epp`, `park`, `material` (laws of
+`skyframe.core.stress_strain`).  Limits: extreme concrete compression
+strain = εcu, steel |ε| = εsu; first yield (first tension bar, else the
+extreme steel fibre at fy/Es) and ultimate located by bisection on φ.
+Caltrans idealisation through first yield with equal area:
+`Mp = k_e (φu − √(φu² − 2 Area / k_e))`.  Errors 400 `{error}`.
+
+`POST /api/shell_sections/stiffness` `{name}` or `{section, materials?}` →
+`{angle, A, D, S13, S23}` (element axes, before modifiers).
+
+### Results CSV folder
+
+`POST /api/tables/export/csv` (same body as xlsx / sqlite) →
+`{ok, mime: "application/zip", filename: "<model>_results.zip",
+content_b64, report: {format: "csv", units, tables, files, folder}}`;
+`skyframe.io.results_csv.export_results_csv_folder(model, results,
+folder, ...)` / `export_results_csv_zip(...)`.  One RFC 4180 CSV per table
+(header `Label [unit]`, floats at full precision, null = empty) plus
+`_index.csv`, `_units.csv`, `_meta.csv`, `README.txt`; fixed ZIP
+timestamps (same results → same bytes).  SQLite stays the Access
+substitute — decision in docs/INTEROP.md.
+
+### DB-edit
+
+Materials: `Material Angle` + `Q11 … G23` columns; Shell Sections:
+`Material Angle` (blank = unset, key removed; untouched rows apply as the
+identity).
+
+### UI
+
+* Material Property Data: Directional Symmetry › Anisotropic (Q matrix
+  group, live Q̄ / Ex preview at the angle) and Material Angle on the
+  orthotropic and anisotropic groups (js/wc9_aniso.js via js/wb_ortho.js).
+* Slab / Wall Property Data: Material Angle row; CLT layers at any angle
+  (js/wb_slab.js).
+* Assign › Shell › Layered Section… (`asn-slayer`, was a hint): Layered
+  Shell Section Data — layers of any kind / material / angle, validation
+  mirrors the backend (js/wc9_layers.js).
+* Tools › Section Moment-Curvature… (`tool-wc9-mcurv`) and an M-φ button in
+  Section Designer: plot (curve, first yield, ultimate, idealised bilinear),
+  table, CSV (js/wc9_mcurv.js; ?mock=1 integrates in JS).
+* File › Export › Results Tables to CSV Folder (.zip)… (`file-wc9-res-csv`).
+
+### Tests
+
+`tests/test_wave_c9_aniso.py` (rotation = Jones eq. 2.84 / 2.97 at 45°; 90°
+plate = swapped E1 / E2 to 1e-9 for shell / shell_thin / shell_thick;
+membrane strip u = S̄11 N L / h and the shear slip S̄16 N L / h to 1e-6;
+anisotropic Q = rotated orthotropic; ±45 laminate; CLT as timber layers:
+membrane (A⁻¹)11 to 1e-6 and Navier 2 %; concrete + timber stack and user
+FRP layers by hand; exact layer stresses; nonlinear timber-core wall),
+`tests/test_wave_c9_mc.py` (RC 300 x 500, 3 × 491 mm² at d = 450, f'c 30
+MPa Hognestad, fy 420 EPP: first yield c = 0.1539 m, My = 244.89 kN·m,
+φy = 7.093e-3 /m; ultimate c = 0.08843 m, Mu = 255.02 kN·m, φu =
+0.03958 /m by strain compatibility — fibre results within 1e-4; steel
+rectangle My = fy b h²/6, Mp = fy b h²/4), `tests/test_wave_c9_export_api.py`
+(every CSV equals the SQLite table cell for cell; HTTP; DB-edit).
+Playwright mock 22/22, live 25/25.

@@ -137,3 +137,5 @@ def extend_catalogue(T: List[Table]) -> None:
         _spring_table("area_spring_properties", "Spring Properties - Area",
                       "area_spring_properties", "none"),
     ]
+    from .aniso import extend_catalogue as _c9_ext   # Wave C aniso/angle
+    _c9_ext(T)

@@ -110,6 +110,8 @@ MATERIAL_SYMMETRY = ("isotropic", "uniaxial")
 # Wave B: orthotropic shells / timber (skyframe.core.ortho) - accepted by
 # validation in addition to MATERIAL_SYMMETRY (anisotropic stays out)
 MATERIAL_SYMMETRY_EXT = MATERIAL_SYMMETRY + ("orthotropic",)
+# Wave C: anisotropic shells (skyframe.core.aniso, user Q matrix)
+MATERIAL_SYMMETRY_EXT = MATERIAL_SYMMETRY_EXT + ("anisotropic",)
 
 # v1.12 self-mass source modes (BuildingModel.mass_source_mode).
 MASS_SOURCE_MODES = ("weight", "element_self_mass")
@@ -198,11 +200,18 @@ class Material:
     # Wave B orthotropic constants {E2, G12, G13, G23} (kPa; E = E1,
     # nu = nu12) - skyframe.core.ortho; None = isotropic (omitted).
     ortho: Optional[dict] = None
+    # Wave C (skyframe.core.aniso; None = unset, omitted): anisotropic
+    # plane-stress matrix {Q11..Q66, G13, G23} (kPa) and the default
+    # shell material angle (deg from element local 1)
+    aniso: Optional[dict] = None
+    material_angle: Optional[float] = None
 
     @property
     def G(self) -> float:
         if self.ortho is not None and self.symmetry == "orthotropic":
             return float(self.ortho["G12"])          # Wave B (G12)
+        if self.aniso is not None and self.symmetry == "anisotropic":
+            return float(self.aniso["Q66"])          # Wave C (Q66)
         return self.E / (2.0 * (1.0 + self.nu))
 
     @property
@@ -236,7 +245,7 @@ class Material:
         d["mass_per_volume"] = self.mass_per_volume
         d["Fye"] = self.Fye
         d["Fue"] = self.Fue
-        return _wbp.material_to_dict(d)     # Wave B ortho (when set)
+        return _wbp.material_to_dict(d)     # Wave B/C ortho/aniso (when set)
 
 
 def material_from_dict(md: dict, name: Optional[str] = None) -> "Material":
@@ -272,7 +281,9 @@ def material_from_dict(md: dict, name: Optional[str] = None) -> "Material":
         color=str(md.get("color", "")),
         notes=str(md.get("notes", "")),
         stress_strain=normalize_stress_strain(md.get("stress_strain")),
-        ortho=_wbp._ortho.normalize_ortho(md.get("ortho")))   # Wave B
+        ortho=_wbp._ortho.normalize_ortho(md.get("ortho")),   # Wave B
+        aniso=_wbp._aniso.normalize_aniso(md.get("aniso")),   # Wave C
+        material_angle=_optf(md.get("material_angle")))       # Wave C
 
 
 def default_material_library() -> Dict[str, "Material"]:
@@ -400,6 +411,9 @@ class FrameSection:
 
 
 SHELL_LAYER_KINDS = ("concrete", "steel")
+# Wave C: any layer material (skyframe.core.aniso.NEW_LAYER_KINDS)
+SHELL_LAYER_KINDS = SHELL_LAYER_KINDS + ("elastic", "orthotropic", "timber",
+                                         "user")
 
 
 @dataclass
@@ -457,6 +471,8 @@ class ShellSection:
     laminate: Optional[dict] = None
     distribution: Optional[str] = None
     one_way_dir: Optional[int] = None
+    # Wave C material angle (deg; None = the material's, omitted)
+    material_angle: Optional[float] = None
 
     @property
     def total_thickness(self) -> float:
@@ -3356,7 +3372,7 @@ class BuildingModel:
                 raise ValueError(f"Shell section {ssec.name}: layer {k}: "
                                  f"kind must be one of {SHELL_LAYER_KINDS}, "
                                  f"got {kind!r}")
-            if "angle" in la:
+            if "angle" in la and kind not in SHELL_LAYER_KINDS[2:]:
                 if kind != "steel":
                     raise ValueError(f"Shell section {ssec.name}: layer "
                                      f"{k}: angle is only valid for steel "

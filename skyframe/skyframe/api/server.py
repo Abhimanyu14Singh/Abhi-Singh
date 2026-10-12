@@ -2393,6 +2393,9 @@ def create_app() -> Flask:
     _plg_register(app, _state)
     from skyframe.api.interop_api import register as _iop_register
     _iop_register(app, _state)
+    # Wave C (C9): designer moment-curvature + shell stiffness preview
+    from skyframe.api.c9_api import register as _c9_register
+    _c9_register(app, _state)
 
     return app
 

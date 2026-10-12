@@ -439,6 +439,10 @@ def _layer_maps(geo: Geometry, i: int, layer: int, T: Optional[np.ndarray]
     la = lays[layer]
     ssec = geo.sections[i]
     mats = geo.model.materials
+    from skyframe.core import aniso as _wca          # Wave C: exact stack
+    if _wca.layered_general(ssec):
+        return _wca.layer_stress_map(ssec, mats, layer,
+                                     None if T is None else T[i])
     m0 = mats[ssec.material]
     E0 = float(m0.E) * float(getattr(ssec, "mod", 1.0) or 1.0)
     nu0 = float(m0.nu)

@@ -15,11 +15,13 @@ import reU from "./units.js";
 import { el as reEl, esc as reEsc, dkForm as reForm, dkGroup as reGroup, dkNote as reNote,
   dkDialog as reDialog } from "./dlgkit.js";
 import { mrtXlsx as reMockXlsx, mrtSqlDump as reMockSql } from "./mock_restables.js";
+import { wc9MockCsvZip as reWc9MockCsvZip } from "./wc9_init.js";   // Wave C CSV folder (mock zip)
 
 const RE = { downloads: [], last: null };
 const RE_FMT = {
   xlsx: { label: "Excel (.xlsx)", mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
   sqlite: { label: "SQLite (.sqlite)", mime: "application/vnd.sqlite3" },
+  csv: { label: "CSV Folder (.zip)", mime: "application/zip" },   // Wave C (skyframe/io/results_csv.py)
 };
 const reMock = sky => !!(sky.store && sky.store.mock);
 const reSafe = s => String(s || "model").replace(/[^\w.-]+/g, "_");
@@ -77,6 +79,8 @@ export async function reExport(sky, { fmt = "xlsx", tables = null, cases = null,
     tabs.push(t);
   }
   const report = { format: fmt, units, tables: Object.fromEntries(tabs.map(t => [t.key, t.rows.length])), mock: true };
+  if (fmt === "csv")   // Wave C
+    return reDownload({ filename: `${name}_results.zip`, mime: RE_FMT.csv.mime, content_b64: reB64(reWc9MockCsvZip(tabs, units, S.model.name || "")), report, fmt });
   if (fmt === "xlsx")
     return reDownload({ filename: `${name}_results.xlsx`, mime: RE_FMT.xlsx.mime, content_b64: reB64(reMockXlsx(tabs, units, S.model.name || "")), report, fmt });
   return reDownload({ filename: `${name}_results.sql`, mime: "application/sql", text: reMockSql(tabs, units, S.model.name || ""), report, fmt: "sql" });
@@ -106,7 +110,7 @@ export async function reOpenExport(sky, fmt = "xlsx", { preselect = null, cases 
       F.select(V, "units", () => reU.UNIT_SET_NAMES.map(n => [n, n]), { label: "Units", id: "reUnits", hint: "values are converted; each header carries its unit" }),
       F.check(V, "skipEmpty", { label: "Skip tables without rows", id: "reSkipEmpty" }),
     ]),
-    reNote(fmt === "sqlite"
+    reNote(fmt === "csv" ? "One CSV file per table (RFC 4180, UTF-8, header “Label [unit]”) in a folder with _index.csv, _units.csv, _meta.csv and README.txt, delivered as a .zip — an open format every tool reads." : fmt === "sqlite"
       ? "One SQL table per results table (ETABS Access-style field names) plus “Table Index”, “Field Units” and “Program Control”. SQLite replaces ETABS’ Microsoft Access export: Access, Excel (ODBC), Python, R and BI tools read it directly." +
         (reMock(sky) ? " <b>Offline mock:</b> an SQL text dump is saved instead — run the live server for a .sqlite file." : "")
       : "One worksheet per table (sheet name = ETABS table name) plus an _index sheet; numbers are stored as numeric cells."),

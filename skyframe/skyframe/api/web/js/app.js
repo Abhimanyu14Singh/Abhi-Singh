@@ -129,6 +129,7 @@ import { wbMockGroupedApplies as wbMockGrouped, wbMockAsce7Grouped as wbMockAsce
 import { initTimeDep as tdInitTimeDep } from "./timedep.js";   // time-dependent materials · step creep · tendon elements (js/timedep.js)
 import { tdMockValidate as tdMockValidateModel } from "./mock_timedep.js";   // ?mock=1 time-dependent / tendon-element validation
 
+import { initWc9 as wc9InitWc9 } from "./wc9_init.js";   // Wave C (C9): layered any-material · moment-curvature · CSV folder (js/wc9_*.js)
 import { initWbProps as wbInitProps } from "./wb_init.js";   // Wave B ortho / slab / deck / CF / composite / line-area springs (js/wb_*.js)
 import { wbMockValidate as wbMockValidateProps } from "./mock_wb.js";   // Wave B ?mock=1 validation
 
@@ -8626,6 +8627,7 @@ async function boot() {
   try { a8InitResults(window.__sky); } catch (err) { console.error("A8 results init failed", err); }   // spandrels · results export · report plus (js/a8results.js)
 
   try { wbInitProps(window.__sky); } catch (err) { console.error("Wave B properties init failed", err); }   // Wave B (js/wb_init.js)
+  try { wc9InitWc9(window.__sky); } catch (err) { console.error("Wave C9 init failed", err); }   // Wave C9 (js/wc9_init.js)
   try { w8InitW8(window.__sky); } catch (err) { console.error("W8 init failed", err); }   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_init.js)
   try { poxInitPoMethods(window.__sky); } catch (err) { console.error("pushover methods init failed", err); }   // pushover performance methods + ADRS (js/pomethods.js)
 

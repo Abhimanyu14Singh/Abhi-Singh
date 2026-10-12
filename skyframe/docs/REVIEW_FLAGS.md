@@ -103,3 +103,19 @@ Each entry says where it lives.
 - General grids are not written to E2K and cannot be the primary grid; vertex
   reshaper and dimension lines are plan-view only; shell divide/merge/chop/expand
   refuse shells with openings.
+
+## Wave C (C9): anisotropic shells, layered any-material, moment-curvature
+- Rotated / anisotropic shells are realised by an 11-slice LayeredShell whose
+  slices may carry NEGATIVE moduli (only the sums are physical; exact for the
+  elastic tangent). Transverse-shear cross coupling (G13 - G23) cs of a rotated
+  material is dropped.
+- Layered sections with the new kinds (elastic / orthotropic / timber / user):
+  f/m/v modifiers are ignored (only `mod`), and self-weight / mass still use
+  the section material x sum t (legacy rule) - set the section material or the
+  weight / mass modifiers for mixed stacks. A user layer is a smeared UNIAXIAL
+  law along its angle (no 2-D user plasticity).
+- Moment-curvature: displaced concrete at bars is not deducted (same as PMM);
+  hole polygons use the base material's law; the mock (?mock=1) uses simplified
+  laws (Hognestad / bilinear) for every model.
+- SQLite remains the Access substitute by decision (docs/INTEROP.md); confirm
+  the ODBC link/import in a real Access install.

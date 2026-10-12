@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import Dict
 
+from . import aniso as _aniso            # Wave C anisotropic / angle
 from . import composite_col as _cc
 from . import ortho as _ortho
 from . import slab_props as _slab
@@ -36,14 +37,14 @@ SHELL_SECTION_KEYS = ("slab", "laminate", "distribution", "one_way_dir")
 def material_to_dict(d: dict) -> dict:
     if d.get("ortho") is None:
         d.pop("ortho", None)
-    return d
+    return _aniso.material_to_dict(d)               # Wave C
 
 
 def shell_section_to_dict(d: dict) -> dict:
     for k in SHELL_SECTION_KEYS:
         if d.get(k) is None:
             d.pop(k, None)
-    return d
+    return _aniso.shell_section_to_dict(d)          # Wave C
 
 
 def region_to_dict(r) -> dict:
@@ -83,6 +84,7 @@ def area_spring_from_dict(asp):
 
 
 def model_from_dict(mdl, d: dict) -> None:
+    _aniso.model_from_dict(mdl, d)                  # Wave C material angle
     for name, sd in (d.get("shell_sections") or {}).items():
         ss = mdl.shell_sections.get(name)
         if ss is None:
@@ -118,6 +120,7 @@ def model_from_dict(mdl, d: dict) -> None:
 # validation
 # --------------------------------------------------------------------------- #
 def validate_model(model) -> None:
+    _aniso.validate_model(model)                    # Wave C
     for mat in model.materials.values():
         _ortho.validate_material(mat)
     for ss in model.shell_sections.values():
@@ -126,7 +129,8 @@ def validate_model(model) -> None:
         _slab.validate_slab(ss, mat)
         _slab.validate_distribution(ss)
         if mat is not None and _ortho.is_ortho(mat) and \
-                getattr(ss, "layered", None):
+                getattr(ss, "layered", None) and \
+                not _aniso.layered_general(ss):             # Wave C
             raise ValueError(f"Shell section {ss.name}: a layered "
                              "(nonlinear) section cannot use the "
                              "orthotropic material directly")
