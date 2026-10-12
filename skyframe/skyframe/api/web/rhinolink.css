@@ -1,0 +1,34 @@
+/* Rhino / Grasshopper exchange (js/rhinolink.js) */
+.rhx-dlg { font-size: 12.5px; }
+.rhx-prof { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 8px; }
+.rhx-prof input[type=text] { width: 140px; }
+.rhx-scroll { max-height: 300px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.rhx-table { width: 100%; border-collapse: collapse; }
+.rhx-table th, .rhx-table td { padding: 3px 6px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+.rhx-table th { position: sticky; top: 0; background: var(--panel, var(--bg)); font-weight: 650; z-index: 1; }
+.rhx-table select, .rhx-table input[type=text] { max-width: 150px; font-size: 12px; }
+.rhx-table tr.rhx-empty td { opacity: .55; }
+.rhx-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px;
+  border: 1px solid rgba(0,0,0,.25); }
+.rhx-num { text-align: right !important; font-variant-numeric: tabular-nums; }
+.rhx-opts { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-top: 8px; }
+.rhx-opts input[type=number] { width: 90px; }
+.rhx-preview { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-top: 8px; max-height: 280px; overflow: auto; }
+.rhx-preview.is-busy { opacity: .55; }
+.rhx-sum { border-collapse: collapse; margin-bottom: 6px; }
+.rhx-sum th, .rhx-sum td { padding: 2px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+.rhx-sum td.is-on { font-weight: 700; }
+.rhx-sum td.rhx-create { color: var(--green, #2f9e44); }
+.rhx-sum td.rhx-update { color: var(--accent); }
+.rhx-sum td.rhx-delete { color: var(--red); }
+.rhx-head { font-weight: 650; padding: 2px 0; border-bottom: 1px solid var(--border); }
+.rhx-warn { margin: 6px 0; }
+.rhx-wrow { padding: 2px 0 2px 8px; }
+.rhx-bad { color: var(--red); margin: 4px 0; }
+.rhx-objs { border-collapse: collapse; width: 100%; font-size: 12px; }
+.rhx-objs th, .rhx-objs td { padding: 2px 6px; border-bottom: 1px solid var(--border); text-align: left; }
+.rhx-objs tr.rhx-st-delete td { color: var(--red); }
+.rhx-objs tr.rhx-st-skip td { opacity: .55; }
+.rhx-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+.rhx-details { margin-top: 6px; }
+.sb-chip.rhx-ind.is-changed { color: var(--accent); border-color: rgba(53,181,229,.55); background: var(--accent-ghost); font-weight: 650; }

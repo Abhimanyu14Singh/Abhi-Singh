@@ -88,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
         os._exit(0)
 
     url = f"http://127.0.0.1:{port}/"
+    print(f"SkyFrame running at {url} (Grasshopper SkyFrame Connect: "
+          f"use this address)", flush=True)
     if args.server_only:
         _serve_forever(url)
         return 0

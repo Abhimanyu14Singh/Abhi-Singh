@@ -2328,6 +2328,10 @@ def create_app() -> Flask:
     from skyframe.api.steel_db_api import register as _sdb_register
     _sdb_register(app, _state)
 
+    # Rhino .3dm import / GH live link + localhost CORS (rhino_api)
+    from skyframe.api.rhino_api import register as _xch_register
+    _xch_register(app, _state)
+
     return app
 
 

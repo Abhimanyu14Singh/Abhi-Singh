@@ -93,6 +93,7 @@ import { installTowersFu as c9fInstallTowersFu } from "./towers_fu.js";
 import { fuMockValidate as c9fMockValidate } from "./mock_towers_fu.js";
 
 import { initRepair as rpInitRepair } from "./repairdlg.js";   // Analyze › Check Model › Fix… (model repair)
+import { initRhinoLink as rhxInitRhinoLink } from "./rhinolink.js";   // File › Import › Rhino (.3dm) / Link Rhino File / Exchange Sessions
 // n/a (negligible drift) story ratios — CONTRACT "Ratio-based story checks" (js/ratio_na.js)
 import { rnaCell as rnaRatioCell, rnaCsv as rnaRatioCsv } from "./ratio_na.js";
 
@@ -8559,6 +8560,7 @@ async function boot() {
   try { c9fInstallTowersFu(window.__sky); } catch (err) { console.error("towers follow-ups init failed", err); }   // C9 follow-ups (js/towers_fu.js)
 
   try { rpInitRepair(window.__sky); } catch (err) { console.error("model repair init failed", err); }   // Check Model › Fix… (js/repairdlg.js)
+  try { rhxInitRhinoLink(window.__sky); } catch (err) { console.error("rhino link init failed", err); }   // Rhino / GH exchange (js/rhinolink.js)
 
   try { accInitAccuracy(window.__sky); } catch (err) { console.error("accuracy tools init failed", err); }   // Analyze > Mesh Sensitivity Study · Model > Accuracy Advisor (js/accuracy.js)
   try { faInitFrameAxesUi(window.__sky); } catch (err) { console.error("frame axes init failed", err); }   // frame local axes (js/frameaxes_ui.js)
