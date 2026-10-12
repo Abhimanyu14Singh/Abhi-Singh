@@ -25,7 +25,7 @@ import { mockExchangeExport as xcMockExport, mockExchangeImport as xcMockImport 
 const XC_FORMATS = {
   e2k: { label: "ETABS E2K", ext: ".e2k", accept: ".e2k,.$et,.txt", hint: "ETABS v20+ text" },
   ifc: { label: "IFC", ext: ".ifc", accept: ".ifc", hint: "IFC4 physical + analysis model" },
-  dxf: { label: "DXF", ext: ".dxf", accept: ".dxf", hint: "3D lines / faces on SF-<kind>-<section> layers" },
+  dxf: { label: "DXF", ext: ".dxf", accept: ".dxf,.dwg", hint: "3D lines / faces on SF-<kind>-<section> layers (DWG: save as DXF first)" },  // Wave C: .dwg -> help
   xlsx: { label: "Excel Tables", ext: ".xlsx", accept: ".xlsx", hint: "interactive-database tables" },
 };
 // display-unit system -> e2k (force, length)
@@ -169,7 +169,7 @@ export function xcOpenExport(sky, fmt) {
     body.push(xcGroup("Include", ["grids", "loads", "cases", "combos", "groups", "mass_source"].map(k =>
       F.check(o, k, { label: XC_LABEL(k), id: "xcInc_" + k })), { cols: 2 }));
     body.push(xcGroup("Round trip", [F.check(o, "extensions", { label: "SkyFrame extension comments ($SF lines)", id: "xcExt",
-      hint: "exact re-import of SkyFrame-only data; ETABS treats them as comments" })]));
+      hint: "exact re-import of SkyFrame-only data; ETABS treats them as comments. Pushover / nonlinear static / staged / steady-state / PSD cases, hinges, nonlinear links and temperature loads are written as native ETABS records" })]));  // Wave C
   } else if (fmt === "ifc") {
     body.push(xcGroup("Include", [["physical", "Physical members (IfcColumn/IfcBeam/IfcSlab/IfcWall + profiles)"],
       ["analysis", "Structural analysis model (IfcStructuralAnalysisModel)"], ["supports", "Supports (point connections)"]].map(([k, l]) =>

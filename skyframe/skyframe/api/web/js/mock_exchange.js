@@ -16,6 +16,9 @@
    get a basic parse (stories, points, frames on SF layers); foreign IFC /
    xlsx need the live server (friendly error, no console noise). */
 
+// Wave C: native NL e2k records + DWG check (mock_e2k_nonlinear.js)
+import { mockE2kNonlinear as xmNlRecords, mockE2kNonlinearCounts as xmNlCounts, mockIsDwg as xmIsDwg, MOCK_DWG_HELP as XM_DWG_HELP } from "./mock_e2k_nonlinear.js";
+
 const xmEnc = new TextEncoder();
 const xmNum = v => { const s = String(+(+v).toPrecision(15)); return s === "-0" ? "0" : s; };
 const xmQ = s => '"' + String(s).replace(/"/g, "''") + '"';
@@ -84,10 +87,11 @@ function xmE2k(m, opts) {
       for (const [k, f] of Object.entries(c.cases || {})) out.push(`  COMBO ${xmQ(c.name)}  LOADCASE ${xmQ(k)}  SF ${xmNum(f)}`);
     }
   }
+  if (opts.include.cases !== false) out.push(...xmNlRecords(m, v => v / u[3]));   // Wave C native NL records
   const skipped = ["mock mode: shells, loads, links and dynamic cases are carried only in the SkyFrame extension comment"];
   if (opts.extensions !== false) out.push("", "$ SKYFRAME EXTENSIONS", "$SF-MOCK " + xmB64(JSON.stringify(m)));
   out.push("", "  END", "$ END OF MODEL FILE", "");
-  return { content: out.join("\n"), report: { format: "e2k", units: [u[0], u[1]], written: xmCounts(m),
+  return { content: out.join("\n"), report: { format: "e2k", units: [u[0], u[1]], written: { ...xmCounts(m), ...xmNlCounts(m) },
     skipped, extensions: opts.extensions !== false ? { model: 1 } : {}, exact: opts.extensions !== false, mock: true } };
 }
 
@@ -284,6 +288,7 @@ export function mockExchangeImport(fmt, body, current) {
   try {
     let res;
     if (fmt === "e2k") res = xmE2kRead(body.text || "");
+    else if (fmt === "dxf" && xmIsDwg(body.text)) return { ok: false, error: XM_DWG_HELP };   // Wave C: DWG
     else if (fmt === "dxf") res = xmDxfRead(body.text || "", body, body.sections_from_current !== false ? current : null);
     else if (fmt === "ifc") {
       const mk = (body.text || "").match(/\/\* SF-MOCK (\S+) \*\//);

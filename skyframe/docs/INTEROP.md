@@ -216,3 +216,49 @@ writes (the default output is unchanged), plus:
 A native Revit add-in (the CSiXRevit equivalent) is a separate product. It
 needs the Revit API and a Windows Revit installation, so it cannot be built
 or tested here and is out of scope.
+
+
+## Tekla and Revit coverage
+
+Native links (a Tekla Structures Open API plug-in, a CSiXRevit-style Revit
+add-in) need Windows-only APIs and a licensed host application. They cannot
+be built or tested here, so the matrix rows stay *partial* for that reason.
+The file routes both programs read and write cover the exchange:
+
+| Program | Into SkyFrame | Out of SkyFrame |
+|---|---|---|
+| Tekla Structures | SDNF v3 (File › Import › SDNF), CIS/2 LPM6 analysis or design model (File › Import › CIS/2), IFC4 (File › Import › IFC) | SDNF v3 (Tekla: File › Import › SDNF), IFC4 (Tekla: reference model / IFC object converter) |
+| Revit | IFC4 (File › Import › IFC) | IFC4 for Revit (File › Export › IFC for Revit…, see "Revit link") |
+
+Each route carries member end points, section names (database shapes by
+name, parametric dimensions, general properties) and orientation;
+`tests/test_e2k_nonlinear.py::test_tekla_and_revit_routes_cover_steel_frame`
+pins SDNF and both IFC flavours on a steel frame (exact end points and
+sections). Loads, connections and analysis settings do not travel through
+these formats; use E2K / `.s2k` for analysis models.
+
+## DWG drawings
+
+ETABS imports DWG directly. SkyFrame imports drawings through its DXF reader
+and does **not** bundle a DWG converter:
+
+* LibreDWG (`dwg2dxf`) is not packaged for the build platform
+  (Ubuntu 24.04 has no `libredwg-tools`);
+* no pip package converts DWG without a proprietary runtime (ezdxf's
+  `odafc` add-on needs the ODA File Converter, `pydwg` drives a running
+  AutoCAD over COM).
+
+So the DWG path is: **save the drawing as DXF from your CAD program**, then
+File › Import › DXF.
+
+* AutoCAD / BricsCAD / ZWCAD: `SAVEAS` → *AutoCAD DXF (\*.dxf)* (any
+  version from R12 on).
+* DraftSight / LibreCAD / FreeCAD: File › Save As / Export → DXF.
+* Or convert with the free ODA File Converter or LibreDWG `dwg2dxf`
+  where available.
+
+The DXF import dialog also accepts `.dwg` files so the user gets this
+guidance instead of a parse error: a file whose first bytes are a DWG
+version signature (`AC1012` … `AC1032`) is refused by
+`skyframe.io.dwg.check_not_dwg` with that message (HTTP 400 from
+`POST /api/exchange/import/dxf`; the same text in `?mock=1`).

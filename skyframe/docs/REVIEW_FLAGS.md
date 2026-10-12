@@ -103,3 +103,47 @@ Each entry says where it lives.
 - General grids are not written to E2K and cannot be the primary grid; vertex
   reshaper and dimension lines are plan-view only; shell divide/merge/chop/expand
   refuse shells with openings.
+
+
+## E2K native nonlinear records (Wave C)
+- Confirmed against real ETABS v16-v22 exports (public GitHub samples):
+  Nonlinear Static `LOADCASE` keywords (INITCOND, LOADPAT, MODE, NLGEOMTYPE
+  "PDelta"/"LargeDispl", LOADCONTROL, DISPLTYPE, MONITOREDDISPL, DISPLMAG,
+  DOF, JOINT "pt" "story", RESULTSSAVED, MINSAVED, MAXSAVED), `HINGE` user
+  hinges (BEHAVIOR, DOF, TYPE, HYSTYPE, labelled points "B".."E"/"-B"..,
+  MOMENTSFP/ROTATIONSFP, IO/LS/CP, FiberPM2M3 FROMSECTION), `HINGEASSIGN`
+  (HINGEPROP, AUTOHINGETYPE, TABLEITEM, DOF, RDISTANCE, LOCATIONTYPE),
+  `HINGEOVERWRITE AUTOSUBDIVIDERELLENGTH`, `LINKPROP ... TYPE
+  "DAMPER - EXPONENTIAL"` with `DOF "U1" NONLIN "Yes" K C EXP`, and
+  `PDELTA LOAD "x" FACTOR f`.
+- NOT confirmed (written in the established style, check by importing into
+  ETABS): the SkyFrame keywords on Nonlinear Static rows (LOADDIST, DIR,
+  TARGETDRIFT, K, LOADMAG, TOWER, HINGEMODE, HARDENING, DEFAULTMY, HINGEMY,
+  HINGEPARAM, MONITOREDDISPL "Story"/"Roof" + STORY), the `~GRAV` auxiliary
+  gravity case of a pushover, every Nonlinear Staged Construction record
+  (STAGE / OPERATION / OBJTYPE / OBJNAME / AGE / LOADTYPE / LOADNAME /
+  AUTOSTAGE / FINALLOADPAT), Steady State / PSD case rows (FREQRANGE,
+  FREQEND, NUMFREQ, MODALFREQ, ADDFREQ, SOLUTIONMETHOD, DAMPTYPE,
+  OUTPUTJOINT, PHASE) and FUNCTYPE "STEADYSTATE"/"PSD" + FREQ rows, HINGE
+  BEYONDE / KELASTIC / PINCHX.. / FORCESFP-DISPSFP / "Auto" deformation SF /
+  AUTOPARAM / GRAVLOADPAT / AXIALP, HINGEOVERWRITE AUTOSUBDIVIDE, the
+  TABLEITEM labels written ("Steel Beams", "Concrete Columns - Shear", ...),
+  all non-exponential-damper LINKPROP type names and parameter keywords
+  (KV, POSTK, YIELD, FSLOW, RADIUS, OPEN, KT, MU, ALPHA1.., DISPL/FORCE
+  multilinear points, HYSTYPE discriminators "Bilinear"/"Bouc-Wen"/"BRB"),
+  and TEMPERATURE / TEMPERATUREGRADIENT load rows (T, TGRAD, DIR).
+- ETABS ASCE 41-13 hinge tables import as the ASCE 41-17 generator (one
+  warning); "Degrading" hysteresis imports as takeda; an asymmetric
+  kinematic backbone imports as takeda (warning).
+- A nonlinear static chain must share one geometric option in SkyFrame (one
+  OpenSees domain): on import the chain takes its most nonlinear NLGEOMTYPE
+  (warning). Nonlinear Static cases with MODE / ACCEL loads import as
+  pushover cases; their INITCOND full-load case supplies the held gravity.
+- Pre-Wave C files exported a triple pendulum as a parameterless
+  `T/C FRICTION ISOLATOR`; the reader keeps that meaning when no parameter
+  rows follow.
+- JSON number typing: values a model keeps raw (user stage durations / ages
+  / scales, nonlinear-static default_My) that arrive as ints from a browser
+  round trip still travel as type-only `$SF` patches.
+- DWG: no converter here (see INTEROP "DWG drawings"); DWG files are only
+  detected and refused with save-as-DXF guidance.
