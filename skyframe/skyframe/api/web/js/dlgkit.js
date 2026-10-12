@@ -21,6 +21,7 @@
    Every number goes through js/units.js; the draft and model stay SI. */
 
 import dkU from "./units.js";
+import { duAuto as dkDuAuto } from "./dlgunits.js";   // D3 per-dialog units selector
 import { icon as dkIcon } from "./icons.js";
 
 export const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -614,6 +615,7 @@ export function dkDialog(o) {
   modal.append(head, body, foot);
   back.appendChild(modal);
   (document.getElementById("app") || document.body).appendChild(back);
+  dkDuAuto(o.id, back, left);   // D3: per-dialog Units selector on section / material dialogs (js/dlgunits.js)
 
   const F = o.form;
   const unsubUnits = dkU.onUnitsChange ? dkU.onUnitsChange(() => { F && F.refresh(); o.onUnits && o.onUnits(); }) : null;

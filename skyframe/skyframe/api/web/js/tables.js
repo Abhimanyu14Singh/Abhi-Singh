@@ -171,7 +171,7 @@ export class VirtualGrid {
     this.head.innerHTML = this.columns.map((c, i) => {
       const s = this.specs[i];
       const arrow = this.sort.key === c.key ? `<span class="sort-arrow">${this.sort.dir > 0 ? "▲" : "▼"}</span>` : "";
-      return `<div class="vg-h${s.text ? " txt" : ""}" data-key="${esc(c.key)}" title="Sort by ${esc(c.label)}">` +
+      return `<div class="vg-h${s.text ? " txt" : ""}" data-key="${esc(c.key)}" title="${c.tip ? esc(c.tip) + " — " : ""}Sort by ${esc(c.label)}">` +   // D3: column tip
         `<span class="vg-hl">${esc(c.label)}${arrow}</span>` +
         `<span class="vg-hu">${esc(s.unit || (s.text ? "" : " "))}</span></div>`;
     }).join("");

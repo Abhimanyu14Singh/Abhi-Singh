@@ -14196,3 +14196,46 @@ Response:
   references and an animated 3D mode-shape viewer.
 * The Buckling case dialog's Advanced group gains the Formulation, Include
   shells and Include links fields. Only touched fields are written.
+
+## Centers of mass and rigidity (audit D3)
+
+Supersedes the CM bullet of "Center of mass / center of rigidity per story"
+and the `centers_mass_rigidity` table bullet.  JSON shape of `story_props`
+is unchanged (`{"<story>": {"cm_x","cm_y","cr_x","cr_y"}}`, rigid-diaphragm
+stories only — a story with diaphragm "none" has no rigid body, so no CM/CR
+entry).  Implementation: `skyframe/engine/story_centers.py`,
+`skyframe/core/centers_table.py`.
+
+* **CM (per story)** = centroid of the LATERAL (UX) mass the analysis
+  carries on the story: the master lump plus every mass on the story's
+  slave nodes (joint `nodal_masses`, `element_self_mass` mode, additional
+  frame / shell mass, tributary mass with `lump_at_stories=false`).  The
+  derived (gravity-load) part of the master lump sits at the centroid of
+  its sources, each at its true resultant: member point loads at `a`,
+  partial UDLs at `(a+b)/2`, trapezoids at `a+(b-a)(w1+2w2)/(3(w1+w2))`,
+  area loads / slab and wall self-weight at the region's net-area centroid
+  (polygon regions and openings exact; parallelograms keep the bilinear
+  centre); `mass_options.self_mass` / `patterns` are honoured.  Additional
+  mass lumped onto a master sits at the centroid of that item.  Explicit
+  `story_masses` (no spatial info) sit at the plan / tower centre.  Named
+  (multi-) diaphragms: per diaphragm, from the mass map (the master is
+  built at the centroid of its own mass).
+  Pre-D3 errors fixed: joint masses, element self-mass and additional mass
+  were ignored; point / partial / trapezoid member loads were put at
+  midspan; polygon (L-shaped) slabs at their bounding-box centre; openings
+  ignored; the table Mass column held only the master lump.
+* **CR (per story)** — ETABS definition, unchanged: unit `Fx`, `Fy` and `Mz`
+  are applied at THIS story's diaphragm only (no load on any other story;
+  the floors above and below are free); `cr = master + (-theta_y/phi,
+  theta_x/phi)` is the point where a lateral force produces no rotation of
+  this story.  Verified against `x_CR = sum(k x)/sum(k)` for single stories
+  (k = 12EI/h^3 guided, 3EI/h^3 cantilever) and an independent numpy
+  assembly of a 3-story coupled column building (rel 1e-7).
+* **Table `centers_mass_rigidity`** columns: `story, diaphragm, mass` (the
+  whole story lateral mass), `cm_x, cm_y` (per story), `cum_mass, ccm_x,
+  ccm_y` (ETABS Cumulative X / XCCM / YCCM: this diaphragm and every
+  same-named diaphragm of the same tower above it), `cr_x, cr_y`.  Columns
+  may carry `tip` (header tooltip text with the definition); the Tables UI
+  shows it in the header title.
+* Legacy models whose only lateral mass is the derived master lump, with
+  full-span / midspan loads and parallelogram slabs, are bit-identical.

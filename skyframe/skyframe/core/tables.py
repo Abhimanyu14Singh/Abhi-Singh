@@ -746,38 +746,9 @@ def _t_diaphragm_drifts(c: _Ctx) -> List[dict]:
     return rows
 
 
-CMCR_COLS = [
-    _col("story", "Story", "text"), _col("diaphragm", "Diaphragm", "text"),
-    _col("mass", "Mass", "mass"),
-    _col("cm_x", "XCM", "length"), _col("cm_y", "YCM", "length"),
-    _col("cr_x", "XCR", "length"), _col("cr_y", "YCR", "length"),
-]
-
-
-def _t_centers(c: _Ctx) -> List[dict]:
-    sp = c.R.get("story_props", {})
-    mass_by_tag = {}
-    for t, d, m in c.mass:
-        if d == 1:
-            mass_by_tag[t] = mass_by_tag.get(t, 0.0) + m
-    rows = []
-    named = _named_dia(c)
-    for s in reversed(c.stories):
-        if s.name in named:                     # named diaphragms
-            for dn, e in sorted(named[s.name].items()):
-                rows.append({"story": s.name, "diaphragm": dn,
-                             "mass": e["mass"],
-                             "cm_x": e["cm_x"], "cm_y": e["cm_y"],
-                             "cr_x": e.get("cr_x"), "cr_y": e.get("cr_y")})
-            continue
-        e = sp.get(s.name)
-        if e is None:
-            continue
-        rows.append({"story": s.name, "diaphragm": "D1",
-                     "mass": mass_by_tag.get(c.masters.get(s.name), 0.0),
-                     "cm_x": e["cm_x"], "cm_y": e["cm_y"],
-                     "cr_x": e.get("cr_x"), "cr_y": e.get("cr_y")})
-    return rows
+# D3 audit: whole-story lateral mass, cumulative XCCM/YCCM, header tips
+from .centers_table import (CMCR_COLS,                     # noqa: E402,F811
+                            t_centers as _t_centers)
 
 
 # --------------------------------------------------------------------------- #

@@ -365,6 +365,7 @@ export function openSectionLibrary(sky, D, { done } = {}) {
   const dlg = dkDialog({
     id: "dsSectionLib", title: "Import Frame Sections", iconId: "exleaf-frames", size: "lg", form: F, body,
     intro: "Tick the shapes to import (double-click a row to toggle).",
+    onUnits: () => draw(),   // D3: table headers / values follow a units switch
     onOk: () => {
       let last = null;
       for (const n of picked) { const e = lib.find(x => x.name === n); if (e && dsME.addLibraryFrameSection(D, e, st.mat)) last = n; }

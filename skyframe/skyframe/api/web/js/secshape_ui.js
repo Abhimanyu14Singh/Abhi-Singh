@@ -108,13 +108,20 @@ export function ssShapeEditor(F, s, { model: D, onChange } = {}) {
   const outs = [];
   const outRow = (label, kind, get, { unit, fmt } = {}) => {
     const o = ssEl("output", { class: "dk-readout", "data-ss": label });
+    // D3: the unit label follows the display units too (unit may be a function)
+    const uTxt = () => typeof unit === "function" ? unit() : unit != null ? unit : ssU.label(kind);
+    const r = F.row(label, o, { unit: uTxt() });
+    const ue = r.querySelector(".dk-unit");
     outs.push(() => {
       const v = get(live || s);
       o.textContent = v == null || !isFinite(v) ? "—" : fmt ? fmt(v) : ssU.sci(kind, v, 4);
+      if (ue) ue.textContent = uTxt();
     });
-    return F.row(label, o, { unit: unit != null ? unit : ssU.label(kind) });
+    return r;
   };
   const paint = () => outs.forEach(f => f());
+  // D3: repaint the read-only readouts when the display units change
+  const offU = ssU.onUnitsChange(() => { if (!node.isConnected) { offU(); return; } paint(); });
   const cwUnit = () => `${ssU.label("dim")}⁶`;
   const cwVal = v => (v * ssU.factor("dim") ** 6).toExponential(4);
   const degFmt = v => (v * 180 / Math.PI).toFixed(3);
@@ -134,7 +141,7 @@ export function ssShapeEditor(F, s, { model: D, onChange } = {}) {
       outRow("Section Modulus about 2 axis, S22", "secmod", sec => pp(sec).S22),
       outRow("Plastic Modulus about 3 axis, Z33", "secmod", sec => pp(sec).Z33),
       outRow("Plastic Modulus about 2 axis, Z22", "secmod", sec => pp(sec).Z22),
-      outRow("Warping Constant, Cw", "none", sec => pp(sec).Cw, { unit: cwUnit(), fmt: cwVal }),
+      outRow("Warping Constant, Cw", "none", sec => pp(sec).Cw, { unit: cwUnit, fmt: cwVal }),
       outRow("Shear Centre Offset along 3, x0", "dim", sec => pp(sec).x0, { fmt: v => String(+ssU.toDisplay("dim", v).toPrecision(4)) }),
       outRow("Shear Centre Offset along 2, y0", "dim", sec => pp(sec).y0, { fmt: v => String(+ssU.toDisplay("dim", v).toPrecision(4)) }),
     );

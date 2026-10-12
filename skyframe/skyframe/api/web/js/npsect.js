@@ -18,6 +18,7 @@
    with OK and no edit leaves the model untouched. */
 
 import U from "./units.js";
+import { duAttach as npDuAttach } from "./dlgunits.js";   // D3 per-dialog units selector
 import { frameLocalAxes as npFrameLocalAxes } from "./frameaxes.js";   // frame local axes (ETABS / legacy convention)
 import { selectionJoints as npSelectionJoints } from "./assigndlg.js";
 import {
@@ -568,6 +569,7 @@ export function openNpSection(ctx, sky, editName = null) {
     npBtn("OK", "btn-run", () => { if (commit()) dlg.close(); }, "", "npOk"),
   ]);
   const dlg = npDialog("npModal", { title: "Nonprismatic Section Definition", glyph: "chart", wide: true, body, foot: fb.wrap, onUnits: draw });
+  npDuAttach(dlg.el, fb.wrap, { id: "npUnits" });   // D3: dialog Units selector (js/dlgunits.js)
   draw();
   return dlg;
 }

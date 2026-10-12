@@ -30,6 +30,7 @@
    __sky.openBuiltup(name?). ?mock=1 → js/mock_builtup.js. */
 
 import BuU from "./units.js";
+import { duAttach as buDuAttach } from "./dlgunits.js";   // D3: dialog Units selector (defaults to the model units)
 import { openMatLib as buOpenMatLib } from "./matlib.js";   // "Add steel grade…" when the model has no steel material
 import { dialog as buDialog, btn as buBtn, footBar as buFootBar, errorLine as buErrorLine,
   showError as buShowError, closeDialog as buCloseDialog } from "./analysisdlg.js";
@@ -164,7 +165,7 @@ export function initBuiltup(sky) {
     const toolbar = el("div", { class: "bu-toolbar" }, [
       tb("+", "Zoom in", () => zoom(1.25), "buZoomIn"), tb("−", "Zoom out", () => zoom(0.8), "buZoomOut"), tb("Fit", "Zoom to fit", () => fit(), "buFit"),
       el("span", { class: "bu-sep" }),
-      el("label", { class: "bu-inline" }, ["Grid ", gridIn, el("span", { class: "muted", text: " " + BuU.label("dim") })]),
+      el("label", { class: "bu-inline" }, ["Grid ", gridIn, el("span", { class: "muted", id: "buGridUnit", text: " " + BuU.label("dim") })]),
       el("label", { class: "bu-inline" }, [snapCb, " Snap"]), el("label", { class: "bu-inline" }, [edgeCb, " Edges"]),
       el("span", { class: "bu-sep" }),
       tb("⟲ 90°", "Rotate +90° (R)", () => rotateSel(90), "buRotL"), tb("⟳ 90°", "Rotate −90° (Shift+R)", () => rotateSel(-90), "buRotR"),
@@ -194,7 +195,18 @@ export function initBuiltup(sky) {
     caB.id = "buCancel";
     const foot = buFootBar("Sections are SI internally; inputs in " + BuU.label("dim") + ".", [caB, okB]);
     const dlg = buDialog(DLG_ID, { title: st.origName ? `Built-up Section — ${st.origName}` : "Built-up Section", iconId: "exleaf-frames", wide: true, body, foot: foot.wrap,
-      onClose: () => { document.removeEventListener("keydown", onKey, true); st = null; D = {}; } });
+      onClose: () => { document.removeEventListener("keydown", onKey, true); offUnits(); st = null; D = {}; } });
+    // D3: Units selector (js/dlgunits.js) + re-render everything on a units switch
+    buDuAttach(dlg.el, foot.wrap, { id: "buUnits" });
+    const offUnits = BuU.onUnitsChange(() => {
+      if (!st || !D.svg) return;
+      D.gridIn.value = BuU.inputValue("dim", st.grid);
+      const gu = D.body.querySelector("#buGridUnit");
+      if (gu) gu.textContent = " " + BuU.label("dim");
+      foot.note.textContent = "Sections are SI internally; inputs in " + BuU.label("dim") + ".";
+      renderSecForm();
+      recompute();
+    });
     dlg.el.querySelector(".modal").classList.add("bu-modal");
     D = { dlg, body, svg, list: body.querySelector("#buCompList"), secForm: body.querySelector("#buSecForm"), compForm: body.querySelector("#buCompForm"),
       props: body.querySelector("#buProps"), warn: body.querySelector("#buWarn"), notes: body.querySelector("#buNotes"), err, coord,

@@ -217,6 +217,7 @@ export function openSteelDb(sky, D, { done } = {}) {
     id: "dsSteelDb", title: "Import Sections from Database", iconId: "exleaf-frames", size: "lg", form: F,
     body: sdbSplit(body, panel, { onEvent: () => {} }),
     intro: "Pick a standard and a family, search, then tick the shapes to import. Click a row to preview it. Properties are the published (tabulated) values.",
+    onUnits: () => { drawTable(); panel.update(); },   // D3: follow a units switch
     onOk: async () => {
       if (!picked.size) { done && done(null); return; }
       if (!st.mat) return "Define a material first.";
