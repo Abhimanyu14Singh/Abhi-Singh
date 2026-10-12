@@ -1976,6 +1976,8 @@ def _build_catalogue() -> List[Table]:
             Col("include_vertical", "Vertical Mass", "bool"),
             Col("lump_at_stories", "Lump at Stories", "bool"),
         ]))
+    from skyframe.core.spandrels import modeltable as _spd_table
+    T.append(_spd_table())                 # Spandrel Label Assignments (A8)
     return T
 
 

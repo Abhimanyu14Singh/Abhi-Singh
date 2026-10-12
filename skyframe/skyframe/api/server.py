@@ -2334,6 +2334,9 @@ def create_app() -> Flask:
     # v1.22 exact section solver (skyframe.api.section_fem_api)
     from skyframe.api.section_fem_api import register as _sfem_register
     _sfem_register(app, _state)
+    # results export xlsx / sqlite + Word report (skyframe.api.results_export_api)
+    from skyframe.api.results_export_api import register as _rxp_register
+    _rxp_register(app, _state)
 
     return app
 

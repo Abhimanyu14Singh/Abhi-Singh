@@ -453,6 +453,7 @@ export function initTables(sky) {
     });
     refreshCasesUi();
     loadList().then(() => select(key || ST.key || (ST.list && ST.list[0] && ST.list[0].key)));
+    document.dispatchEvent(new CustomEvent("sky:tables-open", { detail: { el: back, key: () => ST.key, cases: () => ST.cases ? [...ST.cases] : null } }));   // A8: Excel/SQLite export buttons (js/resexport.js)
     return api;
   }
 

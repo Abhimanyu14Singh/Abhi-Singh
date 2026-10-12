@@ -44,6 +44,7 @@ from skyframe.core import thermal_ext as _thx  # v1.16 temperature / projected
 from skyframe.core import damping_options as _dmpo
 from skyframe.core import towers as _towers  # C9 multiple towers
 from skyframe.core import towers_ext as _towers_ext  # C9 follow-ups
+from skyframe.core import spandrels as _spd  # spandrel labels (A8)
 from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
     PDELTA_INCLUDE_IN, PDELTA_METHODS, pdelta_defaults, pdelta_from_dict,
     pdelta_to_dict, validate_pdelta_options)
@@ -755,6 +756,7 @@ class FrameMember:
     # ``angle``; skyframe.core.section_ext.stamp); never serialised.
     section_axis_offset: float = field(default=0.0, repr=False,
                                        compare=False)
+    spandrel: str = ""  # spandrel label ("" = none; core.spandrels)
 
     @property
     def length(self) -> float:
@@ -801,6 +803,7 @@ class FrameMember:
 
                 **_ow_member_to_dict(self),        # open-structure wind
                 **_towers.tag_to_dict(self),       # C9 tower (when set)
+                **_spd.tag_to_dict(self),          # spandrel (when set)
                 "length": self.length}
 
 
@@ -884,6 +887,7 @@ class ShellRegion:
     distribution: str = "two_way"          # B3 membrane slabs: two_way|one_way
     one_way_dir: int = 1                   # B3 one-way span: region local 1|2
     tower: str = ""                        # C9 owning tower (core.towers)
+    spandrel: str = ""                     # spandrel label (core.spandrels)
 
     @property
     def area(self) -> float:
@@ -940,7 +944,8 @@ class ShellRegion:
                 **_dia.shell_extra_to_dict(self),
                 **_shellopts_shell_to_dict(self),  # mesh opts / load set
                 **_sht.region_extra_to_dict(self),
-                **_towers.tag_to_dict(self)}       # C9 tower (when set)
+                **_towers.tag_to_dict(self),       # C9 tower (when set)
+                **_spd.tag_to_dict(self)}          # spandrel (when set)
 
 
 # --------------------------------------------------------------------------- #
@@ -2101,6 +2106,9 @@ class BuildingModel:
     # BuiltupSection, each MIRRORED by a same-named FrameSection (like
     # designer_sections).  Emitted by to_dict only when non-empty.
     builtup_sections: Dict[str, object] = field(default_factory=dict)
+    # Define > Spandrel Labels (skyframe.core.spandrels); emitted only when
+    # non-empty
+    spandrel_labels: List[str] = field(default_factory=list)
 
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
@@ -3861,6 +3869,7 @@ class BuildingModel:
         self._validate_tendons()
         self._validate_curved_mesh_sets()
         self._validate_towers()
+        _spd.validate(self)                 # spandrel labels
 
     def _validate_towers(self) -> None:
         """C9 multiple towers (see core.towers)."""
@@ -4097,6 +4106,7 @@ class BuildingModel:
             **({"frame_axis_convention": "etabs"}    # only when "etabs"
                if self.frame_axis_convention == "etabs" else {}),
             **_builtup_to_dict(self),   # v1.21 built-up sections (if any)
+            **_spd.model_to_dict(self),  # spandrel labels (if any)
         }
 
     @classmethod
@@ -4535,6 +4545,7 @@ class BuildingModel:
         _towers.model_from_dict(mdl, d)     # C9 towers (absent = none)
         _frame_axes_from_dict(mdl, d)       # frame local-axis convention
         _builtup_from_dict(mdl, d)          # v1.21 built-up sections
+        _spd.model_from_dict(mdl, d)        # spandrel labels / tags
         mdl.validate()
         return mdl
 

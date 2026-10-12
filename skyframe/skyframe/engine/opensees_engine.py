@@ -167,6 +167,7 @@ from skyframe.core.mesh import (MeshedModel, Segment, edge_tie_chains,
                                 mesh_model)
 from skyframe.core.modifiers import shell_mods_default
 from skyframe.core.polymesh import newell_normal
+from skyframe.engine import spandrels as _spd_eng  # spandrel forces (A8)
 from skyframe.core import framemesh as _fm
 from skyframe.core import nonprismatic as _npx     # nonprismatic sections
 from skyframe.core import panelzones as _pzj      # per-joint panel zones
@@ -1590,6 +1591,8 @@ class AnalysisResults:
     model_size: Dict[str, object] = field(default_factory=dict)
     #   model-size report (engine/model_size.py; emitted only when a size
     #   warning fired)
+    spandrels: Dict[str, dict] = field(default_factory=dict)
+    #   spandrel forces (engine/spandrels.py; emitted only when labeled)
 
     def to_dict(self) -> dict:
         d = {
@@ -1663,6 +1666,8 @@ class AnalysisResults:
         if self.towers:                  # C9 towers (only when defined)
             d["towers"] = self.towers
             d["story_tower"] = dict(self.story_tower)
+        if self.spandrels:               # spandrel forces (only when used)
+            d["spandrels"] = self.spandrels
         return d
 
 
@@ -2047,6 +2052,10 @@ class OpenSeesEngine:
                 if combos[cname].minima is None:
                     pier_src[cname] = combos[cname]
             piers = self._compute_piers(asm, pier_src)
+        # spandrel forces: vertical end cuts (engine/spandrels.py; only
+        # when labels exist -> legacy results unchanged)
+        spandrels = (_spd_eng.compute(self, asm, pier_src)
+                     if _spd_eng.enabled(model) else {})
         # v0.16 beam serviceability: relative-to-chord deflection checks per
         # static case + additive combo (pure post-processing of the exact
         # member_deflections stations).
@@ -2116,6 +2125,7 @@ class OpenSeesEngine:
             takedown=takedown,
             section_cuts=section_cuts,
             piers=piers,
+            spandrels=spandrels,                     # A8 spandrel forces
             deflection_checks=deflection_checks,
             warning=warning,
             case_status=dict(status),
@@ -2273,7 +2283,7 @@ class OpenSeesEngine:
         model = self.model
         auto = getattr(model, "auto_pier_walls", False)
         return any(r.kind == "wall" and (getattr(r, "pier", "") or auto)
-                   for r in model.shells)
+                   for r in model.shells) or _spd_eng.enabled(model)  # A8
 
     # ------------------------------------------- v0.17 panel zones
     def _panel_offsets(self) -> Dict[str, Tuple[float, float]]:

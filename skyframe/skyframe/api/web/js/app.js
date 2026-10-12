@@ -102,6 +102,7 @@ import { initMatLib as mlInitMatLib } from "./matlib.js";   // v1.21 Define › 
 
 import { initBuiltup as buInitBuiltup } from "./builtup.js";   // v1.21 Built-up Section editor (js/builtup.js)
 import { initExchange as xcInitExchange } from "./exchange.js";   // File › Import ▸ / Export ▸ E2K · IFC · DXF · Excel (js/exchange.js)
+import { initA8Results as a8InitResults } from "./a8results.js";   // A8: spandrels · results export xlsx/sqlite · report tables/snapshots/.docx
 
 /* ------------------------------------------------ state */
 const store = {
@@ -8567,6 +8568,7 @@ async function boot() {
 
   try { buInitBuiltup(window.__sky); } catch (err) { console.error("built-up sections init failed", err); }   // Define › Section Properties › Built-up Section… (js/builtup.js)
   try { xcInitExchange(window.__sky); } catch (err) { console.error("model exchange init failed", err); }   // File › Import ▸ / Export ▸ (js/exchange.js)
+  try { a8InitResults(window.__sky); } catch (err) { console.error("A8 results init failed", err); }   // spandrels · results export · report plus (js/a8results.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)

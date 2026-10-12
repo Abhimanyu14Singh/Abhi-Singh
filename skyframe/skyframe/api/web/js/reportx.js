@@ -647,6 +647,7 @@ export async function buildEtabsReport(opts = {}) {
     add("runlog", "Analysis log", h);
   }
 
+  if (SKY.reportPlus) parts.push(...await SKY.reportPlus.sections(opts));   // A8: selected result tables + per-case snapshots (js/reportplus.js)
   /* assemble */
   const paper = opts.paper === "Letter" ? "Letter" : "A4";
   const orient = opts.orientation === "landscape" ? "landscape" : "portrait";
@@ -773,6 +774,7 @@ export function openCreateReport() {
   const orient = el("select", { id: "rxOrient", html: `<option value="portrait"${PREF.orientation === "portrait" ? " selected" : ""}>Portrait</option><option value="landscape"${PREF.orientation === "landscape" ? " selected" : ""}>Landscape</option>` });
   g2.appendChild(el("label", { class: "rx-row" }, [el("span", { text: "Paper" }), paper, orient]));
   body.appendChild(g2);
+  const rpx = SKY.reportPlus ? SKY.reportPlus.dialogGroups(body) : null;   // A8: tables / snapshots groups (js/reportplus.js)
   const err = rxErrorLine();
   const status = el("p", { class: "muted rx-status", id: "rxStatus" });
   body.append(err, status);
@@ -781,6 +783,7 @@ export function openCreateReport() {
     const o = { sections: RX_SECTIONS.map(s => s[0]).filter(k => boxes[k].checked),
       topN: Math.max(1, Math.min(500, parseInt(topN.value, 10) || 25)), paper: paper.value, orientation: orient.value,
       storyCases: [...csel.selectedOptions].map(o2 => o2.value).slice(0, 6), planStory: stSel.value || null };
+    if (rpx) Object.assign(o, rpx.opts());   // A8
     Object.assign(PREF, o);
     return o;
   };
@@ -816,7 +819,9 @@ export function openCreateReport() {
   };
   const bPrev = rxBtn("Preview / Print", "", preview); bPrev.id = "rxPreviewBtn";
   const bDl = rxBtn("Download HTML", "btn-primary", download); bDl.id = "rxDownloadBtn";
-  const fb = rxFootBar("File → Create Report", [rxBtn("Cancel", "", () => dlg.close()), bPrev, bDl]);
+  const bDocx = rxBtn("Download .docx", "", async () => { const html = await build(); if (!html || !SKY.reportPlus) return;   // A8: Word export (js/reportplus.js)
+    try { const r = await SKY.reportPlus.downloadDocx(html, PREF); status.textContent += ` · ${r.filename}`; } catch (e) { rxShowError(err, "Word export failed: " + e.message); } }); bDocx.id = "rxDocxBtn";
+  const fb = rxFootBar("File → Create Report", [rxBtn("Cancel", "", () => dlg.close()), bPrev, bDocx, bDl]);
   const dlg = rxDialog("rxReportDlg", { title: "Create Report", iconId: "menu-file", wide: true, body, foot: fb.wrap });
   dlg.el.classList.add("rx-dlg");
   return dlg;

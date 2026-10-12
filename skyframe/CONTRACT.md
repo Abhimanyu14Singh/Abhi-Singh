@@ -11162,3 +11162,108 @@ absent from `to_dict`) or `"exact"`.
 * an analysis runs;
 * kip-in readouts are in in⁴;
 * zero console errors.
+
+---
+
+## Results tables export, spandrels and Word report (A8)
+
+### Spandrel labels (`skyframe/core/spandrels.py`)
+
+* `FrameMember.spandrel`, `ShellRegion.spandrel` (str, `""` = none; walls
+  only) — JSON key `"spandrel"` written ONLY when set.
+* `BuildingModel.spandrel_labels: [names]` (Define > Spandrel Labels; key
+  emitted only when non-empty).  Legacy models stay byte-identical.
+* Validation (`ValueError`): label 1–64 chars, no `,`/`;`, no leading
+  space; no duplicate defined label; a slab may not carry a label.
+* DB-edit table `spandrel_assignments` ("Spandrel Label Assignments",
+  group "Model Definition > Assignments"): rows = every frame + wall
+  `{object_type, uid (read only), spandrel}`; no add / delete; a blank
+  label removes the assignment; CSV / xlsx imports without ids match by
+  row order.
+
+### Spandrel forces (`skyframe/engine/spandrels.py`, pure post-processing)
+
+```jsonc
+results["spandrels"][case][label][story] = {          // only when labeled
+  "Left":  {"P", "V2", "V3", "T", "M2", "M3"},        // kN, kN*m
+  "Right": {...}, "length": L, "n_shells": n, "n_frames": n }
+```
+
+* Objects sharing a label on one story form ONE spandrel (story = the
+  object's `story`, else the story containing its centroid).  Static cases
+  + additive combos.
+* Local axes: `e1` horizontal in the spandrel plane (wall: `ez x n`,
+  frame: plan direction), oriented toward +X (or +Y); `e2 = +Z`;
+  `e3 = e1 x e2`.  **Left** = end at the smaller `e1` coordinate.
+* Vertical cuts at both ends.  Shells: the exact pier kernel — the sum of
+  the spandrel's OWN element nodal resisting forces (`shell_nodal`) at the
+  cut nodes; frames: the section-cut kernel — stations interpolated at the
+  cut and rotated with `_local_axes`.  Moments about the cut centroid
+  (tributary-height-weighted shell cut nodes, else the frame points).
+* Reported = internal force on the material LEFT of the cut from the
+  material on its right (ETABS frame convention): `P` tension-positive; a
+  frame-only spandrel reports exactly its member's `N, V2, M3` stations at
+  the ends.  An unloaded spandrel satisfies `V2_L = V2_R`, `P_L = P_R`,
+  `M3_R - M3_L = -V2 L` (pinned in tests, also for a wall panel + top beam
+  sharing one label).
+* Shell nodal forces are now also captured when spandrel labels exist
+  (one-line `_piers_enabled()` hook); without labels nothing changes.
+
+### Show Tables registry and new tables (`skyframe/core/tables_results.py`)
+
+`tables.register_table(key, title, group, cols, fn, after=None)` and
+`tables.register_context(fn(engine) -> dict)` extend the catalogue;
+`tables.REGISTERED` lists the registered keys (these may be empty for a
+model without the feature).  Registered here (group prefix "Analysis
+Results >"):
+
+| key | ETABS table | columns / source |
+|---|---|---|
+| `element_forces_frames` | Element Forces - Frames | Story, Frame, Output Case, Case Type, Station, P V2 V3 T M2 M3 (= `member_stations`, `P = N`) |
+| `frame_hinge_states` | Frame Hinge States | Story, Frame, Case, Type, Step, Hinge ID, Rel Dist, DOF, Force/Moment, Deformation, Plastic Deformation, Hinge State (A to B / B to C / C to D / D to E / >E), Hinge Status (<=IO / IO to LS / LS to CP / >CP) |
+| `element_forces_links` | Element Forces - Links | elastic links `F = k (u_j - u_i)` (global = link axes), I-End / J-End rows; device links are warned |
+| `pier_forces` | Pier Forces | Location "Bottom", `P = -results P` (ETABS tension +), V2 = V, M3 = M |
+| `spandrel_forces` | Spandrel Forces | Left / Right rows, P..M3, Length |
+| `tendon_forces` | Tendon Forces | Station, Angle Change, P, Loss %, X Y Z |
+| `section_cut_forces` | Section Cut Forces - Analysis | F1..M3 (= FX..MZ), Frames, Shells Excl. |
+| `pushover_curve` | Pushover Curve | Step, Monitored Displ, Base Force, Roof Drift, hinge counts per state and per status, Total |
+| `nonlinear_static_steps` | Nonlinear Static Steps | Step, Load Factor, Monitored Displ, base FX..MZ |
+| `th_base_reactions_steps` | Base Reactions - Time History Steps | Step, Time, FX, FY |
+| `th_story_displacements_steps` | Story Displacements - Time History Steps | Step, Time, Story, UX, UY |
+
+Auto (ASCE 41) hinge plastic deformation = `|rot| - My/k_e`, with `k_e` =
+|M|/|rot| on the elastic branch; fiber / user hinges use their own
+`rot_plastic` / `hinge_state`.  The nonlinear / TH tables ignore a case
+filter that names none of their cases.
+
+### Export endpoints (`skyframe/api/results_export_api.py`)
+
+* `POST /api/tables/export/<xlsx|sqlite>` body `{tables?, cases?, units?
+  ("kN-m" …), skip_empty?, results?}` → `{ok, filename, mime,
+  content_b64, report: {format, units, tables: {key: rows}, warnings}}`;
+  400 on a bad format / units / empty list, 404 on an unknown table.
+  * xlsx (`skyframe/io/results_export.py` via `io/xlsx.write_workbook`):
+    `_index` sheet, one sheet per table (name = ETABS title, <= 31 chars),
+    header `Label [unit]`, numeric cells, `_meta`.
+  * sqlite (stdlib `sqlite3`) is the **Microsoft Access substitute**: one
+    SQL table per results table (fields = labels without spaces:
+    `OutputCase`, `CaseType` …), plus "Table Index", "Field Units" and
+    "Program Control".
+* `POST /api/report/docx` body = the `skyframe.io.docx.build_docx`
+  document `{title, subtitle?, meta?, paper? A4|Letter, landscape?, toc?,
+  blocks: [heading{text, level 1-3} | paragraph{text, style?: "note"} |
+  table{columns, rows, align?, caption?} | image{png_b64 | data_url,
+  width_px?, caption?} | page_break]}` → `{ok, filename, mime,
+  content_b64, size}`; 400 on a bad block or a non-PNG image.
+
+### Frontend
+
+`js/spandrels.js` (Define › Spandrel Labels…, Assign › Frame / Shell ›
+Spandrel Label…, Display › Force Diagrams › Spandrel Forces…),
+`js/resexport.js` (File › Export › Results Tables to Excel / SQLite…, and
+Show Tables "⬇ XLSX" / "Export…"), `js/reportplus.js` (Create Report:
+table selection, per-case isometric deformed snapshots, Download .docx),
+`js/mock_restables.js` (mock tables, spandrels and JS xlsx / docx writers;
+the mock SQLite export is an SQL dump).  Hooks: one line each in app.js
+(init), mock.js (import + augment), tables.js (`sky:tables-open` event),
+mock_tables.js (`registerMockTable`) and four lines in reportx.js.
