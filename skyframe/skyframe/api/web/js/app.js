@@ -127,6 +127,8 @@ import { initPoMethods as poxInitPoMethods } from "./pomethods.js";   // pushove
 import { initW8 as w8InitW8 } from "./w8_init.js";
 import { initWaveC as wcInitWaveC } from "./wavec.js";   // Wave C: piers · floor mesh · edge · dist. moments · ecc · Fpx (js/wavec.js)
 import { wcMockValidate as wc3MockValidateModel } from "./mock_wavec3.js";   // Wave C mock checks   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_*.js)
+
+import { initWallDraw as wdInitWallDraw } from "./walldraw.js";   // D1 Draw Walls / Quick Draw Walls in plan (js/walldraw.js)   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_*.js)
 import { mockValidateW8 as w8MockValidate } from "./mock_w8.js";   // W8 ?mock=1 validation
 import { initWaveBLinks as wbInitLinks, wbMockValidateModel as wbMockValidate } from "./wb_links.js";   // wave B: Wen / BRB / bilinear damper / T-C isolator links, freq-dependent links, damping options (js/wb_links.js)
 import { initWaveCDyn as wcInitDyn } from "./wavec_dyn.js";   // Wave C: eigen shift / TH solution type / RS-SS modal damping (js/wavec_dyn.js)
@@ -8685,6 +8687,8 @@ async function boot() {
   try { dpInitDisplayOptions(window.__sky); } catch (err) { console.error("display options init failed", err); }   // D2: Set Display Options per window (js/dispopts.js)
 
   try { tlInitTplLibrary(window.__sky); } catch (err) { console.error("template library init failed", err); }   // D4 File › Template Library… (js/tpl_library.js)
+
+  try { wdInitWallDraw(window.__sky); } catch (err) { console.error("wall draw init failed", err); }   // D1 Draw Walls (js/walldraw.js) — before the UX pass reads the menus
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)

@@ -75,6 +75,7 @@ export function installStatus(sky) {
     sticky = null;
     const pd = sky.polyDraw;
     if (S.mode === "model") {
+      const wdh = sky.wallDrawHint && sky.wallDrawHint(); if (wdh) return wdh;   // D1 Draw Walls hint (js/walldraw.js)
       const tool = S.tool;
       const h = TOOL_HINT[tool] || (pd && tool === "g2poly" ? TOOL_HINT.g2poly : null);
       const view = S.view === "elev" ? "Elevation" : "Plan";
