@@ -128,6 +128,8 @@ import { wcMockValidate as wc3MockValidateModel } from "./mock_wavec3.js";   // 
 import { mockValidateW8 as w8MockValidate } from "./mock_w8.js";   // W8 ?mock=1 validation
 import { initWaveBLinks as wbInitLinks, wbMockValidateModel as wbMockValidate } from "./wb_links.js";   // wave B: Wen / BRB / bilinear damper / T-C isolator links, freq-dependent links, damping options (js/wb_links.js)
 import { initWaveCDyn as wcInitDyn } from "./wavec_dyn.js";   // Wave C: eigen shift / TH solution type / RS-SS modal damping (js/wavec_dyn.js)
+
+import { initLinkExtC as wcInitLinkExtC } from "./linkext_c.js";   // wave C: coupled 6x6 / per-DOF multilinear / hysteresis options / HDR links, effective K/C, friction options (js/linkext_c.js)
 import { wbMockAugment as wbMockAugmentResults } from "./mock_wbdamp.js";   // wave B ?mock=1 results (composite ζ, freq-dependent-link note)
 
 import { initWaveB as wbInitWaveB } from "./waveb.js";   // Wave B: Irregularity Checks · joint-local reactions (js/waveb.js)
@@ -8651,6 +8653,8 @@ async function boot() {
   try { wcInitWaveCResults(window.__sky); } catch (err) { console.error("Wave C results init failed", err); }   // Wave C (js/wavec_results.js)
 
   try { wcInitDyn(window.__sky); } catch (err) { console.error("wave C dynamics init failed", err); }   // Wave C (js/wavec_dyn.js)
+
+  try { wcInitLinkExtC(window.__sky); } catch (err) { console.error("wave C links init failed", err); }   // js/linkext_c.js
 }
 
 boot();

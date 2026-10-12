@@ -160,7 +160,7 @@ function surfaceEditor(sky, host, p, ctx) {
     bbt.appendChild(hbH("div", { class: "b9-sp-list-btns" }, [add, rm]));
   };
   gB.appendChild(bbt);
-  gB.appendChild(hbH("p", { class: "muted b9-small", text: "Coupled elliptical plasticity with linear hardening from B → C; points past C are state markers (strength held)." }));
+  gB.appendChild(hbH("p", { class: "muted b9-small", text: "Coupled elliptical plasticity with linear hardening from B → C; points past C are state markers unless Drop strength = Drops (below)." }));
   colL.appendChild(gB);
   /* acceptance + axial + stiffness */
   const gA = hbFs("Acceptance (plastic rotation)");
@@ -178,7 +178,8 @@ function surfaceEditor(sky, host, p, ctx) {
     const gX = hbFs("Axial force P for the yield moments");
     p.axial = p.axial || { source: "gravity", value: null, gravity: null };
     const src = hbH("select", { id: "hbSurfAxSrc" });
-    src.innerHTML = hbOpts([["gravity", "From the case gravity (pushover gravity loads)"], ["value", "Fixed value"]], p.axial.source);
+    src.innerHTML = hbOpts([["gravity", "From the case gravity (pushover gravity loads)"], ["value", "Fixed value"],
+      ["analysis", "Updated every step (starts at gravity)"]], p.axial.source);   // wave C: P-M capacity tracks P
     const val = numInput("force", p.axial.value, "hbSurfAxVal", v => { p.axial.value = v; Pv = hbIsNum(v) ? v : Pv; pIn.set(Pv); redraw(); });
     const valRow = hbH("label", { class: "asn-num-row b9-num-row" }, [hbH("span", { text: "P (compression −)" }), val.el, hbH("span", { class: "asn-unit", text: HBU.label("force") })]);
     const sync = () => { valRow.style.display = p.axial.source === "value" ? "" : "none"; };
@@ -186,6 +187,15 @@ function surfaceEditor(sky, host, p, ctx) {
     gX.append(hbH("label", { class: "uh-fld" }, [hbH("span", { text: "Source" }), src]), valRow);
     sync();
     colR.appendChild(gX);
+  }
+  { // wave C: strength drop past C (capacity updates, engine/pmm_update.py)
+    const gD = hbFs("Strength past C");
+    const ds = hbH("select", { id: "hbSurfDrop" });
+    ds.innerHTML = hbOpts([["holds", "Holds (B → C hardening continues)"], ["drops", "Drops (follows C → D → E, residual past E)"]], p.drop_strength || "holds");
+    ds.addEventListener("change", () => { p.drop_strength = ds.value; ctx.check(); });
+    gD.append(hbH("label", { class: "uh-fld" }, [hbH("span", { text: "Drop strength" }), ds]),
+      hbH("p", { class: "muted b9-small", text: "Drops / axial ‘updated every step’ drive the yield moments step by step (capacity lags by one step)." }));
+    colR.appendChild(gD);
   }
   const gK = hbFs("Hinge elastic stiffness");
   const kf = numInput("rot_stiffness", p.k_elastic, "hbSurfKe", v => { p.k_elastic = v == null ? null : v; ctx.check(); }, { placeholder: "10 × 6EI/L" });
@@ -376,7 +386,8 @@ export function hbOpenAutoAssign(sky) {
         validate: v => !v ? "" : v.split(",").every(x => { const n = +x; return x.trim() !== "" && isFinite(n) && n >= 0 && n <= 1; }) ? "" : "Enter numbers in [0, 1] separated by commas." }),
     ]),
     hbGroup("Axial Load P_G", [
-      F.select(V, "axial", [["gravity", "From the case gravity (linear gravity solve)"], ["value", "Fixed value"]], { label: "Source", id: "hbAssignAxial" }),
+      F.select(V, "axial", [["gravity", "From the case gravity (linear gravity solve)"], ["value", "Fixed value"],
+        ["analysis", "Gravity, updated every step (coupled P-M2-M3; PMM only)"]], { label: "Source", id: "hbAssignAxial" }),   // wave C
       F.num(V, "P", { label: "P_G (compression +)", kind: "force", id: "hbAssignP", hint: "used with Fixed value" }),
     ], { note: "Column tables size the P-M interaction and a / b / c at P_G. The gravity solve uses the hinged case's gravity loads (pushover gravity)." }),
     hbAdvanced([paramBox, F.select(V, "hysteresis", [["kinematic", "Kinematic"], ["takeda", "Takeda"], ["pivot", "Pivot"], ["isotropic", "Isotropic"], ["concrete", "Concrete"]],
@@ -390,6 +401,7 @@ export function hbOpenAutoAssign(sky) {
     for (const [k, v] of Object.entries(P)) if (v != null && v !== "") params[k] = v;
     const prop = { type: "auto", auto: { code: V.code, component: V.component, dof: V.dof, params, gravity: null, P: V.axial === "value" ? (V.P || 0) : null },
       hysteresis: V.hysteresis || "kinematic", k_elastic: null, hysteresis_params: null };
+    if (V.axial === "analysis" && V.dof === "PMM") prop.auto.axial_update = true;   // wave C: capacity tracks P
     return prop;
   };
   const distances = () => {
@@ -549,7 +561,7 @@ export function initHingeB(sky) {
   sky.hingeB = { openAutoAssign: () => hbOpenAutoAssign(sky), openWallHinges: () => hbOpenWallHinges(sky), surface: hbEllipseAt };
   if (!(sky.menu && sky.menu.add)) return;
   sky.menu.add("Assign/Frame/Hinges", { label: "Auto Hinges (Code Tables)…", act: "asn-hb-auto", before: "asn-fhinge",
-    hint: "ASCE 41 · FEMA 356 · EC8-3", fn: () => hbOpenAutoAssign(sky) });
+    hint: "ASCE 41 · FEMA 356 · EC8-3 · Caltrans · TBI", fn: () => hbOpenAutoAssign(sky) });
   sky.menu.add("Assign/Shell", { label: "Wall Hinges (Fiber P-M3)…", act: "asn-hb-wall", hint: "per pier · per story", fn: () => hbOpenWallHinges(sky) });
 }
 export { hbMockSurf };

@@ -36,11 +36,16 @@ export const HB_SUPPORT = {
   "ASCE41-17": A41, "ASCE41-23": A41,
   "FEMA356": { steel_beam: ["M3", "M2"], steel_column: ["M3", "M2", "PMM"], rc_beam: ["M3", "M2"] },
   "EC8-3": { rc_beam: ["M3", "M2"], rc_column: ["M3", "M2", "PMM"] },
+  // wave C (design/hinge_tables_c.py) — preliminary, transcribed from memory
+  "Caltrans": { rc_column: ["M3", "M2", "PMM"] },
+  "TBI": { rc_beam: ["M3", "M2"], rc_column: ["M3", "M2", "PMM"], rc_coupling_beam: ["M3"] },
 };
-export const HB_CODE_LABEL = { "ASCE41-17": "ASCE 41-17", "ASCE41-23": "ASCE 41-23", "FEMA356": "FEMA 356", "EC8-3": "EN 1998-3 (EC8-3)" };
+export const HB_CODE_LABEL = { "ASCE41-17": "ASCE 41-17", "ASCE41-23": "ASCE 41-23", "FEMA356": "FEMA 356", "EC8-3": "EN 1998-3 (EC8-3)",
+  "Caltrans": "Caltrans SDC 2.0", "TBI": "PEER TBI 2017" };   // wave C
 export const HB_COMP_LABEL = {
   steel_beam: "Steel beam — flexure", steel_column: "Steel column — P-M", steel_brace: "Steel brace — axial",
   rc_beam: "Concrete beam — flexure", rc_column: "Concrete column — P-M", rc_column_shear: "Concrete column — shear",
+  rc_coupling_beam: "Concrete coupling beam — diagonal (TBI)",   // wave C
 };
 export const HB_DOF_LABEL = { M3: "M3", M2: "M2", PMM: "P-M2-M3 (M2 + M3 at P_G)", P: "P (axial)", V2: "V2", V3: "V3" };
 /** Static mirror of GET /api/hinges/catalog (tables / clauses / verified). */
@@ -54,6 +59,9 @@ const TABLES = {
   rc_column_shear: TI("Eq. 10-3 (force-controlled shear)", "ASCE/SEI 41-17 10.4.2.3", true),
 };
 export function hbTableInfo(code, comp) {
+  if (code === "Caltrans") return TI("Caltrans SDC 2.0 ductile column plastic hinge", "Caltrans SDC 2.0 5.3.4 (Lp), Mander eps_cu", false);   // wave C
+  if (code === "TBI") return TI(comp === "rc_coupling_beam" ? "PEER TBI 2017 diagonal coupling beam (ASCE 41-17 Table 10-19)"
+    : `PEER TBI 2017 (ASCE 41-17 Table ${comp === "rc_beam" ? "10-7" : "10-8"} at TBI expected strengths)`, "PEER TBI Guidelines 2017 v2.03", false);
   if (code === "FEMA356") return comp === "rc_beam" ? TI("FEMA 356 Table 6-7", "FEMA 356 6.5.2.2", false)
     : TI("FEMA 356 Table 5-6", "FEMA 356 5.5.2.2, Eqs. 5-1 … 5-4", false);
   if (code === "EC8-3") return TI("EN 1998-3 Annex A (chord rotation)", "EN 1998-3 (A.1), (A.10b), (A.12)", true);
@@ -166,7 +174,7 @@ export function hbValidateProperty(name, p) {
   if (!(Math.abs(bb[1][1]) > 0)) return `${nm}: point B must have M/My > 0.`;
   for (let k = 1; k < bb.length; k++) if (Math.abs(bb[k][0]) < Math.abs(bb[k - 1][0])) return `${nm}: rotations must be non-decreasing.`;
   if ((p.hysteresis || "kinematic") !== "kinematic") return `${nm}: interacting hinges use kinematic hysteresis.`;
-  if ((p.drop_strength || "holds") !== "holds") return `${nm}: interacting hinges hold their strength (drop strength not available).`;
+  if (!["holds", "drops"].includes(p.drop_strength || "holds")) return `${nm}: drop strength must be holds or drops.`;   // wave C: drops allowed
   const acc = p.acceptance;
   if (acc != null) {
     const seq = ["IO", "LS", "CP"].filter(k => k in acc).map(k => acc[k]);
@@ -175,7 +183,7 @@ export function hbValidateProperty(name, p) {
   }
   if (p.type === "PMM") {
     const ax = p.axial || { source: "gravity" };
-    if (!["gravity", "value"].includes(ax.source)) return `${nm}: axial source must be gravity or value.`;
+    if (!["gravity", "value", "analysis"].includes(ax.source)) return `${nm}: axial source must be gravity, value or analysis.`;   // wave C: analysis
     if (ax.source === "value" && !isNum(ax.value)) return `${nm}: enter the axial load P.`;
   } else if (p.axial != null) return `${nm}: an M2-M3 hinge has no axial setting.`;
   if (p.k_elastic != null && !(isNum(p.k_elastic) && p.k_elastic > 0)) return `${nm}: the elastic stiffness must be > 0.`;

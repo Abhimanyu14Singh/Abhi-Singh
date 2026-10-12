@@ -193,6 +193,8 @@ from skyframe.engine import pushover_performance as _ppf  # ATC-40/FEMA 440/N2
 
 from skyframe.core import links_ext as _wb_lkx      # wave B link types
 from skyframe.engine import links_ext as _wb_lkb    # wave B link builders
+from skyframe.core import links_c as _wc_lkc        # wave C link types
+from skyframe.engine import links_c as _wc_lkb      # wave C link builders
 from skyframe.engine import composite_damping as _wb_cpd  # composite damping
 
 from skyframe.engine import solver_policy as _slv   # solver per problem size
@@ -444,7 +446,8 @@ GAP_YIELD_HUGE = 1.0e12
 NONLINEAR_STATIC_LINK_TYPES = ("gap", "hook", "isolator",
                                "fp_isolator", "triple_fp", "multilinear",
                                *_sprp.HYSTERESIS_LINK_TYPES,   # B11
-                               *_wb_lkx.STATIC_NONLINEAR)      # wave B
+                               *_wb_lkx.STATIC_NONLINEAR,      # wave B
+                               *_wc_lkc.STATIC_NONLINEAR)      # wave C
 
 # v0.21 device links: elastic rotational stiffness handed to the bearing
 # elements' -T/-My/-Mz (singleFPBearing) and rotZ/rotX/rotY
@@ -3529,6 +3532,13 @@ class OpenSeesEngine:
             ni = self._find_node(asm, lk.pi)
             nj = self._find_node(asm, lk.pj)
             ltype = getattr(lk, "link_type", "elastic")
+            _wc_prm = getattr(lk, "params", {}) or {}         # wave C links
+            if _wc_lkb.routed(self, lk, ltype, _wc_prm, hinge_case):
+                mtag, etag, frn_tag, tag = _wc_lkb.build(
+                    self, asm, lk, ltype, _wc_prm, ni, nj, mtag, etag,
+                    frn_tag, tag, hinge_case)
+                device_nodes.update((ni, nj))
+                continue
             if ltype == "elastic":
                 dirs = [d + 1 for d in range(6) if lk.stiffness[d] > 0.0]
                 mats: List[int] = []

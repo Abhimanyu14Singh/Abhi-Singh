@@ -488,8 +488,10 @@ def test_interaction_validation_errors():
          "backbone": [[0, 0], [0, 1]]},                       # 1 curve
         {"type": "PMM", "surface": _diamond(),
          "backbone": [[0, 0], [0, 1]], "hysteresis": "takeda"},
+        # (drop_strength "drops" is accepted since Wave C — strength drop
+        # past C by capacity updates, tests/test_hinges_wavec.py)
         {"type": "PMM", "surface": _diamond(),
-         "backbone": [[0, 0], [0, 1]], "drop_strength": "drops"},
+         "backbone": [[0, 0], [0, 1]], "drop_strength": "bogus"},
         {"type": "M2M3", "surface": _diamond(),
          "backbone": [[0, 0], [0, 1]]},                       # P points
         {"type": "M2M3", "surface": {"curves": [

@@ -53,7 +53,8 @@ def _gravity_of(p: dict, case_grav: Optional[dict]) -> Optional[dict]:
             return None
         return p["auto"]["gravity"] if p["auto"]["gravity"] is not None \
             else (case_grav or {})
-    if p["type"] == "PMM" and p["axial"]["source"] == "gravity":
+    if p["type"] == "PMM" and p["axial"]["source"] in ("gravity",
+                                                      "analysis"):
         return p["axial"]["gravity"] if p["axial"]["gravity"] is not None \
             else (case_grav or {})
     return None
@@ -125,9 +126,10 @@ def pmm_axial(eng, m, d: float, prop: dict) -> Tuple[float, str]:
     if ax["source"] == "value":
         return ax["value"], "value"
     grav = _gravity_of(prop, getattr(eng, "_ah_case_gravity", {}))
+    src = ax["source"]                       # gravity | analysis (wave C)
     if not grav:
-        return 0.0, "gravity (none: P = 0)"
-    return -axial_at(eng, m, d, grav), "gravity"
+        return 0.0, f"{src} (none: P = 0)"
+    return -axial_at(eng, m, d, grav), src
 
 
 def resolve(eng, m, name: str, p: dict, d: float) -> List[dict]:
@@ -145,6 +147,19 @@ def resolve(eng, m, name: str, p: dict, d: float) -> List[dict]:
         warnings.warn(f"auto hinge {name!r} on member {m.uid!r}: {why}",
                       UserWarning)
         return []
+    if auto.get("axial_update"):         # wave C: coupled, P-updated PMM
+        from skyframe.design import hinge_tables_c as _htc
+        grav = _gravity_of(p, getattr(eng, "_ah_case_gravity", {}))
+        ip = _htc.auto_pmm_property(eng.model, m, auto, specs, p, grav)
+        if ip is not None:
+            s3 = next(s for s in specs if s["type"] == "M3")
+            meta = dict(s3["meta"], P_G=P_G, axial_source="analysis",
+                        thy=s3["thy"], dof="PMM", axial_update=True)
+            return [{"property": name, "prop": ip, "d": d,
+                     "t": d * m.length, "placed": False, "auto": meta}]
+        warnings.warn(f"auto hinge {name!r} on member {m.uid!r}: no "
+                      "interaction surface (axial_update ignored)",
+                      UserWarning)
     out = []
     for spec in specs:
         prop = _ht.spec_to_property(spec, p)

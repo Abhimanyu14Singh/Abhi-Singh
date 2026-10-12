@@ -515,8 +515,13 @@ def test_fna_honest_scope_not_implemented():
         OpenSeesEngine(mdl).run_fna("FP")
     mdl = _cantilever("fnatk")
     mdl.nodal_masses.append(NodalMass((0, 0, 3.0), mx=10.0))
-    mdl.add_link((0, 0, 0.0), (0, 0, 0.3), link_type="multilinear_takeda",
-                 params={"points": [[0.01, 10.0], [0.05, 15.0]]})
+    # (Takeda is FNA-supported since Wave C; HDR is not)
+    mdl.add_link((0, 0, 0.0), (0, 0, 0.3), link_type="hdr_isolator",
+                 params={"Gr": 400.0, "Kbulk": 2e6, "D1": 0.1, "D2": 0.9,
+                         "ts": 0.003, "tr": 0.008, "n": 20.0, "a1": 800.0,
+                         "a2": 0.0, "a3": 0.0, "b1": 0.0, "b2": 0.0,
+                         "b3": 0.0, "c1": 0.0, "c2": 0.0, "c3": 0.0,
+                         "c4": 0.0})
     mdl.add_th_case("TK", "X", accel, dt)
     # Wave C: Takeda links are supported by FNA now (tests/test_wavec_
     # dynamics.py); a hinged (nonlinear) case is still refused

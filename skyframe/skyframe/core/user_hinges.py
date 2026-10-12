@@ -164,10 +164,9 @@ def normalize_property(name: str, prop) -> dict:
         if prop.get("hysteresis", "kinematic") != "kinematic":
             raise ValueError(f"{nm}: interacting hinges use kinematic "
                              "hysteresis (coupled elliptical plasticity)")
-        if prop.get("drop_strength", "holds") != "holds":
-            raise ValueError(f"{nm}: interacting hinges cannot drop "
-                             'strength (drop_strength must be "holds")')
-        prop = dict(prop, drop_strength="holds")
+        # wave C: "drops" = strength drop past C by capacity updates
+        # (engine.pmm_update); default "holds" (legacy)
+        prop = dict(prop, drop_strength=prop.get("drop_strength", "holds"))
         out["surface"] = _ih.normalize_surface(typ, prop.get("surface"),
                                                nm)
         out["axial"] = _ih.normalize_axial(typ, prop.get("axial"), nm)

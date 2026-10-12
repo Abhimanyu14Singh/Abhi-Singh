@@ -91,6 +91,11 @@ def build(eng, asm, m, h, orig: int, dup: int, mtag: int, etag: int):
     h3 = _cih.hardening(prop, M3y, sf3)
     H2 = max(h2["H"], _cu.UH_PARALLEL_RATIO * km2)
     H3 = max(h3["H"], _cu.UH_PARALLEL_RATIO * km3)
+    from skyframe.engine import pmm_update as _pmu       # wave C
+    upd = _pmu.active(prop)
+    if upd:          # hardening / drop come from the capacity updates
+        H2 = _cu.UH_PARALLEL_RATIO * km2
+        H3 = _cu.UH_PARALLEL_RATIO * km3
     stag = next_sec_tag(asm)
     ops.section("Elliptical", stag, ke2, ke3, M2y, M3y, 0.0, H2, H3,
                 "My", "Mz")
@@ -110,6 +115,8 @@ def build(eng, asm, m, h, orig: int, dup: int, mtag: int, etag: int):
                 *_lrl.flag(eng, asm, etag, "user_hinge", (1, 2, 3, 4)))
     d = h["d"]
     end = "i" if d <= 0.0 else "j" if d >= 1.0 else f"{d:g}"
+    ust = (_pmu.register(asm, sec_ele, etag, d >= 1.0, M2y, M3y, P)
+           if upd else None)
     asm.user_hinges.append({
         "uid": m.uid, "end": end, "relative_distance": d,
         "property": h["property"], "prop": prop, "kind": "interaction",
@@ -118,7 +125,9 @@ def build(eng, asm, m, h, orig: int, dup: int, mtag: int, etag: int):
                 "P": P, "axial_source": src, "sf2": sf2, "sf3": sf3,
                 "H2": H2, "H3": H3, "fit": ell["fit"],
                 "markers": _cih.markers(prop, 1.0),
-                "tol": 1.0e-6 * max(M2y / ke2 / sf2, M3y / ke3 / sf3)}})
+                "tol": 1.0e-6 * max(M2y / ke2 / sf2, M3y / ke3 / sf3),
+                **({"update": ust} if ust is not None else {})},
+        **({"auto": h["auto"]} if "auto" in h else {})})
     return mtag, etag
 
 
@@ -154,6 +163,9 @@ def record(spec: dict, hh: dict, peak, yielded) -> None:
         peak[spec["uid"]] = rot
     if yielded is not None and st != "A-B":
         yielded.add(spec["uid"])
+    if "update" in env:                         # wave C capacity update
+        from skyframe.engine import pmm_update as _pmu
+        _pmu.update(spec, dpn, hh)
 
 
 def detail(spec: dict, hh: dict) -> dict:
@@ -178,8 +190,15 @@ def detail(spec: dict, hh: dict) -> dict:
         "deformation_scale": [env["sf2"], env["sf3"]],
         "k_elastic": [env["k_e2"], env["k_e3"]],
         "hardening": [env["H2"], env["H3"]],
-        "hysteresis": "kinematic", "drop_strength": "holds",
+        "hysteresis": "kinematic",
+        "drop_strength": prop.get("drop_strength", "holds"),
         "material": "Elliptical", "surface_fit": env["fit"],
+        **({"capacity_update": True, "axial_update":
+            (prop["axial"] or {}).get("source") == "analysis"}
+           if "update" in env else {}),
+        **({"auto": spec["auto"], "preliminary":
+            spec["auto"].get("preliminary", False)}
+           if "auto" in spec else {}),
         **{k: list(v) for k, v in hh.items()}}
 
 

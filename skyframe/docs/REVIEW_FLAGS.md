@@ -78,11 +78,38 @@ Each entry says where it lives.
   brace multiples, all ASCE 41-23 tables (reuse 41-17 numbers), FEMA 356 tables,
   and the wall-hinge acceptance states (Table 10-19). Verify against the code
   tables before relying on acceptance-criteria outputs.
-- Interaction (PMM) hinges hold P at its gravity value; the M2-M3 yield contour
-  is an ellipse through the 0 and 90 degree curves; no strength drop past C.
+- Interaction (PMM) hinges hold P at its gravity value by default (Wave C adds
+  axial source "analysis" and drop_strength "drops"); the M2-M3 yield contour
+  is an ellipse through the 0 and 90 degree curves.
 - Wall fiber hinges keep wall shells at 1e-4 stiffness; loads on interior wall
   nodes go into that soft shell. RC shear hinges are force-controlled.
-- Caltrans and TBI hinge tables not implemented.
+- Caltrans and TBI hinge tables (Wave C, design/hinge_tables_c.py) are
+  TRANSCRIBED FROM MEMORY and all flagged preliminary: Caltrans SDC 2.0
+  expected materials (1.3 f'c >= 34.5 MPa, fye 475 MPa), phi_y = 2.1 eps_y/h,
+  Mander eps_cu with rho_s = 2 rho_t, eps_su^R = 0.09, f'cc = 1.5 f'ce, the SI
+  plastic hinge length 0.08L + 0.022 fye dbl >= 0.044 fye dbl, residual c = 0.2
+  and IO/LS/CP = 0.25/0.75/1.0 theta_p (Caltrans itself has no IO/LS/CP); TBI
+  2017 expected-strength factors 1.3 / 1.17 and the diagonal coupling-beam row
+  a/b/c = 0.03/0.05/0.8, IO/LS/CP = 0.006/0.018/0.030. Verify before use.
+- Wave C PMM capacity update (axial "analysis", drop_strength "drops") is an
+  explicit update: the capacity lags the axial force and the drop by one
+  committed step (first-yield overshoot of one step); use small steps.
+
+## Links (Wave C)
+- Coupled 6x6 links with a non-zero trace of the U-R coupling block (axial-
+  torsion "screw" coupling) are rejected: OpenSees has no general-matrix
+  element; the realisation by parallel springs is exact otherwise.
+- multilinear_isotropic: Steel01 isotropic hardening calibrated to the ETABS
+  rule at the backbone's last point only (other amplitudes ~10 % off).
+- multilinear_degrading defaults (unload_beta 0.5, no damage) and the concrete
+  pinching defaults (0.8 / 0.2, the hinge "concrete" values) are our choice,
+  not ETABS-published values.
+- HDR isolator validated against the element's own Grant elastic component and
+  an energy check only - no published bearing loop was available here.
+- T/C isolator per-direction friction (mu3/R3) is uncoupled per direction and
+  FNA-only; tension friction uses a negative-stiffness bearing trick (verified).
+- Effective damping c_eff acts in linear direct-integration TH (Elastic eta);
+  it is NOT converted to modal damping for response spectrum or FNA.
 
 ## Interop / API (Wave B)
 - SDNF v3 and CIS/2 (LPM6 subset) readers were tested only by round trip and

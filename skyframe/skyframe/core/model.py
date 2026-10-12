@@ -74,6 +74,10 @@ from skyframe.core import link_freq as _lfq
 from skyframe.core import composite_damping as _cpd
 from skyframe.core import wavec_dyn as _wcd  # Wave C: eigen shift / TH types / RS damping
 
+# wave C links: coupled 6x6, multilinear elastic per DOF, hysteresis
+# options, HDR, velocity friction, T/C per direction, effective K/C
+from skyframe.core import links_c as _wcl
+
 G_ACCEL = 9.80665  # m/s^2
 _PLANAR_TOL = 1e-6  # m
 
@@ -1860,7 +1864,8 @@ RS_DIRECTIONAL_METHODS = ("100_30", "SRSS", "CQC3", "ABS")  # +rs_ext
 LINK_TYPES = ("elastic", "damper", "gap", "hook", "isolator",
               "fp_isolator", "triple_fp", "multilinear",
               *_sprp.HYSTERESIS_LINK_TYPES,
-              *_lkx.EXT_LINK_TYPES)              # wave B (core.links_ext)
+              *_lkx.EXT_LINK_TYPES,              # wave B (core.links_ext)
+              *_wcl.C_LINK_TYPES)                # wave C (core.links_c)
 
 # required / optional param keys per advanced link type
 _LINK_PARAM_KEYS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
@@ -1876,6 +1881,7 @@ _LINK_PARAM_KEYS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     **_sprp.LINK_PARAM_KEYS,                     # B11 hysteresis types
     **_lkx.LINK_PARAM_KEYS,                      # wave B link types
 }
+_wcl.extend_param_keys(_LINK_PARAM_KEYS)         # wave C types + keys
 
 DAMPER_DEFAULT_ALPHA = 1.0     # velocity exponent (1 = linear dashpot)
 DAMPER_DEFAULT_K = 1.0e6       # kN/m, Maxwell series spring ("rigid" spring)
@@ -1934,6 +1940,8 @@ class LinkMember:
         for k, v in (params or {}).items():
             if str(k) in ("points", "points_neg"):
                 out[str(k)] = [[float(p[0]), float(p[1])] for p in v]
+            elif str(k) in _wcl.NESTED_PARAMS:          # wave C nested
+                out[str(k)] = _wcl.coerce(str(k), v)
             else:
                 out[str(k)] = float(v)
         return out
@@ -3495,12 +3503,16 @@ class BuildingModel:
                 raise ValueError(f"Link {lk.uid} ({ltype}): unknown param "
                                  f"{key!r} (allowed: "
                                  f"{list(required) + list(optional)})")
-            if key in _sprp.LIST_PARAMS:
+            if key in _sprp.LIST_PARAMS or key in _wcl.NESTED_PARAMS:
                 continue                    # nested list, validated below
             if not (isinstance(v, (int, float)) and math.isfinite(v)):
                 raise ValueError(f"Link {lk.uid} ({ltype}): param {key!r} "
                                  f"must be a finite number (got {v!r})")
         length = lk.length
+        if ltype in _wcl.C_LINK_TYPES:                    # wave C
+            _wcl.validate_link(lk.uid, ltype, prm, lk.pi, lk.pj)
+            return
+        _wcl.validate_extra(lk.uid, ltype, prm, length)   # wave C keys
         if ltype in _lkx.EXT_LINK_TYPES:                  # wave B
             _lkx.validate_link(lk.uid, ltype, prm, length,
                                abs(lk.pj[0] - lk.pi[0])

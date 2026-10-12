@@ -14751,3 +14751,108 @@ after the change.
   * POST /api/model checks;
   * the new DB tables and columns;
   * the mock Diaphragm Design Forces table.
+
+
+## Wave C links and hinges (link types, effective K/C, P-M hinges, Caltrans / TBI)
+
+Modules: `core/links_c.py` (keys, validation, local axes, laws),
+`engine/links_c.py` (OpenSees builders, one hook in the `_build` link
+loop), `core/fna_devices_c.py` + `engine/fna_c.py` (FNA devices, hooks in
+`engine/fna.py`), `engine/pmm_update.py` (P-M capacity updates),
+`design/hinge_tables_c.py` (Caltrans / TBI, registered into
+`design/hinge_tables.py`).  Every default is the legacy path: a model that
+uses none of the keys below gives byte-identical results.
+
+### Link local axes
+`U1` = axis i -> j (`+Z` at zero length); vertical / zero-length link:
+`U2 = +X`, `U3 = U1 x U2`; any other link: `U2` in the vertical plane
+through the axis pointing up, `U3 = U1 x U2`.  `R1..R3` about `U1..U3`.
+
+### New `LinkMember.link_type` values (`params`)
+| type | params | engine |
+|---|---|---|
+| `linear_coupled` | `K`: 6x6 nested list (local U1..R3), symmetric PSD | exact parallel springs (line + torsional `elasticBeamColumn`s placed by `-jntOffset`) |
+| `multilinear_elastic` | `curves`: `{"U1".."R3": [[d, F], ...]}`, `k_lin?`: 6-list | `ElasticMultiLinear` per local DOF |
+| `multilinear_degrading` | `points`, `points_neg?`, `damage1?=0`, `damage2?=0`, `unload_beta?=0.5`, `kv?` | `Hysteretic` |
+| `multilinear_concrete` | `points`, `points_neg?`, `pinch_x?=0.8`, `pinch_y?=0.2`, `damage1?`, `damage2?`, `unload_beta?=0`, `kv?` | `Hysteretic` |
+| `multilinear_isotropic` | `points` (exactly 2), `kv?` | `Steel01` isotropic |
+| `multilinear_brb` | `points` (2), `points_neg?` (2, same yield point), `R0?=20`, `iso_b?=0`, `iso_rho?=1`, `kv?` | `Steel4` asym kinematic (+ `-iso`) |
+| `hdr_isolator` | `Gr Kbulk D1 D2 ts tr n a1 a2 a3 b1 b2 b3 c1 c2 c3 c4`, `kc? phi_m? ac?` | `HDR` (Grant model) |
+
+* `linear_coupled` acts on `d = [u_j(carried to i) - u_i; th_j - th_i]`
+  (moment equilibrium for a finite length); reactions equal `K_g d`
+  exactly, `K_g = T^T K T`.  Rejected: non-symmetric, non-PSD, all-zero,
+  and a non-zero trace of the coupling block `K[0:3, 3:6]` (screw /
+  axial-torsion coupling, not realisable with OpenSees elements).
+* plastic options: a link with a horizontal component acts axially (one
+  material on U1); vertical / zero-length = both shears + elastic `kv`.
+  Peak-oriented rule (Takeda / pivot / degrading / concrete) = OpenSees
+  `Hysteretic`: unload at `k0 (u_max/d1)^-beta`, reload toward the
+  opposite peak through the pinch point `(u0 + pinch_x (d* - u0),
+  pinch_y F_t)`, `d* = u_t - (1 - pinch_y) F_t / k_u`.
+* isotropic: `Steel01(fy, k0, b, a1, 1, a1, 1)` with `a1 = 2b (d2/d1 - 1)
+  / (d2 / (2 d1))^0.8`: a reversal from the backbone end `(d2, F2)` yields
+  at exactly `-F2` (ETABS isotropic); other amplitudes follow Steel01's
+  0.8-power law.
+* HDR elastic component `F = a1 u + a2 u^3 + a3 u^5` (b = c = 0).
+
+### New optional keys on existing types
+* `fp_isolator` / `friction_spring` / `tc_fp_isolator`: `mu_fast` + `rate`
+  -> `mu(v) = mu_fast - (mu_fast - mu) exp(-rate |v|)` (OpenSees
+  `VelDependent`); plus `n_slow` / `n_fast` (`mu_max_fact?=2`) ->
+  `VelNormalFrcDep` (`mu_slow = mu N^(n_slow-1)`, `mu_fast = mu_fast
+  N^(n_fast-1)`).  A per-surface key (`mu3`, `mu_t`) keeps the same
+  fast/slow ratio.
+* `tc_fp_isolator`: `mu3`, `R3` (U3 direction; `mu` / `R` act along U2;
+  uncoupled per direction, FNA only: direct integration raises
+  `NotImplementedError`), `mu_t` (+ `R_t`, default `R`): friction in
+  tension `mu_t N_t + N_t u / R_t` with `N_t = kt (d - gap_t)` (needs
+  `kt > 0`); built as a second `singleFPBearing` whose axial material is
+  `-kt` past the gap (read as compression) plus a `2 kt` hook.
+* every non-elastic type: `k_eff` (6-list, local, >= 0, one > 0) and
+  `c_eff` (6-list, needs `k_eff`).
+
+### Effective (linear) stiffness and damping
+A link with `k_eff` is replaced in every LINEAR build (`_build` without
+`hinge_case`: linear static, modal / Ritz, RS, linear time history,
+buckling, steady state / PSD) by a linear link with `Elastic(k_eff,
+c_eff)` per local DOF (`zeroLength` / `twoNodeLink` with `-orient`);
+NONLINEAR builds (pushover, nonlinear static, nonlinear TH) keep the
+nonlinear property; FNA keeps `k_eff` as the linear part of its basis.
+`asm.link_effective[uid] = {ele, k_eff, c_eff, dirs}`.
+
+### FNA devices
+`linear_coupled` (basis), `multilinear_elastic` (translational curves),
+Takeda / pivot / degrading / concrete (`PeakOriented`, identical to
+`Hysteretic` without damage; damage1/2 > 0 raise), `brb` and
+`multilinear_brb` (sharp bilinear asymmetric kinematic), `damper_bilinear`
+(Maxwell + bilinear dashpot), friction bearings with `mu(v, N)`, and the
+T/C isolator (per direction, tension friction).  `hdr_isolator` and
+`multilinear_isotropic` raise `NotImplementedError` (use direct
+integration).
+
+### Hinges
+* PMM `axial.source = "analysis"`: P starts at the gravity value and is
+  updated after EVERY committed step from the hinge's own axial force;
+  `drop_strength` of PMM / M2M3 may now be `"drops"` (C -> D drop, D -> E,
+  residual `1e-3` past E).  Method (`engine/pmm_update.py`): the
+  Elliptical section's yield moments are OpenSees parameters (`Fy1`,
+  `Fy2`); after step k they are set to `r(dp_k) * M_y(P_k)` (surface at
+  `P_k`, `r` = `core.interaction_hinges.capacity_ratio` of the running
+  max resultant plastic deformation), so the capacity lags P by one
+  step.  Hinge detail adds `capacity_update`, `axial_update` and per-step
+  `P_step`, `capacity_M2`, `capacity_M3`, `capacity_ratio` (entry k = the
+  capacity used by step k+1).
+* auto hinge `auto.axial_update: true` (PMM only; written only when true):
+  the auto P-M2-M3 hinge becomes ONE coupled interaction hinge whose
+  surface is the table generator's yield moment sampled at 81 axial
+  loads (0 / 90 degree curves), backbone ratios and absolute acceptance
+  from the M3 spec at the gravity P, `axial.source = "analysis"`,
+  `drop_strength = "drops"`.
+* codes `"Caltrans"` (`rc_column`: M3, M2, PMM) and `"TBI"` (`rc_beam`,
+  `rc_column`, `rc_coupling_beam`), formulas in
+  `design/hinge_tables_c.py`; every table `verified: false`
+  (`preliminary`), see REVIEW_FLAGS.
+
+### Tests
+`tests/test_links_wavec.py`, `tests/test_hinges_wavec.py`.

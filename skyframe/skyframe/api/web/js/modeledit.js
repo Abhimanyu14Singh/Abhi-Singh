@@ -953,11 +953,16 @@ export function linkTypeOf(l) {
 
 /** Normalize a link's link_type + params in place (absent keys = defaults,
     finite values preserved, stale keys pruned). Pre-v0.15 links = elastic. */
+/** Wave C hook (js/linkext_c.js): extra optional keys a type keeps when
+    set (effective K/C, velocity friction, T/C per direction) — absent keys
+    are never added, so load + save stays byte-identical. */
+export const LINK_EXTRA = { keys: () => [] };
+const keepLinkExtra = (t, src, l) => { for (const k of LINK_EXTRA.keys(t)) if (src[k] !== undefined) l.params[k] = src[k]; return l; };
 export function normalizeLinkDevice(l) {
   const t = linkTypeOf(l);
   l.link_type = t;
   const src = (l.params && typeof l.params === "object") ? l.params : {};
-  if (LINK_TYPES[t].normalize) { l.params = LINK_TYPES[t].normalize(src); return l; }   // B11 hysteresis types (js/linkhyst.js): optional keys kept only when set
+  if (LINK_TYPES[t].normalize) { l.params = LINK_TYPES[t].normalize(src); return keepLinkExtra(t, src, l); }   // B11 hysteresis types (js/linkhyst.js): optional keys kept only when set
   const params = {};
   for (const [k, , dv] of LINK_TYPES[t].params)
     params[k] = isFinite(src[k]) ? +src[k] : dv;
@@ -969,7 +974,7 @@ export function normalizeLinkDevice(l) {
     params.points = pts.length ? pts : LINK_TYPES[t].defaultPoints.map(p => [...p]);
   }
   l.params = params;
-  return l;
+  return keepLinkExtra(t, src, l);                // wave C extra keys (js/linkext_c.js)
 }
 
 /** Switch a link's device type, keeping same-named param values. */
