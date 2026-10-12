@@ -16,8 +16,9 @@ const clone = o => JSON.parse(JSON.stringify(o));
 import { mdbW8Extend } from "./mock_w8.js";   // W8 DB-edit coverage tables
 import { wbMockTables as mdbWbTables } from "./mock_wbdamp.js";   // wave B: material damping / freq-dependent link tables
 
-import { tdMdbExtend } from "./mock_timedep.js";
-import { wcMdbExtend as mdbWcExtend } from "./mock_wavec3.js";   // Wave C DB-edit tables / columns   // time-dependent materials table + tendon element columns
+import { tdMdbExtend } from "./mock_timedep.js";   // time-dependent materials table + tendon element columns
+import { wcMdbExtend as mdbWcExtend } from "./mock_wavec3.js";   // Wave C (C3) DB-edit tables / columns
+import { wcMockExtend as mdbWc2Extend, WC_QUANTITIES as mdbWcQuantities } from "./mock_dbedit_wc.js";   // Wave C (C2) DB-edit tables (js/mock_dbedit_wc.js)
 const QUANTITIES = {
   none: "", length: "m", dim: "m", area: "m^2", inertia: "m^4", force: "kN", moment: "kN*m",
   line_force: "kN/m", line_moment: "kN*m/m", pressure: "kPa", stress: "kPa", modulus: "kPa", unit_weight: "kN/m^3",
@@ -25,6 +26,7 @@ const QUANTITIES = {
   stiffness: "kN/m", rot_stiffness: "kN*m/rad", line_spring: "kN/m/m", thermal_coeff: "1/degC",
   period: "s", angle_deg: "deg",
 };
+Object.assign(QUANTITIES, mdbWcQuantities);   // Wave C: temperature quantities
 const MASS_DEF = { self_mass: true, patterns: true, include_lateral: true, include_vertical: false, lump_at_stories: true };
 
 class RowErr extends Error {}
@@ -667,9 +669,9 @@ function buildCatalogue() {
   ], W8H), W8H);
 }
 let CAT = null;
-const catalogue = () => (CAT = CAT || [...mdbWcExtend(buildCatalogue(), { col, names, plist, G, E, parseCell, RowErr }),   // + Wave C (js/mock_wavec3.js)
-  ...mdbRelTables({ obj, col, G }),
-  ...mdbWbTables({ col, obj, names, G, E, parseCell, clone })]);   // + wave B tables (js/mock_wbdamp.js)   // + end releases / joint axes (js/mock_releases.js)
+const catalogue = () => (CAT = CAT || mdbWc2Extend([...mdbWcExtend(buildCatalogue(), { col, names, plist, G, E, parseCell, RowErr }),   // + Wave C (js/mock_wavec3.js, js/mock_dbedit_wc.js)
+  ...mdbRelTables({ obj, col, G }),   // + end releases / joint axes (js/mock_releases.js)
+  ...mdbWbTables({ col, obj, names, G, E, parseCell, clone })], { col, obj, plist, child, names, optNames, getv, parseCell, rowValues, same, E, clone, RowErr, mergeOrdered, CASC, REFS, G, pt }));   // + wave B tables (js/mock_wbdamp.js)
 const table = key => catalogue().find(t => t.key === key);
 
 function rowsOf(t, d) {

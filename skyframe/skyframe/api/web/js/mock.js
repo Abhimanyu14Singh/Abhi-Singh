@@ -17,6 +17,7 @@ import { mockNlsExtendResults as g3MockNlsExtend } from "./mock_nls.js";   // G3
 
 import { augmentMockModel, augmentMockResults as augmentTableResults } from "./mock_tables.js";   // tables / frequency / energy mock blocks
 import { mrtMockAugment as a8MrtMockAugment } from "./mock_restables.js";   // A8: spandrel forces + element / wall / NL tables (js/mock_restables.js)
+import { WC_MOCK_TABLE_KEYS as wcMockTableKeys } from "./mock_tables_wc.js";   // Wave C Show Tables (registers itself; js/mock_tables_wc.js)
 // G2 polygon shells — mock auto mesh (quads + triangles) for non-quad regions
 import { mockPolyMesh as g2MockPolyMesh, isLegacyQuad as g2IsLegacyQuad } from "./mock_poly.js";
 // Groups — user-defined stage results + section cuts defined by group

@@ -110,6 +110,7 @@ import { initBuiltup as buInitBuiltup } from "./builtup.js";   // v1.21 Built-up
 import { initExchange as xcInitExchange } from "./exchange.js";   // File › Import ▸ / Export ▸ E2K · IFC · DXF · Excel (js/exchange.js)
 import { initInterop as iopInitInterop } from "./interop.js";   // File › Import ▸ / Export ▸ SAP2000 · SAFE · SDNF · CIS/2 · IDEA · IFC for Revit (js/interop.js)
 import { initPlugins as plgInitPlugins } from "./plugins.js";   // Options › Plugins… · Tools › Plugins ▸ · Help › Scripting API (js/plugins.js)
+import { initGenDisp as wcInitGenDisp } from "./gendisp.js";   // Wave C: Define › Generalized Displacements… (js/gendisp.js)
 import { initShellRes as shrInitShellRes } from "./shellres.js";   // A3 Display › Force Diagrams › Shell Stresses / Forces… (js/shellres.js)
 
 import { initReleases as relInitReleases } from "./releases.js";   // Assign › Frame › Releases / Partial Fixity + Joint › Local Axes (js/releases.js)
@@ -8630,6 +8631,7 @@ async function boot() {
   try { xcInitExchange(window.__sky); } catch (err) { console.error("model exchange init failed", err); }   // File › Import ▸ / Export ▸ (js/exchange.js)
   try { iopInitInterop(window.__sky); } catch (err) { console.error("interop init failed", err); }   // SAP2000 / SAFE / SDNF / CIS2 / IDEA / Revit IFC (js/interop.js)
   try { plgInitPlugins(window.__sky); } catch (err) { console.error("plugins init failed", err); }   // plugin framework (js/plugins.js)
+  try { wcInitGenDisp(window.__sky); } catch (err) { console.error("gendisp init failed", err); }   // Wave C (js/gendisp.js)
   try { shrInitShellRes(window.__sky); } catch (err) { console.error("shell contours init failed", err); }   // A3 shell stresses / forces contours (js/shellres.js)
 
   try { lcInitLoadCodes(window.__sky); } catch (err) { console.error("load codes init failed", err); }   // code spectra · design combos · LLR (js/loadcodes.js)

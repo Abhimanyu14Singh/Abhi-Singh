@@ -15002,3 +15002,69 @@ MPa Hognestad, fy 420 EPP: first yield c = 0.1539 m, My = 244.89 kN·m,
 rectangle My = fy b h²/6, Mp = fy b h²/4), `tests/test_wave_c9_export_api.py`
 (every CSV equals the SQLite table cell for cell; HTTP; DB-edit).
 Playwright mock 22/22, live 25/25.
+
+## Wave C: Show Tables results, generalized displacements and DB-edit coverage
+
+### Generalized displacements (`skyframe/core/gendisp.py`)
+
+`BuildingModel.generalized_displacements` (emitted by `to_dict` only when
+non-empty; legacy models byte-identical):
+
+```json
+"generalized_displacements": {"DRIFT2": {"type": "translation" | "rotation",
+  "terms": [{"point": [x, y, z], "dof": "UX".."RZ", "sf": 1.0}, ...]}}
+```
+
+`g = sum sf * u(point, dof)` on global joint displacements (SI: m, rad).
+`validate()` -> ValueError on unknown keys, a bad type / dof, an empty term
+list, a non-[x,y,z] point or a non-finite sf.  UI: Define › Groups, Cuts &
+Labels › Generalized Displacements… (`js/gendisp.js`, act
+`def-wc-gendisp`, dialogs `wcGdDefine` / `wcGdData`).
+
+### New Show Tables tables (`skyframe/core/tables_wave_c.py`, registered via `register_table`)
+
+| key | rows |
+|---|---|
+| `joint_velocities`, `joint_velocities_absolute`, `joint_accelerations`, `joint_accelerations_absolute` | per TH case and recorded joint (`output_requests.joints`): `Max`, `Min`, then one `Step` row per sample (step 0 = t 0); cols story, label, joint, case, case_type (LinDirHist / NonDirHist), step_type, step, time, UX..RZ (quantities `velocity` / `accel`, rotations `angular_velocity` / `angular_accel`). Absolute = relative + ground (rotations = relative). No recorded joints -> a warning. |
+| `assembled_joint_masses` | the analysis lumped mass per joint (engine context) UX..UZ (`mass`), RX..RZ (`mass_moi`), x/y/z; last row `label: "Sum"` |
+| `mass_summary_by_story` / `_by_diaphragm` / `_by_group` | masses summed per story range, per diaphragm master (mass_x, mass_y, mmi, center of mass), per group joint set (masters belong to no group) |
+| `material_list_by_section` / `_by_story` / `_by_material` | pieces, length, area (net), volume (`volume`), weight (= unit weight x volume x weight modifier) + a `Total` row |
+| `story_max_avg_displacements` | all joints of the story level: max = max abs u, min = min abs u, avg = (max+min)/2, ratio = max/avg (n/a when negligible) |
+| `modal_load_participation` | item_type Acceleration / Load Pattern, static / dynamic % (from `results.modal.load_participation`, else the on-demand engine routine, cached per model) |
+| `generalized_displacements` | per definition and static case / additive combo (step_type ""), plus Max / Min of recorded TH joints; `translation` (length) or `rotation` (angle) |
+
+`element_forces_links` now also tabulates device links: static rows for
+damper (0), gap / hook (axial law on the solved deformation) and
+zero-length isolators (bilinear monotonic law), additive combos summed from
+their cases; TH rows (Max / Min / Step) from recorded links
+(`output_requests.links`).  Columns `step_type`, `step`, `time` are appended
+only when TH device rows exist; other device types keep a warning.  Export
+units (`io/results_export.unit_for`): velocity / accel = length unit per s /
+s^2, volume, rotational mass.
+
+### Interactive Database Editing (`skyframe/core/modeltables_wave_c.py`)
+
+New tables (all editable; all round-trip byte-identically alone, together,
+via CSV and via zip; the mock port `js/mock_dbedit_wc.js` gives identical
+rows): `staged_stages`, `staged_operations` (op, group, age_days, pattern,
+scale), `staged_live`, `hyperstatic_cases`, `section_cuts`,
+`frame_temperature_loads`, `shell_temperature_loads`, `joint_temperatures`,
+`ground_displacements`, `joint_patterns`, `pdelta_options`,
+`pdelta_load_factors`, `active_dof`, `analysis_options`,
+`analysis_convergence_tests`, `damping_options`, `panel_zone_option`,
+`joint_panel_zones`, `towers`, `joint_towers`, `frame_hinge_assignments`,
+`frame_hinge_overwrites`, `floor_mesh`, `nonprismatic_segments`,
+`nonprismatic_subdivisions`, `builtup_sections`, `builtup_components`,
+`designer_sections`, `designer_polygons`, `designer_rebar`,
+`generalized_displacements`, `generalized_displacement_terms`.
+`staged_cases` gains `stage_mode` (read only) and `td_*` columns (one per
+`time_dependent` key; blank = absent).  Options tables have one row and
+write only changed values; a value returning to its default removes the
+key.  Deleting every stage of a case returns it to `"per_story"`.
+Built-up / designer edits re-derive the mirrored frame section (modifiers
+kept); renames cascade to members, deletes are refused while a frame uses
+the section.  Numbers inside text cells use the JavaScript
+`Number#toString` form (`jsnum`).  New column quantities: `temp_delta`
+(degC), `temp_gradient` (degC/m).
+
+Tests: `tests/test_wave_c_tables.py`.

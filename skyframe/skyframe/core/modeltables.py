@@ -2023,6 +2023,10 @@ def _build_catalogue() -> List[Table]:
     _wbp_extend(T)       # Wave B: ortho / slab / spring props (props_tables)
     from .wavec_tables import extend as _wc_extend
     _wc_extend(T)        # Wave C: floor mesh / edge / pier / ecc (wavec_tables)
+
+
+    from .modeltables_wave_c import extend as _wc2_extend
+    _wc2_extend(T)       # Wave C: cuts / temps / options / stages / sections
     return T
 
 

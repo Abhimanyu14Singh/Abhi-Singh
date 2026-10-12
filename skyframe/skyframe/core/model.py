@@ -54,6 +54,7 @@ from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
     PDELTA_INCLUDE_IN, PDELTA_METHODS, pdelta_defaults, pdelta_from_dict,
     pdelta_to_dict, validate_pdelta_options)
 from skyframe.core import analysis_options as _aopt  # solver/convergence
+from skyframe.core import gendisp as _gdisp  # Wave C generalized displacements
 from skyframe.core import rs_ext as _rsx  # RS ecc / U3 / angle / CQC3
 
 from skyframe.core import modal_cases as _mcs  # mass sources / modal cases
@@ -2366,6 +2367,10 @@ class BuildingModel:
     # (skyframe.core.wavec_dyn); {} = legacy, emitted only when set.
     eigen_options: Dict[str, object] = field(default_factory=dict)
 
+    # Wave C: generalized displacements (skyframe.core.gendisp); emitted by
+    # to_dict only when non-empty.
+    generalized_displacements: Dict[str, dict] = field(default_factory=dict)
+
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
         self.materials[mat.name] = mat
@@ -4272,6 +4277,7 @@ class BuildingModel:
         _cpd.validate(self)                 # wave B material damping
 
         self._validate_workspace()          # named views / report sets
+        _gdisp.validate(self)               # Wave C generalized displacements
 
     def _validate_workspace(self) -> None:
         _wks.validate(self)                 # core.workspace
@@ -4455,6 +4461,8 @@ class BuildingModel:
             **_wks.model_to_dict(self),  # named views / report sets (if any)
 
             **_wcd.model_to_dict(self),  # Wave C eigen options (if set)
+
+            **_gdisp.model_to_dict(self),  # Wave C generalized displacements
         }
 
     @classmethod
@@ -4923,6 +4931,8 @@ class BuildingModel:
 
         _wks.model_from_dict(mdl, d)        # named views / report sets / aids
         _wcd.model_from_dict(mdl, d)        # Wave C eigen / TH type / damping
+
+        _gdisp.model_from_dict(mdl, d)      # Wave C generalized displacements
         mdl.validate()
         return mdl
 
