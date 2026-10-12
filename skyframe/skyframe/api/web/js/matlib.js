@@ -326,6 +326,6 @@ export function openMatLib(sky, { D = null, done } = {}) {
 export function initMatLib(sky) {
   sky.matLib = { open: o => openMatLib(sky, o), standards: () => mlStandards(sky), materials: s => mlMaterials(sky, s), importInto: mlImportInto };
   if (sky.menu && sky.menu.add) {
-    sky.menu.add("Define", { label: "Material Library…", act: "def-matlib", hint: "ASTM/ACI · EN · IS · BS · AS/NZS", fn: () => openMatLib(sky) });
+    sky.menu.add("Define", { label: "Material Library…", act: "def-matlib", before: "Section Properties", hint: "ASTM/ACI · EN · IS · BS · AS/NZS", fn: () => openMatLib(sky) });
   }
 }

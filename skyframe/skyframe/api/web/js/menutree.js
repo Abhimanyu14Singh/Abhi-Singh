@@ -549,7 +549,9 @@ export function buildMenuTree(o) {
       nodes = more.sub; landed.push("More");
       break;
     }
-    nodes.push(item);
+    // optional item.before = act id: insert ahead of that sibling (else append)
+    const at = item.before ? nodes.findIndex(x => x && (x.act === item.before || (x.sub && valOf(x.label) === item.before))) : -1;
+    if (at >= 0) nodes.splice(at, 0, item); else nodes.push(item);
     rebuildTop(top);
     return landed.join("/");
   }

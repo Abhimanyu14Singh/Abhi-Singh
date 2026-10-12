@@ -200,8 +200,10 @@ export function initEtabs(sky) {
         { label: "Towers…", act: "def-c9-towers", hint: "multi-tower · podium", fn: () => sky.openTowers && sky.openTowers() },   // C9 (js/towers.js)
       ]},
       { label: "Diaphragms…", act: "def-diaphragms", hint: "named · rigid / semi-rigid", fn: () => sky.openDiaphragms && sky.openDiaphragms() },   // G3
-      { label: "Groups…", act: "def-groups", hint: "staging · section cuts", fn: () => sky.openGroups && sky.openGroups() },   // js/groups.js
-      { label: "Section Cuts…", act: "def-cuts", fn: () => gotoLoads("ls-cuts") },
+      { label: "Groups, Cuts & Labels", sub: [
+        { label: "Groups…", act: "def-groups", hint: "staging · section cuts", fn: () => sky.openGroups && sky.openGroups() },   // js/groups.js
+        { label: "Section Cuts…", act: "def-cuts", fn: () => gotoLoads("ls-cuts") },
+      ]},
       SEP,
       { label: "Mass Source…", act: "def-mass", fn: () => sky.openMassSource() },
       { label: "P-Delta Options…", act: "def-pdelta", hint: "model-wide", fn: () => sky.openPDeltaOptions && sky.openPDeltaOptions() },
@@ -288,9 +290,11 @@ export function initEtabs(sky) {
         { label: "Releases / Partial Fixity", act: "asn-frel", fn: () => assignHint("end releases") },
         { label: "Local Axes", act: "asn-forient", fn: () => assignHint("orientation") },
         SEP,   // G2 — insertion point / end length offsets (js/insertdlg.js)
-        { label: "Insertion Point…", act: "asn-finsert", hint: "cardinal point", fn: () => sky.openInsertionPoint && sky.openInsertionPoint() },
-        { label: "End Length Offsets…", act: "asn-fendoff", hint: "auto / define", fn: () => sky.openEndOffsets && sky.openEndOffsets() },
-        { label: "Rigid End Offsets", act: "asn-foff", hint: "in the Properties panel", fn: () => assignHint("rigid end offsets") },
+        { label: "Offsets & Insertion", sub: [
+          { label: "Insertion Point…", act: "asn-finsert", hint: "cardinal point", fn: () => sky.openInsertionPoint && sky.openInsertionPoint() },
+          { label: "End Length Offsets…", act: "asn-fendoff", hint: "auto / define", fn: () => sky.openEndOffsets && sky.openEndOffsets() },
+          { label: "Rigid End Offsets", act: "asn-foff", hint: "in the Properties panel", fn: () => assignHint("rigid end offsets") },
+        ]},
         { label: "Tension / Compression Limits", act: "asn-faxial", fn: () => assignHint("axial limit") },
         { label: "Panel Zone", act: "asn-fpz", fn: () => assignHint("panel zones") },
         { label: "Additional Mass…", act: "asn-fmass", fn: () => sky.openFrameAddMass && sky.openFrameAddMass() },

@@ -185,8 +185,8 @@ export function initSpandrels(sky) {
   sky.spandrels = { openDefine: () => spOpenDefine(sky), openAssign: k => spOpenAssign(sky, k), openForces: () => spOpenForces(sky),
     labels: () => spAllLabels(sky.store.model) };
   if (!(sky.menu && sky.menu.add)) return;
-  sky.menu.add("Define", { label: "Spandrel Labels…", act: "def-a8-spandrels", hint: "coupling beams · wall panels", fn: () => spOpenDefine(sky) });
-  sky.menu.add("Assign/Frame", { label: "Spandrel Label…", act: "asn-a8-fspandrel", hint: "selected frames", fn: () => spOpenAssign(sky, "frame") });
+  sky.menu.add("Define/Groups, Cuts & Labels", { label: "Spandrel Labels…", act: "def-a8-spandrels", hint: "coupling beams · wall panels", fn: () => spOpenDefine(sky) });
+  sky.menu.add("Assign/Frame", { label: "Spandrel Label…", act: "asn-a8-fspandrel", before: "asn-fmass", hint: "selected frames", fn: () => spOpenAssign(sky, "frame") });
   sky.menu.add("Assign/Shell", { label: "Spandrel Label…", act: "asn-a8-sspandrel", hint: "selected walls", fn: () => spOpenAssign(sky, "shell") });
   sky.menu.add("Display/Force Diagrams", { label: "Spandrel Forces…", act: "dis-a8-spandrels", hint: "P · V2 · M3 at both ends", fn: () => spOpenForces(sky) });
 }

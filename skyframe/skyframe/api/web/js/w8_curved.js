@@ -248,7 +248,7 @@ export function initW8Curved(sky) {
 
   if (sky.menu) {
     sky.menu.add("Draw/Frames", { label: "Curved Beam (3-point arc)", act: "draw-w8-curvebeam", fn: startTool });
-    sky.menu.add("Assign/Frame", { label: "Curved Geometry…", act: "asn-w8-fcurve", hint: "3rd point · radius · segments", fn: openAssignCurve });
+    sky.menu.add("Edit/Edit Frames", { label: "Curved Frame Geometry…", act: "asn-w8-fcurve", hint: "3rd point · radius · segments", fn: openAssignCurve });
   }
   sky.w8curved = { startTool, openAssign: openAssignCurve, memberArc, state: () => ({ pts: st.pts.slice() }), TOOL };
 }

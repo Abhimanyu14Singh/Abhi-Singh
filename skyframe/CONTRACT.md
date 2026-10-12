@@ -12478,7 +12478,7 @@ unchanged: every new key is modelling metadata or an existing engine field.
 * Define › Section Properties › Shell Uniform Load Sets… and Assign › Shell
   Loads › Uniform Load Sets… (`shell_load_sets`, `ShellRegion.load_set`).
 * Draw › Frames › Curved Beam (3-point arc: start, end, point on the arc →
-  `curve.via`) and Assign › Frame › Curved Geometry… (3rd point, plan radius
+  `curve.via`) and Edit › Edit Frames › Curved Frame Geometry… (3rd point, plan radius
   + side, segments, local 2).
 
 ### Database-editing coverage (`core/modeltables_ext.py`)
