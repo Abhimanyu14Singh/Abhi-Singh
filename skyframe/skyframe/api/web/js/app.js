@@ -102,6 +102,8 @@ import { initMatLib as mlInitMatLib } from "./matlib.js";   // v1.21 Define › 
 
 import { initBuiltup as buInitBuiltup } from "./builtup.js";   // v1.21 Built-up Section editor (js/builtup.js)
 import { initExchange as xcInitExchange } from "./exchange.js";   // File › Import ▸ / Export ▸ E2K · IFC · DXF · Excel (js/exchange.js)
+import { initW8 as w8InitW8 } from "./w8_init.js";   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_*.js)
+import { mockValidateW8 as w8MockValidate } from "./mock_w8.js";   // W8 ?mock=1 validation
 
 /* ------------------------------------------------ state */
 const store = {
@@ -293,7 +295,8 @@ async function postModel(payload) {
       || pfMockValidateModel(payload)   // plot functions: TH output_requests
       || owMockValidateModel(payload)   // open-structure wind member params
       || c9MockValidateTowers(payload)   // C9 towers
-      || c9fMockValidate(payload);   // C9 follow-ups: control_tower
+      || c9fMockValidate(payload)   // C9 follow-ups: control_tower
+      || w8MockValidate(payload);   // W8 master/similar stories · curves · shell options
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -8567,6 +8570,7 @@ async function boot() {
 
   try { buInitBuiltup(window.__sky); } catch (err) { console.error("built-up sections init failed", err); }   // Define › Section Properties › Built-up Section… (js/builtup.js)
   try { xcInitExchange(window.__sky); } catch (err) { console.error("model exchange init failed", err); }   // File › Import ▸ / Export ▸ (js/exchange.js)
+  try { w8InitW8(window.__sky); } catch (err) { console.error("W8 init failed", err); }   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_init.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)

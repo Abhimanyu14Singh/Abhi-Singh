@@ -1,0 +1,9 @@
+/* SkyFrame W8 — snapping chips, selection list, similar-stories columns (js/w8_*.js) */
+.w8-osnap { display: inline-flex; align-items: center; gap: 2px; }
+.w8-osnap .sb-lbl { margin-right: 2px; }
+.w8-osnap-chip { min-width: 26px; padding: 0 6px; }
+.w8-sel-list { max-height: 260px; overflow: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px; padding: 4px 0; }
+.w8-sel-list .dk-check { margin: 0; }
+#dsStoryTable .w8-master { margin: 0 auto; display: block; }
+#dsStoryTable .w8-similar { min-width: 90px; }
+.w8-sh-note { margin-top: 2px; }

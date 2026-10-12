@@ -44,6 +44,7 @@ from skyframe.core import thermal_ext as _thx  # v1.16 temperature / projected
 from skyframe.core import damping_options as _dmpo
 from skyframe.core import towers as _towers  # C9 multiple towers
 from skyframe.core import towers_ext as _towers_ext  # C9 follow-ups
+from skyframe.core import similar_stories as _simst  # W8 master/similar
 from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
     PDELTA_INCLUDE_IN, PDELTA_METHODS, pdelta_defaults, pdelta_from_dict,
     pdelta_to_dict, validate_pdelta_options)
@@ -602,12 +603,14 @@ class Story:
     height: float           # m (story height below this level's floor? no: height of this story)
     elevation: float = 0.0  # m, computed = top-of-story elevation
     tower: str = ""         # C9 owning tower ("" = default; core.towers)
+    master: bool = False    # W8 ETABS Master Story (core.similar_stories)
+    similar_to: str = ""    # W8 ETABS Similar To: a master story ("" = none)
 
     def to_dict(self) -> dict:
         d = asdict(self)
         if not self.tower:                  # C9: emitted only when tagged
             d.pop("tower")
-        return d
+        return _simst.trim_story_dict(d)    # W8: master/similar_to if set
 
 
 def _insertion_fields_to_dict(m) -> dict:
@@ -3861,6 +3864,7 @@ class BuildingModel:
         self._validate_tendons()
         self._validate_curved_mesh_sets()
         self._validate_towers()
+        _simst.validate(self)               # W8 master / similar stories
 
     def _validate_towers(self) -> None:
         """C9 multiple towers (see core.towers)."""
@@ -4533,6 +4537,7 @@ class BuildingModel:
         mdl.analysis_options = _aopt.analysis_options_from_dict(d)
 
         _towers.model_from_dict(mdl, d)     # C9 towers (absent = none)
+        _simst.model_from_dict(mdl, d)      # W8 master / similar stories
         _frame_axes_from_dict(mdl, d)       # frame local-axis convention
         _builtup_from_dict(mdl, d)          # v1.21 built-up sections
         mdl.validate()

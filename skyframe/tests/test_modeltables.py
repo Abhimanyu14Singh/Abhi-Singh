@@ -215,9 +215,10 @@ def test_zip_export_import_identity_and_foreign_model(d):
     for k in ("name", "num_modes", "mass_from_patterns"):
         got.pop(k), qb.pop(k)
     assert JS(got) == JS(qb)
-    # function libraries are not tables: RS cases naming one need them
+    # W8: function libraries are tables now; buckling gravity is not, so a
+    # buckling case rebuilt from its sheet alone is rejected
     m3, errs3, _ = MT.import_zip(BuildingModel().to_dict(), data)
-    assert m3 is None and errs3[0]["col"] == "function"
+    assert m3 is None and errs3[0]["table"] == "buckling_cases"
     assert MT.import_zip(d, b"not a zip")[1][0]["message"] == \
         "not a zip archive"
 

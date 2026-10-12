@@ -1976,6 +1976,8 @@ def _build_catalogue() -> List[Table]:
             Col("include_vertical", "Vertical Mass", "bool"),
             Col("lump_at_stories", "Lump at Stories", "bool"),
         ]))
+    from .modeltables_ext import extend_catalogue as _w8_extend
+    _w8_extend(T)        # W8: DB-edit coverage (core/modeltables_ext.py)
     return T
 
 
