@@ -123,7 +123,7 @@ export function initBuiltup(sky) {
     if (exist) {
       sec = buNorm(exist);
       if (copy) sec.name = uniqueName(`${name}-copy`);
-    } else sec = buNorm({ name: uniqueName("BU"), material: defaultMaterial(), components: [] });
+    } else sec = buNorm({ name: uniqueName("BU"), material: defaultMaterial(), components: [], torsion: "exact" });   // v1.22: NEW sections use the exact solver
     st = {
       sec, origName: exist && !copy ? name : null, orig: exist && !copy ? JSON.stringify(buNorm(exist)) : null,
       sel: sec.components.length ? 0 : -1, grid: defaultGrid(), snap: true, edge: true,
@@ -236,7 +236,7 @@ export function initBuiltup(sky) {
       field("Name", nm),
       field("Material", selInput("buMaterial", mats, st.sec.material, v => { st.sec.material = v; renderSecForm(); })),
       field("Analysis axes", selInput("buAxes", [["geometric", "Geometric (x / y)"], ["principal", "Principal (major / minor)"]], st.sec.axes, v => { st.sec.axes = v; })),
-      field("Torsion J", selInput("buTorsion", [["auto", "Auto (open / Bredt cell)"], ["open", "Open Σ b·t³/3"], ["fem", "FEM (sectionproperties)"]], st.sec.torsion, v => { st.sec.torsion = v; })),
+      field("Torsion J", selInput("buTorsion", [["exact", "Exact (finite elements)"], ["auto", "Auto (open / Bredt cell)"], ["open", "Open Σ b·t³/3"], ["fem", "FEM (legacy = exact)"]], st.sec.torsion, v => { st.sec.torsion = v; })),
     );
     const curMat = (S.model.materials || {})[st.sec.material];
     if (!curMat || curMat.material_type !== "steel") {
@@ -326,14 +326,15 @@ export function initBuiltup(sky) {
     t.textContent = "";
     D.warn.textContent = "";
     buShowError(D.err, st.err);
-    D.src.textContent = !p ? "" : st.srv ? "· backend ✓" : isMock() ? "· mock (exact)" : "· client (exact)";
+    D.src.textContent = !p ? "" : st.srv ? "· backend ✓" : isMock() ? "· mock (closed form)" : "· client (closed form)";
     D.notes.textContent = st.sec.notes || "";
     if (!p) { t.appendChild(el("tr", {}, [el("td", { class: "muted", text: "—" })])); return; }
     const row = (lab, kind, v, id) => t.appendChild(el("tr", {}, [el("th", { text: lab }), el("td", { id: id || null, "data-si": v == null ? "" : String(v), text: fmtNum(kind, v) }), el("td", { class: "muted", text: kind === "none" ? "" : BuU.label(kind) })]));
     row("A", "area", p.A, "buPA");
     row("I33", "inertia", p.I33, "buPI33");
     row("I22", "inertia", p.I22, "buPI22");
-    t.appendChild(el("tr", {}, [el("th", { text: "J" }), el("td", { id: "buPJ", "data-si": String(p.J), text: fmtNum("inertia", p.J) }), el("td", { class: "muted", text: `${BuU.label("inertia")} · ${p.J_method}` })]));
+    t.appendChild(el("tr", {}, [el("th", { text: "J" }), el("td", { id: "buPJ", "data-si": String(p.J), "data-method": p.J_method, text: fmtNum("inertia", p.J) }), el("td", { class: "muted", id: "buPJm", text: `${BuU.label("inertia")} · ${p.J_method}` })]));
+    if (p.Cw != null) t.appendChild(el("tr", {}, [el("th", { text: "Cw" }), el("td", { id: "buPCw", "data-si": String(p.Cw), text: String(+(p.Cw * BuU.factor("dim") ** 6).toPrecision(4)) }), el("td", { class: "muted", text: `${BuU.label("dim")}⁶ · exact` })]));
     row("Centroid x", "dim", p.cx, "buPcx");
     row("Centroid y", "dim", p.cy, "buPcy");
     t.appendChild(el("tr", {}, [el("th", { text: "Principal θ" }), el("td", { id: "buPth", "data-si": String(p.theta), text: (+p.theta_deg.toFixed(3)).toString() }), el("td", { class: "muted", text: "° (major, CCW)" })]));
@@ -349,7 +350,7 @@ export function initBuiltup(sky) {
     row("As2", "area", p.As2, "buPAs2");
     row("As3", "area", p.As3, "buPAs3");
     const sc = p.shear_centre;
-    t.appendChild(el("tr", {}, [el("th", { text: "Shear centre" }), el("td", { id: "buPsc", text: sc ? `${fmtNum("dim", sc.x)}, ${fmtNum("dim", sc.y)}` : "n/a" }), el("td", { class: "muted", text: sc ? `${BuU.label("dim")} · ${sc.method}` : "use FEM" })]));
+    t.appendChild(el("tr", {}, [el("th", { text: "Shear centre" }), el("td", { id: "buPsc", text: sc ? `${fmtNum("dim", sc.x)}, ${fmtNum("dim", sc.y)}` : "n/a" }), el("td", { class: "muted", text: sc ? `${BuU.label("dim")} · ${sc.method}` : "use Exact" })]));
     for (const w of p.warnings || []) D.warn.appendChild(el("li", { text: w }));
   }
 

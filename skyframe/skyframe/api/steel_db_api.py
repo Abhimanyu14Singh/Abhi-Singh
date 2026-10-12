@@ -12,8 +12,10 @@ database and parametric shapes").
   apply?=true}`` -> ``{added, skipped, sections: {name: section dict},
   model?}``; ``apply`` false only builds the section dicts (the UI merges
   them into its draft), true adds them to the current model.
-* ``POST /api/steel_db/shape_props {type, dims}`` -> exact parametric
-  properties (SI), 400 on invalid dimensions.
+* ``POST /api/steel_db/shape_props {type, dims, torsion?}`` -> exact
+  parametric properties (SI), 400 on invalid dimensions; ``torsion:
+  "exact"`` (or ``dims.torsion == "exact"``) adds the finite-element J /
+  Cw / shear centre / shear areas (v1.22, ``props.J_method``).
 """
 
 from __future__ import annotations
@@ -112,10 +114,15 @@ def register(app, state: Dict[str, Any]) -> None:
         b = _body()
         typ = b.get("type") or b.get("shape")
         dims = b.get("dims")
+        dims = dims if isinstance(dims, dict) else {}
+        tor = b.get("torsion") or ("exact" if dims.get("torsion") == "exact"
+                                   else "closed")
         try:
-            props = shape_properties(typ, dims if isinstance(dims, dict)
-                                     else {})
+            props = shape_properties(typ, dims, tor)
         except (ValueError, TypeError) as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify({"type": typ, "props": props,
-                        "shear_area_formula": SHEAR_AREA_FORMULAS[typ]})
+                        "shear_area_formula": (
+                            "exact (finite-element shear functions)"
+                            if props.get("J_method") == "exact"
+                            else SHEAR_AREA_FORMULAS[typ])})

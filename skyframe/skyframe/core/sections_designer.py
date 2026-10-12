@@ -28,10 +28,22 @@ no numerical quadrature:
 with ``cr_i = y_i z_{i+1} - y_{i+1} z_i``.  Hole polygons SUBTRACT
 (every polygon is normalized to CCW and holes enter with sign -1).
 
-TORSION is the St. Venant polygon APPROXIMATION ``J ~ A^4 / (40 * Ip)``
-with ``Ip = I33 + I22`` (exact for a circle, ~10% class accuracy for
-compact solid shapes — DOCUMENTED APPROXIMATE; rebar and holes enter only
-through A and Ip).
+TORSION (``torsion`` field, v1.22):
+
+* ``"approx"`` (the stored default — every section saved before v1.22)
+  is the St. Venant polygon APPROXIMATION ``J ~ A^4 / (40 * Ip)`` with
+  ``Ip = I33 + I22`` (exact for a circle, ~10% class accuracy for compact
+  solid shapes — DOCUMENTED APPROXIMATE; rebar and holes enter only
+  through A and Ip);
+* ``"exact"`` (the default for NEW sections drawn in the editor) runs the
+  in-house finite-element warping analysis
+  (:mod:`skyframe.core.section_fem`) of the polygons: each solid polygon
+  is a region weighted by ``n = E_polygon / E_base`` (hole polygons are
+  cut out of every solid), rebar ignored.  It gives the exact J (used by
+  the mirrored FrameSection), Cw, the shear centre and the shear areas
+  (``J_method = "exact"``); unmeshable outlines fall back to "approx"
+  with a warning.  ``to_dict`` emits ``torsion`` only when it is not
+  "approx", so old files round-trip byte-identically.
 
 REBAR is kept SEPARATE from the gross polygon area (bars are POINT areas
 laid on top of the base material — the displaced base material is NOT
@@ -83,6 +95,7 @@ __all__ = [
 ]
 
 DESIGNER_BASES = ("concrete", "steel")
+DESIGNER_TORSION = ("approx", "exact")
 
 REBAR_FY_DEFAULT = 420_000.0   # kPa — rebar fy when the material has none
 STEEL_FY_DEFAULT = 345_000.0   # kPa — base-steel Fy fallback (A992)
@@ -234,9 +247,10 @@ class DesignerSection:
     base: str = "concrete"
     polygons: List[dict] = field(default_factory=list)
     rebar: List[dict] = field(default_factory=list)
+    torsion: str = "approx"          # v1.22: "approx" | "exact"
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "name": self.name, "material": self.material, "base": self.base,
             "polygons": [{"vertices": [[float(y), float(z)]
                                        for (y, z) in p["vertices"]],
@@ -248,6 +262,9 @@ class DesignerSection:
                        "material": str(r["material"])}
                       for r in self.rebar],
         }
+        if self.torsion != "approx":
+            d["torsion"] = self.torsion
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "DesignerSection":
@@ -255,7 +272,8 @@ class DesignerSection:
             raise ValueError("designer section must be a JSON object")
         name = str(d.get("name") or "")
         ds = cls(name=name, material=str(d.get("material") or ""),
-                 base=str(d.get("base", "concrete")))
+                 base=str(d.get("base", "concrete")),
+                 torsion=str(d.get("torsion") or "approx"))
         for p in d.get("polygons") or []:
             ds.polygons.append({
                 "vertices": [[float(v[0]), float(v[1])]
@@ -292,6 +310,9 @@ def validate_designer_section(ds: DesignerSection,
     if ds.material not in materials:
         raise ValueError(f"Designer section {ds.name}: unknown material "
                          f"{ds.material!r}")
+    if getattr(ds, "torsion", "approx") not in DESIGNER_TORSION:
+        raise ValueError(f"Designer section {ds.name}: torsion must be one "
+                         f"of {DESIGNER_TORSION}, got {ds.torsion!r}")
     if not any(not p.get("hole") for p in ds.polygons):
         raise ValueError(f"Designer section {ds.name}: needs at least one "
                          "non-hole polygon")
@@ -335,7 +356,10 @@ def section_properties(ds: DesignerSection,
     (holes subtract, rebar EXCLUDED); ``*_tr`` add the ``(n-1)*As``
     transformed rebar contributions with ``n = E_bar / E_base``;
     ``J = A^4/(40*Ip)`` is the documented St. Venant approximation
-    (gross section only).
+    (gross section only) unless ``torsion == "exact"`` (then J comes from
+    :func:`exact_properties` and ``Cw``, ``x0``/``y0`` (shear centre minus
+    gross centroid, y / z), ``As2``/``As3`` and ``exact`` (solver
+    summary) are added).  ``J_method`` names the method used.
     """
     validate_designer_section(ds, materials)
     A = Sy = Sz = Iyy = Izz = 0.0
@@ -373,14 +397,56 @@ def section_properties(ds: DesignerSection,
         dA = (n - 1.0) * r["area"]
         I33_tr += dA * (r["z"] - Cz_tr) ** 2
         I22_tr += dA * (r["y"] - Cy_tr) ** 2
-    return {
+    out = {
         "A": A, "Cy": Cy, "Cz": Cz, "I33": I33, "I22": I22, "Ip": Ip,
         "J": J, "b": max(ys) - min(ys), "h": max(zs) - min(zs),
         "A_tr": A_tr, "Cy_tr": Cy_tr, "Cz_tr": Cz_tr,
         "I33_tr": I33_tr, "I22_tr": I22_tr,
         "As_total": sum(r["area"] for r in ds.rebar),
         "n_bars": len(ds.rebar),
+        "J_method": "approx",
     }
+    if getattr(ds, "torsion", "approx") == "exact":
+        try:
+            ex = exact_properties(ds, materials)
+        except (ValueError, ArithmeticError) as exc:
+            out["warnings"] = [f"exact torsion: the outline could not be "
+                               f"analysed ({exc}); used the approximation."]
+        else:
+            out.update({"J": ex["J"], "J_method": "exact", "Cw": ex["Cw"],
+                        "x0": None if ex["xs"] is None else ex["xs"] - Cy,
+                        "y0": None if ex["ys"] is None else ex["ys"] - Cz,
+                        "As2": ex["Asy"], "As3": ex["Asx"],
+                        "exact": {"method": "exact", "mesh": ex["mesh"],
+                                  "time_ms": ex["time_ms"],
+                                  "cached": ex["cached"], "nu": ex["nu"],
+                                  "parts": ex["parts"], "hash": ex["hash"]},
+                        "warnings": ex["warnings"]})
+    return out
+
+
+def exact_regions(ds: DesignerSection, materials: Dict[str, object]
+                  ) -> List[dict]:
+    """:mod:`skyframe.core.section_fem` regions of a designer section:
+    every solid polygon weighted by ``E_polygon / E_base``, every hole
+    polygon cut out of every solid (rebar ignored)."""
+    E0 = float(materials[ds.material].E)
+    holes = [verts for sgn, verts, _m in ds.signed_polygons() if sgn < 0]
+    regs = []
+    for sgn, verts, m in ds.signed_polygons():
+        if sgn > 0:
+            E = float(getattr(materials.get(m), "E", 0.0) or 0.0)
+            regs.append({"outer": verts, "holes": holes,
+                         "n": (E / E0) if E > 0 and E0 > 0 else 1.0})
+    return regs
+
+
+def exact_properties(ds: DesignerSection,
+                     materials: Dict[str, object]) -> dict:
+    """The raw :func:`skyframe.core.section_fem.solve` result of ``ds``
+    in its (y, z) plane (x = y width, y = z depth)."""
+    from skyframe.core import section_fem
+    return section_fem.solve(exact_regions(ds, materials))
 
 
 def make_frame_section(ds: DesignerSection, materials: Dict[str, object]):

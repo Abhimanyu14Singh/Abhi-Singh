@@ -13,6 +13,7 @@
      onClose()                  → refresh views after the dialog closes      */
 
 import { designerProps, defaultMaterial } from "./modeledit.js";
+import { seDesignerBlock as dsExactBlock, seDesignerNew as dsExactNew } from "./secexact.js";   // v1.22 exact torsion (js/secexact.js)
 
 const MM = 1000;                                   // m → mm
 const esc = s => String(s).replace(/[&<>"]/g, c =>
@@ -91,7 +92,7 @@ export class SectionDesigner {
     const m = this.model();
     let i = 1;
     while ((m.designer_sections || {})[`DS${i}`] || m.sections[`DS${i}`]) i++;
-    this.sec = { name: `DS${i}`, polygons: [], rebar: [] };
+    this.sec = dsExactNew({ name: `DS${i}`, polygons: [], rebar: [] });   // v1.22: new sections → torsion "exact"
     this.savedName = null;
     this.pending = [];
     this.pmmData = null;
@@ -263,7 +264,10 @@ export class SectionDesigner {
     const btn = this.$("dsSave");
     btn.disabled = true;
     try {
-      await this.opts.onUpsert(JSON.parse(JSON.stringify(this.sec)));
+      const payload = JSON.parse(JSON.stringify(this.sec));
+      // v1.22: the backend needs the base material (first solid polygon's)
+      if (!payload.material) payload.material = (payload.polygons.find(p => !p.hole) || payload.polygons[0]).material;
+      await this.opts.onUpsert(payload);
       this.savedName = name;
       this.opts.toast("Designer section saved",
         `${name} is available as a frame section (properties recomputed)`, "info", 4000);
@@ -451,6 +455,7 @@ export class SectionDesigner {
       <div class="ds-prop-line ds-saved"><span>I33 ${sci(saved.I33)} m⁴</span><span>I22 ${sci(saved.I22)} m⁴</span></div>`;
     }
     box.innerHTML = html;
+    dsExactBlock(this, box);          // v1.22: torsion method + exact J readout (js/secexact.js)
   }
 
   _syncHint() {
