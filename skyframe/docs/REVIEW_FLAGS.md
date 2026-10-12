@@ -83,3 +83,23 @@ Each entry says where it lives.
 - Wall fiber hinges keep wall shells at 1e-4 stiffness; loads on interior wall
   nodes go into that soft shell. RC shear hinges are force-controlled.
 - Caltrans and TBI hinge tables not implemented.
+
+## Interop / API (Wave B)
+- SDNF v3 and CIS/2 (LPM6 subset) readers were tested only by round trip and
+  hand-written fixtures - check one real file from your detailing package.
+- `.s2k` export writes two `SKYFRAME ...` extension tables; SAP2000 should report
+  them as unrecognised and continue (untested in SAP2000).
+- OAPI facade: all cases/combos are selected for output until the first
+  selection call (CSI starts with none); distributed moments (MyType=2) and
+  RS/TH/pushover case setters are not in the facade (use REST / skyframe.client).
+- Revit: IFC4 Reference View + structural view with Revit-style names; a native
+  Revit add-in is a separate product (not buildable here).
+- Plugins run as trusted in-process code (failures contained, not sandboxed).
+
+## Interface tools (Wave B)
+- Waffle/ribbed slabs are one equivalent shell per bay (Huber m12); they warn
+  that the shell mass modifier is ignored in "weight" mass mode (mass is
+  still right via the weight modifier).
+- General grids are not written to E2K and cannot be the primary grid; vertex
+  reshaper and dimension lines are plan-view only; shell divide/merge/chop/expand
+  refuse shells with openings.
