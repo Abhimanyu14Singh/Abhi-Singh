@@ -1,0 +1,26 @@
+{
+  "id": "example-story-summary",
+  "name": "Story Summary (example)",
+  "version": "1.0.0",
+  "description": "Example plugin: a Tools › Plugins menu item, a per-story summary table, a custom endpoint and pre/post analysis hooks.",
+  "author": "SkyFrame",
+  "skyframe": ">=1.23",
+  "python": "plugin.py",
+  "js": ["plugin.js"],
+  "hooks": ["pre_analysis", "post_analysis"],
+  "endpoints": ["summary"],
+  "tables": [
+    {"key": "story_summary", "title": "Story Summary (plugin)",
+     "columns": [
+       {"key": "story", "label": "Story", "quantity": "text"},
+       {"key": "elevation", "label": "Elevation", "quantity": "length"},
+       {"key": "columns", "label": "Columns", "quantity": "id"},
+       {"key": "beams", "label": "Beams", "quantity": "id"},
+       {"key": "braces", "label": "Braces", "quantity": "id"},
+       {"key": "max_drift", "label": "Max drift", "quantity": "ratio"}
+     ]}
+  ],
+  "menus": [{"path": "Tools/Plugins", "label": "Story Summary…", "act": "tool-plg-story-summary"}],
+  "permissions": ["model:read", "results:read"],
+  "enabled_by_default": false
+}

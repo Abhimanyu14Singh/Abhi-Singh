@@ -94,7 +94,10 @@ def _cross(a, b):
             a[0] * b[1] - a[1] * b[0])
 
 
-def export_ifc(model, include: Optional[dict] = None) -> Tuple[str, dict]:
+def export_ifc(model, include: Optional[dict] = None,
+               revit: bool = False) -> Tuple[str, dict]:
+    """``revit=True`` adds the Revit-friendly entities of
+    :mod:`skyframe.io.ifc_revit` (default output unchanged)."""
     from skyframe.core import frame_axes as _fa
     from skyframe.core.model import BuildingModel
     if isinstance(model, dict):
@@ -107,6 +110,8 @@ def export_ifc(model, include: Optional[dict] = None) -> Tuple[str, dict]:
         model = copy.deepcopy(model)
         _fa.convert_model_to_etabs(model)
     m = model
+    if revit:
+        from skyframe.io.ifc_revit import revit_profile_name as rv_profile
     st = _Step()
     skipped: List[str] = []
     counts: Dict[str, int] = {}
@@ -134,6 +139,11 @@ def export_ifc(model, include: Optional[dict] = None) -> Tuple[str, dict]:
     origin = placement3d((0.0, 0.0, 0.0))
     ctx = st.add("IFCGEOMETRICREPRESENTATIONCONTEXT", "$", "'Model'", "3",
                  "1.E-05", origin, "$")
+    rv = None                                   # Revit additions (ifc_revit)
+    if revit:
+        from skyframe.io.ifc_revit import RevitIfc
+        rv = RevitIfc(st, ctx, ifc_guid, _s, step_real)
+    body_ctx, axis_ctx = (rv.body, rv.axis) if rv else (ctx, ctx)
     units = [st.add("IFCSIUNIT", "*", ".LENGTHUNIT.", "$", ".METRE."),
              st.add("IFCSIUNIT", "*", ".PLANEANGLEUNIT.", "$", ".RADIAN."),
              st.add("IFCSIUNIT", "*", ".PRESSUREUNIT.", "$", ".PASCAL."),
@@ -165,10 +175,11 @@ def export_ifc(model, include: Optional[dict] = None) -> Tuple[str, dict]:
     storey_of: Dict[str, str] = {}
     storeys = []
     for name, elev in sorted(levels, key=lambda t: t[1]):
-        sp = st.add("IFCLOCALPLACEMENT", "$", origin)
+        sp = rv.storey_placement(elev, placement3d) if rv else \
+            st.add("IFCLOCALPLACEMENT", "$", origin)
         sid = st.add("IFCBUILDINGSTOREY", _s(ifc_guid("storey" + name)),
-                     owner, _s(name), "$", "$", sp, "$", "$", ".ELEMENT.",
-                     step_real(elev))
+                     owner, _s(name), "$", "$", sp, "$",
+                     _s(name) if rv else "$", ".ELEMENT.", step_real(elev))
         storey_of[name] = sid
         storeys.append(sid)
     if storeys:
@@ -179,8 +190,8 @@ def export_ifc(model, include: Optional[dict] = None) -> Tuple[str, dict]:
     # ---- materials ------------------------------------------------------ #
     mat_of: Dict[str, str] = {}
     for mt in m.materials.values():
-        mid = st.add("IFCMATERIAL", _s(mt.name), "$",
-                     _s(mt.material_type))
+        mnm, mcat = rv.material(mt) if rv else (mt.name, mt.material_type)
+        mid = st.add("IFCMATERIAL", _s(mnm), "$", _s(mcat))
         mat_of[mt.name] = mid
         props = [
             st.add("IFCPROPERTYSINGLEVALUE", "'YoungModulus'", "$",
@@ -206,7 +217,8 @@ def export_ifc(model, include: Optional[dict] = None) -> Tuple[str, dict]:
         if sec.name in prof_of:
             return prof_of[sec.name]
         R = step_real
-        pname = _s(sec.db_ref["name"] if sec.db_ref else sec.name)
+        pname = _s(rv_profile(sec) if rv else (
+            sec.db_ref["name"] if sec.db_ref else sec.name))
         d = {k: v for k, v in (sec.dims or {}).items()
              if not isinstance(v, str)}
         typ = sec.shape if isinstance(sec.dims, dict) else None
@@ -303,9 +315,9 @@ def export_ifc(model, include: Optional[dict] = None) -> Tuple[str, dict]:
                            direction((0.0, 0.0, 1.0)), step_real(L))
             axis = st.add("IFCPOLYLINE", f"({point((0.0, 0.0, 0.0))},"
                           f"{point((0.0, 0.0, L))})")
-            reps = [st.add("IFCSHAPEREPRESENTATION", ctx, "'Body'",
+            reps = [st.add("IFCSHAPEREPRESENTATION", body_ctx, "'Body'",
                            "'SweptSolid'", f"({solid})"),
-                    st.add("IFCSHAPEREPRESENTATION", ctx, "'Axis'",
+                    st.add("IFCSHAPEREPRESENTATION", axis_ctx, "'Axis'",
                            "'Curve3D'", f"({axis})")]
             pds = st.add("IFCPRODUCTDEFINITIONSHAPE", "$", "$",
                          "(" + ",".join(reps) + ")")
@@ -314,6 +326,8 @@ def export_ifc(model, include: Optional[dict] = None) -> Tuple[str, dict]:
                          _s(mem.story), pdt)
             contained.setdefault(lev, []).append(eid)
             rel_mat.setdefault(sec.material, []).append(eid)
+            if rv:
+                rv.member(eid, mem, sec)
         if inc["analysis"]:
             v1 = st.add("IFCVERTEXPOINT", point(mem.pi))
             v2 = st.add("IFCVERTEXPOINT", point(mem.pj))
@@ -374,7 +388,7 @@ def export_ifc(model, include: Optional[dict] = None) -> Tuple[str, dict]:
             solid = st.add("IFCEXTRUDEDAREASOLID", prof,
                            placement3d((0.0, 0.0, 0.0)),
                            direction((0.0, 0.0, 1.0)), step_real(t))
-            rep = st.add("IFCSHAPEREPRESENTATION", ctx, "'Body'",
+            rep = st.add("IFCSHAPEREPRESENTATION", body_ctx, "'Body'",
                          "'SweptSolid'", f"({solid})")
             pds = st.add("IFCPRODUCTDEFINITIONSHAPE", "$", "$", f"({rep})")
             if r.kind == "wall":
@@ -388,6 +402,8 @@ def export_ifc(model, include: Optional[dict] = None) -> Tuple[str, dict]:
             contained.setdefault(lev, []).append(eid)
             if ss is not None:
                 rel_mat.setdefault(ss.material, []).append(eid)
+            if rv:
+                rv.shell(eid, r, ss)
         if inc["analysis"]:
             def loop(pts):
                 return st.add("IFCPOLYLOOP", "(" + ",".join(
@@ -457,6 +473,10 @@ def export_ifc(model, include: Optional[dict] = None) -> Tuple[str, dict]:
                "$", "$", "(" + ",".join(analysis_items) + ")", "$", sam)
         st.add("IFCRELSERVICESBUILDINGS", _s(ifc_guid("srv" + m.name)),
                owner, "$", "$", sam, f"({bld})")
+    if rv:
+        rv.finish(owner)
+        counts.update({"revit_types": rv.counts["types"],
+                       "revit_psets": rv.counts["psets"]})
     skipped.append("loads, load cases and combinations are not written "
                    "(IFC export carries geometry, sections, materials and "
                    "supports)")

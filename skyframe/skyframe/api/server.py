@@ -334,6 +334,7 @@ from skyframe.core.sections_library import library_to_dict
 from skyframe.core import tables as _tables
 from skyframe.core import runlog as _rl      # model info / run log / report
 from skyframe.core import frame_axes as _fa  # frame local-axis convention
+from skyframe.core import plugins as _plg    # plugin framework hooks (core/plugins.py)
 
 try:
     from skyframe.engine.opensees_engine import OpenSeesEngine
@@ -1078,11 +1079,12 @@ def create_app() -> Flask:
         try:
             with warnings.catch_warnings(record=True) as _rl_w:
                 warnings.simplefilter("always")
+                _plg.pre_analysis(app, _state["model"])   # plugin hooks (core/plugins.py)
                 engine = OpenSeesEngine(_state["model"])
                 results = engine.run()
         except Exception as exc:
             return jsonify({"error": str(exc)}), 400
-        d = results.to_dict()
+        d = _plg.post_analysis(app, _state["model"], results.to_dict())   # plugins: no-op unless enabled
         _tables_remember(d, engine)
         _rl_remember(_state["model"], d, engine, _rl_t0, _rl_started, _rl_w)
         return jsonify(d)
@@ -2356,6 +2358,14 @@ def create_app() -> Flask:
     # Ritz (skyframe.api.modalx_api)
     from skyframe.api.modalx_api import register as _mxa_register
     _mxa_register(app, _state)
+
+    # Interop/extensibility: /api/v1 + OpenAPI · plugins · SAP2000/SAFE/SDNF/CIS2/IDEA
+    from skyframe.api.openapi import register as _oas_register
+    _oas_register(app, _state)
+    from skyframe.api.plugins_api import register as _plg_register
+    _plg_register(app, _state)
+    from skyframe.api.interop_api import register as _iop_register
+    _iop_register(app, _state)
 
     return app
 

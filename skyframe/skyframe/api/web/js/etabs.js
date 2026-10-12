@@ -442,6 +442,7 @@ export function initEtabs(sky) {
         { label: "Slab · Two-Way", act: "des-slab", needs: "results", fn: () => showDesign("slab") },
       ]},
       { label: "Section Optimization", act: "des-optimize", needs: "results", fn: () => { showDesign("steel"); requestAnimationFrame(() => { const p = $("optimizePanel"); if (p) p.scrollIntoView({ block: "start", behavior: "smooth" }); }); } },
+      { label: "Plugins", sub: [] },   // plugin framework: Plugin Manager + plugin menu items (filled by js/plugins.js)
     ]},
     // UX pass — Help menu (js/ux.js: palette / shortcuts / start screen)
     { name: "Help", accel: "h", items: [
