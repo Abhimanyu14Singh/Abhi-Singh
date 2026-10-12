@@ -43,3 +43,8 @@ Each entry says where it lives.
   Abrahamson wavelet method); verified within +-10 %.
 - Live-load reduction applies to columns and piers, not beams.
 - Release springs use stiff ties at 1e6 x member stiffness (~1e-6 softening).
+- Pushover performance panel (ADRS): W for ASCE 41 there is total push-direction
+  mass x g (pairs with alpha1); the older performance-point endpoint uses story +
+  nodal masses, so the two ASCE 41 numbers can differ slightly. FEMA 440 may
+  return no performance point on strongly hardening curves (method behaviour).
+  Long-period spectrum tails are scaled by ATC-40 SRV (approximation).
