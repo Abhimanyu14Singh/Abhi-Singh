@@ -28,7 +28,7 @@ export const HELP = {
   "def-cases": { etabs: "Define › Load Cases › Linear Static", text: "Linear static cases: a weighted sum of load patterns, with optional P-Delta from a gravity case." },
   "def-rs": { etabs: "Define › Load Cases › Response Spectrum", text: "Response-spectrum cases: spectrum function per direction, modal combination (CQC/SRSS), directional combination and damping." },
   "def-th": { etabs: "Define › Load Cases › Time History", text: "Linear/nonlinear modal (FNA) or direct-integration time-history cases driven by TH functions." },
-  "def-pushover": { etabs: "Define › Load Cases › Nonlinear Static (Pushover)", text: "Pushover cases: lateral load distribution, control node, target displacement and hinge assignments." },
+  "def-pushover": { etabs: "Define › Load Cases › Nonlinear Static (Pushover)", text: "Pushover cases: lateral load distribution, control node, target displacement and hinge assignments. Performance methods (ASCE 41, ATC-40, FEMA 440 EL, EN 1998 N2) are chosen per case under Pushover Performance Methods." },
   "def-nls": { etabs: "Define › Load Cases › Nonlinear Static", text: "Nonlinear static case data: initial conditions (chain from another case), loads applied, load application control (full load / displacement) and results saved (final state or multiple states)." },
   "def-modal": { etabs: "Define › Load Cases › Modal", text: "Modal case: eigen or Ritz vectors, number of modes and the stiffness to use (unstressed or from the end of a nonlinear case)." },
   "def-buckling": { etabs: "Define › Load Cases › Buckling", text: "Linear buckling cases: number of buckling modes and the load pattern(s) whose stresses drive the geometric stiffness." },
@@ -191,7 +191,9 @@ Object.assign(HELP, {
   /* Display */
   "dis-drift": { etabs: "Display › Story Response Plots › Drift (optimizer)", text: "Virtual-work member contributions to the roof drift, to find the members that stiffen the building most." },
   "dis-th": { etabs: "Display › Show Plot Functions (time history)", text: "Time-history traces (displacement, drift, base shear) per TH case and story." },
-  "dis-pushover": { etabs: "Display › Show Static Pushover Curve", text: "Capacity curve, ASCE 41 target displacement (coefficient method) and hinge states for pushover cases." },
+  "dis-pushover": { etabs: "Display › Show Static Pushover Curve", text: "Capacity curve (base shear vs. control displacement), the ASCE 41-17 coefficient-method target displacement and hinge states for pushover cases. The Performance Methods card adds the ADRS plot (Sa vs. Sd) with the 5 % demand, the ATC-40 reduced demand and the FEMA 440 MADRS overlaid, the bilinear and EN 1998 N2 idealisations, and one results table for ASCE 41, ATC-40, FEMA 440 EL and N2." },
+  "dis-po-adrs": { etabs: "Display › Show Static Pushover Curve (plot type: ATC-40 / FEMA 440 / Eurocode 8)", text: "ADRS plot of a pushover case: capacity spectrum Sa = V/(α1·W), Sd = Δroof/(PF1·φroof), demand spectra, bilinear representation and performance points, with one table of ASCE 41, ATC-40 (procedure A/B), FEMA 440 equivalent linearization and EN 1998-1 Annex B (N2) results. No design-code acceptance checks." },
+  "def-po-methods": { etabs: "Define › Load Cases › Nonlinear Static › (Pushover plot parameters)", text: "Per pushover case: which performance methods to evaluate (ASCE 41, ATC-40, FEMA 440 EL, N2), the 5 %-damped demand spectrum (ASCE 7 SDS/SD1 or EN 1998-1 ag + ground type), the ATC-40 structural behaviour type (κ) and procedure, and the ASCE 41 site class. Saved options are evaluated on every run." },
   "dis-freq": { etabs: "Display › Show Plot Functions (frequency domain)", text: "Steady-state and PSD response vs. frequency." },
   "dis-buckling": { etabs: "Display › Show Tables › Buckling Factors", text: "Critical buckling load factors and buckled mode shapes." },
   "dis-takedown": { etabs: "Display › Show Tables › Column Load Takedown", text: "Column axial loads accumulated story by story." },
@@ -243,6 +245,7 @@ export const DIALOG_HELP = {
   ckOptionsModal: "an-check", ckStabModal: "an-stability", cxLogDlg: "an-log", showTablesModal: "dis-tables",
   nlsResModal: "dis-nls", unitsModal: "opt-units", uxStartModal: "file-new",
   uxAnalysisOptions: "an-opts-hub",   // UX pass 2
+  poxMethodsDlg: "def-po-methods",    // pushover performance methods (js/pomethods.js)
 };
 
 /** lower-case title prefix → HELP key (fallback for dialogs without a mapped id) */
