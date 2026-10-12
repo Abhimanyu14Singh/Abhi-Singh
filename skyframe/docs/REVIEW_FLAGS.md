@@ -48,3 +48,8 @@ Each entry says where it lives.
   nodal masses, so the two ASCE 41 numbers can differ slightly. FEMA 440 may
   return no performance point on strongly hardening curves (method behaviour).
   Long-period spectrum tails are scaled by ATC-40 SRV (approximation).
+- Links (wave B): Wen in direct integration treats shear directions uncoupled
+  (FNA couples them); a one-step linear static case on Wen is ~2 % off the
+  monotonic curve (use multi-step nonlinear static). Composite damping ratios
+  are applied by mode index to FNA's linearised model (exact without device
+  links). Mock composite preview uses volume shares, not strain energy.
