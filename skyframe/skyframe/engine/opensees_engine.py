@@ -193,6 +193,7 @@ from skyframe.engine import parallel as _par        # parallel solve families
 
 from skyframe.engine import towers as _tw          # C9 multiple towers
 from skyframe.engine import towers_ext as _twx     # C9 follow-ups
+from skyframe.engine import modal_cases as _mcx    # named modal cases / Ritz
 from skyframe.core.frame_axes import member_local_axes as _fa_member_local_axes  # noqa: E501
 from skyframe.core.frame_axes import sync_members_if_etabs as _fa_sync
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
@@ -1590,6 +1591,8 @@ class AnalysisResults:
     model_size: Dict[str, object] = field(default_factory=dict)
     #   model-size report (engine/model_size.py; emitted only when a size
     #   warning fired)
+    modal_cases: Dict[str, dict] = field(default_factory=dict)
+    #   named modal cases (engine/modal_cases.py; emitted only when defined)
 
     def to_dict(self) -> dict:
         d = {
@@ -1663,6 +1666,8 @@ class AnalysisResults:
         if self.towers:                  # C9 towers (only when defined)
             d["towers"] = self.towers
             d["story_tower"] = dict(self.story_tower)
+        if self.modal_cases:             # named modal cases (when defined)
+            d["modal_cases"] = self.modal_cases
         return d
 
 
@@ -1870,6 +1875,7 @@ class OpenSeesEngine:
                 modal = ModalResults([], [], [], {})
         else:
             modal = ModalResults([], [], [], {})
+        mcases = _mcx.run_all(self, runs, attempt)   # named modal cases
         # v1.13 modal load participation ratios (ETABS table parity).  Opt-in:
         # it costs 3 + n_patterns extra solves, so plain runs skip it (see
         # run_load_participation / POST /api/analyze/load_participation).
@@ -2132,6 +2138,7 @@ class OpenSeesEngine:
             hyperstatic=hyperstatic,
             convergence=_cvg.reports(self),
             model_size=size_rep,
+            modal_cases=mcases,
         )
         from . import curved as _curved     # curved frames (no-op if none)
         _curved.attach(self, res)
@@ -2163,12 +2170,13 @@ class OpenSeesEngine:
         for n in (list(model.rs_cases) + list(model.th_cases)
                   + list(model.steady_state_cases) + list(model.psd_cases)):
             if status.get(n) == "finished":
-                need(MODAL_CASE, n)
+                need(_mcx._mcs.modal_dep(model, n), n)   # named modal case
         for n, bc in model.buckling_cases.items():
             base = getattr(bc, "base_case", None)
             if status.get(n) == "finished" and base:
                 need(base, n)
         self._nls_plan(status, need)
+        _mcx.plan(self, status, need)       # modal-case / FNA initial deps
         for n, hc in (getattr(model, "hyperstatic_cases", None) or {}).items():
             if status.get(n) == "finished":          # PT hyperstatic
                 need(hc["case"], n)
@@ -2496,6 +2504,9 @@ class OpenSeesEngine:
         Cached per effective mode count so RS cases reuse the eigen solve.
         """
         model = self.model
+        _rz = _mcx.run_modal_hook(self, num_modes)   # Ritz modal case
+        if _rz is not None:
+            return _rz
         if getattr(model, "modal_from_case", None):
             # stiffness at the end of a nonlinear static case
             from skyframe.engine import nonlinear_static as _nls
@@ -7353,6 +7364,8 @@ class OpenSeesEngine:
         if name not in model.th_cases:
             raise ValueError(f"Unknown time-history case {name!r}")
         th = model.th_cases[name]
+        if _mcx.wants_th(th):                   # named modal case
+            return _mcx.run_th(self, name)
         accel, dt = self._resolve_th_record(th)
         nonlinear = bool(getattr(th, "nonlinear", False))
         # v0.15: any advanced device link (damper/gap/hook/isolator) makes
@@ -7707,6 +7720,8 @@ class OpenSeesEngine:
         if name not in model.rs_cases:
             raise ValueError(f"Unknown response-spectrum case {name!r}")
         rs = model.rs_cases[name]
+        if _mcx.wants_rs(rs):                   # named modal case
+            return _mcx.run_rs(self, name)
         spectrum = self._resolve_rs_spectrum(rs)
 
         n_req = rs.num_modes if rs.num_modes > 0 else None
@@ -7956,6 +7971,9 @@ class OpenSeesEngine:
             raise ValueError(f"Unknown time-history case {name!r}")
         th = model.th_cases[name]
         accel, dt = self._resolve_th_record(th)
+        from . import fna as _fnx               # extended FNA (engine/fna.py)
+        if _fnx.wants(self, th):
+            return _fnx.run(self, name)
         if getattr(th, "nonlinear", False):
             raise NotImplementedError(
                 f"FNA case {name!r}: hinge nonlinearity is not supported "

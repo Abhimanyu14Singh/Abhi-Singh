@@ -1,6 +1,7 @@
 /* SkyFrame model editing — pure mutations on the client-side model dict
    (same shape as BuildingModel.to_dict(), see CONTRACT.md v0.2). */
 
+import { mxRenamePattern as mxRefsRenamePattern, mxPatternRefs as mxRefsPatternRefs } from "./modalx_refs.js";   // named mass sources / modal cases
 import { normalizeUnits } from "./units.js";   // v1.13 — model.display_units
 import { recomputeTowerElevations as c9RecomputeTowers, inheritTower as c9InheritTower,
   renameTowerStory as c9RenameTowerStory } from "./towers.js";   // C9 multiple towers
@@ -1390,7 +1391,8 @@ export function patternRefs(model, name) {
   ...CXR.patternRefsExtra(model, name),   // P-Delta options + TH pattern components
   ...Object.entries(model.nonlinear_static_cases || {}).filter(([, c]) => (c.loads || []).some(l => l.pattern === name)).map(([n]) => n),   // G3
   ...grpStagePatternRefs(model, name),      // Groups: staged "load" operations
-  ...ptRefsPattern(model, name)];           // PT: tendons write into the pattern
+  ...ptRefsPattern(model, name),            // PT: tendons write into the pattern
+  ...mxRefsPatternRefs(model, name)];       // named mass sources / Ritz starts (js/modalx_refs.js)
 }
 
 export function addPattern(model, base = "PAT") {
@@ -1421,6 +1423,7 @@ export function renamePattern(model, oldName, newName) {
 
   grpRenamePatternInStages(model, oldName, newName);   // Groups: staged "load" operations
   ptRefsRenamePattern(model, oldName, newName);        // PT: tendon patterns follow
+  mxRefsRenamePattern(model, oldName, newName);        // named mass sources / Ritz starts (js/modalx_refs.js)
   return true;
 }
 

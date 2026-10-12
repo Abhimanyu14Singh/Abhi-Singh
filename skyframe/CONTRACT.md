@@ -11162,3 +11162,273 @@ absent from `to_dict`) or `"exact"`.
 * an analysis runs;
 * kip-in readouts are in in⁴;
 * zero console errors.
+
+## Time-history functions, mass sources, modal cases, Ritz basis and FNA breadth
+
+Units: kN, m, tonne, s.  ETABS parity rows closed: *Time-history
+functions*, *Mass source* (multiple named), *Multiple modal cases*,
+*Ritz vectors* (usable basis), *Fast Nonlinear Analysis (FNA)*.
+Every default reproduces the previous results byte-identically
+(SHA-256 of `to_dict()` / `run().to_dict()` / legacy `run_fna` /
+`ritz_analysis` JSON on a 3-story frame with RS + TH and on the
+isolated block: identical before/after).
+
+### Time-history function input (`skyframe.core.thfunc`)
+
+`TimeHistoryFunction.source: Optional[dict]` (provenance; emitted only
+when set; validated: `kind` in `file | matched | inline | sine | cosine
+| ramp | sawtooth | triangular | user_periodic`).  Values stay SI m/s^2,
+sample k at t = k dt.
+
+* `import_function(text, fmt, dt=None, header_lines=0, units=None,
+  scale=1.0)` -> `{values, dt, source, warnings}`:
+  * `"at2"` — PEER NGA: 4-line header, NPTS / DT from line 4 (classic
+    `NPTS=  3909, DT= .0100 SEC` or NGA-West2 `3909 0.0100 NPTS, DT`),
+    units from line 3 (`UNITS OF G` -> g); the first NPTS numbers;
+  * `"time_value"` — `t a` pairs after `header_lines`; uniform spacing
+    kept, otherwise linearly RESAMPLED at `dt` (default: the smallest
+    spacing; the engine needs equal steps); `t0 > 0` prepends `(0, 0)`;
+  * `"equal"` — values at equal `dt` (required) after `header_lines`;
+  * `values = raw * UNIT_FACTORS[units] * scale` with `g` = 9.80665,
+    `m/s2`, `cm/s2`, `mm/s2`, `in/s2`, `ft/s2`.
+* `generate_function(kind, **p)` -> `{values, dt, source}`: `sine` /
+  `cosine` (`period`, `steps_per_cycle` (16), `cycles`, `amplitude`),
+  `ramp` (`ramp_time`, `amplitude`, `max_time`, `dt`), `sawtooth`
+  (`period`, `ramp_time <= period/4`, `steps_per_cycle` (40), `cycles`,
+  `amplitude`; per period (0,0) (tr,A) (T/2-tr,A) (T/2+tr,-A) (T-tr,-A)
+  (T,0)), `triangular` ((0,0) (T/4,A) (3T/4,-A) (T,0)), `user_periodic`
+  (`values` of one cycle at `dt`, `cycles`, `amplitude`; a closed
+  cycle's repeated first sample is not duplicated).
+* `response_spectrum(acc, dt, periods, damping=0.05)` — PSA = w^2 max|u|,
+  EXACT for linearly interpolated excitation (state-transition kernels
+  `e^{At}` of the SDOF, discrete convolution by FFT); periods with fewer
+  than 20 samples per cycle are sub-stepped on the same interpolated
+  record (peak-sampling error <= 1 - cos(pi/20) = 1.2%).
+* `match_spectrum(acc, dt, target, damping=0.05, t_min=0.05,
+  t_max=3.0, n_periods=100, max_iter=40, tol=0.04, target_units="g")` —
+  a **frequency-domain approximation** (the time-domain wavelet
+  adjustment of Al Atik & Abrahamson 2010 is NOT implemented): iterate
+  { PSA on `n_periods` log-spaced periods; ratio `target/PSA` mapped to
+  frequency, interpolated in log f onto the FFT bins (zero padded to
+  2n), faded to 1 over a quarter decade outside the range; Fourier
+  amplitudes scaled, phases kept; inverse FFT; baseline correction
+  (least-squares quartic of the double-integrated displacement removed
+  through its 2nd derivative) } until `max|PSA/target - 1| <= tol`; the
+  best iterate is returned as `{values, dt, periods, target, matched,
+  original, max_misfit, iterations, source}` (spectra in m/s^2).
+* Pins: AT2 embedded sample exact (incl. NGA-West2 header, short-record
+  error); time-value uniform / resampled / prepended values exact;
+  generator samples in closed form; PSA == an independent fine-step RK4
+  to 1e-6 (>= 20 samples / cycle) and within the 1.2% bound below;
+  **matching: a synthetic 20 s record matched to a 6-point target over
+  0.05-3 s is within +-10% on a DIFFERENT 157-period check grid**
+  (seed misfit > 30%).
+* API: `POST /api/th_function/import {text, format, dt?, header_lines?,
+  units?, scale?}`, `POST /api/th_function/generate {kind, ...}`,
+  `POST /api/th_function/match {values+dt | function, target |
+  spectrum_function, damping?, t_min?, t_max?, max_iter?, tol?,
+  n_periods?, target_units?}`; 400 with the message on bad input.  None
+  of them changes the model (the UI writes the function).
+
+### Multiple named mass sources and modal cases (`skyframe.core.modal_cases`)
+
+`BuildingModel` fields (default `{}`, emitted only when non-empty):
+
+```json
+"mass_sources": {"HALF": {"mass_source": {"DEAD": 0.5},
+                          "mode": "weight",
+                          "options": {"self_mass": true, "patterns": true,
+                                      "include_lateral": true,
+                                      "include_vertical": false,
+                                      "lump_at_stories": true}}},
+"modal_cases": {"MH": {"type": "eigen", "num_modes": 12,
+                       "mass_source": "HALF", "stiffness_case": null},
+                "RITZ": {"type": "ritz", "num_modes": 12, "mass_source": "",
+                         "stiffness_case": null, "max_cycles": 0,
+                         "ritz_starts": [{"type": "accel", "dir": "UX"},
+                                         {"type": "pattern", "name": "DEAD"},
+                                         {"type": "links"}]}}
+```
+
+* The model-level `mass_source` / `mass_from_patterns` /
+  `mass_source_mode` / `mass_options` stay the DEFAULT mass source
+  (`mass_source: ""` everywhere); explicit `story_masses` overrides,
+  `nodal_masses` and diaphragm additional masses apply under every
+  source.  The reserved `MODAL` case (`num_modes`, `modal_from_case`)
+  is unchanged and stays the default basis.
+* `ResponseSpectrumCase.modal_case`, `TimeHistoryCase.modal_case`
+  (`""` = MODAL) and `TimeHistoryCase.initial_case` (`""` = none; a
+  nonlinear static case) — emitted only when set.
+* Validation (`ValueError`): mass-source mode / option booleans /
+  patterns exist / factors >= 0 / lateral or vertical / self or
+  patterns; modal-case names unique across ALL cases and not `MODAL`;
+  `type` in `eigen | ritz`; `1 <= num_modes <= 1000`; mass source
+  exists; `stiffness_case` (eigen only) is a nonlinear static case;
+  Ritz starts non-empty, `accel` dir in `UX..RZ`, `pattern` exists,
+  `links`; `max_cycles >= 0`; RS/TH `modal_case` exists; TH
+  `initial_case` is a nonlinear static case.
+* `case_kinds()` lists every modal case as `"modal"`.  Set Load Cases to
+  Run: an RS / TH case needs its modal case (`MODAL` only when it uses
+  the default); a modal case needs its `stiffness_case`; a TH case needs
+  its `initial_case` (chains re-resolved).
+* Engine (`skyframe.engine.modal_cases`): each modal case runs on a
+  cached SUB-ENGINE built on a deep copy of the source model with the
+  named mass source applied, `num_modes` = the case's count,
+  `modal_from_case` = its `stiffness_case`, and every RS/TH
+  `modal_case` / `initial_case` cleared — same mesh, hence the same node
+  tags and member uids, so its results slot into the parent run.
+  * RS with `modal_case`: run on that sub-engine (mass map + basis of
+    the case).  Pinned: equals the same RS on a model whose DEFAULT
+    mass source is the named one (1e-12), and a half-mass source scales
+    every period by exactly sqrt(0.5) (1e-9).
+  * TH direct integration with `modal_case`: mass source + the case's
+    first / third periods for the Rayleigh fit (Ritz periods for a Ritz
+    case); `damping_model "modal"` keeps its in-domain eigen solve.
+  * TH direct integration with `initial_case`: the predecessor chain's
+    cumulative pattern factors become the `gravity` stage (load-control
+    chains without hinges; otherwise `NotImplementedError` naming FNA).
+  * `run()` adds `"modal_cases": {name: ModalResults.to_dict() + {type,
+    mass_source, warnings}}` (only when modal cases exist) and their
+    `case_status`.
+* DB-edit tables (`skyframe.core.modal_cases_tables`, appended to the
+  catalogue): `mass_sources` (name, mode, five option booleans),
+  `mass_source_patterns` (source, pattern, multiplier), `modal_cases`
+  (name, type, modes, mass source, stiffness case, Ritz max cycles,
+  Ritz starts as text `UX; UY; pattern:DEAD; links`).  Renames cascade
+  (mass source -> modal cases; modal case -> RS/TH; pattern -> named
+  sources and Ritz pattern starts); deleting a referenced definition is
+  refused.
+
+### Ritz vectors on the full assembly (`skyframe.engine.ritz_engine`)
+
+A Ritz modal case runs the WYD sequence on the ENGINE's elastic
+OpenSees domain (frames, shells, elastic links, springs, rigid / named
+diaphragms, panel zones — everything the engine builds), one static
+solve per vector on the reused factor-once domain:
+
+* starting loads: `accel` -> `M r_dir` on the massed DOFs; `pattern` ->
+  the CONSISTENT nodal load vector (pattern applied at u = 0,
+  `P = -nodeReaction`); `links` -> per nonlinear link DOF a unit force
+  pair (axial devices along the axis; bearings global X and Y) — for
+  FNA the device DOFs of the case;
+* chains alternate; two-pass M-Gram-Schmidt; a chain ends when its
+  candidate's M-norm falls below 1e-16 of the pre-orthogonalization
+  value (or carries no mass); `max_cycles > 0` caps vectors per chain;
+  fewer than requested -> a warning;
+* the load representation of every vector is carried, so
+  `K_r = U^T F_U` is a nodal dot product (Betti through the constraint
+  transformation); `K_r z = theta z`, `M_r = I`; vectors M-orthonormal,
+  sign: largest massed component positive.  Result: `ModalResults`
+  keyed by engine node tags.
+* Pins: ONE vector from a tip-load pattern reproduces the 3-mass
+  cantilever's static displacement EXACTLY by modal superposition
+  (2e-16; one eigenmode misses by ~1%); as many vectors as massed DOFs
+  == eigen periods (1e-8) and RS on that Ritz basis == RS on eigen
+  (1e-8 base shear); a wall (shell) portal: Ritz == eigen first period
+  (1e-6) while the legacy frame-only numpy Ritz is > 1.5x too long;
+  elastic links included (hand k = 3EI/L^3 + k_link).
+* `POST /api/analyze/ritz {n, direction}`: a model WITH shells or links
+  (or a body with `starts` / `mass_source`) now uses the engine assembly
+  (response gains `"assembly": "engine"`, shapes keyed by engine tags);
+  frame-only legacy requests are byte-identical (the numpy path).
+  `OpenSeesEngine.run_ritz` / `core.ritz.ritz_analysis` are unchanged.
+* `POST /api/analyze/ritz_full {n?, starts?, max_cycles?, mass_source?,
+  model?}` and `POST /api/analyze/modal_case {case, model?}` ->
+  `ModalResults.to_dict()` + `{case, type, mass_source, warnings}`.
+
+### FNA breadth (`skyframe.engine.fna`, `skyframe.core.fna_devices`)
+
+`run_fna` routes a case to the extended driver when it uses a
+`fp_isolator`, `triple_fp`, `multilinear`, `multilinear_kinematic`,
+`friction_spring`, `rubber_isolator_bouc_wen` or `plastic_wen` (if that
+type exists) link, a `damper` with `alpha != 1`, `gravity`,
+`initial_case` or `modal_case`; every other case keeps the v0.24 path
+bit-identically (the extended driver reproduces it to 1e-10 when
+forced).  Hinged (`nonlinear`) cases and the other hysteresis types
+(`multilinear_takeda`, `multilinear_pivot`) still raise
+`NotImplementedError` naming `run_time_history`.
+
+Device laws (rows = global deformation measures; the linear part stays
+in the basis, the rest is the pseudo-force):
+
+| link | FNA law | linear part in basis |
+|---|---|---|
+| damper alpha != 1 | Maxwell `k` + `cd sgn(v) abs(v)^alpha`, implicit trapezoid, bracketed Newton | none |
+| fp_isolator | biaxial `(N/R) u` + rigid-plastic friction (stick `k_init`, slip `mu N`, radial return); `N = N0 - kv dz` (>= 0) | `k_init + N0/R`, `kv` |
+| friction_spring | the same with `R = inf` | `k_init`, `kv` |
+| triple_fp | Fenz & Constantinou (2008) series model: (`mu1`, `2 R1`, `2 d1`), (`mu2`, `R2 - R1`, `d2 (R2-R1)/R2`), (`mu3`, `R3 - R1`, `d3 (R3-R1)/R3`), stick `mu_i W / uy`, stops `1e3 W / R_eff`; needs `mu1 < mu2 <= mu3`, `R1 < R2, R3` | series stick stiffness, `kv` |
+| multilinear / multilinear_kinematic | Masing (Iwan parallel EPP springs), uncoupled X / Y | first slope |
+| rubber_isolator_bouc_wen | biaxial Bouc-Wen `F = a1 k u + qd z (+ a2 k sgn(u) abs(u)^mu)`, `uy = qd / ((1 - a1) k)` | `k_init` |
+| plastic_wen | ETABS Plastic (Wen) `F = r k u + (1 - r) Fy z`, `beta = gamma = 0.5`, `eta = exp` | `k` (bearing) / none (axial) |
+
+* Axial load `N` of FP / TFP: from the gravity state (`-kv d0_z`), else
+  `P0` (fp_isolator) / `W` (triple_fp); an FP / flat slider with neither
+  -> `ValueError` ("needs its axial load").
+* Gravity initial conditions: `initial_case` (any nonlinear static
+  chain) or `gravity` (an in-memory 10-step load-control nonlinear
+  static case) runs on a copy of the FULL device model; end-state
+  displacements give each device row `d0`, every device is driven
+  monotonically to `d0`, and the pseudo-force is
+  `-B^T (F(d0 + B q) - F(d0) - k_lin B q)` — the reported response is
+  the increment past the gravity state (the direct-integration
+  convention).
+* Basis: `modal_case` (eigen or Ritz; Ritz `links` starts = the case's
+  device DOFs); a `stiffness_case` modal case is refused (FNA needs the
+  elastic basis).
+* `THResults.extra["fna"]` (extended driver only): `{basis, modal_case,
+  modes, periods, initial_case ("gravity" for the pattern stage),
+  devices: {law: count}, warnings, bearing_axial: {link uid: N0}}`.
+* Pins (DI = OpenSeesPy direct integration, viscous damping ~0 — the
+  modal and initial-stiffness Rayleigh damping models differ once a
+  device yields):
+  * damper alpha = 0.5 SDOF: FNA vs DI 2e-4 of peak (spec 1%); the
+    alpha = 1 law == the v0.24 Maxwell law (1e-12); alpha = 0.5 steady
+    state `cd v^alpha` (1e-6);
+  * FP: theoretical loop `F(D) = N D/R + mu N` (1e-9), zero-crossing
+    `-mu N`, area `4 mu N (D - mu N/k0)` (1e-3), biaxial orbit friction
+    `mu N`; gravity-loaded block: FNA vs singleFPBearing DI 0.8% peak
+    (spec 2%), FNA vs an independent hand SDOF Newmark-Raphson 2e-8;
+    bearing axial = W/4 (1e-6);
+  * TFP: regimes I-IV in closed form (`mu1 W + W u/(2R1)`, tangents
+    `W/(R1+R2)`, `W/(R2+R3)`, then `W/(R1+R3)` after surface 2's stop;
+    2e-3); FNA vs TripleFrictionPendulum DI 0.5% peak (spec 2%);
+  * multilinear: backbone exact, Masing unloading `F_max - 2 F_b(du/2)`
+    (1e-12); FNA vs MultiLinear DI 1.6e-6;
+  * Bouc-Wen: initial tangent `k` and saturation `r k u + (1-r) Fy`
+    (1e-4); FNA vs elastomericBearingBoucWen DI 0.3% peak;
+  * `initial_case` == the `gravity` stage (1e-9 FNA, 1e-12 DI);
+  * Ritz basis (UX + links, <= 6 vectors) FNA vs DI and vs the eigen
+    basis < 1% on the bilinear isolated block.
+
+### UI (js/modalx.js, js/modalx_refs.js, js/mock_modalx.js)
+
+* Define › Mass Source… (`def-mass`) opens **Define Mass Sources**
+  (`#mxMassSources`, list `#mxMsList`): the model default ("MsSrc
+  (default)", edits the legacy fields) + named sources; Add / Copy /
+  Modify / Delete (refused while a modal case uses it) → **Mass Source
+  Data** (`#mxMassSourceData`).
+* Define › Load Cases › Modal… (`def-modal`) opens **Define Modal Cases**
+  (`#mxModalCases`, list `#mxMcList`): MODAL (default, opens the existing
+  `#dcModalCase`) + named cases; Add New / Add New Ritz / Copy / Modify /
+  Delete → **Modal Case Data** (`#mxModalCaseData`: name, Eigen/Ritz,
+  mass source, modes, Ritz starting vectors table `#mxMcStarts`, max
+  cycles, eigen stiffness case).  Both lists edit a draft and commit
+  changed keys only (OK with defaults is byte-identical).
+* RS / TH case dialogs: `#dcRsModalCase`, `#dcThModalCase` and
+  `#dcThInitial` (keys written only when set).
+* Time History Function dialog: group "Define From" with **Import from
+  File…** (`#mxThImport`: AT2 / pairs / equal, browse or paste, header
+  lines, Δt, file units, scale, preview), **Generate…** (`#mxThGenerate`)
+  and **Match to Spectrum…** (`#mxThMatch`: spectrum function, period
+  range, damping, misfit + target / matched / seed chart); exact SI
+  values are kept (not the 6-digit textarea rounding) with `source`.
+* Modal results tab: `#mxModalCaseSel` shows any named modal case of
+  `results.modal_cases` in the modal table / 3D mode shapes.
+* Hooks: `app.js` (import + init line after the dialog standard),
+  `dlgstd_cases.js` (one spread line each in the RS / TH dialogs, via
+  `__sky.modalx`), `dlgstd_defs.js` (TH function tools + exact values),
+  `modeledit.js` (import + pattern rename / pattern references).
+* Playwright: mock 20/20, live 21/21 (dialogs open, edit, save; OK with
+  defaults byte-identical; POST /api/model round trip and second echo
+  identical; live run reports `modal_cases` and the tab shows RITZ;
+  kip-in amplitude 386.0886 in/s² → 9.80665 m/s²; zero console errors).

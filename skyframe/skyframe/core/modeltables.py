@@ -388,6 +388,8 @@ def _cascade_pattern(d, mp):
         c["pattern"] = mp.get(c.get("pattern"), c.get("pattern"))
         if isinstance(c.get("include_live"), dict):
             c["include_live"] = _rename_keys(c["include_live"], mp)
+    from .modal_cases_tables import cascade_pattern as _mct_cp
+    _mct_cp(d, mp)                    # named mass sources / Ritz starts
 
 
 def _cascade_case(d, mp):
@@ -1976,6 +1978,8 @@ def _build_catalogue() -> List[Table]:
             Col("include_vertical", "Vertical Mass", "bool"),
             Col("lump_at_stories", "Lump at Stories", "bool"),
         ]))
+    from .modal_cases_tables import tables as _mct_tables  # named mass
+    T.extend(_mct_tables(G_DEF, G_CASE))      # sources + modal cases
     return T
 
 

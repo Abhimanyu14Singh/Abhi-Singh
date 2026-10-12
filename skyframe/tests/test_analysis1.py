@@ -502,29 +502,24 @@ def test_fna_honest_scope_not_implemented():
     mdl.add_th_case("NL", "X", accel, dt, nonlinear=True, default_My=50.0)
     with pytest.raises(NotImplementedError, match="run_time_history"):
         OpenSeesEngine(mdl).run_fna("NL")
-    # (b) gravity stage
-    mdl = _cantilever("fnag")
-    mdl.nodal_masses.append(NodalMass((0, 0, 3.0), mx=10.0))
-    pat = mdl.pattern("D", "dead")
-    mdl.add_th_case("GR", "X", accel, dt, gravity={"D": 1.0})
-    with pytest.raises(NotImplementedError, match="run_time_history"):
-        OpenSeesEngine(mdl).run_fna("GR")
-    # (c) damper alpha != 1
-    mdl = _cantilever("fnaa")
-    mdl.nodal_masses.append(NodalMass((0, 0, 3.0), mx=10.0))
-    mdl.add_link((0, 0, 3.0), (1.5, 0, 3.0), link_type="damper",
-                 params={"cd": 20.0, "alpha": 0.5})
-    mdl.add_th_case("AL", "X", accel, dt)
-    with pytest.raises(NotImplementedError, match="alpha"):
-        OpenSeesEngine(mdl).run_fna("AL")
-    # (d) friction-pendulum device
+    # (b)-(d) gravity stages, damper alpha != 1 and friction-pendulum
+    # devices are SUPPORTED since the FNA-breadth wave (engine/fna.py,
+    # tests/test_fna_breadth.py); a bearing without an axial load source
+    # is refused, as is an unsupported hysteresis link type
     mdl = _cantilever("fnafp")
     mdl.nodal_masses.append(NodalMass((0, 0, 3.0), mx=10.0))
     mdl.add_link((0, 0, 0.0), (0, 0, 0.3), link_type="fp_isolator",
                  params={"R": 2.0, "mu": 0.05})
     mdl.add_th_case("FP", "X", accel, dt)
-    with pytest.raises(NotImplementedError, match="run_time_history"):
+    with pytest.raises(ValueError, match="axial load"):
         OpenSeesEngine(mdl).run_fna("FP")
+    mdl = _cantilever("fnatk")
+    mdl.nodal_masses.append(NodalMass((0, 0, 3.0), mx=10.0))
+    mdl.add_link((0, 0, 0.0), (0, 0, 0.3), link_type="multilinear_takeda",
+                 params={"points": [[0.01, 10.0], [0.05, 15.0]]})
+    mdl.add_th_case("TK", "X", accel, dt)
+    with pytest.raises(NotImplementedError, match="run_time_history"):
+        OpenSeesEngine(mdl).run_fna("TK")
     # (e) unknown case name
     mdl = _cantilever("fnau")
     with pytest.raises(ValueError, match="Unknown time-history case"):
