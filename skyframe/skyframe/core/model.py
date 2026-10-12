@@ -645,6 +645,16 @@ def _shellopts_model_to_dict(model) -> dict:
     return model_to_dict(model)
 
 
+def _rel_member_to_dict(m) -> dict:
+    from skyframe.core.releases import member_to_dict
+    return member_to_dict(m)
+
+
+def _rel_model_to_dict(model) -> dict:
+    from skyframe.core.releases import model_to_dict
+    return model_to_dict(model)
+
+
 def _insertion_fields_from_dict(md: dict) -> dict:
     from skyframe.core.insertion import member_fields_from_dict
     return member_fields_from_dict(md)
@@ -755,6 +765,9 @@ class FrameMember:
     # ``angle``; skyframe.core.section_ext.stamp); never serialised.
     section_axis_offset: float = field(default=0.0, repr=False,
                                        compare=False)
+    # Per-DOF end releases + partial-fixity springs (skyframe.core.releases;
+    # None = none; the legacy Mi/Mj tokens stay the canonical pin)
+    end_releases: Optional[dict] = None
 
     @property
     def length(self) -> float:
@@ -801,6 +814,7 @@ class FrameMember:
 
                 **_ow_member_to_dict(self),        # open-structure wind
                 **_towers.tag_to_dict(self),       # C9 tower (when set)
+                **_rel_member_to_dict(self),       # end releases (if set)
                 "length": self.length}
 
 
@@ -2101,6 +2115,10 @@ class BuildingModel:
     # BuiltupSection, each MIRRORED by a same-named FrameSection (like
     # designer_sections).  Emitted by to_dict only when non-empty.
     builtup_sections: Dict[str, object] = field(default_factory=dict)
+
+    # Joint local axes (skyframe.core.releases): [{"point", "angles"}];
+    # empty (default) = global axes everywhere.  Emitted only when set.
+    joint_local_axes: List[dict] = field(default_factory=list)
 
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
@@ -3861,6 +3879,8 @@ class BuildingModel:
         self._validate_tendons()
         self._validate_curved_mesh_sets()
         self._validate_towers()
+        from skyframe.core.releases import validate_model as _rel_validate
+        _rel_validate(self)                 # end releases / joint axes
 
     def _validate_towers(self) -> None:
         """C9 multiple towers (see core.towers)."""
@@ -4097,6 +4117,7 @@ class BuildingModel:
             **({"frame_axis_convention": "etabs"}    # only when "etabs"
                if self.frame_axis_convention == "etabs" else {}),
             **_builtup_to_dict(self),   # v1.21 built-up sections (if any)
+            **_rel_model_to_dict(self),  # joint local axes (if any)
         }
 
     @classmethod
@@ -4535,6 +4556,8 @@ class BuildingModel:
         _towers.model_from_dict(mdl, d)     # C9 towers (absent = none)
         _frame_axes_from_dict(mdl, d)       # frame local-axis convention
         _builtup_from_dict(mdl, d)          # v1.21 built-up sections
+        from skyframe.core.releases import model_from_dict as _rel_from
+        _rel_from(mdl, d)                   # end releases / joint axes
         mdl.validate()
         return mdl
 

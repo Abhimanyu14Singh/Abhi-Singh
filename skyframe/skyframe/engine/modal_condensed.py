@@ -76,8 +76,11 @@ def applicable(eng, asm, n: int) -> bool:
     from skyframe.engine.opensees_engine import _slow_path
     if _slow_path() or n <= 0:
         return False
-    if (getattr(asm, "linear_system", "") or "BandGeneral") \
-            not in ("UmfPack", "Mumps", "SparseGeneral"):
+    if ((getattr(asm, "linear_system", "") or "BandGeneral")
+            not in ("UmfPack", "Mumps", "SparseGeneral")
+            and not getattr(asm, "release_penalty", False)):
+        # (end-release / skewed-support penalty ties: a dense eigen solve
+        # on the stiff ties loses ~1e-3; condensation uses linear solves)
         return False
     nm = len(massed_dofs(asm))
     return n <= nm <= MAX_MASSED

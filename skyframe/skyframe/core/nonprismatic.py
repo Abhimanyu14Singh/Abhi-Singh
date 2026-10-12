@@ -435,6 +435,8 @@ def expanded_model(model):
             if "Mj" in toks and k == len(xs) - 2:
                 rel.append("Mj")
             sub.releases = ",".join(rel)
+            from skyframe.core.releases import split_for_piece as _rsp
+            sub.end_releases = _rsp(m, k, len(xs) - 1)   # per-DOF releases
             members.append(sub)
             children.setdefault(m.uid, []).append(sub.uid)
     new.members = members

@@ -101,7 +101,9 @@ import { initSecPreview as spvInitSecPreview } from "./secpreview.js";   // live
 import { initMatLib as mlInitMatLib } from "./matlib.js";   // v1.21 Define › Material Library… (js/matlib.js)
 
 import { initBuiltup as buInitBuiltup } from "./builtup.js";   // v1.21 Built-up Section editor (js/builtup.js)
-import { initExchange as xcInitExchange } from "./exchange.js";   // File › Import ▸ / Export ▸ E2K · IFC · DXF · Excel (js/exchange.js)
+import { initExchange as xcInitExchange } from "./exchange.js";
+import { initReleases as relInitReleases } from "./releases.js";   // Assign › Frame › Releases / Partial Fixity + Joint › Local Axes (js/releases.js)
+import { mockValidateReleases as relMockValidate } from "./mock_releases.js";   // ?mock=1 end releases / joint local axes   // File › Import ▸ / Export ▸ E2K · IFC · DXF · Excel (js/exchange.js)
 
 /* ------------------------------------------------ state */
 const store = {
@@ -293,7 +295,8 @@ async function postModel(payload) {
       || pfMockValidateModel(payload)   // plot functions: TH output_requests
       || owMockValidateModel(payload)   // open-structure wind member params
       || c9MockValidateTowers(payload)   // C9 towers
-      || c9fMockValidate(payload);   // C9 follow-ups: control_tower
+      || c9fMockValidate(payload)   // C9 follow-ups: control_tower
+      || relMockValidate(payload);   // end releases / partial fixity / joint local axes
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -8567,6 +8570,7 @@ async function boot() {
 
   try { buInitBuiltup(window.__sky); } catch (err) { console.error("built-up sections init failed", err); }   // Define › Section Properties › Built-up Section… (js/builtup.js)
   try { xcInitExchange(window.__sky); } catch (err) { console.error("model exchange init failed", err); }   // File › Import ▸ / Export ▸ (js/exchange.js)
+  try { relInitReleases(window.__sky); } catch (err) { console.error("releases / joint axes init failed", err); }   // Releases / Partial Fixity · Joint Local Axes (js/releases.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)

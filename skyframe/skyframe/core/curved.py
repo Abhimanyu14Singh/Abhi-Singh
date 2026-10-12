@@ -396,6 +396,7 @@ def expand_members(model) -> Dict[str, dict]:
         pts = arc_points(m, g, n)
         angs = chord_angles(m, pts, g["normal"])
         toks = m.release_tokens()
+        from skyframe.core.releases import split_for_piece as _rel_split
         chords = [f"{m.uid}{CHORD_SEP}{k}" for k in range(n)]
         S = g["radius"] * g["sweep"]
         clen = [math.dist(a, b) for a, b in zip(pts[:-1], pts[1:])]
@@ -408,6 +409,7 @@ def expand_members(model) -> Dict[str, dict]:
             ch = dataclasses.replace(
                 m, uid=chords[k], pi=pts[k], pj=pts[k + 1], angle=angs[k],
                 releases=",".join(rel),
+                end_releases=_rel_split(m, k, n),     # per-DOF releases
                 rigid_i=m.rigid_i if k == 0 else 0.0,
                 rigid_j=m.rigid_j if k == n - 1 else 0.0,
                 auto_mesh=copy.deepcopy(m.auto_mesh),

@@ -79,16 +79,13 @@ def apply_frame_gradient(eng, asm, member, grad2: float,
 
     segs = asm.mesh.segments[member.uid]
     last = len(segs) - 1
-    toks = member.release_tokens()
+    from skyframe.engine.releases_eng import fef_released as _rle_fef
     for seg in segs:
         f0 = np.zeros(12)
         f0[5], f0[11] = -Mz0, Mz0
         f0[4], f0[10] = My0, -My0
-        rel: List[int] = []
-        if "Mi" in toks and seg.index == 0:
-            rel += [4, 5]
-        if "Mj" in toks and seg.index == last:
-            rel += [10, 11]
+        rel: List[int] = _rle_fef(member, seg.index, last,   # end releases
+                                  member.uid in asm.timo)
         if rel:
             K = _local_stiffness(mat.E, mat.G, A_eff, I22_eff, I33_eff,
                                  J_eff, seg.length)

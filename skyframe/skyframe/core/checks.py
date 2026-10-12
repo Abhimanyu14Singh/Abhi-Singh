@@ -1019,6 +1019,8 @@ def check_model(model: BuildingModel,
     _check_connectivity(ctx, sup)
     _check_loads(ctx, fe_keys)
     _run_validators(ctx)
+    from skyframe.core.releases import check_issues as _rel_check
+    _rel_check(ctx)                     # unstable releases / joint axes
 
     order = {s: k for k, s in enumerate(SEVERITIES)}
     issues = sorted(ctx.issues, key=lambda i: order[i["severity"]])
