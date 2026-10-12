@@ -24,6 +24,7 @@ from skyframe.io.exchange_common import (
     G_SI, Units, diff_patches, fmt, model_dict, q, summarize_patches)
 
 from skyframe.io import e2k_ext as _e2kx  # noqa: E402  (Wave B records)
+from skyframe.io import e2k_nonlinear as _e2knl  # noqa: E402  (Wave C)
 
 __all__ = ["export_e2k", "INCLUDE_KEYS", "STEEL_DB_FILES", "SHAPE_NAMES"]
 
@@ -320,7 +321,9 @@ class _Writer:
         self._shell_props()
         self._link_props()
         self._spring_props()
+        _e2knl.write_hinge_props(self)           # Wave C: FRAME HINGE PROPS
         self._geometry()
+        _e2knl.write_hinge_assigns(self)         # Wave C: HINGEASSIGN
         if self.inc.get("loads", True):
             self._patterns()
             self._loads()
@@ -329,6 +332,7 @@ class _Writer:
             self._mass_source()
         if self.inc.get("cases", True):
             self._functions()
+            _e2knl.write_freq_functions(self)    # Wave C: freq. functions
             self._cases()
         if self.inc.get("combos", True):
             self._combos()
@@ -630,11 +634,13 @@ class _Writer:
             pname = f"LP_{lk.uid}"
             self.link_props[lk.uid] = pname
             typ = types.get(lk.link_type, "LINEAR")
-            self.rec(f"LINKPROP  {q(pname)}  TYPE {q(typ)}")
-            if lk.link_type != "elastic":
-                self.skipped.append(f"link {lk.uid}: {lk.link_type} device "
-                                    "parameters (not expressible)")
+            if lk.link_type != "elastic":        # Wave C: native NL links
+                self.rec(f"LINKPROP  {q(pname)}  "
+                         + _e2knl.link_type_header(lk))
+                for row_ in _e2knl.link_prop_rows(lk, pname, self.u):
+                    self.rec(row_)
                 continue
+            self.rec(f"LINKPROP  {q(pname)}  TYPE {q(typ)}")
             perm = link_axis_perm(lk.pi, lk.pj)
             if perm is None:
                 self.skipped.append(f"link {lk.uid}: skewed axis, global "
@@ -1000,9 +1006,11 @@ class _Writer:
                     self.skipped.append(f"area load on {a.region_uid}: "
                                         "joint pattern / projected flag")
             if p.thermal_loads or p.shell_thermal_loads or \
-                    p.joint_temperatures:
-                self.skipped.append(f"pattern {p.name}: temperature loads "
-                                    "(not expressible)")
+                    p.joint_temperatures:          # Wave C: TEMPERATURE
+                tp_, tf_, ta_ = _e2knl.thermal_rows(self, p)
+                pl += tp_
+                fl += tf_
+                al += ta_
             if p.ground_displacements:
                 self.skipped.append(f"pattern {p.name}: ground displacements"
                                     " (not expressible)")
@@ -1172,15 +1180,10 @@ class _Writer:
             self.rec(f"LOADCASE {q(bc.name)}  BUCKLINGMODES  "
                      f"{int(bc.num_modes)}")
             n += 1
-        for kind, dct in (("pushover", m.pushover_cases),
-                          ("staged construction", m.staged_cases),
-                          ("nonlinear static",
-                           getattr(m, "nonlinear_static_cases", {})),
-                          ("steady state", getattr(m, "steady_state_cases",
-                                                   {})),
-                          ("PSD", getattr(m, "psd_cases", {}))):
-            for name in dct or {}:
-                self.skipped.append(f"{kind} case {name} (not expressible)")
+        # Wave C: pushover / nonlinear static / staged / steady-state /
+        # PSD cases as native LOADCASE records (io/e2k_nonlinear.py)
+        used_ = set(m.case_kinds()) | {MODAL_CASE}
+        n += _e2knl.write_cases(self, used_)
         self.count("load_cases", n)
 
     def _combos(self) -> None:

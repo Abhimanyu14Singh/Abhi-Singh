@@ -25,6 +25,7 @@ import math
 from typing import Dict, List, Optional, Tuple
 
 from skyframe.io import e2k_ext as _e2kx
+from skyframe.io import e2k_nonlinear as _e2knl  # Wave C NL records
 from skyframe.io.e2k import _kv, _num, _Tok, _tokenize
 from skyframe.io.exchange_common import G_SI, Units, apply_patches
 
@@ -180,6 +181,7 @@ class _Reader:
                  "FUNCTION", "ACTIVEDOF", "PDELTA", "PDELTALOAD",
                  "MASSSOURCE", "MASSSOURCELOAD", "LOADCASE", "COMBO",
                  "GROUP"}
+        known |= _e2knl.KNOWN_RECORDS            # Wave C hinge records
         for head, rows in self.recs.items():
             if head not in known:
                 unknown[head] = len(rows)
@@ -559,7 +561,7 @@ def read_e2k(text: str, units=("KN", "M"),
         kv = _kv(t, 2)
         p = lprops.setdefault(t[1].text, {"type": "elastic", "k": {}})
         if "TYPE" in kv:
-            p["type"] = _LINK_TYPES.get(kv["TYPE"].text.upper(), "elastic")
+            p["type"] = _e2knl.link_type_of(kv, _LINK_TYPES)  # Wave C
         if "DOF" in kv and "KE" in kv:
             dof = kv["DOF"].text.upper()
             if dof in _LDOFS:
@@ -661,6 +663,7 @@ def read_e2k(text: str, units=("KN", "M"),
         members.append(md)
         member_story[(label, story)] = uid
     d["members"] = members
+    _e2knl.read_hinges(r, d, member_story, w)    # Wave C: HINGE records
 
     # ----------------------------------------------------------- areas
     areas: Dict[str, Tuple[str, List[str], List[int]]] = {}
@@ -767,9 +770,12 @@ def read_e2k(text: str, units=("KN", "M"),
         for j, kv_ in prop["k"].items():
             gi = perm[j % 3] + (3 if j >= 3 else 0)
             k6[gi] = kv_
+        # Wave C: device parameters from the per-DOF LINKPROP rows
+        ltyp_, lpar_ = _e2knl.link_type_params(r.rows("LINKPROP"), pname,
+                                               prop["type"], r.u)
         links.append({"uid": t[1].text, "pi": a, "pj": b, "stiffness": k6,
-                      "link_type": prop["type"], "params": {}})
-        if prop["type"] != "elastic":
+                      "link_type": ltyp_, "params": lpar_})
+        if prop["type"] != "elastic" and not lpar_:
             w.append(f"link {t[1].text!r}: {prop['type']} parameters not "
                      "in e2k — defaults needed")
     d["links"] = links
@@ -864,6 +870,8 @@ def read_e2k(text: str, units=("KN", "M"),
         if len(t) < 3:
             continue
         kv = _kv(t, 3)
+        if _e2knl.is_temperature(kv):            # Wave C: read_thermal
+            continue
         p = pat(kv["LC"].text) if "LC" in kv else None
         xyz_ = xyz(t[1].text, t[2].text)
         if p is None or xyz_ is None:
@@ -880,6 +888,8 @@ def read_e2k(text: str, units=("KN", "M"),
         if len(t) < 3:
             continue
         kv = _kv(t, 3)
+        if _e2knl.is_temperature(kv):            # Wave C: read_thermal
+            continue
         uid = member_story.get((t[1].text, t[2].text))
         p = pat(kv["LC"].text) if "LC" in kv else None
         if p is None or uid is None:
@@ -937,6 +947,8 @@ def read_e2k(text: str, units=("KN", "M"),
         if uid is None:
             continue
         kv = _kv(t, 3)
+        if _e2knl.is_temperature(kv):            # Wave C: read_thermal
+            continue
         typ = kv["TYPE"].text.upper() if "TYPE" in kv else "UNIFF"
         if typ == "UNIFLOADSET":
             setname = t[5].text if len(t) > 5 else ""
@@ -953,6 +965,7 @@ def read_e2k(text: str, units=("KN", "M"),
         if dirn != "gravity":
             ad["direction"] = dirn
         p["area_loads"].append(ad)
+    _e2knl.read_thermal(r, pats, member_story, area_story, xyz, w)  # W.C
     d["patterns"] = pats
 
     # ---------------------------------------------------------- options
@@ -970,6 +983,11 @@ def read_e2k(text: str, units=("KN", "M"),
                   "max_iterations": int(_num(kv.get("MAXITER")) or 2),
                   "tolerance": _num(kv.get("TOL")) or 0.001,
                   "include_in": "all_linear"}
+    for t in r.rows("PDELTA"):        # Wave C: ETABS 'PDELTA LOAD x FACTOR f'
+        kv = _kv(t, 1)
+        if po is not None and "LOAD" in kv:
+            po["load_factors"][kv["LOAD"].text] = \
+                _num(kv.get("FACTOR")) or 1.0
     for t in r.rows("PDELTALOAD"):
         if po is not None and len(t) >= 2:
             po["load_factors"][t[1].text] = _num(_kv(t, 2).get("SF")) or 1.0
@@ -1034,6 +1052,7 @@ def read_e2k(text: str, units=("KN", "M"),
         d["spectrum_functions"] = spec_fn
     if hist_fn:
         d["th_functions"] = hist_fn
+    _e2knl.read_freq_functions(r, d)             # Wave C: freq. functions
 
     # ---------------------------------------------------------- load cases
     cases_raw: Dict[str, dict] = {}
@@ -1058,7 +1077,10 @@ def read_e2k(text: str, units=("KN", "M"),
     cases, rs_cases, th_cases, bk = {}, {}, {}, {}
     g_file = G_SI / r.u.factor("accel")
     num_modes = 0
+    taken_ = _e2knl.read_cases(r, d, xyz, w)    # Wave C: NL / freq cases
     for name, c in cases_raw.items():
+        if name in taken_:
+            continue
         typ, kv = c["type"], c["kv"]
         if typ.startswith("MODAL"):
             num_modes = int(_num(kv.get("MAXMODES")) or 12)
@@ -1163,8 +1185,10 @@ def read_e2k(text: str, units=("KN", "M"),
         if r.patches and apply_extensions:
             mdl = BuildingModel.from_dict(apply_patches(d, r.patches))
             return mdl, w
-        raise ValueError(f"e2k import produced an invalid model: {exc}") \
-            from exc
+        mdl = _e2knl.salvage(d, w)       # Wave C: drop invalid NL items
+        if mdl is None:
+            raise ValueError(f"e2k import produced an invalid model: "
+                             f"{exc}") from exc
     if r.patches and apply_extensions:
         mdl = BuildingModel.from_dict(apply_patches(mdl.to_dict(),
                                                     r.patches))

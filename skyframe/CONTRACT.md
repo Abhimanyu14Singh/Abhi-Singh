@@ -14035,3 +14035,113 @@ unchanged.
   * live analysis succeeds; existing menus still work;
   * every panel has ≤ 14 entries;
   * zero console errors.
+
+
+## E2K native nonlinear records (Wave C)
+
+`export_e2k` now writes pushover / nonlinear static / staged / steady-state
+/ PSD cases, hinge properties + assignments + overwrites, nonlinear link
+properties and temperature loads as native ETABS records, and `read_e2k`
+reads them back (module `skyframe/io/e2k_nonlinear.py`, hooks in
+`e2k_write.py` / `e2k_read.py`). Before, they travelled only as `$SF`
+comments. Whatever a record cannot carry still falls back to `$SF` (the
+exporter diffs the native re-import), so `report["exact"]` is unchanged.
+Models without these features export byte-identically.
+
+Record dialect (file units; `"..."` = quoted name):
+
+* **Nonlinear static** (`model.nonlinear_static_cases`):
+  `LOADCASE "N" TYPE "Nonlinear Static" INITCOND "<start_from>"|"NONE"
+  MODALCASE "MODAL"`, one `LOADPAT "p" SF s` row per load, `NLGEOMTYPE
+  "None"|"PDelta"|"LargeDispl"`, `LOADCONTROL "Full"|"Displacement"
+  DISPLTYPE "Monitored" [MONITOREDDISPL "Joint"|"Story" STORY "s"]
+  [DISPLMAG d] DOF "U1".."R3" [JOINT "pt" "level"]`, `RESULTSSAVED
+  "Multiple" MINSAVED n MAXSAVED n` (n = steps), `[TOWER "t"]`, and the
+  case hinge plan `HINGEMODE "Column Base"|"All Ends"|"ASCE41" HARDENING h
+  [DEFAULTMY m]`, `HINGEMY "uid" MY m`, `HINGEPARAM "k" VALUE v`.
+* **Pushover** (`model.pushover_cases`): the same rows plus
+  `LOADDIST "Roof Point"|"Pattern"|"Mode"|"Uniform Acceleration"|
+  "Triangular" DIR "X"|"Y" TARGETDRIFT r [K k] [LOADMAG f] [TOWER "t"]`;
+  the distribution load as `LOADPAT "p" SF 1` / `MODE n SF 1` (0 =
+  dominant) / `ACCEL "U1"|"U2" SF 1`; held gravity as an auxiliary
+  full-load case `"<name>~GRAV"` named in INITCOND (else INITCOND =
+  start_from).
+* **Reading ETABS files:** a Nonlinear Static case with LOADDIST / MODE /
+  ACCEL rows becomes a pushover case (gravity = the pattern factors of its
+  INITCOND nonlinear case), one with LOADCONTROL a nonlinear static case
+  (start_from = INITCOND when that is a nonlinear static case; a chain is
+  given its most nonlinear NLGEOMTYPE, reported), anything else a static
+  LoadCase as before. steps = MINSAVED (default 10 / 100).
+* **Staged** (`model.staged_cases`): `TYPE "Nonlinear Staged
+  Construction"`; per_story: `AUTOSTAGE "Per Story"` + `LOADPAT "pattern"
+  SF 1`; user stages: `STAGE "s" [DURATION d]` then `STAGE "s" OPERATION
+  "Add Structure"|"Remove Structure"|"Load Objects" OBJTYPE "Group"
+  OBJNAME "g" [AGE a] [LOADTYPE "Load Pattern" LOADNAME "p"] [SF s]`;
+  include_live as `FINALLOADPAT "p" SF f`.
+* **Frequency** (`frequency_functions`, `steady_state_cases`,
+  `psd_cases`): `FUNCTION "f" FUNCTYPE "STEADYSTATE"|"PSD"` + `FUNCTION "f"
+  FREQ hz VALUE v`; `TYPE "Steady State"|"Power Spectral Density"`, loads
+  `LOADPAT "p"|ACCEL "U1".."U3" SF s FUNC "f" PHASE deg` (ACCEL SF in
+  file length/s²), `FREQRANGE f0 FREQEND f1 NUMFREQ n MODALFREQ "Yes"`,
+  `ADDFREQ f`, `SOLUTIONMETHOD "Modal"|"Direct" NUMMODES n`, `DAMPTYPE
+  "Modal"|"Hysteretic" CONSTDAMP z`, `OUTPUTJOINT "pt" "level"`.
+* **Hinges** (`$ FRAME HINGE PROPERTIES`): `HINGE "h" BEHAVIOR
+  "Deformation Controlled" DOF "M3"|"M2"|"P"|"V2"|"V3"|"T"|"PMM"|"M2M3"
+  TYPE "Moment-Rotation"|"Force-Displacement" HYSTYPE "Kinematic"|..
+  BEYONDE "Drops To Zero"|"Is Extrapolated"`; backbone points after A as
+  `HINGE "h" "B" d f` .. `"-B" -d -f` (f unitless × MOMENTSFP/FORCESFP;
+  d absolute unless ROTATIONSFP/DISPSFP is given, `"Auto"` = yield
+  deformation); `IO x LS x CP x -IO ..`; `KELASTIC k`; `PINCHX ..`.
+  `DOF "FiberPM2M3" FROMSECTION "Yes"` for PMM_fiber; auto (code-table)
+  properties `AUTOHINGETYPE "ASCE41-17" TABLEITEM "Concrete Beams" DOF
+  "M3"` + `AUTOPARAM "k" VALUE v`, `GRAVLOADPAT "p" SF f`, `AXIALP P`.
+  Assignments `HINGEASSIGN "frame" "story" HINGEPROP "h" [AUTOHINGETYPE ..
+  TABLEITEM .. DOF ..] RDISTANCE r`; legacy `auto_m3` = `AUTOHINGETYPE
+  "ASCE41-17" DOF "M3" RDISTANCE 0|1` (no TABLEITEM / HINGEPROP);
+  `fiber_pmm` = `DOF "FiberPM2M3" RDISTANCE 0|1`; ETABS auto assignments
+  without HINGEPROP create property `"Auto <code> <item> <dof>"`.
+  Overwrites `HINGEOVERWRITE "frame" "story" [AUTOSUBDIVIDE "Yes"]
+  [AUTOSUBDIVIDERELLENGTH r]`.
+* **Links**: device links get `LINKPROP "LP_uid" TYPE "<ETABS type>"
+  [HYSTYPE ".."]` (damper "DAMPER - EXPONENTIAL", damper_bilinear "DAMPER -
+  BILINEAR", gap / hook, isolator "RUBBER ISOLATOR" "Bilinear",
+  rubber_isolator_bouc_wen "RUBBER ISOLATOR" "Bouc-Wen", fp_isolator
+  "FRICTION ISOLATOR", tc_fp_isolator "T/C FRICTION ISOLATOR", triple_fp
+  "TRIPLE PENDULUM ISOLATOR", multilinear "MULTILINEAR ELASTIC",
+  multilinear_* "MULTILINEAR PLASTIC" + Kinematic/Takeda/Pivot,
+  friction_spring "DAMPER - FRICTION SPRING", plastic_wen / brb "PLASTIC
+  (WEN)" (+ "BRB")) and per-DOF parameter rows `LINKPROP "LP" DOF "U1"
+  NONLIN "Yes" K k C c EXP a ...` (keyword table `_LINK_KEYS`; damper C
+  in force·(s/length)^alpha), multilinear points `DOF "U2" DISPL d FORCE f`
+  (negative side signed).
+* **Temperature**: `LINELOAD "frame" "story" TYPE "TEMPERATURE" LC "p" T
+  dT` + `TYPE "TEMPERATUREGRADIENT" DIR "2"|"3" LC "p" TGRAD g` (°C per
+  file length), `AREALOAD .. TYPE "TEMPERATURE" | "TEMPERATUREGRADIENT"
+  DIR "3"`, `POINTLOAD "pt" "level" LC "p" TYPE "TEMPERATURE" T dT`.
+* **Robustness**: an ETABS item SkyFrame rejects (bad hinge property,
+  unsupported table, invalid case) is dropped with a warning (`salvage`);
+  the reader never raises on these records. `PDELTA LOAD "p" FACTOR f`
+  rows are read as P-Delta load factors.
+
+### DWG
+
+No DWG converter is available on the build platform (no `libredwg-tools`
+in Ubuntu 24.04, no pip converter). `skyframe.io.dwg.check_not_dwg` (called
+by `import_dxf_layers`) refuses content starting with a DWG signature
+`AC10xx` with `DWG_HELP` (save as DXF from the CAD program);
+`POST /api/exchange/import/dxf` answers 400 with that message. The DXF
+import dialog accepts `.dwg` to show it (mock: `js/mock_e2k_nonlinear.js`).
+
+### Tests
+
+`tests/test_e2k_nonlinear.py` (16): native-only re-import equals the
+model exactly in kN-m and within 1e-12 in kip-in / N-mm / kgf-m / lb-ft;
+analysis results of a model with pushover, NL static chain, user and
+per-story staged, steady-state, PSD, user/auto/legacy hinges, 16 device
+links and frame / shell / joint temperatures are identical (0.0 rel)
+after the native round trip; dialect records; legacy exports unchanged;
+hand-written ETABS file: restrained beam N = E A α ΔT = 480 kN and
+M = E I α g = 24 kN·m, damper C_SI = C·F/L^α, hinge scale 66.77 kN·m,
+displacement pushover ends at DISPLMAG = 30 mm; warnings not raises;
+API round trip; DWG detection + HTTP 400; Tekla/Revit file routes.
+Playwright mock 17/17, live 20/20.

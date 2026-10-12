@@ -219,6 +219,8 @@ def import_dxf_layers(text: str, sections_from=None, unit_scale: float = 1.0,
     from skyframe.core.model import (BuildingModel, FrameSection, Material,
                                      ShellSection)
     from skyframe.io.e2k_read import _containing, _opening
+    from skyframe.io.dwg import check_not_dwg   # Wave C: DWG -> help text
+    check_not_dwg(text)
     warnings: List[str] = []
     s = 1.0 / float(unit_scale)
     smap: Dict[str, str] = {}
