@@ -23,6 +23,8 @@ from typing import Dict, List, Optional, Tuple
 from skyframe.io.exchange_common import (
     G_SI, Units, diff_patches, fmt, model_dict, q, summarize_patches)
 
+from skyframe.io import e2k_ext as _e2kx  # noqa: E402  (Wave B records)
+
 __all__ = ["export_e2k", "INCLUDE_KEYS", "STEEL_DB_FILES", "SHAPE_NAMES"]
 
 E2K_VERSION = "20.0.0"
@@ -726,14 +728,9 @@ class _Writer:
             parts = [f"SECTION {q(mem.section)}"]
             if mem.angle:
                 parts.append(f"ANGLE {fmt(mem.angle)}")
-            rel = []
-            toks = mem.release_tokens()
-            if "Mi" in toks:
-                rel += ["M2I", "M3I"]
-            if "Mj" in toks:
-                rel += ["M2J", "M3J"]
-            if rel:
-                parts.append(f"RELEASE {q(' '.join(rel))}")
+            # Wave B: per-DOF RELEASE + PARTIALFIXITY (io/e2k_ext.py; a
+            # legacy Mi/Mj pin gives the legacy "M2I M3I" text)
+            parts += _e2kx.release_parts(mem, self.n)
             if mem.rigid_i or mem.rigid_j:
                 parts.append(f"LENOFFI {self.n(mem.rigid_i, 'length')}  "
                              f"LENOFFJ {self.n(mem.rigid_j, 'length')}")
@@ -867,6 +864,9 @@ class _Writer:
                                  f"{self.n(getattr(nm, key), 'rot_mass')}")
             if parts:
                 _pa(nm.point, "  ".join(parts), "nodal mass")
+
+        for pt_, txt_ in _e2kx.joint_axes_parts(m):  # Wave B joint axes
+            _pa(pt_, txt_, "joint local axes")
 
         self.sec("POINT COORDINATES")
         for key in self.point_order:
@@ -1135,10 +1135,12 @@ class _Writer:
             fn = rs.function or self.fn_name.get(("rs", rs.name), "")
             self.rec(f"LOADCASE {q(rs.name)}  TYPE  \"Response Spectrum\"  "
                      f"MODALCASE  {q(MODAL_CASE)}")
-            acc = {"X": "U1", "Y": "U2", "Z": "U3"}.get(rs.direction,
-                                                        "U2")  # RS ext U3
-            self.rec(f"LOADCASE {q(rs.name)}  ACCEL  {q(acc)}  FUNC  {q(fn)}"
-                     f"  SF  {fmt(rs.scale * g_file)}")
+            # Wave B: one ACCEL row per direction (+ ANG), ECCRATIO,
+            # DIRCOMBO (io/e2k_ext.py; legacy cases: the legacy row)
+            for row_ in _e2kx.rs_acc_rows(rs, q, fmt, g_file, fn):
+                self.rec(row_)
+            for row_ in _e2kx.rs_extra_records(rs, q, fmt):
+                self.rec(row_)
             self.rec(f"LOADCASE {q(rs.name)}  MODALCOMBO  "
                      f"{q(RS_METHODS.get(rs.combo_method, 'CQC'))}")
             self.rec(f"LOADCASE {q(rs.name)}  MODALDAMPTYPE  \"Constant\"  "

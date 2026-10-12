@@ -2357,6 +2357,10 @@ def create_app() -> Flask:
     from skyframe.api.modalx_api import register as _mxa_register
     _mxa_register(app, _state)
 
+    # Wave B: irregularity checks + joint-local reactions (waveb_api)
+    from skyframe.api.waveb_api import register as _wb_register
+    _wb_register(app, _state, _tables_lookup)
+
     return app
 
 

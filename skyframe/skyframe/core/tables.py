@@ -1315,6 +1315,10 @@ def compute_table(key: str, results: dict, model, context: Optional[dict] = None
     c = _Ctx(results, model, context, cases)
     rows = fn(c)
     cols, rows = _tw_decorate(model, cols, rows)    # C9 tower column
+    # Wave B: Joint Reactions F1..M3 in joint local axes (only when the
+    # model has joint local axes; core/joint_local_results.py)
+    from .joint_local_results import decorate as _jl_decorate
+    cols, rows = _jl_decorate(key, model, cols, rows)
     return {"key": key, "title": title, "group": group,
             "columns": [dict(col) for col in cols], "rows": rows,
             "warnings": list(dict.fromkeys(c.warnings))}
@@ -1327,3 +1331,7 @@ _shell_tables.register(_TABLES, TABLES, QUANTITIES)
 # registered extensions (keep at the end: they import this module)
 from . import tables_results as _tables_results  # noqa: E402  element/wall/NL
 _tables_results.register()
+
+# Wave B: Irregularity Checks table (core/irregularity_ext.py)
+from . import irregularity_ext as _irregularity_ext  # noqa: E402
+_irregularity_ext.register()

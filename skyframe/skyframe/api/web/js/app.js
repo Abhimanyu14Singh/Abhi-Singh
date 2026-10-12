@@ -115,6 +115,8 @@ import { initModalX as mxInitModalX } from "./modalx.js";   // TH function tools
 
 import { initW8 as w8InitW8 } from "./w8_init.js";   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_*.js)
 import { mockValidateW8 as w8MockValidate } from "./mock_w8.js";   // W8 ?mock=1 validation
+import { initWaveB as wbInitWaveB } from "./waveb.js";   // Wave B: Irregularity Checks · joint-local reactions (js/waveb.js)
+import { wbMockGroupedApplies as wbMockGrouped, wbMockAsce7Grouped as wbMockAsce7 } from "./mock_waveb.js";   // Wave B ?mock=1 grouped ASCE 7 combos
 
 /* ------------------------------------------------ state */
 const store = {
@@ -690,7 +692,7 @@ async function generateAsce7Combos(params) {
       return store.model;
     } catch (e) { console.warn("ASCE7 combos endpoint unavailable, computing locally:", e.message); }
   }
-  const { added } = mockAsce7Combos(store.model, params.standard, params.SDS);
+  const { added } = (wbMockGrouped(store.model) ? wbMockAsce7 : mockAsce7Combos)(store.model, params.standard, params.SDS);   // Wave B: grouped pattern types
   ME.normalizeModel(store.model);
   markDirty();
   toast("ASCE 7 combinations generated",
@@ -8592,6 +8594,7 @@ async function boot() {
   try { a8InitResults(window.__sky); } catch (err) { console.error("A8 results init failed", err); }   // spandrels · results export · report plus (js/a8results.js)
 
   try { w8InitW8(window.__sky); } catch (err) { console.error("W8 init failed", err); }   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_init.js)
+  try { wbInitWaveB(window.__sky); } catch (err) { console.error("Wave B init failed", err); }   // Irregularity Checks · joint-local reactions (js/waveb.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)

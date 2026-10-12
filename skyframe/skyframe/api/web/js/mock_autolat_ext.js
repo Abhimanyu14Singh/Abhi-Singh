@@ -4,6 +4,9 @@
    ports the same formulas / constants / summary shape; js/mock_loads116.js
    registers them with a few hook lines.  Everything SI. */
 
+import { WBX_MOCK_COMPUTE as wbxMockCompute, WBX_MOCK_PARAMS as wbxMockParams, WBX_MOCK_DEFAULT_NAME as wbxMockDefaultName,
+  WBX_NTC_KEYS as wbxNtcKeys, wbxWrapNtc } from "./mock_waveb_alx.js";   // Wave B hook
+
 const G = 9.80665;
 const FT = 0.3048, MPH = 0.44704;
 const isNum = v => typeof v === "number" && isFinite(v);
@@ -399,12 +402,18 @@ export const ALX_MOCK_DEFAULT_NAME = {
   nscp2015: "NSCP2015", ntc_cdmx: "NTCSISMO", asce7_16_wind: "WIND16", en1991_wind: "WINDEN",
   is875_wind: "WINDIS", as1170_2_wind: "WINDAS", gb50009_wind: "WINDGB" };
 export const ALX_MOCK_WIND = new Set(["asce7_22_wind", "asce7_16_wind", "en1991_wind", "is875_wind", "as1170_2_wind", "gb50009_wind"]);
+// Wave B hook: TS 498 / KDS / CFE wind + NTC long-period keys (js/mock_waveb_alx.js)
+Object.assign(ALX_MOCK_PARAMS, wbxMockParams);
+ALX_MOCK_PARAMS.ntc_cdmx.push(...wbxNtcKeys);
+Object.assign(ALX_MOCK_DEFAULT_NAME, wbxMockDefaultName);
+for (const k of Object.keys(wbxMockCompute)) ALX_MOCK_WIND.add(k);
 
 /** {code: fn(model, params)}; `legacy22` = the v1.16 mock ASCE 7-22 wind,
     used when none of the v1.19 keys asks for something new. */
 export function alxMockCompute(legacy22) {
   return {
-    nzs1170_5: nzs, as1170_4: as4, gb50011: gb11, tsc2018: tsc, kds41: kds, nscp2015: nscp, ntc_cdmx: ntc,
+    nzs1170_5: nzs, as1170_4: as4, gb50011: gb11, tsc2018: tsc, kds41: kds, nscp2015: nscp,
+    ntc_cdmx: wbxWrapNtc(ntc),                        // Wave B hook: NTC T > Tb two-term form
     asce7_16_wind: (m, p) => asceWind(m, "7-16", p),
     asce7_22_wind: (m, p) => {
       const lc = p.load_case ?? 1;
@@ -418,6 +427,7 @@ export function alxMockCompute(legacy22) {
       return asceWind(m, "7-22", { cp_total: 1.3, G: 1.0, ...p, ...(split ? { cp_total: null } : {}), ...(p.gust ? { G: null } : {}) });
     },
     en1991_wind: en, is875_wind: is875, as1170_2_wind: as2, gb50009_wind: gb9,
+    ...wbxMockCompute,                                // Wave B hook: TS 498 / KDS / CFE wind
   };
 }
 /** autolateral.generate case_torsion mirror → [ecc, ecc_y|null]. */

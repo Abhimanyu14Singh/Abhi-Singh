@@ -12523,3 +12523,207 @@ unchanged: every new key is modelling metadata or an existing engine field.
 * Playwright, mock and live 90/90: every dialog opens from its menu, OK
   with defaults is byte-identical, the POST /api/model double echo is
   identical, kip-in inputs convert, live runs succeed, zero console errors.
+
+## Irregularity checks, grouped ASCE 7 combinations, E2K releases / joint axes, joint-local reactions, RS shell forces in combos, TS 498 / KDS / CFE wind, NTC long-period distribution
+
+Wave B loose ends.  Modules: `core/irregularity_ext.py`,
+`core/combos_asce7.py`, `io/e2k_ext.py`, `core/joint_local_results.py`,
+`engine/combos_ext.py` (shell forces), `core/wind_codes_ext.py`,
+`core/seismic_codes_ext.py`, `api/waveb_api.py`; UI `js/waveb.js` (+
+`js/mock_waveb.js`).  No model field is added.  Legacy models: results
+JSON, tables, ASCE 7 combos and E2K text are byte-identical, with one
+deliberate exception (item 5): an EXTENDED combo (any combo that is not a
+static-only add / envelope) on a model with shells now also carries
+`shell_forces` (and `min.shell_forces`).
+
+### 1. Irregularity checks
+
+`irregularity_ext.compute(model, results=None, options=None)` returns:
+
+```
+{"stories": [{story, elevation, height, mass (t), Dx, Dy, cx, cy,
+              n_columns, n_braces, n_walls, Vn_x, Vn_y (kN | null),
+              strength_source: "estimated"|"user",
+              floor: null | {Lx, Ly, cx, cy, area_net, area_outline,
+                             area_hull, notch_x, notch_y}}],
+ "discontinuities": [{story, element, type: "column"|"wall",
+                      kind: "in_plane"|"out_of_plane"|"unsupported",
+                      offset (m | null), ratio (offset / wall length),
+                      point}],
+ "checks": [{code: "ASCE 7"|"EN 1998-1"|"IS 1893", item, check, story,
+             case, direction, value (number | null), limit (text),
+             status: "ok"|"irregular"|"extreme"|"n/a", note}],
+ "summary": {code: {item: worst status}},
+ "options": {ec8_tol, raster}, "warnings": []}
+```
+
+Options:
+* `ec8_tol` (0.25): the EC8 4.2.3.3(3) judgement band.
+* `raster` (200 cells): the floor-outline raster.
+* `story_strength` `{story: {"x": kN, "y": kN}}`: overrides the strength
+  estimate.
+
+Items and limits:
+
+| Code | Item | Rule |
+|---|---|---|
+| ASCE 7 | Table 12.3-2 Type 1 | Engine soft-story flag (lateral cases only). |
+| ASCE 7 | Type 2 weight | m / m_adj > 1.5. A roof lighter than the floor below is ignored. |
+| ASCE 7 | Type 3 vertical geometric | SFRS plan extent / adjacent > 1.3, in X and Y. |
+| ASCE 7 | Type 4 in-plane discontinuity | Any in-plane offset. |
+| ASCE 7 | Type 5a/5b weak story | Vn / Vn_above < 0.80 (< 0.65 extreme). |
+| ASCE 7 | Table 12.3-1 Type 1 | Engine torsional ratio ≥ 1.2 (≥ 1.4 extreme). |
+| ASCE 7 | Table 12.3-1 Types 2–5 | Type 2: both notch projections > 0.15. Type 3: openings > 50 %. Type 4: out-of-plane offset. Type 5: element not parallel to X/Y (> 1°). |
+| EN 1998-1 | 4.2.3.2(4), (5), (6) | (4): recess (hull − outline)/outline ≤ 0.05. (5): Lmax/Lmin ≤ 4. (6): torsional radius not evaluated (`n/a`). |
+| EN 1998-1 | 4.2.3.3(2), (3), (5) | (2): no discontinuity. (3): mass and stiffness upper/lower in [1 − tol, 1 + tol]. (5): setbacks per Fig. 4.1. |
+| IS 1893 | Table 5 (i) | Dmax/Dmin = r/(2 − r) > 1.5 (> 2.0 extreme). (i)(b): torsional period longer than a translational one. |
+| IS 1893 | Table 5 (ii)–(v) | (ii) re-entrant > 0.15. (iii) openings > 50 %. (iv) out-of-plane offsets. (v) non-parallel elements. |
+| IS 1893 | Table 6 (i)–(vii) | (i) k < k_above. (ii) W > 1.5 W_below. (iii) D > 1.25 D_adj. (iv) offset > 0.20 L. (v) Vn < Vn_above. (vi) floating columns. (vii) first 3 modes < 65 %, or Tx and Ty within 10 %. |
+
+The strength estimate ignores reinforcement:
+* concrete column: `0.17√f'c·0.8A`;
+* concrete wall: `0.17√f'c·t·0.8L`, in its plane;
+* steel column: `0.6Fy·min(As2, As3)` (A/2 when unset);
+* brace: horizontal component of `Fy A`.
+
+A story whose elements lack `fc` / `fy` gets `n/a`.  Response-based rows
+use only static cases whose patterns are all `quake` / `wind`.  A ratio
+with a negligible denominator is `null` with a reason
+(core/ratio_significance.py).
+
+Table `irregularity_checks` ("Irregularity Checks", Analysis Results >
+Structure Output > Other Output Items, after Story Stiffness) holds the
+`checks` rows.
+
+`POST /api/irregularity` `{options?, results?}` returns the report plus
+`has_results`.  Without results in the body it uses the last analysis.
+With no analysis at all, only the model-based rows are evaluated; the
+model is not analysed.  Bad options give 400.
+
+### 2. Grouped ASCE 7 combinations
+
+`codes.asce7_combinations` switches to `combos_asce7.asce7_grouped` when a
+case applies a `superdead`, `reducible_live`, `roof_live` or `snow`
+pattern.  Groups follow `combos_codes.classify`:
+* D = dead + superdead;
+* L = live + reducible live;
+* Lr = roof live;
+* S = snow.
+
+All cases of a group take the same factor.  `(Lr or S)` expands to one
+combination per group present.
+
+LRFD:
+* 1.4D
+* 1.2D + 1.6L + 0.5(Lr|S)
+* 1.2D + 1.6(Lr|S) + (1.0L | ±0.5W)
+* 1.2D + 1.0L + 0.5(Lr|S) ± 1.0W
+* 0.9D ± 1.0W
+* (1.2 + 0.2SDS)D + 1.0L + 0.2S ± 1.0E
+* (0.9 − 0.2SDS)D ± 1.0E
+
+ASD:
+* D
+* D + L
+* D + (Lr|S)
+* D + 0.75L + 0.75(Lr|S)
+* D ± 0.6W
+* D + 0.75L + 0.75(Lr|S) ± 0.45W
+* 0.6D ± 0.6W
+* (1 + 0.14SDS)D ± 0.7E
+* (1 + 0.105SDS)D + 0.75L + 0.75S ± 0.525E
+* (0.6 − 0.14SDS)D ± 0.7E
+
+Models with only the legacy kinds never reach the grouped generator.  On
+such a model it would give exactly the legacy names and factors (tested).
+
+### 3 / 8. E2K records
+
+* `LOADPATTERN … TYPE "Super Dead" | "Reducible Live" | "Roof Live" |
+  "Snow" | …` reads back to the same kind.  Every
+  `combos_codes.PATTERN_KIND_LABELS` label is accepted, plus the SUPERDEAD
+  and REDUCE LIVE aliases.  The legacy subset reader `io/e2k.import_e2k`
+  is unchanged.
+* `LINEASSIGN … RELEASE "PI V2I V3I TI M2I M3I PJ …"` lists every released
+  DOF, partial fixity included.  `PARTIALFIXITY "M3I 1500 V2J 200"` gives
+  the springs in file units (force/length, force·length/rad).
+  * A legacy pin writes the legacy `"M2I M3I"`.
+  * Reading canonicalises: a pure M2+M3 pin becomes a `releases` token,
+    anything else goes to `end_releases`.
+* `POINTASSIGN … ANGLEA a  ANGLEB b  ANGLEC c` = `joint_local_axes`, in
+  degrees.
+* RS cases:
+  * one `ACCEL` row per direction, with `SF` = scale × load scale × g and
+    `FUNC` per load;
+  * `ANG` (the angle) on each row;
+  * `ECCRATIO`;
+  * `DIRCOMBO "SRSS"|"ABS"|"CQC3"`, plus `DIRSF`.
+
+  Importing several rows gives `loads`, with case scale 1.
+  `ecc_overrides` and `ecc_ax` stay in `$SF` lines.
+
+### 4. Joint-local reactions
+
+With `joint_local_axes` set, the `joint_reactions` table gains
+`local_axes` ("yes" | "") and `F1 F2 F3 M1 M2 M3` = Rᵀ·(FX…MZ).  Joints
+without axes use the identity.  Without joint axes the table is
+unchanged.
+
+`POST /api/results/joint-local-reactions` `{case?, results?}` returns
+`{"cases": {case: {tag: {point, angles, global: [6], local: [6]}}}}` for
+static cases and single-valued combos.
+
+### 5. Shell forces in extended combos
+
+`engine/combos_ext.py` flattens `shell_forces` like every other quantity:
+* static members are signed;
+* RS members are `[−|f|r, +|f|r]`;
+* max/min members use their pair.
+
+Add, envelope, abs, srss and range follow the existing interval rules.
+TH members record no shell forces, so a combo with one omits them.  The
+combo carries `shell_forces` (max) and `min.shell_forces`.  Shell contours
+(`core/shell_results.py`) of these combos equal that box.
+
+### 6. Wind generators (`autolateral.compute(model, code, …)`)
+
+| code | Formula | Parameters |
+|---|---|---|
+| `ts498_wind` | TS 498 Table 4: q(z) = 0.5 / 0.8 / 1.1 / 1.3 kPa (≤ 8, ≤ 20, ≤ 100, > 100 m), × `q_factor`. F = (cp_w + \|cp_l\|) q(z) A. | `cp_windward` 0.8, `cp_leeward` −0.4, `q_factor` 1 |
+| `kds41_wind` | V_z = V0 K_D K_zr K_zt I_w, with K_zr = Kb (z/Zb)^α. Zb/Kb/α/Zg: A 20/0.58/0.33/550, B 15/0.81/0.22/450, C 10/1.0/0.15/350, D 5/1.13/0.10/250. q = ½ρV². F = G_D (Cpe1 q_z + \|Cpe2\| q_H) A. | `V0`, `roughness` C, `KD` `Kzt` `Iw` 1, `GD` 2.0, `cpe_windward` 0.8, `cpe_leeward` −0.5, `rho_air` 1.225 |
+| `cfe_wind` | V_D = F_T F_rz V_R, with F_rz = c (z/10)^α and z clamped to [10 m, δ]. Categories 1–4: α 0.099/0.128/0.156/0.170, δ 245/315/390/455, c 1.137/1.0/0.881/0.815; `form="ntc"` sets c = 1. q = 0.613 G V_D². Leeward Cpe from d/b. | `VR`, `category` 2, `form` "cfe", `FT` 1, `G` 1, `cpe_windward` 0.8, `cpe_leeward` (auto) |
+
+Default pattern names: WINDTS, WINDKDS, WINDCFE.
+
+### 7. NTC-Sismo long period
+
+`ntc_cdmx` with T > Tb and `long_period="reduced"` (the default):
+
+```
+F_i = w_i a/(Q′R) (kh1 h_i + kh2 h_i²)
+kh1 = [1 − 0.5r(1 − q)] Σw/Σwh
+kh2 = 0.75r(1 − q) Σw/Σwh²
+q   = (Tb/T)^r
+```
+
+So `V = a/(Q′R) W [1 + 0.25r(1 − q)]`.  The summary adds `q, r, kh1, kh2,
+long_period`.
+* `r` defaults to 2, the (Tb/T)² decay of the 2017 spectrum.  NTC-2004
+  zones use 1/2, 2/3 and 1.
+* `long_period="linear"` gives the previous w·h distribution of
+  V = a/(Q′R) W.
+* T ≤ Tb is unchanged.
+
+### Validation
+
+`tests/test_waveb_loose_ends.py` pins hand values for every item:
+
+| Item | Hand values |
+|---|---|
+| Irregularity | Mass 2.0 / 0.5 with the roof rule. D ratio 2.0. Setbacks 0.5 / 0.4 / 0.1. Column offset 5 m, wall offset 2/6. Vn = 4 × 0.17√30 × 0.8 × 0.25 × 1000. L floor: outline 64, hull 82, recess 0.28125. Openings 0.64 / 0.36. Dmax/Dmin = 1.25/0.75. |
+| ASCE 7 combos | Grouped equals legacy for LRFD/ASD × SDS. |
+| E2K | Native and extension round trips in kN-m, kip-ft and N-mm, with equal analysis results. |
+| Joint-local reactions | Skewed roller: F1 = 0, F3 = (P/2)/cos30. |
+| RS combo shell forces | Box 1.2s ± \|r\|, envelope, SRSS. |
+| Wind | TS 498: 12.6 / 10.8 / 8.64 kN. KDS: q = 551.25 Pa. CFE: q = 980.8 Pa. |
+| NTC | kh1 = 0.0654971, kh2 = 0.0160920. |

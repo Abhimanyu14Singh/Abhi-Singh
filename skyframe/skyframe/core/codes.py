@@ -268,6 +268,11 @@ def asce7_combinations(model: BuildingModel, standard: str = "LRFD",
             raise ValueError(f"SDS must be a finite value >= 0 (or None), "
                              f"got {SDS!r}")
     sds = 0.0 if SDS is None else float(SDS)
+    # Wave B: grouped pattern types (superdead / reducible + roof live /
+    # snow) -> core/combos_asce7.py; legacy-kind models never get here.
+    from .combos_asce7 import asce7_grouped, grouped_applies
+    if grouped_applies(model):
+        return asce7_grouped(model, std, sds)
     dead, live, quakes, winds = _classify_cases(model)
     combos: Dict[str, Dict[str, float]] = {}
     if dead is None:
