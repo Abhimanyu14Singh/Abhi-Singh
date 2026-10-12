@@ -591,7 +591,7 @@ export function wcMockExtend(T, H) {
     options("active_dof", "Active Degrees of Freedom", G_AOPT, DOF6.map(k => col(k, k, "bool")), dofRead,
       (d, ch) => { const cur = { ...dofRead(d), ...ch }; d.active_dof = DOF6.filter(k => cur[k]); }),
     options("analysis_options", "Analysis Options - Solver and Convergence", G_AOPT, [
-      col("solver", "Solver", "enum", "none", { enum: SOLVERS }), col("eigen_solver", "Eigen Solver", "enum", "none", { enum: ["auto", "legacy"] }),
+      col("solver", "Solver", "enum", "none", { enum: SOLVERS }), col("eigen_solver", "Eigen Solver", "enum", "none", { enum: ["auto", "legacy", "lanczos"] }),
       col("size_warnings", "Model-Size Warnings", "bool"), col("parallel", "Parallel (auto / off / 1..8)", "text"),
       col("conv_mode", "Convergence Mode", "enum", "none", { enum: ["legacy", "robust"] }), col("algorithms", "Algorithms", "text"),
       col("max_halvings", "Max Step Halvings", "int"),
@@ -634,7 +634,7 @@ export function wcMockExtend(T, H) {
     }),
     attrTable("floor_mesh", "Shell Assignments - Floor Auto Mesh Options", [
       col("shell", "Shell", "ref", "none", { ref: "shells", required: true }),
-      col("mode", "Mesh Option", "enum", "none", { enum: ["default", "rectangular", "cookie_cut"], def: "default", get: o => o.mode ?? "default" }),
+      col("mode", "Mesh Option", "enum", "none", { enum: ["default", "rectangular", "cookie_cut", "none"], def: "default", get: o => o.mode ?? "default" }),
       col("max_size", "Max Element Size", n, "length", { optional: true, get: o => o.max_size ?? null }),
       col("at_beams", "At Beams", "bool", "none", { def: true, get: o => !!(o.at_beams ?? true) }),
       col("at_walls", "At Walls", "bool", "none", { def: true, get: o => !!(o.at_walls ?? true) }),
