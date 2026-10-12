@@ -54,6 +54,8 @@ import VXU from "./units.js";
 import { memberAxes as vxMemberAxes, CP_GRID as VX_CP_GRID, regionFrame as vxRegionFrame,
   clipToBox2 as vxClipToBox2, pointInPoly2 as vxPointInPoly2 } from "./polygeom.js";
 import { isNpSec as vxIsNpSec, npLayout as vxNpLayout, npPropsAt as vxNpPropsAt, npRaw as vxNpRaw } from "./npsect.js";
+// D2 Display Options (js/dispopts.js): colour by group / story / property + per-window extras in opts.dp
+import { DP_COLOR_BY as vxDpColorBy, dpColorOf as vxDpColorOf, dpShrinkPts as vxDpShrink, DP_SHRINK as VX_DP_SHRINK } from "./dispopts_core.js";
 
 /* ================================================================
    Options (view state, persisted per session)
@@ -65,7 +67,7 @@ export const VX_SHOW_KEYS = [
   ["joint", "Joints"], ["load", "Loads"], ["axes", "Local axes"], ["label", "Object labels"],
   ["grid", "Grid"], ["secname", "Section names"],
 ];
-export const VX_COLOR_BY = [["type", "Object type"], ["section", "Section"], ["material", "Material"]];
+export const VX_COLOR_BY = vxDpColorBy;   // D2: + group / story / property (js/dispopts_core.js)
 
 export function vxDefaults() {
   return {
@@ -89,6 +91,8 @@ function vxNormalize(o) {
   for (const k of Object.keys(out.show)) out.show[k] = !!out.show[k];
   for (const k of ["extrude", "extrudeShells", "edges", "selOnly"]) out[k] = !!out[k];
   for (const k of ["loadPattern", "storyFrom", "storyTo", "group"]) out[k] = typeof out[k] === "string" ? out[k] : "";
+  // D2: display-options extras (sparse object; absent = every extra at its default)
+  if (!out.dp || typeof out.dp !== "object" || Array.isArray(out.dp) || !Object.keys(out.dp).length) delete out.dp;
   return out;
 }
 function vxLoad() {
@@ -432,6 +436,7 @@ export function initViewExt(sky) {
     opts = vxNormalize({ ...opts, ...patch, show: { ...opts.show, ...((patch && patch.show) || {}) }, cut: { ...opts.cut, ...((patch && patch.cut) || {}) } });
     isDef = vxIsDefault(opts);
     vxSave(opts); ver++; redraw(); syncChips();
+    document.dispatchEvent(new CustomEvent("sky:vx-changed"));   // D2: display options follow every toggle
     return vxClone(opts);
   };
   document.addEventListener("sky:model-changed", () => { ver++; redraw(); });
@@ -513,7 +518,10 @@ export function initViewExt(sky) {
       }
       return profCache.get(k);
     };
-    const colorOf = (kind, secName, mat) => {
+    const colorOf = (kind, secName, mat, uid, story) => {
+      // D2: colour by group / story / property type (js/dispopts_core.js)
+      if (opts.colorBy === "group" || opts.colorBy === "story" || opts.colorBy === "property")
+        return vxDpColorOf(m, opts.colorBy, { type: "member", kind, uid, section: secName, story });
       if (opts.colorBy === "section" && secName) return VX_PALETTE[sectionIndex(m, secName) % VX_PALETTE.length];
       if (opts.colorBy === "material" && mat) return VX_PALETTE[(vxHash(mat) + 3) % VX_PALETTE.length];
       return VX_TYPE_COLORS[kind] || VX_TYPE_COLORS.beam;
@@ -595,7 +603,7 @@ export function initViewExt(sky) {
       const full = prof(mm.section, "full"), box = prof(mm.section, "box");
       const st = vxMemberStations(m, mm, full, tr[0], tr[1], memChunk, zcuts);
       const ref = s => lerp3(mm.pi, mm.pj, s);
-      const col = colorOf(seg.kind, mm.section, sec.material || "");
+      const col = colorOf(seg.kind, mm.section, sec.material || "", seg.uid, mm.story || seg.story);
       const nc0 = tr[0] === 0 && buried(seg.p1, seg.kind), nc1 = tr[1] === 1 && buried(seg.p2, seg.kind);
       const mesh = { uid: seg.uid, seg, size: st.size, col, parts: [] };
       // horizontal prismatic member crossing a slab band → profile pieces
@@ -963,7 +971,7 @@ export function initViewExt(sky) {
     }
     let merged = null;
     if (opts.extrude && opts.extrudeShells && !flags.overlayActive) {
-      const alpha = 1 - opts.shellTransp;
+      const alpha = opts.dp && opts.dp.fill === false ? 0.08 : 1 - opts.shellTransp;   // D2: fill objects off
       // zone-sorted horizontal slab: its coplanar tiles never overlap and the
       // sides / members of its band only border them → one fill per slab,
       // drawn first within its zone
@@ -999,25 +1007,30 @@ export function initViewExt(sky) {
     lastStats.faces = 0;
     const ov = !!(v.overlay.deformed || v.overlay.modal || v.overlay.buckling);
     const extruding = opts.extrude && !ov;
+    const dpx = opts.dp || {};   // D2 display-options extras (js/dispopts.js)
+    const shrinkSeg = vs => (vs && dpx.shrink && !extruding ? (([p1, p2]) => ({ ...vs, p1, p2 }))(vxDpShrink([vs.p1, vs.p2], VX_DP_SHRINK)) : vs);
+    const shrinkShell = vs => (vs && dpx.shrink ? { ...vs, corners: vxDpShrink(vs.corners, VX_DP_SHRINK), openings: [] } : vs);
     return {
       grid: opts.show.grid,
-      hideHulls: !opts.show.slab || g.F.active || (extruding && opts.extrudeShells && g.zones.length > 0),
-      shellAlpha: 1 - opts.shellTransp,
+      bubbles: dpx.bubbles !== false,
+      lineScale: +dpx.lineScale || 1,
+      hideHulls: !opts.show.slab || g.F.active || dpx.fill === false || !!dpx.shrink || (extruding && opts.extrudeShells && g.zones.length > 0),
+      shellAlpha: dpx.fill === false ? 0 : 1 - opts.shellTransp,
       supports: opts.show.support,
       springs: opts.show.spring,
       supportPt: p => opts.show.support && g.ptOk(p),
       springPt: p => opts.show.spring && g.ptOk(p),
       extrudeFrames: extruding,
-      seg: seg => (g.segVis.has(seg) ? g.segVis.get(seg) : seg),
+      seg: seg => shrinkSeg(g.segVis.has(seg) ? g.segVis.get(seg) : seg),
       // extruded shells are drawn as solids → hide the legacy fill (contour
       // mode keeps the legacy behaviour: contour quads replace shell fills)
       shell: sp => {
         const vis = g.shellVis.has(sp) ? g.shellVis.get(sp) : sp;
-        return vis && extruding && opts.extrudeShells ? null : vis;
+        return vis && extruding && opts.extrudeShells ? null : shrinkShell(vis);
       },
       link: lk => (g.linkVis.has(lk) ? g.linkVis.get(lk) : true),
       segColor: opts.colorBy !== "type" ? seg => g.colorOf(seg.kind, seg.section,
-        ((g.model.sections || {})[seg.section] || {}).material) : null,
+        ((g.model.sections || {})[seg.section] || {}).material, seg.uid, seg.story) : null,
       items: (items, P2, flags) => { try { pushSolids(items, C, flags || {}); } catch (e) { lastError = String(e && e.stack || e); throw e; } },
       draw: (ctx, it) => { try { drawItem(ctx, it); } catch (e) { lastError = String(e && e.stack || e); throw e; } },
       post: (ctx) => { try { drawAnnotations(ctx, C, g); } catch (e) { lastError = String(e && e.stack || e); throw e; } },
@@ -1070,7 +1083,7 @@ export function initViewExt(sky) {
       const off = [0, 1, 2].map(k => -0.5 * pr.h * gg[0] * axes.y[k] - 0.5 * pr.b * gg[1] * axes.z[k]);
       const stations = idx.map((i, k) => ({ s: k, sy: 1, sz: 1, off }));
       const ms = vxBuildPrism(pr.pts, animating ? [] : pr.holes, pr.convex, stations, axes, s => pts[idx[s]], !!pr.smooth);
-      const css = g.colorOf(rm.kind || (mm && mm.kind) || "beam", secName, ((v.model.sections || {})[secName] || {}).material);
+      const css = g.colorOf(rm.kind || (mm && mm.kind) || "beam", secName, ((v.model.sections || {})[secName] || {}).material, rm.uid, mm && mm.story);
       const size = Math.max(pr.b, pr.h);
       for (let k = 0; k < idx.length - 1; k += 2) {
         const k1 = Math.min(k + 2, idx.length - 1);
@@ -1098,20 +1111,22 @@ export function initViewExt(sky) {
 
   /* ---------------- annotations (joints, axes, labels, loads, cut) ---------------- */
   function drawAnnotations(ctx, C, g) {
-    const o = opts, show = o.show;
+    const o = opts, show = o.show, dpx = o.dp || {};
     const segsVis = [];
     for (const [seg, vv] of g.segVis) if (vv) segsVis.push([seg, vv]);
     ctx.save();
     if (show.joint) {
       ctx.fillStyle = "rgba(230, 236, 244, 0.9)";
       ctx.beginPath();
+      const jr = dpx.jointSize ? +dpx.jointSize * 0.55 : 2.2;   // D2: joint size
       for (const p of g.joints) {
         const q = projPt(C, p[0], p[1], p[2]);
-        if (q) { ctx.moveTo(q[0] + 2.2, q[1]); ctx.arc(q[0], q[1], 2.2, 0, 2 * Math.PI); }
+        if (q) { ctx.moveTo(q[0] + jr, q[1]); ctx.arc(q[0], q[1], jr, 0, 2 * Math.PI); }
       }
       ctx.fill();
     }
-    if (show.axes) {
+    const shellAxesOn = "shellAxes" in dpx ? !!dpx.shellAxes : show.axes;   // D2: frame / shell axes split
+    if (show.axes || shellAxesOn) {
       const len = Math.min(Math.max((viewer.radius || 10) * 0.035, 0.25), 1.5);
       const cols = ["#e5484d", "#30a46c", "#3e7bfa"];   // local 1 / 2 / 3 = red / green / blue
       ctx.lineWidth = 1.4; ctx.font = "700 9px -apple-system, 'Segoe UI', sans-serif";
@@ -1129,19 +1144,20 @@ export function initViewExt(sky) {
           ctx.fillText(String(i + 1), q[0] + (q[0] - q0[0]) * 0.25, q[1] + (q[1] - q0[1]) * 0.25);
         });
       };
-      for (const [seg, vv] of segsVis) {
+      if (show.axes) for (const [seg, vv] of segsVis) {
         const mm = g.byUid.get(seg.uid) || { pi: seg.p1, pj: seg.p2, angle: 0 };
         const ax = vxMemberAxes(mm, model());
         triad(lerp3(vv.p1, vv.p2, 0.5), [ax.x, ax.y, ax.z]);
       }
-      for (const [sp, vv] of g.shellVis) {
+      if (shellAxesOn) for (const [sp, vv] of g.shellVis) {
         if (!vv) continue;
         const fr = vxRegionFrame(sp.corners);
         const c = [0, 1, 2].map(k => vv.corners.reduce((a, p) => a + p[k], 0) / vv.corners.length);
         triad(c, [fr.e1, fr.e2, fr.e3]);
       }
     }
-    if (show.label || show.secname) {
+    const shellNameOn = "shellName" in dpx ? !!dpx.shellName : show.label;   // D2: frame / shell labels split
+    if (show.label || show.secname || shellNameOn) {
       ctx.font = "600 10px -apple-system, 'Segoe UI', sans-serif";
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
       const many = segsVis.length > 1500;
@@ -1149,10 +1165,11 @@ export function initViewExt(sky) {
         const c = lerp3(vv.p1, vv.p2, 0.5);
         const q = projPt(C, c[0], c[1], c[2]);
         if (!q || (many && q[2] > (viewer.dist || 30) * 1.1)) continue;
+        if (!show.label && !show.secname) break;
         if (show.label) { ctx.fillStyle = "rgba(225, 232, 240, 0.92)"; ctx.fillText(String(seg.uid), q[0], q[1] - 7); }
         if (show.secname) { ctx.fillStyle = "rgba(245, 190, 60, 0.95)"; ctx.fillText(String(seg.section || ""), q[0], q[1] + (show.label ? 6 : 0)); }
       }
-      if (show.label) for (const [sp, vv] of g.shellVis) {
+      if (shellNameOn) for (const [sp, vv] of g.shellVis) {
         if (!vv) continue;
         const c = [0, 1, 2].map(k => vv.corners.reduce((a, p) => a + p[k], 0) / vv.corners.length);
         const q = projPt(C, c[0], c[1], c[2]);
@@ -1160,6 +1177,8 @@ export function initViewExt(sky) {
       }
     }
     if (show.load) drawLoads(ctx, C, g);
+    // D2 hook — releases, insertion points, shell sections, link labels (js/dispopts.js)
+    if (viewer.dpAnnot && o.dp) { try { viewer.dpAnnot(ctx, (x, y, z) => projPt(C, x, y, z), g, o.dp); } catch (e) { lastError = String(e && e.stack || e); } }
     // cut plane outline (amber, dashed) at the active coordinate
     if (o.cut.on && o.cut.coord != null && viewer._bbox) {
       const [lo, hi] = viewer._bbox, c = +o.cut.coord, pad = 0.6;

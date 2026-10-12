@@ -463,6 +463,8 @@ export class PlanEditor {
         "pointer-events": "none", "data-ref": `punchhalo:${hp.uid || ""}`,
       }));
     }
+    // D2 hook — per-window display options: visibility, colour by, fill, shrink (js/dispopts.js)
+    if (this.dpStatic) { try { this.dpStatic(this); } catch (e) { console.error(e); } }
     // Groups hook — Show Group highlight (js/groups.js)
     if (this.grpOverlay) { try { this.grpOverlay(this); } catch (e) { console.error(e); } }
     // B10 hook — user hinge dots / hinge states (js/uhdlg.js)
@@ -562,6 +564,8 @@ export class PlanEditor {
     }
     // Nonprismatic badges + panel-zone markers (js/npsect.js)
     if (this.npOverlay) { try { this.npOverlay(this); } catch (e) { console.error(e); } }
+    // D2 hook — per-window display options: object labels, bubbles, story labels (js/dispopts.js)
+    if (this.dpLabels) { try { this.dpLabels(this); } catch (e) { console.error(e); } }
   }
 
   /* ------------------------------------------------ snapping */

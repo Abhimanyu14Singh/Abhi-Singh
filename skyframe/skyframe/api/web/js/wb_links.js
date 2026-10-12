@@ -39,6 +39,6 @@ export function initWaveBLinks(sky) {
     const S = sky.store;
     if (S.mock && S.results && S.model) wbAugment(S.model, S.results);
   });
-  sky.wb = { linkExt: lx, linkFreq: lf, damp: dp };
+  sky.wb = Object.assign(sky.wb || {}, { linkExt: lx, linkFreq: lf, damp: dp });   // D2 fix: keep wb.views / wb.windows / wb.draw3d (wbi_init.js)
   return sky.wb;
 }

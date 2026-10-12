@@ -122,7 +122,7 @@ View
   Set Elevation View                              [draw-elev]
   Set 3D View                                     [view-3d]  (new)
   —
-  Set Display Options…                            [vx-display-options]
+  Set Display Options…               Ctrl+W       [vx-display-options]  (D2: per window, js/dispopts.js)
   ✓ Extruded View                                 [vx-extrude]
   ✓ Show Selection Only                           [vx-selonly]
   ✓ Section Cut Plane View                        [vx-cut]

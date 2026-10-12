@@ -606,7 +606,7 @@ export class Viewer3D {
     if (curColor !== null) ctx.stroke();
     ctx.font = "600 11px -apple-system, 'Segoe UI', sans-serif";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    for (const gl of (VX && !VX.grid ? [] : this.gridLabels)) {   // VX: grid toggle
+    for (const gl of (VX && (!VX.grid || VX.bubbles === false) ? [] : this.gridLabels)) {   // VX: grid toggle · D2 grid bubbles
       const pc = P.toCam(gl.p);
       if (pc[2] > P.near) {
         const s = P.proj(pc);
@@ -797,7 +797,7 @@ export class Viewer3D {
         ctx.globalAlpha = (hovered || hl) ? 1 : (mc && !overlayActive) ? Math.max(alpha, 0.95) : alpha;
         ctx.strokeStyle = hovered ? "#ffffff"
           : hl ? this.highlight.color : (mc || (VX && VX.segColor ? VX.segColor(seg) : null) || COLORS[seg.kind] || COLORS.beam);
-        ctx.lineWidth = (hovered || hl) ? 2.6 : mc ? 2.3 : (seg.kind === "column" ? 1.8 : 1.3);
+        ctx.lineWidth = ((hovered || hl) ? 2.6 : mc ? 2.3 : (seg.kind === "column" ? 1.8 : 1.3)) * ((VX && VX.lineScale) || 1);   // D2: line thickness
         ctx.lineCap = "round";
         ctx.beginPath();
         ctx.moveTo(s.a.x, s.a.y); ctx.lineTo(s.b.x, s.b.y);
