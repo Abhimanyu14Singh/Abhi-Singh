@@ -10,6 +10,8 @@
    store stays SI. Also CSV (SI, `_id` + column keys) and a stored-zip
    workbook (one CSV per table). Exported: mockDbEdit(model, path, body). */
 
+import { relMockTables as mdbRelTables } from "./mock_releases.js";   // frame releases / joint local axes tables
+
 const clone = o => JSON.parse(JSON.stringify(o));
 const QUANTITIES = {
   none: "", length: "m", dim: "m", area: "m^2", inertia: "m^4", force: "kN", moment: "kN*m",
@@ -655,7 +657,7 @@ function buildCatalogue() {
   ];
 }
 let CAT = null;
-const catalogue = () => (CAT = CAT || buildCatalogue());
+const catalogue = () => (CAT = CAT || [...buildCatalogue(), ...mdbRelTables({ obj, col, G })]);   // + end releases / joint axes (js/mock_releases.js)
 const table = key => catalogue().find(t => t.key === key);
 
 function rowsOf(t, d) {

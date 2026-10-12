@@ -647,6 +647,16 @@ def _shellopts_model_to_dict(model) -> dict:
     return model_to_dict(model)
 
 
+def _rel_member_to_dict(m) -> dict:
+    from skyframe.core.releases import member_to_dict
+    return member_to_dict(m)
+
+
+def _rel_model_to_dict(model) -> dict:
+    from skyframe.core.releases import model_to_dict
+    return model_to_dict(model)
+
+
 def _insertion_fields_from_dict(md: dict) -> dict:
     from skyframe.core.insertion import member_fields_from_dict
     return member_fields_from_dict(md)
@@ -761,6 +771,10 @@ class FrameMember:
     # (skyframe.core.rhino_exchange_fields; None = native; set only)
     source_ref: Optional[dict] = None
 
+    # Per-DOF end releases + partial-fixity springs (skyframe.core.releases;
+    # None = none; the legacy Mi/Mj tokens stay the canonical pin)
+    end_releases: Optional[dict] = None
+
     @property
     def length(self) -> float:
         return math.dist(self.pi, self.pj)
@@ -807,6 +821,8 @@ class FrameMember:
                 **_ow_member_to_dict(self),        # open-structure wind
                 **_towers.tag_to_dict(self),       # C9 tower (when set)
                 **_xch.ref_to_dict(self),          # exchange (when set)
+
+                **_rel_member_to_dict(self),       # end releases (if set)
                 "length": self.length}
 
 
@@ -2143,6 +2159,10 @@ class BuildingModel:
     # Live-load reduction settings (skyframe.core.llr_codes; None = not set,
     # not emitted).  {code, params?, kinds?, apply_to?, pier_areas?}
     llr_settings: Optional[dict] = None
+
+    # Joint local axes (skyframe.core.releases): [{"point", "angles"}];
+    # empty (default) = global axes everywhere.  Emitted only when set.
+    joint_local_axes: List[dict] = field(default_factory=list)
 
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
@@ -3916,6 +3936,8 @@ class BuildingModel:
         self._validate_curved_mesh_sets()
         self._validate_towers()
         self._validate_exchange()
+        from skyframe.core.releases import validate_model as _rel_validate
+        _rel_validate(self)                 # end releases / joint axes
 
     def _validate_exchange(self) -> None:
         """Rhino/GH exchange fields (see core.rhino_exchange_fields)."""
@@ -4160,6 +4182,8 @@ class BuildingModel:
 
             **({"llr_settings": copy.deepcopy(self.llr_settings)}  # LLR
                if self.llr_settings is not None else {}),
+
+            **_rel_model_to_dict(self),  # joint local axes (if any)
         }
 
     @classmethod
@@ -4605,6 +4629,9 @@ class BuildingModel:
         _xch.model_from_dict(mdl, d)        # Rhino/GH exchange (absent=unset)
 
         mdl.llr_settings = d.get("llr_settings")    # live-load reduction
+
+        from skyframe.core.releases import model_from_dict as _rel_from
+        _rel_from(mdl, d)                   # end releases / joint axes
         mdl.validate()
         return mdl
 

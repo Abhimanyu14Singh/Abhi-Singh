@@ -272,7 +272,8 @@ def ritz_analysis(model: BuildingModel, n: int,
                     "(frame-only Ritz stiffness)")
     if model.links:
         warn.append(f"{len(model.links)} link element(s) skipped")
-    if any(m.release_tokens() for m in model.members):
+    from skyframe.core.releases import has_any as _rel_any
+    if any(_rel_any(m) for m in model.members):
         warn.append("member end releases ignored (members treated "
                     "continuous)")
 

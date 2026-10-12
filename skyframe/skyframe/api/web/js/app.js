@@ -106,6 +106,9 @@ import { initBuiltup as buInitBuiltup } from "./builtup.js";   // v1.21 Built-up
 import { initExchange as xcInitExchange } from "./exchange.js";   // File › Import ▸ / Export ▸ E2K · IFC · DXF · Excel (js/exchange.js)
 import { initShellRes as shrInitShellRes } from "./shellres.js";   // A3 Display › Force Diagrams › Shell Stresses / Forces… (js/shellres.js)
 
+import { initReleases as relInitReleases } from "./releases.js";   // Assign › Frame › Releases / Partial Fixity + Joint › Local Axes (js/releases.js)
+import { mockValidateReleases as relMockValidate } from "./mock_releases.js";   // ?mock=1 end releases / joint local axes   // File › Import ▸ / Export ▸ E2K · IFC · DXF · Excel (js/exchange.js)
+
 /* ------------------------------------------------ state */
 const store = {
   model: null,
@@ -296,7 +299,8 @@ async function postModel(payload) {
       || pfMockValidateModel(payload)   // plot functions: TH output_requests
       || owMockValidateModel(payload)   // open-structure wind member params
       || c9MockValidateTowers(payload)   // C9 towers
-      || c9fMockValidate(payload);   // C9 follow-ups: control_tower
+      || c9fMockValidate(payload)   // C9 follow-ups: control_tower
+      || relMockValidate(payload);   // end releases / partial fixity / joint local axes
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -8574,6 +8578,8 @@ async function boot() {
   try { shrInitShellRes(window.__sky); } catch (err) { console.error("shell contours init failed", err); }   // A3 shell stresses / forces contours (js/shellres.js)
 
   try { lcInitLoadCodes(window.__sky); } catch (err) { console.error("load codes init failed", err); }   // code spectra · design combos · LLR (js/loadcodes.js)
+
+  try { relInitReleases(window.__sky); } catch (err) { console.error("releases / joint axes init failed", err); }   // Releases / Partial Fixity · Joint Local Axes (js/releases.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)

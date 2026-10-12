@@ -193,6 +193,7 @@ from skyframe.engine import parallel as _par        # parallel solve families
 
 from skyframe.engine import towers as _tw          # C9 multiple towers
 from skyframe.engine import towers_ext as _twx     # C9 follow-ups
+from skyframe.engine import releases_eng as _rle   # end releases/joint axes
 from skyframe.core.frame_axes import member_local_axes as _fa_member_local_axes  # noqa: E501
 from skyframe.core.frame_axes import sync_members_if_etabs as _fa_sync
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
@@ -1271,6 +1272,12 @@ class _Assembly:
     linear_system: str = ""
     #   solver policy (engine/solver_policy.py): the OpenSees ``system``
     #   chosen for this build ("" = legacy BandGeneral)
+    release_dups: Dict[Tuple[str, int], Tuple[int, int]] = field(
+        default_factory=dict)
+    release_ele: Dict[Tuple[str, str], int] = field(default_factory=dict)
+    release_penalty: bool = False
+    #   end releases (engine/releases_eng.py): (uid, mesh point index) ->
+    #   (member-side duplicate tag, joint tag); (uid, end) -> zeroLength
 
     def free_massed_dofs(self) -> int:
         """Number of massed (node, dof) pairs that are NOT restrained.
@@ -2718,9 +2725,9 @@ class OpenSeesEngine:
                 asm.struct_coords[tag] = p
                 rt = tag
                 created_springs.add(rt)
-            if _sprp.is_named(sp):                         # B9
-                spec = _sprp.resolve(
-                    sp, getattr(model, "spring_properties", {}) or {})
+            if _sprp.is_named(sp) or _rle.spring_routed(model, sp):  # B9
+                spec = _rle.orient_spec(model, sp.point, _sprp.resolve(
+                    sp, getattr(model, "spring_properties", {}) or {}))
                 named_specs.append((rt, spec))
                 spring_cover.setdefault(rt, set()).update(
                     spec.global_dofs())
@@ -2829,8 +2836,8 @@ class OpenSeesEngine:
         if model.supports:
             for sup in model.supports:
                 ntag = self._find_node(asm, sup.point)
-                restr = _clear_sprung(ntag, [int(bool(r)) for r in
-                                             sup.restraints])
+                restr = _clear_sprung(ntag, _rle.support_restraints(
+                    self, asm, sup, ntag, named_specs, spring_cover))
                 ops.fix(ntag, *restr)
                 asm.support_tags.append(ntag)
                 record_fix(ntag, restr)
@@ -2996,7 +3003,8 @@ class OpenSeesEngine:
             # --- v0.21 fiber PMM hinge member (asce41 pushover only) ------
             bb_fiber = fiber_plan.get(m.uid)
             if bb_fiber is not None:
-                if len(segs) != 1 or has_offset or toks or ecc is not None:
+                if (len(segs) != 1 or has_offset or toks or ecc is not None
+                        or _rle.plan(m, False)):
                     warnings.warn(
                         f"fiber_pmm hinges: member {m.uid!r} is split by "
                         "shell-edge compatibility, rigid-offset, or "
@@ -3028,6 +3036,10 @@ class OpenSeesEngine:
                                       timo_fallback)
             if timo_av is not None:
                 asm.timo[m.uid] = timo_av
+            rplan = _rle.plan(m, timo_av is not None)     # end releases
+            rl_axes = _local_axes(m)[:3] if rplan else None
+            if rplan:
+                _rle.warn_unstable(m)
             np_var = _npx.is_varying(model, sec)    # nonprismatic member
             for seg in segs:
                 if np_var:
@@ -3035,9 +3047,8 @@ class OpenSeesEngine:
                         model, m, seg.x0, seg.length)
                 etag += 1
                 beam_etag = etag
-                rel_i = "Mi" in toks and seg.index == 0
-                rel_j = "Mj" in toks and seg.index == last
-                code = (1 if rel_i else 0) + (2 if rel_j else 0)
+                code_z, code_y = _rle.native_codes(rplan, seg.index, last)
+                code = code_z or code_y
                 # v0.25: released segments cannot ride Corotational (see
                 # the _build docstring) -> PDelta fallback + warning
                 seg_transf = transf_name
@@ -3063,7 +3074,7 @@ class OpenSeesEngine:
                                    *jnt_offset_args(e_si, e_sj))
                 else:
                     ops.geomTransf(seg_transf, beam_etag, *vecxz)
-                extra = ["-releasez", code, "-releasey", code] if code else []
+                extra = _rle.release_args(code_z, code_y)
                 ni_tag, nj_tag = seg.ni + 1, seg.nj + 1
                 # v0.17 scissors panel zones: a BEAM end at a panel-zone
                 # joint connects to the joint's duplicate node instead
@@ -3138,7 +3149,12 @@ class OpenSeesEngine:
                                 mat.G * RIGID_LINK_FACTOR, J_eff, I22_eff,
                                 I33_eff, etag)
                     nj_tag = tag
-                if timo_av is not None:            # never released (plan)
+                if rplan:            # per-DOF releases / partial fixity
+                    ni_tag, nj_tag, tag, etag, mtag = _rle.spring_ends(
+                        self, asm, m, rplan, seg, last, ni_tag, nj_tag, tag,
+                        etag, mtag, (A_eff, I22_eff, I33_eff, J_eff), mat,
+                        rl_axes)
+                if timo_av is not None:     # legacy pins: never (plan)
                     ops.element("ElasticTimoshenkoBeam", beam_etag,
                                 ni_tag, nj_tag, mat.E, mat.G, A_eff, J_eff,
                                 I22_eff, I33_eff, timo_av[0], timo_av[1],
@@ -3149,8 +3165,11 @@ class OpenSeesEngine:
                                 A_eff, mat.E, mat.G, J_eff, I22_eff, I33_eff,
                                 beam_etag, *extra)
                 asm.seg_ele[(m.uid, seg.index)] = beam_etag
-                for node, released in ((seg.ni, rel_i), (seg.nj, rel_j)):
-                    rot_add(node, torsion_only if released else eye3)
+                for node, end_, here in ((seg.ni, "i", seg.index == 0),
+                                         (seg.nj, "j", seg.index == last)):
+                    S_r, released = _rle.rot_presence(
+                        rplan, end_, here, rl_axes, torsion_only, eye3)
+                    rot_add(node, S_r)
                     if released:
                         released_nodes.add(node)
             asm.ele_nodes[m.uid] = (segs[0].ni + 1, segs[-1].nj + 1)
@@ -4867,15 +4886,10 @@ class OpenSeesEngine:
 
         segs = asm.mesh.segments[member.uid]
         last = len(segs) - 1
-        toks = member.release_tokens()
+        timo_m = member.uid in asm.timo
 
         def seg_release(seg: Segment) -> List[int]:
-            rel: List[int] = []
-            if "Mi" in toks and seg.index == 0:
-                rel += [4, 5]
-            if "Mj" in toks and seg.index == last:
-                rel += [10, 11]
-            return rel
+            return _rle.fef_released(member, seg.index, last, timo_m)
 
         L = member.length
         if kind == "point":
@@ -5060,7 +5074,6 @@ class OpenSeesEngine:
         loc, glo = _lx.member_moment_vectors(direction, M, xax, yax, zax)
         segs = asm.mesh.segments[member.uid]
         last = len(segs) - 1
-        toks = member.release_tokens()
         x_p = a * member.length
         seg = segs[-1]
         for s_ in segs:
@@ -5073,11 +5086,8 @@ class OpenSeesEngine:
             ops.load(asm.pz_load_tag.get((member.uid, node), node + 1),
                      0.0, 0.0, 0.0, *glo)
             return
-        rel: List[int] = []
-        if "Mi" in toks and seg.index == 0:
-            rel += [4, 5]
-        if "Mj" in toks and seg.index == last:
-            rel += [10, 11]
+        rel = _rle.fef_released(member, seg.index, last,
+                                member.uid in asm.timo)
         self._apply_fef(asm, member, seg, [("moment", loc, xi)], rel)
 
     def _apply_ground_displacements(self, asm: _Assembly, pat,
@@ -5253,8 +5263,10 @@ class OpenSeesEngine:
             if (node_disp is not None
                     and sum(self._member_offsets(m)) <= _TOL
                     and self._member_ecc(m) is None):
-                md = self._member_deflection(m, segs, corrected, xs,
-                                             node_disp, asm.timo.get(m.uid))
+                md = self._member_deflection(
+                    m, segs, corrected, xs,
+                    _rle.member_node_disp(node_disp, asm, m.uid, segs),
+                    asm.timo.get(m.uid))
                 if md is not None:
                     member_deflections[m.uid] = md
         return member_forces, member_stations, member_deflections

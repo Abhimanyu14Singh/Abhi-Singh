@@ -1085,6 +1085,13 @@ def _split_member(ctx: _Ctx, uid: str, ts: List[float]) -> List[str]:
         first, last = k == 0, k == len(bounds) - 2
         pm["releases"] = ",".join(
             t for t in toks if (t == "Mi" and first) or (t == "Mj" and last))
+        if m.get("end_releases"):                   # per-DOF releases
+            ner = {e: dict(v) for e, v in m["end_releases"].items()
+                   if v and ((e == "i" and first) or (e == "j" and last))}
+            if ner:
+                pm["end_releases"] = ner
+            else:
+                pm.pop("end_releases", None)
         if not first:
             pm["rigid_i"] = 0.0
         if not last:
@@ -1584,7 +1591,8 @@ def op_extrude(ctx: _Ctx, sel: dict, params: dict) -> dict:
 
 # ----------------------------------------------------------------- join
 _JOIN_FREE = {"uid", "pi", "pj", "story", "length", "releases", "rigid_i",
-              "rigid_j", "joint_offsets", "hinges"}
+              "rigid_j", "joint_offsets", "hinges",
+              "end_releases"}                   # per-DOF releases (ends)
 
 
 def _join_pair(ctx: _Ctx, A: dict, B: dict, J) -> Optional[str]:
@@ -1610,6 +1618,10 @@ def _join_pair(ctx: _Ctx, A: dict, B: dict, J) -> Optional[str]:
     if ("Mj" if a_at_J == "pj" else "Mi") in ra or \
             ("Mi" if b_at_J == "pi" else "Mj") in rb:
         return "moment release at the shared joint"
+    if ((A.get("end_releases") or {}).get("j" if a_at_J == "pj" else "i")
+            or (B.get("end_releases") or {}).get("i" if b_at_J == "pi"
+                                                 else "j")):
+        return "end release at the shared joint"
     for pat in d["patterns"].values():
         ta = [x for x in pat.get("thermal_loads") or []
               if x["member_uid"] == A["uid"]]
@@ -1657,6 +1669,13 @@ def _join_pair(ctx: _Ctx, A: dict, B: dict, J) -> Optional[str]:
     nm["pi"], nm["pj"] = _clean(new_pi), _clean(new_pj)
     nm["releases"] = ",".join(t for t, on in (("Mi", rel_i), ("Mj", rel_j))
                               if on)
+    ner = {e: dict(v) for e, v in (
+        ("i", (i_piece.get("end_releases") or {}).get(i_end)),
+        ("j", (j_piece.get("end_releases") or {}).get(j_end))) if v}
+    if ner:                                         # per-DOF releases
+        nm["end_releases"] = ner
+    else:
+        nm.pop("end_releases", None)
     nm["rigid_i"] = float(i_piece.get(f"rigid_{i_end}", 0.0) or 0.0)
     nm["rigid_j"] = float(j_piece.get(f"rigid_{j_end}", 0.0) or 0.0)
     joa, job = A.get("joint_offsets"), B.get("joint_offsets")

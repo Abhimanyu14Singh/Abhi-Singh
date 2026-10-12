@@ -49,7 +49,7 @@ export function initDlgStd(sky) {
     "def-th": () => std.loadCases({ addKind: "th" }), "def-buckling": () => std.loadCases({ addKind: "buckling" }), "def-modal": () => std.modalCase(),
     "def-combos": () => std.combinations(), "def-mass": () => std.massSource(), "def-diaphragms": () => std.diaphragms(),
     "an-opts": () => std.analysisOptions(), "an-dof": () => std.analysisOptions({ tab: "dof" }), "def-pdelta": () => std.analysisOptions({ tab: "pdelta" }),
-    "asn-fsec": () => std.assignFrame({ tab: "section" }), "asn-frel": () => std.assignFrame({ tab: "releases" }),
+    "asn-fsec": () => std.assignFrame({ tab: "section" }), "asn-frel": () => (sky.relOpenReleases ? sky.relOpenReleases() : std.assignFrame({ tab: "releases" })),   // js/releases.js
     "asn-forient": () => std.assignFrame({ tab: "axes" }), "asn-foff": () => std.assignFrame({ tab: "offsets" }),
     "asn-faxial": () => std.assignFrame({ tab: "nonlinear" }), "asn-fhinge": () => std.assignFrame({ tab: "nonlinear" }),
     "asn-ssec": () => std.assignShell(), "asn-scp": () => std.assignShell(), "asn-support": () => std.assignSupports(),

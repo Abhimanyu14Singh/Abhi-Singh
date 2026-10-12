@@ -344,7 +344,8 @@ def buckling_analysis(model: BuildingModel, gravity: Dict[str, float],
                     "(frame-only buckling)")
     if model.links:
         warn.append(f"{len(model.links)} link element(s) skipped")
-    if any(m.release_tokens() for m in model.members):
+    from skyframe.core.releases import has_any as _rel_any
+    if any(_rel_any(m) for m in model.members):
         warn.append("member end releases ignored (members treated continuous)")
 
     # ---- assemble elastic K and cache per-member transforms/props ----

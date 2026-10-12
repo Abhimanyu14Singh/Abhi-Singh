@@ -1995,6 +1995,8 @@ def _build_catalogue() -> List[Table]:
             Col("include_vertical", "Vertical Mass", "bool"),
             Col("lump_at_stories", "Lump at Stories", "bool"),
         ]))
+    from skyframe.core.releases import tables as _rel_tables
+    T.extend(_rel_tables())     # frame releases / joint local axes
     return T
 
 

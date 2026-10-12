@@ -11890,3 +11890,145 @@ All of them return 400 `{error}` on bad input.
   * `mock_tables.js`: the 2 tables.
 * `?mock=1` uses the JS ports in `mock_loadcodes.js`. Spectra and combos
   give identical numbers; the LLR tributary area is plan area / columns.
+
+
+## Frame end releases, partial fixity and joint local axes
+
+ETABS **Assign › Frame › Releases/Partial Fixity** and **Assign › Joint ›
+Local Axes**. Model side `skyframe/core/releases.py`, engine side
+`skyframe/engine/releases_eng.py`, UI `js/releases.js` + `js/mock_releases.js`.
+
+### Model JSON (SI; both keys omitted when unused → legacy files byte-identical)
+
+```json
+"members": [{ "...": "...", "releases": "Mi",
+              "end_releases": {"i": {"T": 0.0}, "j": {"V2": 0.0, "M3": 1500.0}} }],
+"joint_local_axes": [{"point": [6.0, 0.0, 0.0], "angles": [0.0, 30.0, 0.0]}]
+```
+
+* `end_releases[end][dof]` with `end` in `i`/`j` and `dof` in
+  `P V2 V3 T M2 M3` (member local axes 1/2/3). The value is the
+  **partial-fixity spring**: `0` = fully released, `> 0` = an elastic spring
+  between the joint and the member end (kN/m for P/V2/V3, kN·m/rad for
+  T/M2/M3). Unlisted DOFs are continuous. A list shorthand
+  (`{"j": ["V2"]}`) is read as zero springs. Errors (400): unknown end,
+  unknown DOF, negative / non-finite spring.
+* The legacy `releases` tokens are the canonical subset: `"Mi"` ≡
+  `{"i": {"M2": 0, "M3": 0}}` (and `"Mj"`). The effective release set of an
+  end is the union of both. The UI and the DB-edit table write the
+  **canonical form**: an end that is exactly the M2+M3 pin with no springs
+  is stored as the token, anything else under `end_releases` (and the key
+  is dropped when empty).
+* `joint_local_axes[k].angles = [a, b, c]` in degrees:
+  `R = Rz(a)·Ry(b)·Rx(c)` (a about global Z, then b about the rotated 2
+  axis, then c about the rotated 1 axis); local axes 1/2/3 are the columns
+  of `R`. Errors: point / angles not 3 finite numbers, duplicate joint.
+
+### Engine (exact condensation, every element path)
+
+Per member END:
+
+* **native** — only full M2 and/or M3 releases (no spring) on an Euler
+  `elasticBeamColumn`: the element's own `-releasey` (M2) / `-releasez`
+  (M3) codes; exact fixed-end forces condense the same local DOFs
+  (`_condensed_fef` with indices 4/5 and 10/11). The legacy Mi/Mj pin is
+  exactly this path with the identical element arguments → legacy models
+  give byte-identical results (verified: results-JSON SHA-256 of the
+  exchange representative model, a released quick building with point /
+  partial / thermal loads, and the curved two-hinged arch, before = after).
+* **spring** — anything else (P, V2, V3, T, any spring, any release on an
+  `ElasticTimoshenkoBeam`): the element end connects to a co-located
+  duplicate node joined to the joint by a `zeroLength` oriented on the
+  member local axes (`-orient` local 1, local 2). Released DOF: the spring
+  `k` (no material when `k = 0`); continuous DOF: a stiff tie
+  `1e6 ×` the member's own stiffness in that DOF (EA/L, 12EI/L³, GJ/L,
+  4EI/L). The element itself is unreleased, so every load path
+  (beamUniform, beamPoint, exact FEF, uniform / gradient thermal) uses the
+  unreleased element FEF and its end nodal loads go to the duplicate node
+  (`asm.pz_load_tag`); the global solve performs the condensation. Works on
+  Euler and Timoshenko elements (the Timoshenko element is kept), frame
+  auto-mesh (first / last segment), curved frames (first / last chord),
+  nonprismatic members (first / last piece), rigid end offsets (release
+  inboard of the rigid arm), P-Delta / Corotational builds (no fallback),
+  hinges, model-wide P-Delta (string springs read `eleNodes`).
+* Station forces, end forces and the closed-form deflection recovery are
+  unchanged code: they read the element end forces + FEF corrections; the
+  deflection stations use the member-side duplicate displacement at a
+  spring end (a shear release shows its slip).
+* Rotations left unstiffened at a joint (all members reach it through
+  released rotations) are auto-restrained exactly like the legacy pins.
+* Accuracy of the spring path: ties soften a released end by ~1e-6 of its
+  own stiffness (quick building with every beam pinned: base-shear
+  equilibrium 5e-9, column forces 2e-8, periods 2e-7 vs the native path).
+  Builds with ties (or skewed-support penalties) take the exact condensed
+  modal solve (`modal_condensed`) instead of a dense eigen solve.
+* **Stability (ETABS rules)** — full releases only (a spring > 0 is not a
+  release here): P at both ends; V2 at both ends; V3 at both ends; T at
+  both ends; M2 at both ends + V3 at an end; M3 at both ends + V2 at an
+  end. Check Model reports `RELEASE_UNSTABLE` (warning); the engine warns
+  (`UserWarning`, run log) and keeps the solve regular with a residual
+  `1e-6 ×` the DOF stiffness on the mechanism DOFs.
+* Joint local axes: an explicit restraint group (UX..UZ or RX..RZ) whose
+  three flags are equal is axis-independent → exact `ops.fix`; a MIXED
+  group at a joint with local axes becomes a grounded penalty spring
+  (`1e8 ×` the model's largest member end stiffness) on the restrained
+  LOCAL DOFs through the named-spring machinery, whose reaction is exact and
+  reported in GLOBAL axes (`reactions`). Point springs at the joint act in
+  the joint axes (the spring's own property axes / plan angle are composed
+  on top). Joint loads stay stored in GLOBAL components; the UI converts
+  loads typed in joint local axes (`joint_load_to_global`, also exposed in
+  Python).
+* Linear buckling and Ritz vectors (numpy frame-only assemblies) keep
+  ignoring every release with their existing warning.
+
+### Closed-form validation (tests/test_releases_partial_fixity.py)
+
+| case | hand result | engine |
+|---|---|---|
+| propped cantilever, V2 released at mid-span, UDL w, halves a | R_A = R_C = w a, M_A = 0, M_B = w a²/2, tip slip v = (w a⁴/6 − w a⁴/24)/EI | 1e-7 |
+| fixed-fixed beam, M3 spring k at i, UDL | M_i = (wL²/12)·k/(k + 4EI/L), M_j = wL²/12 + (2EI/L)θ_i (k/(4EI/L) = 0, 0.25, 1, 10) | 2e-5 |
+| same on a Timoshenko member | M_i = FEM·k/(k + (4+φ)EI/((1+φ)L)) | 2e-5 |
+| fixed bar, P released at i, ΔT | N = EAαΔT·k/(k + EA/L) → 0 for k = 0 | 2e-5 |
+| torque at a joint of AB + BC | split by GJ/L (0.6 T₀); T released at BC's B end → T_AB = T₀ | 1e-7 |
+| M3-only release (native) | strong axis wL²/8, weak axis still wL²/12 | 1e-9 |
+| roller on a 30° incline (joint axes b = 30°, restraint U3 local) | R_B = (P/2)(tan30°, 0, 1), normal to the incline; A takes −(P/2)tan30° | 1e-6 |
+| spring path vs native pin | auto-mesh, curved arch, nonprismatic, P-Delta, modal periods, joint reached only through released ends | 2e-5 |
+
+### DB-edit tables (Model Definition > Assignments)
+
+* `frame_releases` "Frame Releases and Partial Fixity": one row per frame
+  (no add / delete), columns `uid`, `pi … m3i`, `pj … m3j` (bool), then
+  `k_pi … k_m3j` (`stiffness` / `rot_stiffness`). A spring cell is ignored
+  on an unreleased DOF. Writes the canonical form.
+* `joint_local_axes` "Joint Local Axes": `x y z angle_a angle_b angle_c`.
+
+### UI
+
+* **Assign › Frame › Releases / Partial Fixity** (`asn-frel`, routed by
+  `dlgstd.js` to `#relFrame`): 6 × 2 grid (`#relCb_<end>_<dof>`,
+  `#relK_<end>_<dof>` in display units, unit column), "— mixed —" for
+  multi-selections, live ETABS stability warning `#relWarn`, Fast Assign
+  `#relPresetPin` / `#relPresetNone`, OK · Cancel · Apply. Only touched
+  cells are written; untouched OK is byte-identical.
+* **Assign › Joint › Local Axes…** (`asn-jlocalaxes`, `#relJla`): angles
+  A/B/C (deg) for the joints of the selection, live axis preview
+  `#relJlaAxes`; all-zero removes the entry.
+* **Assign › Joint Loads › Force / Moment (Joint Local Axes)…**
+  (`asn-jforce-local`, `#relJl`): F1..M3 in joint axes → stored global.
+* 3D view: a ring near each released end, a double ring for partial
+  fixity (`__sky.relDrawViewer`).
+* `?mock=1`: `mockValidateReleases` (backend messages) and both DB-edit
+  tables in `mock_dbedit.js`; the mock round-trips the keys untouched.
+* Hooks: `app.js` (2 imports, 1 init line, 1 mock-validator line),
+  `dlgstd.js` (the `asn-frel` route), `mock_dbedit.js` (import + catalogue
+  line), `viewer3d.js` (1 draw line), `edit_geom.js` (Divide / Join Frames
+  carry `end_releases` exactly like `core/edit.py`: end i stays on the first
+  piece, end j on the last; Join refuses a release at the shared joint).
+
+**Playwright.** Mock 20/20 and live 21/21: menus present; 12 + 12 grid;
+OK with defaults byte-identical (releases and joint axes); canonical
+writes (`Mi,Mj` preset, mixed legacy + new); kip-in display and input
+conversion; stability warning; joint axes preview; local joint load
+rotated to global; POST /api/model double echo identical; DB-edit tables
+(live + mock); live analysis with the feature (V2-released end shear 0);
+existing Assign dialogs still open; zero console errors.

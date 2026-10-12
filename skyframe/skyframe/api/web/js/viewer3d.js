@@ -1053,6 +1053,9 @@ export class Viewer3D {
       }
     }
 
+    // end-release / partial-fixity rings near frame ends (js/releases.js)
+    if (window.__sky && window.__sky.relDrawViewer) { try { window.__sky.relDrawViewer(ctx, this._segsScreen, this.model, overlayActive); } catch (e) { /* never break the render */ } }
+
     // ---- v0.13 section-cut plane name labels (at each plane centroid)
     if (this.sectionCutPolys && this.sectionCutPolys.length) {
       ctx.font = "700 10px -apple-system, 'Segoe UI', sans-serif";

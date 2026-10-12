@@ -676,6 +676,7 @@ function splitMember(ctx, uid, ts) {
     pm.pj = clean(lerp(m.pi, m.pj, s1));
     const first = k === 0, last = k === bounds.length - 2;
     pm.releases = toks.filter(t => (t === "Mi" && first) || (t === "Mj" && last)).join(",");
+    if (m.end_releases) { const er = {}; if (first && m.end_releases.i) er.i = clone(m.end_releases.i); if (last && m.end_releases.j) er.j = clone(m.end_releases.j); if (Object.keys(er).length) pm.end_releases = er; else delete pm.end_releases; }   // per-DOF releases (js/releases.js)
     if (!first) pm.rigid_i = 0;
     if (!last) pm.rigid_j = 0;
     const jo = pm.joint_offsets;
@@ -1064,7 +1065,7 @@ function opExtrude(ctx, sel, params) {
 }
 
 /* ---- join */
-const JOIN_FREE = new Set(["uid", "pi", "pj", "story", "length", "releases", "rigid_i", "rigid_j", "joint_offsets", "hinges"]);
+const JOIN_FREE = new Set(["uid", "pi", "pj", "story", "length", "releases", "rigid_i", "rigid_j", "joint_offsets", "hinges", "end_releases"]);   // + per-DOF releases
 const stable = x => JSON.stringify(x, (k, v) => (v && typeof v === "object" && !Array.isArray(v)
   ? Object.keys(v).sort().reduce((o, kk) => { o[kk] = v[kk]; return o; }, {}) : v));
 const relToks = m => new Set(String(m.releases || "").split(",").map(t => t.trim()).filter(Boolean));
@@ -1114,6 +1115,7 @@ function joinPair(ctx, A, B, J) {
   const aAtJ = pkey(A.pj) === J ? "pj" : "pi";
   const bAtJ = pkey(B.pi) === J ? "pi" : "pj";
   if (ra.has(aAtJ === "pj" ? "Mj" : "Mi") || rb.has(bAtJ === "pi" ? "Mi" : "Mj")) return "moment release at the shared joint";
+  if ((A.end_releases || {})[aAtJ === "pj" ? "j" : "i"] || (B.end_releases || {})[bAtJ === "pi" ? "i" : "j"]) return "end release at the shared joint";   // per-DOF releases
   for (const pat of Object.values(d.patterns)) {
     const strip = uid => (pat.thermal_loads || []).filter(x => x.member_uid === uid)
       .map(x => { const c = clone(x); delete c.member_uid; return stable(c); }).sort();
@@ -1138,6 +1140,7 @@ function joinPair(ctx, A, B, J) {
   const nm = A;
   nm.pi = clean(newPi); nm.pj = clean(newPj);
   nm.releases = [["Mi", relI], ["Mj", relJ]].filter(x => x[1]).map(x => x[0]).join(",");
+  { const er = {}; const a = (iPiece.end_releases || {})[iEnd], b = (jPiece.end_releases || {})[jEnd]; if (a) er.i = clone(a); if (b) er.j = clone(b); if (Object.keys(er).length) nm.end_releases = er; else delete nm.end_releases; }   // per-DOF releases
   nm.rigid_i = +(iPiece[`rigid_${iEnd}`] || 0);
   nm.rigid_j = +(jPiece[`rigid_${jEnd}`] || 0);
   const joa = A.joint_offsets, job = B.joint_offsets;
