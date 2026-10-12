@@ -70,3 +70,16 @@ Each entry says where it lives.
   ageing only (no creep/shrinkage strain); members with end releases creep
   axially only; step method needs user-defined stages. Tendon-element
   hyperstatic primary uses the force after friction/anchor losses.
+
+## Hinges (Wave B) - IMPORTANT
+- ASCE 41-17 / FEMA 356 / EC8-3 hinge table values were transcribed from memory
+  (standards not reachable). Each table carries a `verified` flag; the
+  "preliminary" flag stays on for: ASCE 41-17 steel-column acceptance fractions,
+  brace multiples, all ASCE 41-23 tables (reuse 41-17 numbers), FEMA 356 tables,
+  and the wall-hinge acceptance states (Table 10-19). Verify against the code
+  tables before relying on acceptance-criteria outputs.
+- Interaction (PMM) hinges hold P at its gravity value; the M2-M3 yield contour
+  is an ellipse through the 0 and 90 degree curves; no strength drop past C.
+- Wall fiber hinges keep wall shells at 1e-4 stiffness; loads on interior wall
+  nodes go into that soft shell. RC shear hinges are force-controlled.
+- Caltrans and TBI hinge tables not implemented.
