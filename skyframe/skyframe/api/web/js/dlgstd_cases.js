@@ -274,6 +274,7 @@ export function editRsCase(sky, D, name, { copyOf, done } = {}) {
     dkGroup("Other Parameters", [
       F.select(c, "combo_method", RS_METHODS, { label: "Modal Combination Method", id: "dcRsMethod" }),
       F.num(c, "damping", { label: "Modal Damping Ratio", min: 0, lt: 1, id: "dcRsDamp" }),
+      ...((window.__sky && window.__sky.modalx) ? window.__sky.modalx.rsFields(F, c, D) : []),   // named modal case (js/modalx.js)
     ]),
     ...dcRsxGroups(F, c, D),   // RS ext: directions & angle / directional combination / eccentricity (js/rs_ext.js)
     adv,
@@ -332,7 +333,8 @@ export function editThCase(sky, D, name, { copyOf, done } = {}) {
       recBox,
       F.num(c, "scale", { label: "Scale Factor", id: "dcThScale" }),
     ]),
-    dkGroup("Other Parameters", [F.num(c, "damping", { label: "Damping Ratio", min: 0, lt: 1, id: "dcThDamp" })]),
+    dkGroup("Other Parameters", [F.num(c, "damping", { label: "Damping Ratio", min: 0, lt: 1, id: "dcThDamp" }),
+      ...((window.__sky && window.__sky.modalx) ? window.__sky.modalx.thFields(F, c, D) : [])]),   // modal case + FNA initial conditions (js/modalx.js)
     adv,
   ];
   syncRec();

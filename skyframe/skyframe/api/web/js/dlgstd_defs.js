@@ -715,6 +715,7 @@ export function editThFunction(sky, D, name, { copyOf, done } = {}) {
   const toText = vals => (vals || []).map(v => +(+dsU.toDisplay("accel", v)).toPrecision(6)).join(", ");
   ta.value = toText(f.values);
   let valsDirty = false;
+  let mxExact = null;   // exact SI values from Import / Generate / Match (js/modalx.js)
   const taErr = el("div", { class: "dk-err", role: "alert" });
   const chart = el("div");
   const parsed = () => ta.value.split(/[\s,;]+/).filter(Boolean).map(t => dsU.parse("accel", t));
@@ -722,8 +723,10 @@ export function editThFunction(sky, D, name, { copyOf, done } = {}) {
   ta.addEventListener("change", () => {
     const v = parsed();
     if (v.length < 2 || v.some(x => !isFinite(x))) { taErr.textContent = "Enter at least two numeric values separated by commas or spaces."; return; }
-    taErr.textContent = ""; valsDirty = true; F.touched = true; redraw();
+    taErr.textContent = ""; valsDirty = true; mxExact = null; F.touched = true; redraw();
   });
+  const mxTools = (window.__sky && window.__sky.modalx) ? window.__sky.modalx.thTools({ D, values: () => (valsDirty ? (mxExact || parsed()) : f.values), dt: () => f.dt,
+    setValues: (vals, dt, src) => { mxExact = vals; f.dt = dt; if (src) f.source = src; ta.value = toText(vals); taErr.textContent = ""; valsDirty = true; F.touched = true; F.refresh(); redraw(); } }) : null;   // import / generate / match
   const body = [
     dkGroup("Function", [
       F.text(draftName, "v", { label: "Function Name", id: "dsThFnName", validate: nameCheck(() => new Set(Object.keys(D.th_functions)), name) }),
@@ -731,6 +734,7 @@ export function editThFunction(sky, D, name, { copyOf, done } = {}) {
       F.readout("Number of steps", () => (valsDirty ? parsed() : f.values || []).length),
     ]),
     dkGroup(`Ground acceleration values (${unitLabel("accel")})`, [ta, taErr, chart]),
+    mxTools,   // js/modalx.js
   ];
   redraw();
   return dkDialog({
@@ -741,7 +745,7 @@ export function editThFunction(sky, D, name, { copyOf, done } = {}) {
       const nn = draftName.v.trim();
       if (name && nn !== name) dsME.renameThFunction(D, name, nn);
       const out = { ...f, name: nn };
-      if (valsDirty) out.values = parsed();
+      if (valsDirty) out.values = mxExact || parsed();
       D.th_functions[nn] = out;
       done && done(nn);
     },

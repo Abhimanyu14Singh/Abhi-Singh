@@ -51,6 +51,8 @@ from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
     pdelta_to_dict, validate_pdelta_options)
 from skyframe.core import analysis_options as _aopt  # solver/convergence
 from skyframe.core import rs_ext as _rsx  # RS ecc / U3 / angle / CQC3
+
+from skyframe.core import modal_cases as _mcs  # mass sources / modal cases
 from skyframe.core.builtup import (  # v1.21 built-up sections
     model_to_dict as _builtup_to_dict, model_from_dict as _builtup_from_dict)
 
@@ -1376,6 +1378,8 @@ class ResponseSpectrumCase:
     ecc_overrides: Dict[str, float] = field(default_factory=dict)
     ecc_ax: bool = False
 
+    modal_case: str = ""    # named modal case (core.modal_cases; "" = MODAL)
+
     def to_dict(self) -> dict:
         d = {"name": self.name, "direction": self.direction,
              "spectrum": [[float(t), float(sa)] for t, sa in self.spectrum],
@@ -1390,6 +1394,9 @@ class ResponseSpectrumCase:
             if getattr(self, key) != default:
                 d[key] = getattr(self, key)
         d.update(_rsx.to_dict_extra(self))       # RS ext: non-defaults only
+
+        if self.modal_case:                     # core.modal_cases (if set)
+            d["modal_case"] = self.modal_case
         return d
 
 
@@ -1465,6 +1472,11 @@ class TimeHistoryCase:
     # output request {"joints", "links", "frames", "hinges"}; None = legacy
     # (nothing extra recorded, key omitted from to_dict)
     output_requests: Optional[dict] = None
+    # core.modal_cases: named modal case ("" = MODAL) and the nonlinear
+    # static predecessor giving FNA its initial conditions ("" = none);
+    # both emitted by to_dict only when set
+    modal_case: str = ""
+    initial_case: str = ""
 
     def to_dict(self) -> dict:
         d = {"name": self.name, "direction": self.direction,
@@ -1486,6 +1498,9 @@ class TimeHistoryCase:
             d["components"] = [dict(c) for c in self.components]
         if self.output_requests is not None:              # plot functions
             d["output_requests"] = _plotfn_norm(self.output_requests)
+        for key in ("modal_case", "initial_case"):        # core.modal_cases
+            if getattr(self, key):
+                d[key] = getattr(self, key)
         return d
 
 
@@ -1958,11 +1973,17 @@ class TimeHistoryFunction:
     name: str
     values: List[float]
     dt: float
+    # provenance (core.thfunc: file import / generator / matching); None =
+    # legacy, key omitted from to_dict
+    source: Optional[dict] = None
 
     def to_dict(self) -> dict:
-        return {"name": self.name,
-                "values": [float(v) for v in self.values],
-                "dt": float(self.dt)}
+        d = {"name": self.name,
+             "values": [float(v) for v in self.values],
+             "dt": float(self.dt)}
+        if self.source is not None:                       # core.thfunc
+            d["source"] = copy.deepcopy(self.source)
+        return d
 
 
 # --------------------------------------------------------------------------- #
@@ -2174,6 +2195,12 @@ class BuildingModel:
     # Joint local axes (skyframe.core.releases): [{"point", "angles"}];
     # empty (default) = global axes everywhere.  Emitted only when set.
     joint_local_axes: List[dict] = field(default_factory=list)
+
+    # Named mass sources + named modal cases (skyframe.core.modal_cases);
+    # empty (default) = the single legacy mass source / MODAL case.
+    # Emitted by to_dict only when non-empty.
+    mass_sources: Dict[str, dict] = field(default_factory=dict)
+    modal_cases: Dict[str, dict] = field(default_factory=dict)
 
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
@@ -3583,6 +3610,8 @@ class BuildingModel:
             for n in src:
                 out.setdefault(n, kind)
         out.setdefault(MODAL_CASE, "modal")
+        for n in getattr(self, "modal_cases", None) or {}:   # named modal
+            out.setdefault(n, "modal")
         return out
 
     def compute_story_masses(self, self_mass: Optional[bool] = None,
@@ -3950,6 +3979,7 @@ class BuildingModel:
         from skyframe.core.releases import validate_model as _rel_validate
         _rel_validate(self)                 # end releases / joint axes
         _spd.validate(self)                 # spandrel labels
+        _mcs.validate(self)                 # mass sources / modal cases
 
     def _validate_exchange(self) -> None:
         """Rhino/GH exchange fields (see core.rhino_exchange_fields)."""
@@ -4198,6 +4228,8 @@ class BuildingModel:
             **_rel_model_to_dict(self),  # joint local axes (if any)
 
             **_spd.model_to_dict(self),  # spandrel labels (if any)
+
+            **_mcs.model_to_dict(self),  # mass sources / modal cases (if any)
         }
 
     @classmethod
@@ -4648,6 +4680,8 @@ class BuildingModel:
         _rel_from(mdl, d)                   # end releases / joint axes
 
         _spd.model_from_dict(mdl, d)        # spandrel labels / tags
+
+        _mcs.model_from_dict(mdl, d)        # mass sources / modal cases
         mdl.validate()
         return mdl
 

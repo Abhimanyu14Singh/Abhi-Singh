@@ -1154,6 +1154,9 @@ def create_app() -> Flask:
         direction = body.get("direction", "X")
         if n is not None and (not isinstance(n, int) or n < 1):
             return jsonify({"error": "'n' must be a positive integer"}), 400
+        from skyframe.api import modalx_api as _mxa   # engine-assembly Ritz
+        if _mxa.full_ritz(_state["model"], body):     # (shells/links/starts)
+            return _mxa.ritz_route(_state["model"], body)
         try:
             from skyframe.core.ritz import ritz_analysis
             res = ritz_analysis(_state["model"],
@@ -2348,6 +2351,11 @@ def create_app() -> Flask:
     # Code spectra / design combos / pattern types / live-load reduction
     from skyframe.api.loadcodes_api import register as _lc_register
     _lc_register(app, _state)
+
+    # TH function import/generate/match, named modal cases, full-assembly
+    # Ritz (skyframe.api.modalx_api)
+    from skyframe.api.modalx_api import register as _mxa_register
+    _mxa_register(app, _state)
 
     return app
 
