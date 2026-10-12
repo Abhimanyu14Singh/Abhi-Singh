@@ -14196,3 +14196,149 @@ Response:
   references and an animated 3D mode-shape viewer.
 * The Buckling case dialog's Advanced group gains the Formulation, Include
   shells and Include links fields. Only touched fields are written.
+
+## Structural-system template library (D4)
+
+File › **New Model from Template…** (`file-wb-template`, now the Template
+Library of js/tpl_library.js — the File panel is at its 14-entry limit, so
+no new row; the Wave B slab form stays one click away) and 14 start-screen
+cards build one parametric model per lateral system, laid out
+like the ETABS New Model quick templates and the ETABS example buildings
+(our own renditions; no CSI example result is reproduced or claimed).
+Backend: `skyframe/core/templates_sys.py`, reached through the existing
+endpoints of "Model templates, general grids, shell editing and drawing
+aids" — `templates.TEMPLATES` / `catalogue()` / `normalize_params()` /
+`build_template()` delegate to it for the new ids. The five slab templates
+and their JSON are unchanged (byte-identical models, summaries, results and
+catalogue entries).
+
+### Ids
+
+`frame_2d`, `steel_smf`, `steel_cbf`, `steel_ebf`, `steel_deck`,
+`flat_slab_perimeter`, `rc_dual_core`, `rc_shear_wall`, `rc_framed_tube`,
+`outrigger`, `podium_tower`, `base_isolated`, `industrial_shed`, `diagrid`
+(after the five slab ids in `TEMPLATES` and in `GET /api/model/templates`).
+
+### Catalogue entry (system templates)
+
+```jsonc
+{"id", "label", "params": {key: default},
+ "category": "Steel" | "Concrete" | "Tall building" | "Special",
+ "etabs": "<ETABS equivalent>", "description": "...", "system": true,
+ "meta": [{"key", "kind": "int"|"len"|"num"|"str"|"choice"|"steel",
+           "label", "group": "geometry"|"system"|"sections"|"materials"|
+                             "loads"|"code"|"advanced",
+           "unit": "<js/units.js kind>"   // length | dim | pressure |
+                                          // stiffness | period | none
+           "min"?, "max"?, "options"? (choice), "aisc_default"? (steel),
+           "hidden"? (derived / fixed by the system)}]}
+```
+
+### Parameters (all SI)
+
+Common: the slab-template set (`name, bays_x, bays_y, bay_x, bay_y,
+stories, story_height, first_story_height, sdl, live, live_mass_factor,
+mesh_size, code, SDS, SD1, R, Ie, ag, q, ground_type, Z, soil`) plus
+`roof_live` (kPa), `units` (one of `DISPLAY_UNITS`; sets
+`display_units`), `material_standard` (`astm_aci` | `eurocode` | `is` |
+`bs` | `as_nzs`), `steel_material` / `concrete_material` (library names;
+null = the standard's default grade: A992 / 4000psi, S355 / C30/37, E250 /
+M30, S355-t16 / C40-BS8110, 350-AS3678 / N40), `steel_db` (`aisc` |
+`eurocode` | `is808` | `bs` | `as_nzs`). Steel sections are database
+names; null = the template's AISC default, or for another database the
+shape of the same type minimising `|ln(A/A0)| + |ln(I33/I330)|`. Per
+template (defaults in the catalogue): sections / dimensions and
+`brace_type` (chevron | x), `link_length`, `infill_beams`, `infill_dir`
+(X | Y), `moment_frames` (perimeter | all), `deck_slab`, `deck_rib`,
+`core_bays_x/y`, `pier_length`, `opening`, `spandrel_depth`,
+`planar_length`, `tube_subdiv`, `inner_core` (yes | no),
+`outrigger_levels` ("mid,top" or story numbers), `towers` (1 | 2),
+`tower_bays_x/y`, `tower_stories`, `tower_story_height`,
+`isolator_period` (s), `isolator_kv` (kN/m), `isolator_height`, `roof`
+(portal | truss), `pitch` (deg), `truss_depth`, `truss_panels`,
+`core_size`. Diagrid: `bays_y` / `bay_y` follow `bays_x` / `bay_x` unless
+given. Errors are 400s with plain messages (centred core parity, tower fit,
+square diagrid, coupled-wall length, unknown shape / material ...).
+
+### Model content
+
+* Geometry per system (uids are stable; JS port js/tpl_lib_geom.js builds
+  the same uids / coordinates / releases / angles, checked by
+  tests/test_templates_sys.py via node):
+  * `frame_2d`: XZ frame, `active_dof = [UX, UZ, RY]`, area loads as beam
+    UDLs (`trib_width`); EQX / RSX only.
+  * `steel_smf`: perimeter moment frames (columns' strong axis in the
+    frame plane; corners alternate 0 / 90 deg), interior beams `Mi,Mj`,
+    interior gravity columns released `Mi` at the base.
+  * `steel_cbf` / `steel_ebf`: middle bay(s) of every face braced
+    (`braced_bays(n)`), beams / braces pinned, column bases `Mi`; EBF link
+    beam `LK...` of `link_length` between the brace work points.
+  * `steel_deck`: girders on every grid line split at the infill beams,
+    pinned infill beams `IB...`, `deck_filled` membrane strips spanning
+    one-way onto the infill beams; moment frames on the perimeter or all
+    lines.
+  * `flat_slab_perimeter`: meshed shell slab + perimeter beams.
+  * `rc_dual_core`: centred box core (one wall region per bay per story,
+    piers P1 S / P2 E / P3 N / P4 W), frame beams on every grid line.
+  * `rc_shear_wall`: coupled walls on both long faces (lower pier panels
+    labelled P1-P4; the short panel beside the spandrel is unlabelled
+    because the engine cuts every labelled region at its own base; the
+    spandrel region over the door is labelled S1 / S2 and listed in
+    `spandrel_labels`), planar walls PX1 / PX2 centred on the end faces,
+    extra grid lines at the wall edges (conforming meshes).
+  * `rc_framed_tube`: perimeter columns every `bay/tube_subdiv` with deep
+    spandrels, interior gravity frame, optional central core.
+  * `outrigger`: core walls + pinned steel gravity frame (column bases
+    `Mi`); at each outrigger story the core-line and perimeter beams of its
+    top and bottom levels are moment-connected chords, one diagonal per
+    outrigger bay rising toward the core, X belt-truss diagonals in every
+    perimeter bay.
+  * `podium_tower`: `towers = [P, T1(, T2)]` with grid systems GP / GT1 /
+    GT2 (Define > Towers); podium stories `P<i>`, tower stories `T<k>-<i>`;
+    the podium roof carries LIVE (plaza).
+  * `base_isolated`: story `ISO` (height `isolator_height`) with base beams
+    and slab; one elastic link per column from `(x, y, 0)` to the ISO level
+    with stiffness `[k, k, kv, 0, 0, 0]`, `k = 4 pi^2 M / (T^2 n)` (M = sum
+    of the story masses); explicit fixed supports at the link bottoms only.
+  * `industrial_shed`: one story `Roof` (eave height), portal frames or
+    Pratt trusses on fixed-base columns, eave struts / ridge purlin pinned,
+    end-bay wall X-bracing, `CLADDING` membrane roof spanning one-way along
+    Y, `diaphragm = "none"`.
+  * `diagrid`: square plan, diagonals over two-story modules, node rows
+    alternating by half a panel, corner columns, ring beams, core walls
+    P1-P4, trapezoid membrane floors.
+* Loads: `DEAD` (dead, self weight 1), `SDL` (superdead, `sdl` on every
+  floor / roof region), `LIVE` (live, floors below the roof; omitted when
+  no such floor or `live = 0`), `LROOF` (roof_live, roof regions); one
+  linear static case each; mass source `{DEAD: 1, SDL: 1, LIVE:
+  live_mass_factor}`; `num_modes = min(3 n_stories, 12)` (frame_2d:
+  `min(n, 6)`, shed 12). Code loads via `templates.apply_code_loads(model,
+  p, dirs)` (EQX / EQY auto lateral, RSF, RSX / RSY, ASCE 7 grouped LRFD /
+  EN 1990 / IS 456 combinations).
+* `build_template` returns `(model, summary)`; the model uses the ETABS
+  frame-axis convention and passes `validate()`. Summary adds to the slab
+  keys: `links`, `piers`, `spandrels`, `towers`, `diaphragm`, `system` and,
+  for `base_isolated`, `isolator_keff`, `isolated_mass`.
+
+### Validation (tests/test_templates_sys.py)
+
+Every template builds (defaults), validates, round-trips and runs linear
+static + modal; counts and the DEAD / SDL / LIVE base reactions equal hand
+take-offs (1e-6); story masses equal the hand seismic weight (columns not
+lumped) within 2 %; T1 in [0.2, 3] x ASCE 7 Ta; story CM at the plan centre.
+Closed forms: 1-bay portal sway stiffness (5-dof Timoshenko direct
+stiffness, 1e-6; within 0.5 % of slope-deflection) and gravity corner /
+base moments (Timoshenko slope-deflection, 1e-6); chevron CBF brace force
+`(F/2)/(2 cos theta)` and EBF link shear `N sin theta (b - e)/b`, link end
+moments `V e / 2` (1e-4); isolation-layer drift `V / sum k` (1e-6) and
+`T_target < T1 < 1.1 T_target`.
+
+### UI
+
+Template Library dialog (dlgkit): category chips, card list with sketch
+thumbnails, live iso + plan sketch of the current parameters with element
+counts and inline constraint errors, description / ETABS equivalent and a
+grouped parameter panel generated from `meta` (units via js/units.js; the
+model's display units follow the working units until picked). ?mock=1:
+js/mock_tpl_library.js (+ generated js/mock_tpl_library_data.js,
+tools/gen_mock_tpl_library.py).

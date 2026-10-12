@@ -134,6 +134,7 @@ import { tdMockValidate as tdMockValidateModel } from "./mock_timedep.js";   // 
 import { initWbProps as wbInitProps } from "./wb_init.js";   // Wave B ortho / slab / deck / CF / composite / line-area springs (js/wb_*.js)
 import { wbMockValidate as wbMockValidateProps } from "./mock_wb.js";   // Wave B ?mock=1 validation
 
+import { initTplLibrary as tlInitTplLibrary } from "./tpl_library.js";   // D4 structural-system template library
 import { initWb as wbInitWb } from "./wbi_init.js";   // Wave B: templates · general grids · named views / windows · Edit Shells · quick draw · report templates (js/wb_*.js)
 import { wbMockValidate as wbMockValidateIface } from "./mock_wbi.js";   // Wave B ?mock=1 validation
 
@@ -8635,6 +8636,7 @@ async function boot() {
   try { wbInitWaveB(window.__sky); } catch (err) { console.error("Wave B init failed", err); }   // Irregularity Checks · joint-local reactions (js/waveb.js)
 
   try { wbInitWb(window.__sky); } catch (err) { console.error("Wave B init failed", err); }   // Wave B interface & modelling tools (js/wb_init.js)
+  try { tlInitTplLibrary(window.__sky); } catch (err) { console.error("template library init failed", err); }   // D4 File › Template Library… (js/tpl_library.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)

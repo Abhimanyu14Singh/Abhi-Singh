@@ -237,7 +237,7 @@ export function installStart(sky) {
       for (const t of UX_TEMPLATES) {
         const c = uxEl("button", { type: "button", class: "ux-tpl-card" + (t.id === cur ? " is-sel" : ""), role: "radio", "aria-checked": t.id === cur ? "true" : "false", "data-tpl": t.id,
           title: `${t.name} — ${t.sub}\nETABS: ${t.etabs}` });
-        c.innerHTML = thumb(t.id) + `<span class="ux-tpl-meta"><b>${uxEsc(t.name)}</b><span class="muted">${uxEsc(t.sub)}</span></span>`;
+        c.innerHTML = (t.thumb ? t.thumb() : thumb(t.id)) + `<span class="ux-tpl-meta"><b>${uxEsc(t.name)}</b><span class="muted">${uxEsc(t.sub)}</span></span>`;   // D4: card.thumb hook (js/tpl_library.js)
         c.addEventListener("click", () => { cur = t.id; renderCards(); renderForm(); });
         c.addEventListener("dblclick", () => { cur = t.id; create(); });
         cards.appendChild(c);
