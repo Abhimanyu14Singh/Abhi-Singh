@@ -1314,6 +1314,9 @@ class CaseResults:
     #   transverse deflections (LOCAL y / z, m) at the 11 member stations,
     #   recovered in closed form for prismatic members (static cases and
     #   additive combos; empty for RS/TH/envelopes)
+    rs_info: Dict[str, object] = field(default_factory=dict)
+    #   RS ext (engine/rs_ext.py): loads / dir_combo / eccentricity torques;
+    #   serialised as "rs" only when set (legacy RS results unchanged)
 
     def to_dict(self) -> dict:
         d = {
@@ -1335,6 +1338,8 @@ class CaseResults:
             d["min"] = self.minima.to_dict()
         if self.warning:
             d["warning"] = self.warning
+        if self.rs_info:                         # RS ext (engine/rs_ext.py)
+            d["rs"] = self.rs_info
         return d
 
 
@@ -7715,6 +7720,11 @@ class OpenSeesEngine:
             raise RuntimeError(
                 f"RS case {name!r}: the model has no dynamic modes "
                 "(no mass on unrestrained DOFs)")
+        from . import rs_ext as _rsx    # RS U3 / angle / multi-dir / ecc
+        if _rsx._crx.is_extended(rs):
+            result = _rsx.run_case(self, rs, name, modal)
+            self._rs_cache[name] = result
+            return result
         asm = self._asm  # tags are stable across rebuilds (same mesh)
         mass_map = dict(asm.mass_map)
         gamma_key = "gamma_x" if rs.direction == "X" else "gamma_y"
@@ -7752,6 +7762,7 @@ class OpenSeesEngine:
         else:
             result = _mc.run_rs_extended(self, rs, name, modal, per_mode,
                                          omegas, spectrum, mass_map)
+        result = _rsx.apply_ecc(self, rs, name, modal, result)  # no-op: ecc 0
         self._rs_cache[name] = result
         return result
 
@@ -7771,9 +7782,13 @@ class OpenSeesEngine:
         shape (node_disp / reactions / base / member_forces / story /
         member_stations).
         """
+        if method in ("CQC3", "ABS"):         # RS ext (engine/rs_ext.py)
+            from . import rs_ext as _rsx
+            return _rsx.directional(self, name_x, name_y, method,
+                                    name or f"{name_x}+{name_y}")
         if method not in ("100_30", "SRSS"):
-            raise ValueError(f"RS directional method must be 100_30|SRSS, "
-                             f"got {method!r}")
+            raise ValueError(f"RS directional method must be "
+                             f"100_30|SRSS|CQC3|ABS, got {method!r}")
         rx = self.run_response_spectrum(name_x)
         ry = self.run_response_spectrum(name_y)
 
@@ -7807,6 +7822,8 @@ class OpenSeesEngine:
             member_forces=comb_vecs(rx.member_forces, ry.member_forces),
             story=story,
             member_stations=member_stations,
+            shell_forces=(comb_vecs(rx.shell_forces, ry.shell_forces)
+                          if rx.shell_forces else {}),        # RS shells
         )
 
     def run_buckling(self, name: str) -> BucklingResult:
@@ -8282,8 +8299,10 @@ class OpenSeesEngine:
         # positive envelopes; deflections are a static-case quantity)
         member_forces, member_stations, _ = self._member_outputs(asm)
         story = self._modal_story(asm, loads, node_disp)
+        # RS shell forces: per-mode shell resultants (engine/rs_ext.py)
         return CaseResults("", node_disp, reactions, base, member_forces,
-                           story, member_stations)
+                           story, member_stations,
+                           shell_forces=self._shell_outputs(asm))
 
     def _modal_story(self, asm: _Assembly,
                      loads: Dict[Tuple[int, int], float],
@@ -8331,8 +8350,11 @@ class OpenSeesEngine:
         member_forces = _mcd.scaled(unit, "member_forces", c)
         member_stations = _mcd.scaled(unit, "member_stations", c)
         story = self._modal_story(asm, loads, node_disp)
+        shell_forces = (_mcd.scaled(unit, "shell_forces", c)   # RS shells
+                        if unit.get("shell_forces") else {})
         return CaseResults("", node_disp, reactions, base, member_forces,
-                           story, member_stations)
+                           story, member_stations,
+                           shell_forces=shell_forces)
 
     @staticmethod
     def _combine_rsa(name: str, parts: List[CaseResults],
@@ -8380,6 +8402,8 @@ class OpenSeesEngine:
             member_forces=comb_vecs(lambda r: r.member_forces),
             story=story,
             member_stations=member_stations,
+            shell_forces=(comb_vecs(lambda r: r.shell_forces)   # RS shells
+                          if parts[0].shell_forces else {}),
         )
 
     # ---------------------------------------------------------------- modal
@@ -8491,4 +8515,6 @@ class OpenSeesEngine:
                 if gamma_key:
                     entry[gamma_key] = num / den
             out.append(entry)
+        from . import rs_ext as _rsx            # UZ participation (opt-in)
+        _rsx.add_uz(self.model, asm, shapes, out)
         return out

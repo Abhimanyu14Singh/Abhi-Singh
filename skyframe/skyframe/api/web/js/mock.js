@@ -31,6 +31,7 @@ import { pfMockExtend as pfMockExtendResults } from "./mock_plotfn.js";   // plo
 import { mockRatioNaApply as rnaMockRatioNaApply } from "./mock_ratio_na.js";   // n/a (negligible drift) story ratios
 
 import { fuMockAugment as c9fMockAugment } from "./mock_towers_fu.js";   // C9 follow-ups: per-tower TH shear, control tower
+import { rsxMockAugment } from "./mock_rs_ext.js";   // RS ext: U3 / angle / CQC3 / ABS / ecc / RS shell forces
 const G = 9.80665;
 
 function mulberry32(seed) {
@@ -1530,7 +1531,7 @@ export function mockRsDirectional(model, p = {}) {
     name,
     name_x: p.name_x || "",
     name_y: p.name_y || "",
-    method: p.method === "SRSS" ? "SRSS" : "100_30",
+    method: ["SRSS", "CQC3", "ABS"].includes(p.method) ? p.method : "100_30",   // RS ext: + CQC3 / ABS
   };
   return model;
 }
@@ -3324,6 +3325,7 @@ export function mockResults(model) {
   pfMockExtendResults(model, r);                  // plot functions: th_cases[*].plot_functions (js/mock_plotfn.js)
   c9fMockAugment(model, r);                       // C9 follow-ups: per-tower TH story shear + control_tower (js/mock_towers_fu.js)
   rnaMockRatioNaApply(model, r);                  // n/a (negligible drift) story ratios (js/mock_ratio_na.js)
+  rsxMockAugment(model, r);                       // RS ext: U3 / angle / CQC3 / ABS / ecc / RS shell forces (js/mock_rs_ext.js)
   return r;
 }
 

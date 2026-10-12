@@ -48,6 +48,7 @@ from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
     PDELTA_INCLUDE_IN, PDELTA_METHODS, pdelta_defaults, pdelta_from_dict,
     pdelta_to_dict, validate_pdelta_options)
 from skyframe.core import analysis_options as _aopt  # solver/convergence
+from skyframe.core import rs_ext as _rsx  # RS ecc / U3 / angle / CQC3
 from skyframe.core.builtup import (  # v1.21 built-up sections
     model_to_dict as _builtup_to_dict, model_from_dict as _builtup_from_dict)
 
@@ -1280,7 +1281,7 @@ class LoadCase:
         return asdict(self)
 
 
-RS_DIRECTIONS = ("X", "Y")
+RS_DIRECTIONS = ("X", "Y", "Z")   # Z (U3, vertical): core/rs_ext.py
 RS_COMBO_METHODS = ("CQC", "SRSS", "ABS", "GMC", "NRC10", "DSC")  # v1.13
 # v1.13 defaults of the ETABS modal-combination parameters
 RS_GMC_F1 = 1.0          # Hz, Gupta rigid-response lower frequency
@@ -1328,6 +1329,15 @@ class ResponseSpectrumCase:
     dsc_td: float = RS_DSC_TD            # v1.13
     rigid_response: bool = False         # v1.13
     include_missing_mass: bool = False   # v1.13
+    # RS completeness (core/rs_ext.py): angle / several loads / CQC3-ABS
+    # directional combination / accidental eccentricity
+    angle: float = 0.0
+    loads: List[dict] = field(default_factory=list)
+    dir_combo: str = "SRSS"
+    dir_sf: float = 1.0
+    ecc: float = 0.0
+    ecc_overrides: Dict[str, float] = field(default_factory=dict)
+    ecc_ax: bool = False
 
     def to_dict(self) -> dict:
         d = {"name": self.name, "direction": self.direction,
@@ -1342,6 +1352,7 @@ class ResponseSpectrumCase:
                              ("include_missing_mass", False)):
             if getattr(self, key) != default:
                 d[key] = getattr(self, key)
+        d.update(_rsx.to_dict_extra(self))       # RS ext: non-defaults only
         return d
 
 
@@ -1653,7 +1664,7 @@ class BucklingCase:
 
 
 # v0.10 response-spectrum directional combination methods (ASCE 7 §12.5)
-RS_DIRECTIONAL_METHODS = ("100_30", "SRSS")
+RS_DIRECTIONAL_METHODS = ("100_30", "SRSS", "CQC3", "ABS")  # +rs_ext
 
 # v0.15 advanced link types (seismic protection devices).  ``elastic`` is the
 # original v0.5 6-DOF spring; the others are device links driven by
@@ -2469,8 +2480,11 @@ class BuildingModel:
                     scale: float = 1.0, function: str = "",
                     gmc_f1: float = RS_GMC_F1, gmc_f2: float = RS_GMC_F2,
                     dsc_td: float = RS_DSC_TD, rigid_response: bool = False,
-                    include_missing_mass: bool = False
+                    include_missing_mass: bool = False, **ext
                     ) -> ResponseSpectrumCase:
+        # ``ext``: RS ext fields (angle, loads, dir_combo, dir_sf, ecc,
+        # ecc_overrides, ecc_ax — core/rs_ext.py)
+        ext = _rsx.from_dict_kwargs(ext)
         rs = ResponseSpectrumCase(
             name, direction,
             [[float(t), float(sa)] for t, sa in (spectrum or [])],
@@ -2479,15 +2493,16 @@ class BuildingModel:
             function=str(function), gmc_f1=float(gmc_f1),
             gmc_f2=float(gmc_f2), dsc_td=float(dsc_td),
             rigid_response=bool(rigid_response),
-            include_missing_mass=bool(include_missing_mass))
+            include_missing_mass=bool(include_missing_mass), **ext)
         self._validate_rs_case(rs)
         self.rs_cases[name] = rs
         return rs
 
     def _validate_rs_case(self, rs: ResponseSpectrumCase) -> None:
         if rs.direction not in RS_DIRECTIONS:
-            raise ValueError(f"RS case {rs.name}: direction must be X|Y, "
+            raise ValueError(f"RS case {rs.name}: direction must be X|Y|Z, "
                              f"got {rs.direction!r}")
+        _rsx.validate(self, rs)                  # RS ext fields
         if rs.combo_method not in RS_COMBO_METHODS:
             raise ValueError(f"RS case {rs.name}: combo_method must be "
                              f"{'|'.join(RS_COMBO_METHODS)}, got "
@@ -2869,6 +2884,7 @@ class BuildingModel:
             if rc not in self.rs_cases:
                 raise ValueError(f"RS combo {name}: {key} references unknown "
                                  f"response-spectrum case {rc!r}")
+        _rsx.validate_combo(self, name, combo)   # CQC3 compatibility
 
     def add_pushover_case(self, name: str, direction: str,
                           gravity: Optional[Dict[str, float]] = None,
@@ -4378,7 +4394,8 @@ class BuildingModel:
                 dsc_td=float(rd.get("dsc_td", RS_DSC_TD)),
                 rigid_response=bool(rd.get("rigid_response", False)),
                 include_missing_mass=bool(
-                    rd.get("include_missing_mass", False)))
+                    rd.get("include_missing_mass", False)),
+                **_rsx.from_dict_kwargs(rd))         # RS ext fields
         for name, td in (d.get("th_cases") or {}).items():
             tmy = td.get("default_My")
             mdl.th_cases[name] = TimeHistoryCase(

@@ -212,7 +212,8 @@ def _unit_response(eng, asm, node_disp, lam: float) -> dict:
     member_forces, member_stations, _ = eng._member_outputs(asm)
     return {"lam": lam, "node_disp": nd, "reactions": reactions,
             "member_forces": member_forces,
-            "member_stations": member_stations}
+            "member_stations": member_stations,
+            "shell_forces": eng._shell_outputs(asm)}   # RS shell forces
 
 
 def _flatten(block: dict):

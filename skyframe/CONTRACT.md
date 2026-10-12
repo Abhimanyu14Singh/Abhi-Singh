@@ -11162,3 +11162,133 @@ absent from `to_dict`) or `"exact"`.
 * an analysis runs;
 * kip-in readouts are in in⁴;
 * zero console errors.
+
+## Response spectrum: eccentricity, U3 / angle, directional combination, shell forces
+
+Bulk in `skyframe/core/rs_ext.py` (fields, validation, JSON) and
+`skyframe/engine/rs_ext.py` (engine). Shared files carry small hooks only:
+`ResponseSpectrumCase` fields + `to_dict` / `from_dict` / `_validate_rs_case` /
+`add_rs_case(**ext)` / `_validate_rs_combo` (model.py), the
+`run_response_spectrum` dispatch + eccentricity post-step, the
+`run_rs_directional` CQC3/ABS dispatch, per-mode shell resultants in
+`_modal_static` / `_modal_static_scaled` / `_combine_rsa` /
+`modalcombo.combine_case_results` / `modal_condensed._unit_response`, the UZ
+participation entry (`_participation`), `CaseResults.rs_info`, the
+`parallel.prefetch_rs` serial fallback and five `rs_cases` table columns.
+
+### `ResponseSpectrumCase` fields (JSON keys written only when non-default)
+
+| field | default | meaning |
+|---|---|---|
+| `direction` | — | `X` (U1) \| `Y` (U2) \| **`Z` (U3, vertical)** |
+| `angle` | `0.0` | excitation angle in plan, degrees CCW from +X: U1 = `(cos a, sin a)`, U2 = `(-sin a, cos a)`; U3 ignores it |
+| `loads` | `[]` | several directions in ONE case: `[{"dir": "X"\|"Y"\|"Z", "scale": 1.0, "function": ""}]` (each dir at most once; `function` "" = the case's function / inline spectrum; effective scale = `case.scale * load.scale`). Non-empty replaces `direction` (which stays a valid label). |
+| `dir_combo` | `"SRSS"` | `SRSS` \| `CQC3` \| `ABS` (directional combination of the loads) |
+| `dir_sf` | `1.0` | ABS scale factor in [0, 1] (1 = absolute sum, 0.3 = 100/30) |
+| `ecc` | `0.0` | accidental eccentricity ratio in [0, 0.5] |
+| `ecc_overrides` | `{}` | `{story \| "story/diaphragm": ratio}` overrides (a named-diaphragm key wins over its story key) |
+| `ecc_ax` | `false` | ASCE 7-16 §12.8.4.3 `Ax` torque amplification |
+
+`add_rs_case(..., angle=, loads=, dir_combo=, dir_sf=, ecc=,
+ecc_overrides=, ecc_ax=)` accepts the same keywords.
+
+Validation (`ValueError`): bad direction / dir / duplicate dir / unknown
+function / non-finite angle or scale; `dir_combo` not in the list; `dir_sf`
+outside [0, 1]; `CQC3` without both X and Y loads, or with a modal
+combination other than CQC / SRSS / DSC, or with `rigid_response` /
+`include_missing_mass`; `ecc` (or an override) outside [0, 0.5]; override of
+an unknown story or story/diaphragm; eccentricity with no horizontal load.
+
+`rs_combos[...].method` (`RS_DIRECTIONAL_METHODS`) also accepts `"CQC3"`
+(needs two single horizontal cases with perpendicular directions, the same
+`num_modes`, `combo_method` in CQC/SRSS/DSC, `damping`, `dsc_td`;
+eccentricity of either case is applied per direction, torques by SRSS) and
+`"ABS"` (`|Rx| + |Ry|`).
+
+### Method
+
+Per mode one static solve gives `q_i` = the response to `M phi_i` (the
+condensed modal path's unit responses are scaled instead). Load `d` along
+unit vector `e` with spectrum `S_d`: `r_i = Gamma_i(e) S_d(T_i) scale g q_i`,
+`Gamma_i(e) = phi_i^T M iota_e / phi_i^T M phi_i` (`iota_e` = `e` on the
+UX/UY/UZ massed DOFs). Each load is combined with the case's modal method
+(every v1.13 method, rigid response, missing mass along `e`) into `R_d >= 0`;
+then `SRSS`: `sqrt(sum R_d^2)`; `ABS`: `max_k (R_k + sf sum_{j!=k} R_j)`;
+`CQC3` (Menun & Der Kiureghian 1998, U1 spectrum S1, U2 spectrum S2, U3 by
+SRSS): `R^2 = (P+Q)/2 + sqrt(((P-Q)/2)^2 + C^2) + R_z^2` with
+`P = A1 + B2`, `Q = B1 + A2`, `C = C1 - C2`,
+`A_k = sum rho_ij S_k,i S_k,j a_i1 a_j1`, `B_k` the same with `a_i2 a_j2`,
+`C_k` with `a_i1 a_j2`, `a_i1 = Gamma_i(U1) q_i`, `a_i2 = Gamma_i(U2) q_i`
+(the maximum over the excitation angle of the two-component response;
+`S1 = S2` gives exactly SRSS; independent of `angle`).
+
+**U3** needs UZ mass: Mass Source `include_vertical = true` (tributary
+vertical mass; the condensed modal path keeps it) or nodal `mz`. Without it
+the case fails with "U3 (vertical) excitation needs vertical mass".
+`results.modal.participation[*]` gains `uz` (mass ratio) and `gamma_z`
+whenever `include_vertical` is on or an RS case excites U3 (absent
+otherwise — legacy output unchanged).
+
+**Eccentricity.** Torsion groups: each story (rigid master + story nodes;
+tower stories use the tower's extents), or each named diaphragm (its bbox)
+plus the story's free nodes. The diaphragm force along each horizontal load
+direction `e_d` is the case's modal combination of `F_i = Gamma_i(e_d)
+S_d(T_i) g sum_{t in group} m_t phi_i(t).e_d` (missing mass joins as the
+rigid mode); `T_g,d = ecc_g F_g,d (Lx |e_y| + Ly |e_x|)` (`Ly` for X, `Lx`
+for Y — the static accidental-torsion dimensions). Several horizontal loads:
+SRSS of the torques (SRSS, CQC3), ABS rule for ABS. All torques are applied
+as ONE static load (diaphragm master `rz`; otherwise a pure couple
+`f_t = T w_t / I_p (-(y - y_c), x - x_c)` over the story nodes, `w` = UX
+mass, else 1) and, `+T` and `-T` being enveloped, every quantity is
+`R + |R_T|`. `ecc_ax`: `Ax = (d_max / (1.2 d_avg))^2` clamped to [1, 3] from
+the combined displacement along `e_d` (`|ux ex| + |uy ey|`) at the two story
+nodes extreme in the perpendicular direction; the torques are multiplied by
+`Ax` and solved once more.
+
+### Results
+
+`results.rs_cases[name]` keeps the standard case shape and now ALSO carries
+`shell_forces` — **exactly the static shape**:
+`{"<quad_index>": [Nxx, Nyy, Nxy, Mxx, Myy, Mxy, Vxz, Vyz]}` (positive
+envelopes, combined per resultant with the case's modal / directional rule,
+plus `|R_T|` for eccentricity). Present on every RS case, on `rs_combos`
+(100_30, SRSS, CQC3, ABS) and on eccentric results whenever the model has
+meshed shells (absent otherwise, as for static cases). This replaces the
+"ABSENT ... on RS results" note of "Shell element forces" for RS (TH and
+envelope combos unchanged; extended load combinations with RS members do not
+carry shell forces yet).
+
+Extended / eccentric cases add an `rs` block (absent on legacy cases):
+
+```jsonc
+"rs": {
+  "loads": [{"dir": "X", "vector": [0.866, 0.5, 0.0], "scale": 9.80665}],
+  "dir_combo": "SRSS",
+  "ecc": {"ratio": 0.05,
+          "forces":  {"<story>|<story>/<diaphragm>": {"X": kN}},
+          "torques": {"<story>|<story>/<diaphragm>": kN*m},
+          "ax": {"<group>": 1.0}}          // only with ecc_ax
+}
+```
+
+**Legacy byte-identical:** a case with all new fields at their defaults
+takes the unchanged legacy path; every pre-existing result key is
+bit-identical (verified by JSON hash on frame, meshed-shell, two-tower and
+named-diaphragm models); the only addition is `shell_forces` on RS results
+of models with meshed shells.
+
+### DB tables
+
+`rs_cases` gains columns `angle` (deg), `dir_combo`, `dir_sf`, `ecc`,
+`ecc_ax` (the multi-load list and per-story overrides are edited in the
+dialog / JSON).
+
+### UI
+
+`js/rs_ext.js` hooks into Load Case Data — Response Spectrum
+(`js/dlgstd_cases.js`): direction U1 / U2 / U3, excitation angle, a
+multi-direction load table, directional combination (SRSS / CQC3 /
+Absolute + scale factor) and eccentricity (ratio, ASCE 7 Ax). The RS
+directional-combination editor offers CQC3 and Absolute.
+`js/mock_rs_ext.js` gives `?mock=1` plausible results (angle cosines,
+SRSS / ABS / CQC3 of the directions, eccentricity torques).

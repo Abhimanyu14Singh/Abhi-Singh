@@ -156,7 +156,7 @@ export function normalizeModel(m) {
   }
   for (const [n, rc] of Object.entries(m.rs_cases)) {
     rc.name = rc.name || n;
-    rc.direction = rc.direction === "Y" ? "Y" : "X";
+    rc.direction = ["Y", "Z"].includes(rc.direction) ? rc.direction : "X";   // RS ext: U3 (Z)
     rc.spectrum = Array.isArray(rc.spectrum) ? rc.spectrum : [];
     rc.combo_method = ["SRSS", "ABS", "GMC", "NRC10", "DSC"].includes(rc.combo_method) ? rc.combo_method : "CQC";
     rc.damping = isFinite(rc.damping) ? rc.damping : 0.05;
@@ -276,7 +276,7 @@ export function normalizeModel(m) {
     rcmb.name = rcmb.name || n;
     rcmb.name_x = rcmb.name_x || "";
     rcmb.name_y = rcmb.name_y || "";
-    rcmb.method = rcmb.method === "SRSS" ? "SRSS" : "100_30";
+    rcmb.method = ["SRSS", "CQC3", "ABS"].includes(rcmb.method) ? rcmb.method : "100_30";   // RS ext: + CQC3 / ABS
   }
   // v0.13 — section cuts (list of cutting planes) + function library
   m.section_cuts = (Array.isArray(m.section_cuts) ? m.section_cuts : [])

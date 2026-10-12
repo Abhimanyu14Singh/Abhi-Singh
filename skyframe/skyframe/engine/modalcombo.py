@@ -240,6 +240,8 @@ def combine_case_results(name: str, parts: list, comb: Callable):
         member_forces=comb_vecs(lambda r: r.member_forces),
         story=story,
         member_stations=member_stations,
+        shell_forces=(comb_vecs(lambda r: r.shell_forces)   # RS shells
+                      if parts[0].shell_forces else {}),
     )
 
 

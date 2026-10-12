@@ -159,6 +159,20 @@ class Col:
         cur[self.path[-1]] = value
 
 
+def _rs_ext_cols(num):
+    """RS case ext columns (core/rs_ext.py); the multi-load list stays in
+    the Load Case Data dialog."""
+    from skyframe.core.rs_ext import RS_DIR_COMBOS
+    return [
+        Col("angle", "Excitation Angle", num, "angle_deg", default=0.0),
+        Col("dir_combo", "Directional Combo", "enum", enum=RS_DIR_COMBOS,
+            default="SRSS"),
+        Col("dir_sf", "Abs. Directional SF", num, default=1.0),
+        Col("ecc", "Eccentricity Ratio", num, default=0.0),
+        Col("ecc_ax", "ASCE 7 Ax", "bool", default=False),
+    ]
+
+
 def _is_num(v) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
@@ -1888,6 +1902,8 @@ def _build_catalogue() -> List[Table]:
                 default="CQC"),
             Col("damping", "Damping", num, default=0.05),
             Col("scale", "Scale Factor", num, default=1.0),
+            # RS ext (core/rs_ext.py): angle / directional combo / ecc
+            *_rs_ext_cols(num),
         ], container="rs_cases", keycol="name", on_rename=_cascade_case,
         delete_refs=_case_refs,
         new_obj=lambda d: {"spectrum": [], "num_modes": 0,
