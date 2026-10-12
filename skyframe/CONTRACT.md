@@ -10643,3 +10643,326 @@ embedded, verbatim 42-shape subset covering all 15 families
 * kip-in: 0.25 m reads 9.84252 in, 12 in stores 0.3048 m, and the table
   headers read in²/in⁴;
 * zero console errors.
+
+## Model exchange: E2K / IFC / DXF / Excel
+
+Export and import of whole models. All code is new and lives in
+`skyframe/io/` (`e2k_write.py`, `e2k_read.py`, `ifc_write.py`,
+`ifc_read.py`, `dxf_layers.py`, `xlsx.py`, `exchange_common.py`) plus
+`skyframe/api/exchange_api.py` (registered by `create_app` with one line).
+No model or engine code changed, so a model that is never exported is
+byte-identical (quick building: model `95a41577bb25e727`, results
+`4b9bdc714c4a23e0`). The legacy readers `import_e2k`, `import_ifc` and
+`import_dxf` (and `POST /api/import/<fmt>`) are unchanged.
+
+### E2K (ETABS v20+ text)
+
+`export_e2k(model, units=("KN","M"), include=None, extensions=True)` →
+`(text, report)`; `read_e2k(text, units=("KN","M"), apply_extensions=True)`
+→ `(model, warnings)`.
+
+* **Units.** `UNITS "<F>" "<L>" "C"` with F in KN, N, KIP, LB, KGF, TONF and
+  L in M, MM, CM, FT, IN. Values are converted from SI on export and to SI
+  on import (stress F/L², unit weight F/L³, mass F·s²/L, …). The `units`
+  argument of `read_e2k` applies only when the file has no UNITS line.
+* **Axes.** Records are written in ETABS axes: a `"legacy"` model is
+  converted first (vertical members get `angle − 90`, see "Frame local
+  axes"). Imported models are `"etabs"`.
+* **Records written.** One `$` section each. The reader dispatches on the
+  record keyword, as ETABS does, so section headers are cosmetic.
+  * `PROGRAM "ETABS" VERSION "20.0.0"`, `TITLE2`.
+  * `TOWER` (multi-tower models); `STORY "S" HEIGHT h [TOWER "T"]`
+    top-down and one `STORY "Base" ELEV z` per tower (`Base_<tower>` for
+    the others).
+  * `GRIDSYSTEM` (`CARTESIAN` / `CYLINDRICAL`, `UX UY ROTATION`) + `GRID`
+    lines (`DIR X|Y|R|T`).
+  * `DIAPHRAGM "D" TYPE RIGID|SEMIRIGID`.
+  * `MATERIAL` (TYPE, WEIGHTPERVOLUME, MASSPERVOLUME, SYMTYPE, E, U, A, FY,
+    FU, FYE = Ry·fy, FUE, FC, LTWTCONC, LTWTFACT, DAMPRATIO).
+  * `FRAMESECTION`:
+    * rectangles built by `FrameSection.rectangular` → `SHAPE "Concrete
+      Rectangular" D h B b`;
+    * steel-database sections → the parametric ETABS shape plus
+      `FROMFILE "<file>" DBSECTNAME "<shape>"` (aisc `AISC16.xml`,
+      eurocode `Euro.xml`, bs `BSShapes2006.xml`, as_nzs
+      `Australia-NZ.xml`, is808 `Indian.xml`); the reader rebuilds them
+      with `steel_db.section_from_db`;
+    * parametric shapes → `Steel I/Wide Flange` (I; I_mono adds `BB TFB`),
+      `Steel Channel`, `Steel Angle`, `Steel Double Angle` (`DIS`),
+      `Steel Tee`, `Steel Tube` (`CORNERRADIUS`), `Steel Pipe`,
+      `Steel Rectangular` / `Steel Rod` (`Concrete Rectangular` /
+      `Concrete Circle` for concrete), `Steel Plate`, `Concrete Tee`,
+      `Concrete L`, keys `D B TF TW`; the reader rebuilds them with
+      `section_from_dims`;
+    * everything else (general, designer, built-up, nonprismatic) →
+      `SHAPE "General" D B AREA AS2 AS3 I33 I22 I23 J` (AS2/AS3 = 0 means
+      unset);
+    * a second line carries `AMOD A2MOD A3MOD JMOD I2MOD I3MOD MMOD WMOD`
+      when any modifier differs from 1.
+  * `SDSECTION` for built-up sections. Components are `STEEL PLATE`
+    (D = t, B = b) or a parametric / database shape, with `XC YC ROTATION
+    MIRROR2`. The reader recreates `builtup_sections` and re-snapshots
+    database components.
+  * `SHELLPROP` (`PROPTYPE Wall|Slab`, `MODELINGTYPE ShellThin |
+    ShellThick | Membrane | PlateThin | PlateThick`, thickness, `F11MOD …
+    V23MOD MMOD WMOD`). Membrane-behaviour slabs use `Membrane`; a section
+    used by both behaviours gets a second property `<name>~M`.
+  * `LINKPROP "LP_<uid>" TYPE` + `DOF U1..R3 KE`. Elastic stiffness maps
+    from global to the default ETABS link axes: vertical / zero length
+    1 = Z, 2 = X, 3 = Y; along X 1 = X, 2 = Z, 3 = Y; along Y 1 = Y,
+    2 = Z, 3 = X.
+  * `POINTSPRING` (UX..RZ), `AREASPRING` (U3, `NONLINEAROPT3 "Compression
+    Only"`).
+  * `POINT "n" x y [dz]`, where dz is the distance below the story level
+    of the referencing record.
+  * `LINE "uid" COLUMN|BEAM|BRACE "pi" "pj" N`: N = levels from i to j, so
+    i is N levels below the assigned story; members drawn top-down get a
+    negative N.
+  * `AREA "uid" FLOOR|PANEL n "p1".."pn" N1..Nn` (levels below the
+    assigned story). Openings are separate areas `"<uid>~O<k>"` with
+    `AREAASSIGN … OPENING "Yes"`.
+  * `LINK "uid" POINT1 "p" "level" POINT2 "p" "level"`.
+  * `POINTASSIGN` (`RESTRAINT`, `SPRINGPROP`, `DIAPH`, `MASSUX..MASSRZ`),
+    `LINEASSIGN` (`SECTION ANGLE RELEASE "M2I M3I M2J M3J" LENOFFI LENOFFJ
+    RIGIDZONE CARDINALPT TRANSFORMSTIFFNESSFOROFFSETS`), `AREAASSIGN`
+    (`SECTION DIAPH SPRINGPROP PIER OBJMESHTYPE "MAXSIZE" MESHMAXSIZE`),
+    `LINKASSIGN PROPERTY`.
+  * Loads:
+    * `LOADPATTERN TYPE SELFWEIGHT`;
+    * story forces: `SEISMIC|WIND "P" "User Loads" [ECCRATIO e]` +
+      `… STORY "S" DIAPHRAGM "D" FX FY MZ`;
+    * `POINTLOAD TYPE "FORCE" FX..MZ`;
+    * `LINELOAD TYPE "UNIFF" | "TRAPF" (FSTART FEND RDSTART RDEND) |
+      "POINTF" (FVAL RDIST)`, `DIR GRAV | 2 | X | Y | Z`;
+    * `AREALOAD TYPE "UNIFF" DIR GRAV|X|Y|Z|1|2|3`, and
+      `SHELLUNIFORMLOADSET` + `AREALOAD TYPE "UNIFLOADSET" "set"`.
+  * `ACTIVEDOF`, `PDELTA METHOD NONE|NONITERATIVE|ITERATIVE [MAXITER TOL]`,
+    `PDELTALOAD`.
+  * `MASSSOURCE "MsSrc1" INCLUDEELEMENTS INCLUDEADDEDMASS INCLUDELOADS
+    INCLUDELATERALMASS INCLUDEVERTICALMASS LUMPATSTORIES ISDEFAULT` +
+    `MASSSOURCELOAD`.
+  * `FUNCTION FUNCTYPE "SPECTRUM"` (PERIOD / VALUE) and `FUNCTYPE
+    "HISTORY" TIMESTEP dt` (TIME / VALUE). Inline RS spectra / TH records
+    become `<case>_SPEC` / `<case>_TH`.
+  * `LOADCASE`:
+    * `"Modal - Eigen"` with `MAXMODES` = num_modes (omitted when 0);
+    * `"Linear Static"`, or `"Nonlinear Static" NLGEOMTYPE "PDelta" |
+      "PDelta plus Large Displ"`;
+    * `"Response Spectrum" MODALCASE ACCEL U1|U2 FUNC SF MODALCOMBO
+      CONSTDAMP`, where SF = scale·g in file units;
+    * `"Linear | Nonlinear Direct Integration History" ACCEL FUNC SF
+      NUMSTEPS STEPSIZE CONSTDAMP`;
+    * `"Buckling" LOADPAT BUCKLINGMODES`.
+  * `COMBO TYPE "Linear Add" | "Envelope" | "Absolute Add" | "SRSS" |
+    "Range Add"`, members `LOADCASE` / `LOADCOMBO … SF`.
+  * `GROUP "g" [COLOR]`, `GROUP "g" LINE|AREA "uid" "story"`, `LINK "uid"`,
+    `POINT "p" "story"`.
+* **Reader rules.**
+  * Object uid = the label when the label is assigned at one story, else
+    `<label>-<story>`.
+  * Base fixity: identical full-fixed or pinned restraints at exactly the
+    lowest object points → `base_fixity`; otherwise explicit `supports`.
+  * A rigid diaphragm assigned only through points, covering every object
+    point of each story it touches (name `D1`, or the only diaphragm), is
+    the legacy per-story rigid diaphragm. Stories without one get
+    `story_diaphragm = "none"`. Other diaphragms become named diaphragms.
+  * Opening areas attach to the `<uid>` of their name, else to the
+    containing coplanar area. A parallelogram opening becomes a u/v
+    rectangle, anything else a polygon opening.
+  * Unknown records and references are warnings, never exceptions.
+* **SkyFrame extensions (exact round trip).**
+  * The writer re-imports its native text, diffs it against
+    `model.to_dict()` and writes every remaining difference as `$SF {"op":
+    "set"|"del"|"order", "path": [...], "value"|"keys": …}` comment lines
+    (values SI). ETABS treats `$` lines as comments.
+  * `read_e2k` replays them (`exchange_common.apply_patches`).
+  * In kN-m the round trip is byte-identical; in other units the
+    comparison uses 1e-12 relative.
+  * `report = {format, units, written: {kind: n}, skipped: [str],
+    extensions: {top-level key: n}, exact, native_exact}`.
+* **Not expressible in E2K.** These are carried by `$SF` lines, and
+  dropped with `extensions=False`:
+  * materials: stress-strain curves, colour, notes;
+  * frame sections: the shear-deformation flag, the principal-axis flag,
+    nonprismatic segments (written as the General props of the section),
+    built-up labels / template / notes / axes / torsion, designer-section
+    geometry;
+  * shells: layered sections, the shell `mod` factor, the legacy shell
+    type `shell` (written ShellThin, read `shell_thin`), region mesh
+    divisions / floor mesh, one-way distribution, wind Cp, additional
+    masses;
+  * frames: joint offsets, automatic end offsets, axial limits, hinges,
+    Winkler foundation, auto mesh / output stations, curved geometry,
+    open-structure wind, tower tags, objects above the top story;
+  * links and springs: non-elastic link parameters, skewed elastic links,
+    line springs, nonlinear / rotated named point springs;
+  * loads: thermal loads, ground displacements, frame moments, projected
+    flags, joint patterns;
+  * cases: pushover, staged, nonlinear static, steady-state, PSD and
+    hyperstatic cases, buckling base cases, static P-Delta gravity, RS mode
+    counts and GMC / DSC / rigid / missing-mass options, TH hinge /
+    damping-model / DI / multi-component options, RS directional
+    combinations, cases not run;
+  * model options: explicit story masses, the `mass_from_patterns` alias,
+    edge constraints, panel zones, analysis / damping option dictionaries,
+    section cuts, display units, the legacy axis convention.
+
+### IFC (IFC4 STEP text, no dependencies)
+
+`export_ifc(model, include={"physical","analysis","supports"})` →
+`(text, report)`; `read_ifc(text)` → `(model, warnings)`.
+
+* **Spatial structure.** IfcProject (SI units) → IfcSite → IfcBuilding →
+  one IfcBuildingStorey per level (base included, `Elevation`).
+* **Materials.** `Pset_MaterialMechanical` (YoungModulus in Pa,
+  PoissonRatio) and `Pset_MaterialCommon` (MassDensity in kg/m³).
+* **Physical members.** IfcColumn / IfcBeam / IfcMember (Name = uid,
+  ObjectType = section, Tag = story) with an IfcExtrudedAreaSolid. The
+  solid's Z is local 1, X is −local 3 and Y is local 2. Profiles:
+  IfcIShapeProfileDef, IfcAsymmetricIShapeProfileDef, IfcUShapeProfileDef,
+  IfcLShapeProfileDef, IfcTShapeProfileDef, IfcRectangleHollowProfileDef,
+  IfcCircleHollowProfileDef, IfcCircleProfileDef or IfcRectangleProfileDef.
+  `ProfileName` is the database shape name for database sections. Each
+  profile carries `Pset_ProfileMechanical` (CrossSectionArea,
+  MomentOfInertiaY = I33, MomentOfInertiaZ = I22, TorsionalConstantX = J,
+  ShearAreaZ/Y).
+* **Walls and slabs.** IfcWall / IfcSlab extruded from the mid-surface,
+  with openings as voids.
+* **Analysis model.** IfcStructuralAnalysisModel groups:
+  * IfcStructuralCurveMember (IfcEdge of the exact end points, `Axis` =
+    local 2);
+  * IfcStructuralSurfaceMember (outer and opening loops, Thickness);
+  * IfcStructuralPointConnection (IfcBoundaryNodeCondition).
+* **Import.** Geometry comes from the analysis members (exact), else from
+  the physical solids (full 3D placement chains). Profiles map back as
+  follows:
+  * a ProfileName found in aisc, eurocode, bs, as_nzs or is808 (in that
+    order) with the same type → that database section;
+  * otherwise the IFC parameters → a parametric shape;
+  * a rectangle → `FrameSection.rectangular`, or a general section when
+    its Pset_ProfileMechanical differs.
+* **Limits.** Double angles, concrete T/L, built-up, designer and general
+  sections are written as their bounding rectangle with their properties.
+  Loads, cases and combinations are not written.
+
+### DXF (ASCII, AC1009 entities)
+
+`export_dxf(model, include={"frames","shells","links","grids"},
+unit_scale=1)` → `(text, report)`; `import_dxf_layers(text,
+sections_from=None, unit_scale=1, layer_map=None)` → `(model, warnings)`.
+
+* **Layers.**
+  * frames: 3D LINE on `SF-COL|BEAM|BRACE-<section>`;
+  * walls / slabs / membrane slabs: 3DFACE (3–4 corners, no openings) or a
+    closed 3D POLYLINE on `SF-WALL|SLAB|DECK-<section>`;
+  * openings on `SF-OPENING`, links on `SF-LINK`, grid lines (at the base
+    level) on `SF-GRID`.
+* **Names.** Layer names are sanitised (`<>/\":;?*|=,` and blanks → `_`).
+  The header carries one `999` comment `SF-MAP <layer>=<section>` per
+  layer, so the import maps layers back to exact section names.
+* **Units.** `unit_scale` is drawing units per metre (1000 = mm).
+* **Import.**
+  * Stories come from the distinct elevations (lowest = base).
+  * Sections, materials and link properties come from `sections_from`
+    (the server uses the current model). Without it, placeholders are
+    used (0.3 × 0.6 m frames, 0.2 m shells) with a warning.
+  * `layer_map {layer: {kind, section}}` maps foreign layers.
+
+### Excel (.xlsx, zipfile + minimal OOXML)
+
+`export_xlsx(model, tables=None)` → `(bytes, report)`;
+`import_xlsx(model, data)` → `(model|None, errors, summary)`.
+
+* **Writer.** One sheet per `core/modeltables.py` table, with header
+  `_id` + `<key> [<SI unit>]`. Numeric cells are exact doubles, booleans
+  are boolean cells, everything else is an inline string. Two more sheets:
+  `_index`, and `_meta` (`model_sha256`).
+* **Reader.** Accepts inline or shared strings and sparse cells. It
+  reuses `csv_to_rows` + `apply_tables` (atomic) and honours `_id` only
+  when `_meta.model_sha256` matches, exactly the zip-of-CSV rules of
+  "Interactive database editing".
+
+### HTTP
+
+* `POST /api/exchange/export/<e2k|ifc|dxf|xlsx>` `{model?, units?,
+  include?, extensions?, unit_scale?, tables?}` → `{ok: true, filename,
+  mime, content | content_b64, report}`.
+* `POST /api/exchange/import/<fmt>` `{text | content_b64, units?,
+  unit_scale?, sections_from_current? = true, layer_map?, model?,
+  dry_run?, soft_errors?}` → `{ok: true, model, warnings, report}`.
+  * `report = {format, read: {stories, materials, frame_sections,
+    shell_sections, frames, areas, links, load_patterns, load_cases,
+    load_combinations, groups}, extensions?, tables?}`.
+  * The model replaces the server model unless `dry_run`.
+  * Excel applies the tables to `model` (or the current model).
+* Errors: 400 `{error}`, or 200 `{ok: false, error}` with `soft_errors`.
+  A text file without frames, areas or links is an error.
+
+### UI (`js/exchange.js`, `js/mock_exchange.js`)
+
+* **Menus.** File › Import ▸ and File › Export ▸. Two submenu nodes are
+  added to `js/etabs.js` and filled through `sky.menu.add`; acts are
+  `file-xch-imp|exp-e2k|ifc|dxf|xlsx`.
+* **Export dialogs** (`#xcExport`):
+  * E2K: file units (`#xcUnits`, default = the display units), include
+    checkboxes, `$SF` extensions;
+  * IFC: physical / analysis / supports;
+  * DXF: drawing units (`#xcDxfUnit`) and content;
+  * Excel: table groups.
+* **Import dialogs** (`#xcImport`): file (`#xcFile`), E2K fallback units,
+  DXF drawing units and "sections from the current model".
+* **Report.** Each run ends in a report dialog (`#xcReport`): counts, the
+  exact flag, extension keys, skipped features and warnings.
+* **Model.** Exports never touch the model. E2K / IFC / DXF imports
+  replace the working model (with a confirm when it is dirty); Excel
+  applies the tables and marks the model dirty.
+* **Mock (`?mock=1`).** Files are built client-side. Each embeds the model
+  JSON in a comment, so mock round trips are identical; foreign e2k / DXF
+  files get a basic parse. Downloads are stubbed into
+  `__sky.exchange.downloads`.
+* **Test hook.** `__sky.exchange = {FORMATS, openExport, openImport,
+  exportNow, importNow, download, showReport, state, downloads,
+  lastReport}`.
+
+### Validation (`tests/test_exchange.py`)
+
+* **Representative model.** Two stories; rectangular, W14X90 database,
+  channel, general and built-up sections; a wall with an opening, a shell
+  slab, a membrane slab; a brace, a link along Y, a rotational spring,
+  releases, rigid offsets, a cardinal point and a 30° column; a group;
+  dead self weight, UDLs, point / trapezoid / global-X frame loads, area
+  loads, a nodal load and story forces; static, RS and TH cases, add and
+  envelope combos, the mass source.
+  * E2K with extensions: the `to_dict()` SHA-256 is identical; only the
+    material colour and the built-up labels / template need `$SF` lines.
+  * E2K native records only: full `run()` results are identical (max
+    relative difference 0.0).
+  * kip-in, N-mm and kgf-m: the model is equal to 1e-12. Static, combo and
+    RS results are within 1e-9 (observed 5.5e-11). Modal shapes and the
+    Rayleigh-damped TH are within 1e-6 (observed 1.8e-9 and 1.7e-7): the
+    iterative eigen solver tolerance amplifies last-bit input changes.
+* **ETABS files.** A hand-written ETABS v20 cantilever (W360X60,
+  P = 10 kN, L = 4 m) gives `PL³/(3E·I33) + PL/(G·As2)` to 1e-9.
+  `FROMFILE "Euro.xml" DBSECTNAME "IPE300"` resolves the eurocode record.
+  A two-tower model round-trips stories, tower tags and members natively.
+  `import_e2k` is unchanged.
+* **IFC.** Member end points, corners, openings and stories are exact;
+  angles to 1e-9; W14X90 comes back as the AISC record; channel dims and
+  rectangle / general / built-up properties are exact; physical-only files
+  to 1e-9.
+* **DXF.** Kinds, sections, coordinates, stories and openings are exact;
+  a sanitised layer (`BEAM 300/600`) maps back; a mm drawing to 1e-12.
+* **Excel.** Byte-identical round trip; a `b` edit recomputes the
+  rectangle.
+* **HTTP.** Export → import of all four formats; an empty file is a 400.
+* **Playwright.** Mock 33/33, live 34/34:
+  * the eight dialogs open from the menus;
+  * exports leave the model byte-identical;
+  * E2K export → import is identical (server SHA-256 in live);
+  * kip-in display units set the default E2K units and the file reads
+    `UNITS "KIP" "IN"`;
+  * IFC, DXF (mm) and Excel imports;
+  * an analysis runs on the imported model;
+  * legacy File › Import… and Define › Material Library still open;
+  * a bad file shows an inline error;
+  * zero console errors.
