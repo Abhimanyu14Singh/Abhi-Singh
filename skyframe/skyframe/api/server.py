@@ -2335,6 +2335,10 @@ def create_app() -> Flask:
     from skyframe.api.section_fem_api import register as _sfem_register
     _sfem_register(app, _state)
 
+    # Rhino .3dm import / GH live link + localhost CORS (rhino_api)
+    from skyframe.api.rhino_api import register as _xch_register
+    _xch_register(app, _state)
+
     return app
 
 

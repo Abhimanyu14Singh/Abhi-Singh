@@ -61,10 +61,13 @@ jobs:
       - name: Install app + build tools
         run: |
           python -m pip install --upgrade pip wheel setuptools
-          pip install ".[desktop]" pyinstaller
+          pip install ".[desktop,rhino]" pyinstaller
 
       - name: Sanity-check the OpenSees import (unfrozen)
         run: python -c "import openseespy.opensees as ops; print('OpenSees import OK')"
+
+      - name: Sanity-check the rhino3dm import (Rhino .3dm support)
+        run: python -c "import rhino3dm; print('rhino3dm', rhino3dm.__version__)"
 
       - name: Freeze with PyInstaller
         run: >

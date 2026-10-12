@@ -11162,3 +11162,142 @@ absent from `to_dict`) or `"exact"`.
 * an analysis runs;
 * kip-in readouts are in in⁴;
 * zero console errors.
+
+## Rhino / Grasshopper exchange
+
+Shared spec `skyframe.exchange/1` (Rhino `.3dm` import via rhino3dm + the
+Grasshopper live link). Code: `skyframe/core/rhino_exchange.py` (validation,
+role resolution, conversion, stories, merge / replace, results by source),
+`skyframe/core/rhino_exchange_fields.py` (model fields),
+`skyframe/io/rhino3dm_io.py` (.3dm reader), `skyframe/api/rhino_api.py`
+(HTTP), `skyframe/api/web/js/rhinolink.js` + `js/mock_rhinolink.js` (UI).
+User guide: `docs/RHINO_LINK.md`. A model that never used the exchange is
+byte-identical to before (no new keys are emitted).
+
+### Payload
+
+```json
+{"schema": "skyframe.exchange/1",
+ "source": {"app": "grasshopper|rhino3dm", "doc": "tower.3dm", "units": "m|mm|cm|ft|in", "tolerance": 0.001},
+ "session": "<stable id>",
+ "layers": [{"path": "Structure::Beams", "color": "#RRGGBB"}],
+ "objects": [{"id": "<guid | guid/k>", "kind": "curve|surface|mesh|point", "layer": "Structure::Beams",
+              "attrs": {"sf_section": "W18X50"}, "role": "beam", "props": {"section": "W18X50"},
+              "geom": {"type": "line", "p": [[0,0,3000],[6000,0,3000]]}}],
+ "warnings": []}
+```
+
+* `geom`:
+  * curve: `line {p:[a,b]}` | `polyline {p:[...]}` | `arc {p:[start,mid,end]}` | `nurbs {samples:[...], degree?, cv?, weights?, knots?, periodic?}`;
+  * surface: `polygon {outer, holes}` | `nurbs_surface {mesh:{v,f}, ...}` (only `mesh` is read);
+  * `mesh {v, f}` (faces of 3 or 4 indices);
+  * `point {p}`.
+* Units: coordinates AND the length props `thickness`, `mesh_size` (also UserText `sf_thickness`, `sf_mesh_size`) are in `source.units`; they are converted to m.
+* `role`: `column|beam|brace|frame|wall|slab|shell|support|joint|link|ignore` (`ignore` is an addition). Absent = automatic.
+* `props`: `section, material, story, angle, release_i[6], release_j[6], restraint[6], shell_section, thickness, mesh_size, stiffness[6]` (`stiffness`, for links, is an addition). Unknown props give a warning.
+* UserText: `sf_role, sf_section, sf_material, sf_story, sf_angle, sf_shell_section, sf_restraint ("111000"), sf_release_i/j ("000011"), sf_thickness, sf_mesh_size`. Keys are case-insensitive; a bad value gives a warning and is ignored.
+* `warnings` (optional addition): messages from the .3dm reader.
+
+Errors: a 400 with `{"error": "<path>: <message>"}`, e.g. `exchange.objects[3].geom.p must be a list of at least 2 points`.
+
+### Resolution and conversion (normative)
+
+Each field resolves on its own, highest priority first: object `role`/`props` → UserText → the
+first mapping rule whose `layer` glob (case-insensitive `fnmatch` on the full path) matches →
+the geometric defaults.
+
+Geometric defaults:
+* curves: vertical / horizontal within 1° → column / beam; otherwise brace;
+* planar surfaces: |n_z| ≥ cos 1° → slab; ≤ sin 1° → wall; otherwise shell;
+* role shell: each face is a slab when |n_z| ≥ cos 45°, else a wall;
+* point: support when its layer path contains "support" or it has a restraint (default `111111`); otherwise joint.
+
+Conversion:
+* polyline: one member per segment, each segment classified on its own. Arc / NURBS: classified once, by the chord.
+* arc: a curved frame (`curve: {type: "arc", via}`; `segments` = ceil(arc length / `mesh_size`) when `mesh_size` is set).
+* NURBS: an exact circular arc (all samples within the tolerance) becomes a curved frame. Otherwise straight pieces: Douglas–Peucker on the samples with deviation max(tolerance, length/200), or equal arc-length pieces ≤ `mesh_size`.
+* polygon: projected on its Newell plane (skipped with a warning if off-plane by more than max(2·tol, 0.1 mm)); slab normals snapped to +z, slabs counter-clockwise from above; holes become polygon `openings`.
+* mesh / `nurbs_surface`: vertices welded within the tolerance; one shell per face; quads off-plane by more than 1e-6 m are split into 2 triangles along the shorter diagonal.
+* Default `mesh_size` 1.0 m; default shell thickness 0.2 m.
+
+Sections:
+* named section: a model section, else the first steel database containing the shape (imported with the explicit material or the model's first steel material, else `A992Fy50`), else a warning and the default;
+* default: a model section whose name contains COL / BEAM / BR, else `W14X90` (column), `W18X50` (beam), `HSS6X6X1/2` (brace) from the AISC database;
+* a material different from the section's material gives a copy named `"<section> (<material>)"`;
+* materials: exact library name, else a unique prefix (`A992` → `A992Fy50`);
+* shell sections: a named one; else an existing section of that thickness and material, else a new `Shell<t>mm`; an unknown name ending in 50–2000 (e.g. `WALL250`) gets t = that many mm when no thickness is given.
+
+Stories (`story_rule` auto):
+* clustering: z of horizontal beam / slab parts of objects whose role is beam / frame / slab, gap tolerance = profile `story_tolerance` (default 0.05 m, at least the tolerance); a cluster's level is its mean z;
+* the base (lowest existing story bottom, else the lowest z in the model) and existing levels (within the tolerance) are not created;
+* new stories are named `Story<n>` (n continues the count); heights are recomputed only when a story is added;
+* an object's story: the level equal to its top z, else the story containing it, else the top story (above) or the first story (below); a named rule that does not exist gives a warning and auto.
+
+Repair: `repair(d, ["merge_joints", "remove_zero_length", "remove_duplicates", "snap_shell_corners", "split_at_joints", "split_at_crossings"], tol=clamp(tolerance, 1e-6, 1))`. Before that, pure joints split the straight members passing through them.
+
+### Merge / replace
+
+Key = `(session, id, part)`.
+
+Merge, for a matched object:
+* Geometry follows the source. Members split by SkyFrame are moved by the affine map of the old chord `pieces[0].pi → pieces[-1].pj` onto the new one.
+* Point records at moved joints follow them (nodal loads, masses, groups, …); ambiguous joints are left in place.
+* `section` / `material` / `kind` / `angle` / `releases` / `restraints` / shell `section` / `mesh_size` change only when given explicitly by the source (props / role / UserText; a mapping rule is not explicit).
+* `story` is re-derived when the geometry changed.
+* Unchanged geometry → status `unchanged`, and the model is identical (idempotent).
+
+Deletion:
+* Keys of the session missing from the payload are deleted with `edit._delete_objects` (loads and references cleaned).
+* Point records left orphaned are removed, except exchange supports.
+* Native objects and other sessions are never touched.
+
+Replace: deletes every object of the session (without orphan cleanup), then creates.
+
+### Model fields (emitted only when set / non-empty)
+
+```json
+"members": [{"...": "...", "source_ref": {"session": "S", "id": "guid", "part": 0}}],
+"shells": [{"...": "...", "source_ref": {...}}],
+"supports": [{"point": [0,0,0], "restraints": [1,1,1,1,1,1], "source_ref": {...}}],
+"links": [{"...": "...", "source_ref": {...}}],
+"exchange_mappings": {"office": {"rules": [{"layer": "Structure::Beams", "role": "beam", "section": "W18X50",
+                                           "material": "...", "shell_section": "...", "story_rule": "auto",
+                                           "angle": 0, "thickness": 0.2, "mesh_size": 1.0, "restraint": "111000"}],
+                                 "story_tolerance": 0.05}},
+"exchange_sessions": {"S": {"app": "rhino3dm", "doc": "tower.3dm", "units": "mm", "tolerance": 0.01,
+                            "last_update": "2026-10-12T08:00:00Z", "mapping": "office",
+                            "joints": {"<id>#<part>": [x, y, z]}}}
+```
+
+* `source_ref` is validated: `session` and `id` are non-empty strings; `part` is an integer ≥ 0 (optional).
+* Split pieces share the `source_ref` of the object they came from.
+* Profile `thickness` / `mesh_size` / `story_tolerance` are in m.
+* `exchange_sessions.<S>.joints` holds the session's pure joints (points without a support).
+
+### HTTP
+
+Every endpoint takes an optional `"model"` in the body: the UI's working model, used instead of the stored one. The result becomes the stored model.
+
+* `GET /api/exchange/status` → `{app: "SkyFrame", version, schema, model, sessions: [{session, objects, members, shells, links, supports, joints, last_update, app, doc, units}], analysis: {has_results}, rhino3dm: {available, version}, revision, link: <link state>}`.
+* `POST /api/exchange/preview {exchange, mapping?: name|{rules, story_tolerance?}, mode?: "merge"|"replace"}` → `{summary: {create|update|delete|unchanged: {members, shells, joints, links}}, warnings, objects: [{id, layer, role, section, story, status: create|update|unchanged|skip|delete, rule, parts}], session, mode, stories_created, sections_added, shell_sections_added, repair: {counts, changed}, valid}`. The model is untouched. `joints` counts supports + pure joints; counts are per part (before the repair).
+* `POST /api/exchange/apply {exchange, mapping?, mode?, run?}` → `{report, model_summary, model, revision, analysis?}`:
+  * `report`: `{schema, session, mode, source, mapping, summary, created|updated|deleted: {members, shells, links, supports, joints}, stories_created, sections_added, shell_sections_added, materials_added, joint_splits, repair: {changed, tolerance_m, counts, warnings, created, deleted, actions}, warnings, objects}`;
+  * `model_summary`: `{name, members, shells, links, supports, stories, sessions}`;
+  * with `run: true`, `analysis: {ok, case_status, combo_status, warnings}`; the results are stored for `/api/exchange/results` and the tables.
+* `GET /api/exchange/results?session=&case=&what=` → `{case, what, session, units: "SI", unit_labels: {length: "m", force: "kN", moment: "kN*m", time: "s"}, items, model?, periods?}`:
+  * `case` defaults to the first case (combos are accepted);
+  * `displacements`: members `{type: "member", segments: [{uid, member, part, pi, pj, i: [6], j: [6]}]}` (curved members give one segment per chord), points `{type: "point", point, disp: [6]}`, shells `{type: "shell", vertices: [{point, disp: [6]}]}` (corners + opening vertices);
+  * `member_forces`: `segments: [{uid, member, part, pi, pj, forces: [12], stations?}]`, in source order (part, then along the chord);
+  * `reactions`: `{type: "point", point, reaction: [6]}`;
+  * `periods`: `periods: [...]`, `items: {"1": {mode, period, frequency}}`, `model: {periods, frequencies}`;
+  * `drifts`: `items` / `model` keyed by story → `{drift_x, drift_y}`; `story`: the full story block;
+  * errors: 409 without results for the current model, 404 for an unknown case, 400 for a bad `what`.
+* `POST /api/rhino/import`: multipart `file` (+ optional form `session`), or `{path}` → `{exchange, layers: [{path, color, count, kinds}], warnings, mtime}`. 501 without rhino3dm (the message names `pip install "skyframe[rhino]"`).
+* `POST /api/rhino/link {path, mapping?, auto_apply?}` / `DELETE` / `GET` → `{linked, path, mtime, current_mtime, exists, changed, session, mapping, auto_apply, last_apply, last_error, revision}`:
+  * `changed` = the file mtime differs from the baseline;
+  * the baseline is reset by an apply of that session after `/api/rhino/import {path}`;
+  * `auto_apply` polls every second (merge, no preview) and bumps `revision`.
+* Helpers: `GET /api/rhino/info` → `{available, version, hint}`; `GET /api/exchange/mappings` → `{mappings}`; `POST /api/exchange/mappings {name, profile|null}` → `{mappings, model}`; `POST /api/exchange/sessions/remove {session}` → `{report: {session, deleted: {members, shells, links, supports, joints}, warnings}, model}`.
+* CORS: `Access-Control-Allow-Origin` echoes only `http(s)://127.0.0.1|localhost|[::1]` (any port) on `/api/*`; there is no auth (the server is localhost-bound). Flask route functions are prefixed `rhx_`.
+
+UI: File › Import › Rhino (.3dm)…, File › Link Rhino File… and File › Exchange Sessions… (registered via `sky.menu.add`); a status-bar chip **Rhino: linked ✓ / Rhino: changed — Update**. Apply / Remove are one undo step each. `?mock=1` uses canned payloads.

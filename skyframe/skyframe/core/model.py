@@ -43,6 +43,7 @@ from skyframe.core.nonprismatic import member_area as _np_area
 from skyframe.core import thermal_ext as _thx  # v1.16 temperature / projected
 from skyframe.core import damping_options as _dmpo
 from skyframe.core import towers as _towers  # C9 multiple towers
+from skyframe.core import rhino_exchange_fields as _xch  # Rhino/GH exchange
 from skyframe.core import towers_ext as _towers_ext  # C9 follow-ups
 from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
     PDELTA_INCLUDE_IN, PDELTA_METHODS, pdelta_defaults, pdelta_from_dict,
@@ -755,6 +756,9 @@ class FrameMember:
     # ``angle``; skyframe.core.section_ext.stamp); never serialised.
     section_axis_offset: float = field(default=0.0, repr=False,
                                        compare=False)
+    # Rhino/GH exchange origin {"session", "id", "part"?}
+    # (skyframe.core.rhino_exchange_fields; None = native; set only)
+    source_ref: Optional[dict] = None
 
     @property
     def length(self) -> float:
@@ -801,6 +805,7 @@ class FrameMember:
 
                 **_ow_member_to_dict(self),        # open-structure wind
                 **_towers.tag_to_dict(self),       # C9 tower (when set)
+                **_xch.ref_to_dict(self),          # exchange (when set)
                 "length": self.length}
 
 
@@ -884,6 +889,7 @@ class ShellRegion:
     distribution: str = "two_way"          # B3 membrane slabs: two_way|one_way
     one_way_dir: int = 1                   # B3 one-way span: region local 1|2
     tower: str = ""                        # C9 owning tower (core.towers)
+    source_ref: Optional[dict] = None      # exchange origin (when set)
 
     @property
     def area(self) -> float:
@@ -940,7 +946,8 @@ class ShellRegion:
                 **_dia.shell_extra_to_dict(self),
                 **_shellopts_shell_to_dict(self),  # mesh opts / load set
                 **_sht.region_extra_to_dict(self),
-                **_towers.tag_to_dict(self)}       # C9 tower (when set)
+                **_towers.tag_to_dict(self),       # C9 tower (when set)
+                **_xch.ref_to_dict(self)}          # exchange (when set)
 
 
 # --------------------------------------------------------------------------- #
@@ -1043,9 +1050,11 @@ class PointSupport:
     base-level fixity."""
     point: Tuple[float, float, float]
     restraints: Tuple[int, int, int, int, int, int]
+    source_ref: Optional[dict] = None      # exchange origin (when set)
 
     def to_dict(self) -> dict:
-        return {"point": list(self.point), "restraints": list(self.restraints)}
+        return {"point": list(self.point), "restraints": list(self.restraints),
+                **_xch.ref_to_dict(self)}          # exchange (when set)
 
 
 @dataclass
@@ -1757,6 +1766,7 @@ class LinkMember:
     link_type: str = "elastic"                  # v0.15, one of LINK_TYPES
     params: Dict[str, object] = field(default_factory=dict)  # v0.15/v0.21
     tower: str = ""                             # C9 owning tower
+    source_ref: Optional[dict] = None           # exchange origin (when set)
 
     @property
     def length(self) -> float:
@@ -1778,7 +1788,8 @@ class LinkMember:
                 "stiffness": [float(k) for k in self.stiffness],
                 "link_type": self.link_type,
                 "params": self.coerce_params(self.params),
-                **_towers.tag_to_dict(self)}       # C9 tower (when set)
+                **_towers.tag_to_dict(self),       # C9 tower (when set)
+                **_xch.ref_to_dict(self)}          # exchange (when set)
 
 
 DIAPHRAGM_OPTIONS = ("rigid", "none")
@@ -2101,6 +2112,12 @@ class BuildingModel:
     # BuiltupSection, each MIRRORED by a same-named FrameSection (like
     # designer_sections).  Emitted by to_dict only when non-empty.
     builtup_sections: Dict[str, object] = field(default_factory=dict)
+
+    # Rhino / Grasshopper exchange (skyframe.core.rhino_exchange_fields): layer
+    # mapping profiles {name: {"rules": [...]}} + applied sessions.
+    # Emitted by to_dict only when non-empty.
+    exchange_mappings: Dict[str, dict] = field(default_factory=dict)
+    exchange_sessions: Dict[str, dict] = field(default_factory=dict)
 
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
@@ -3861,6 +3878,11 @@ class BuildingModel:
         self._validate_tendons()
         self._validate_curved_mesh_sets()
         self._validate_towers()
+        self._validate_exchange()
+
+    def _validate_exchange(self) -> None:
+        """Rhino/GH exchange fields (see core.rhino_exchange_fields)."""
+        _xch.validate(self)
 
     def _validate_towers(self) -> None:
         """C9 multiple towers (see core.towers)."""
@@ -4097,6 +4119,7 @@ class BuildingModel:
             **({"frame_axis_convention": "etabs"}    # only when "etabs"
                if self.frame_axis_convention == "etabs" else {}),
             **_builtup_to_dict(self),   # v1.21 built-up sections (if any)
+            **_xch.model_to_dict(self),  # Rhino/GH exchange (if used)
         }
 
     @classmethod
@@ -4535,6 +4558,7 @@ class BuildingModel:
         _towers.model_from_dict(mdl, d)     # C9 towers (absent = none)
         _frame_axes_from_dict(mdl, d)       # frame local-axis convention
         _builtup_from_dict(mdl, d)          # v1.21 built-up sections
+        _xch.model_from_dict(mdl, d)        # Rhino/GH exchange (absent=unset)
         mdl.validate()
         return mdl
 

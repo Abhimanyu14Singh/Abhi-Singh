@@ -14,7 +14,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-desktop = ["pywebview>=5.0"]
+desktop = ["pywebview>=5.0", "rhino3dm>=8.0,<9"]
+# Rhino .3dm import / link (skyframe.io.rhino3dm_io); optional at runtime
+rhino = ["rhino3dm>=8.0,<9"]
 dev = ["pytest>=8.0", "pyinstaller>=6.0"]
 
 [project.scripts]

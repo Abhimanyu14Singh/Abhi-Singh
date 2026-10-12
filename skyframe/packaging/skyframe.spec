@@ -31,6 +31,13 @@ try:
 except Exception:
     pass  # server-only build without pywebview installed
 
+# Rhino .3dm import (optional: without it the app reports how to install it)
+try:
+    d, b, h = collect_all("rhino3dm")
+    datas += d; binaries += b; hiddenimports += h
+except Exception:
+    pass
+
 a = Analysis(
     ["launch.py"],
     pathex=[".."],

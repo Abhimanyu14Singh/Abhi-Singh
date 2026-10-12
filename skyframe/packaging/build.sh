@@ -12,7 +12,7 @@ echo "==> Installing dependencies (once; tolerate already-satisfied)"
 # Deps are installed separately from SkyFrame so a slow/flaky dependency
 # build never blocks refreshing SkyFrame's own files in site-packages.
 pip install -q --upgrade wheel setuptools
-pip install -q openseespy numpy flask pywebview pyinstaller pytest
+pip install -q openseespy numpy flask pywebview pyinstaller pytest "rhino3dm>=8,<9"   # rhino3dm: .3dm import
 
 echo "==> Reinstalling SkyFrame's own files (fresh, non-editable, no dep churn)"
 # CRITICAL: PyInstaller's collect_all bundles from site-packages. An editable
