@@ -13,8 +13,11 @@
    buildEnvelope / classify mirror skyframe/core/user_hinges.py exactly
    (same constants) so previews and mock results match the engine. */
 
+import { HB_TYPES as uhHbTypes, hbNewProperty as uhHbNew, hbValidateProperty as uhHbValidate,
+  hbIsSpecial as uhHbSpecial } from "./hingeb_core.js";   // Wave B: V3 / T / PMM / M2M3 / auto (js/hingeb_core.js)
+
 export const UH_TYPES = [["M3", "M3 — moment about local 3"], ["M2", "M2 — moment about local 2"],
-  ["P", "P — axial"], ["V2", "V2 — shear along local 2"], ["PMM_fiber", "P-M2-M3 fiber (PMM)"]];
+  ["P", "P — axial"], ["V2", "V2 — shear along local 2"], ["PMM_fiber", "P-M2-M3 fiber (PMM)"], ...uhHbTypes];
 export const UH_HYST = [["kinematic", "Kinematic"], ["takeda", "Takeda"], ["pivot", "Pivot"],
   ["isotropic", "Isotropic"], ["concrete", "Concrete"]];
 export const UH_DROPS = [["drops", "Drops to zero"], ["holds", "Is extrapolated (holds)"]];
@@ -50,12 +53,13 @@ export const isNum = v => typeof v === "number" && isFinite(v);
 export const uhClone = o => (o == null ? o : JSON.parse(JSON.stringify(o)));
 export const isUserList = mm => Array.isArray(mm && mm.hinges);
 /** Force / deformation / stiffness units kinds of a hinge type. */
-export const uhKinds = typ => (typ === "P" || typ === "V2")
+export const uhKinds = typ => (typ === "P" || typ === "V2" || typ === "V3")   // Wave B: + V3
   ? { f: "force", d: "disp", k: "stiffness" }
   : { f: "moment", d: "rotation", k: "rot_stiffness" };
 
 /** A fresh canonical property (engine normalize_property output shape). */
 export function uhNewProperty(typ = "M3") {
+  if (uhHbSpecial(typ)) return uhHbNew(typ);              // Wave B PMM / M2M3 / auto
   if (typ === "PMM_fiber")
     return { type: "PMM_fiber", scale: { yield_value: 1.0, yield_deformation: null },
       acceptance: { IO: 0.004, LS: 0.01, CP: 0.02 }, hysteresis: "kinematic", drop_strength: "drops",
@@ -84,6 +88,7 @@ export function uhValidateProperty(name, p) {
   if (!String(name || "").trim()) return "Hinge property names must be non-empty.";
   if (!p || typeof p !== "object") return `${nm} must be an object.`;
   if (!UH_TYPES.some(([t]) => t === p.type)) return `${nm}: choose a hinge type.`;
+  if (uhHbSpecial(p.type)) return uhHbValidate(name, p);  // Wave B PMM / M2M3 / auto
   const pts = (raw, what) => {
     if (!Array.isArray(raw) || raw.length < 2) return `${nm} ${what}: needs A = (0, 0) and at least point B.`;
     if (raw.length > UH_MAX_POINTS) return `${nm} ${what}: at most ${UH_MAX_POINTS} points.`;
@@ -181,12 +186,21 @@ export function uhSectionProps(model, mm) {
   const pick = (k, mk, d) => (isNum(s[k]) ? s[k] : d) * (isNum(s[mk]) ? s[mk] : 1);
   return { E, A: pick("A", "mod_A", 0.16), I33: pick("I33", "mod_I33", 2.1e-3), I22: pick("I22", "mod_I22", 2.1e-3) };
 }
+/** Wave B: G J of a member section (G = E / (2 (1 + nu))). */
+function uhSectionTorsion(model, mm) {
+  const s = (model.sections || {})[mm.section] || {};
+  const mat = (model.materials || {})[s.material] || {};
+  const E = isNum(mat.E) ? mat.E : 25e6, nu = isNum(mat.nu) ? mat.nu : 0.2;
+  return E / (2 * (1 + nu)) * (isNum(s.J) ? s.J : 1e-3) * (isNum(s.mod_J) ? s.mod_J : 1);
+}
 export function uhKMember(typ, model, mm) {
   const { E, A, I22, I33 } = uhSectionProps(model, mm);
   const L = Math.max(uhLen(mm), 1e-6);
   if (typ === "M3") return 6 * E * I33 / L;
   if (typ === "M2") return 6 * E * I22 / L;
   if (typ === "P") return E * A / L;
+  if (typ === "V3") return 12 * E * I22 / L ** 3;          // Wave B
+  if (typ === "T") return uhSectionTorsion(model, mm) / L;  // Wave B: G J
   return 12 * E * I33 / L ** 3;
 }
 

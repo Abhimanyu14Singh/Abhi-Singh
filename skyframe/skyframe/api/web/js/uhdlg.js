@@ -18,6 +18,8 @@ import { UH_TYPES, UH_HYST, UH_DROPS, UH_HYST_DEFAULTS, UH_HP_KEYS, UH_POINT_LAB
   UH_STATE_COLORS, uhNewProperty, uhSides, uhValidateProperty, uhValidateMemberHinges, uhKinds,
   uhClone, isUserList, isNum, uhLen, uhLocations, uhNice } from "./uhcore.js";
 import { initHingeResults as uhInitResults } from "./uhresults.js";
+import { hbShortType as uhHbShort, hbIsSpecial as uhHbSpecial } from "./hingeb_core.js";   // Wave B hinge types
+import { hbPropertyEditor as uhHbEditor } from "./hingeb.js";                             // Wave B PMM / M2M3 / auto editor
 
 let uhCssDone = false;
 export function uhCss() {
@@ -131,10 +133,10 @@ export function initUserHinges(sky) {
     const list = uhH("div", { class: "b9-sp-list", id: "uhPropList", role: "listbox" });
     const nameOf = base => { let i = 1, n = base; while (draft[n]) n = base + (++i); return n; };
     const addType = uhH("select", { id: "uhPropAddType", title: "Type of the new hinge property" });
-    addType.innerHTML = UH_TYPES.map(([t]) => `<option value="${t}">${t === "PMM_fiber" ? "PMM" : t}</option>`).join("");
+    addType.innerHTML = UH_TYPES.map(([t]) => `<option value="${t}">${uhHbShort(t)}</option>`).join("");   // Wave B labels
     const addBtn = uhBtn("Add", "btn-small", () => {
       const t = addType.value;
-      const n = nameOf("HINGE_" + (t === "PMM_fiber" ? "PMM" : t));
+      const n = nameOf("HINGE_" + uhHbShort(t).replace(/[^A-Za-z0-9]/g, ""));
       draft[n] = uhNewProperty(t);
       cur = n; renderAll();
     }, "Add a new hinge property of the chosen type");
@@ -204,6 +206,7 @@ export function initUserHinges(sky) {
       typeSel.innerHTML = UH_TYPES.map(([t, l]) => `<option value="${t}"${t === p.type ? " selected" : ""}>${uhEsc(l)}</option>`).join("");
       typeSel.addEventListener("change", () => {
         const t = typeSel.value;
+        if (uhHbSpecial(t) || uhHbSpecial(p.type)) { draft[cur] = uhNewProperty(t); renderAll(); return; }   // Wave B
         if (t === "PMM_fiber") { delete p.backbone; }
         else if (!p.backbone) p.backbone = uhNewProperty(t).backbone;
         p.type = t;
@@ -213,6 +216,7 @@ export function initUserHinges(sky) {
         uhH("label", { class: "uh-fld" }, [uhH("span", { text: "Property name" }), nameIn]),
         uhH("label", { class: "uh-fld" }, [uhH("span", { text: "Degree of freedom" }), typeSel]),
       ]));
+      if (uhHbSpecial(p.type)) { uhHbEditor(sky, right, p, { err, name: cur, showError: uhShowError }); return; }   // Wave B (js/hingeb.js)
       const cols = uhH("div", { class: "uh-cols" });
       const colL = uhH("div", { class: "uh-col" }), colR = uhH("div", { class: "uh-col" });
       cols.append(colL, colR);
