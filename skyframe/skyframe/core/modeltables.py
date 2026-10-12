@@ -83,6 +83,7 @@ COL_TYPES = ("number", "int", "bool", "enum", "text", "ref", "points")
 
 PATTERN_KINDS = ("dead", "live", "quake", "wind", "other", "notional",
                  "prestress")
+from .combos_codes import PATTERN_KINDS  # noqa: E402,F811  pattern types
 DIST_KINDS = ("udl", "trapezoid")
 
 

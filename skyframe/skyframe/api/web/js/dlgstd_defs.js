@@ -27,6 +27,7 @@ import { openMatLib as dsOpenMatLib } from "./matlib.js";   // v1.21 material li
 
 import { ssShapeEditor as dsSsEditor, ssShapeLabel as dsSsLabel } from "./secshape_ui.js";   // v1.21 Shape selector + parametric forms
 import { openSteelDb as dsOpenSteelDb } from "./steeldb.js";   // v1.21 Import from Database…
+import { LC_PAT_TYPES as dsLcPatTypes, lcOpenSpectrumFromCode as dsLcSpecFromCode, lcHasSource as dsLcHasSource } from "./loadcodes.js";   // code spectra + pattern types (js/loadcodes.js)
 
 const G = 9.80665;
 const eff = (o, k, d = 1) => (o && o[k] != null && isFinite(o[k])) ? +o[k] : d;
@@ -460,6 +461,7 @@ export function editShellSection(sky, D, name, { copyOf, done } = {}) {
    Load patterns (ETABS: Name · Type · Self Weight Multiplier · Auto Lateral)
    ================================================================ */
 const PAT_TYPES = [["dead", "Dead"], ["live", "Live"], ["quake", "Seismic"], ["wind", "Wind"], ["other", "Other"]];
+PAT_TYPES.push(...dsLcPatTypes);   // ETABS pattern types: Super Dead, Reducible Live, Roof Live, Snow, Temperature … (js/loadcodes.js)
 const PAT_LABEL = Object.fromEntries([...PAT_TYPES, ["notional", "Notional"], ["prestress", "Prestress"]]);
 const patLoadCount = p => ["member_loads", "area_loads", "story_forces", "nodal_loads", "thermal_loads", "member_udls", "ground_displacements"]
   .reduce((a, k) => a + ((p && p[k]) || []).length, 0);
@@ -598,6 +600,7 @@ export function openFunctions(sky, { tab = "rs", select } = {}) {
     selected: tab === "rs" ? select : null, onOpen: k => editRs(k), empty: "No response-spectrum functions.",
     actions: [
       { label: "Add New Function…", id: "dsRsFnAdd", fn: () => editRs(null) },
+      { label: "Add From Code…", id: "dsRsFnCode", title: "ASCE 7 · EC8 · IS 1893 · NBCC · NZS · AS · GB", fn: () => dsLcSpecFromCode(sky, D, { done: nm => { rsList.select(nm); } }) },   // js/loadcodes.js
       { label: "Add Copy…", id: "dsRsFnCopy", needsSel: true, fn: k => editRs(null, k) },
       { label: "Modify/Show…", id: "dsRsFnModify", needsSel: true, fn: k => editRs(k) },
       { label: "Delete", id: "dsRsFnDelete", needsSel: true, fn: k => {
@@ -626,7 +629,9 @@ export function openFunctions(sky, { tab = "rs", select } = {}) {
     ],
     extraSide: errTh,
   });
-  const editRs = (name, copyOf) => editSpectrumFunction(sky, D, name, { copyOf, done: nm => { rsList.select(nm); } });
+  const editRs = (name, copyOf) => (name && dsLcHasSource((D.spectrum_functions || {})[name]))   // code spectrum → its code form (js/loadcodes.js)
+    ? dsLcSpecFromCode(sky, D, { name, done: nm => { rsList.select(nm); } })
+    : editSpectrumFunction(sky, D, name, { copyOf, done: nm => { rsList.select(nm); } });
   const editTh = (name, copyOf) => editThFunction(sky, D, name, { copyOf, done: nm => { thList.select(nm); } });
   const tabs = dkTabs([
     { id: "rs", label: "Response Spectrum", body: rsList },
@@ -691,6 +696,7 @@ export function editSpectrumFunction(sky, D, name, { copyOf, done } = {}) {
       if (name && nn !== name) dsME.renameSpectrumFunction(D, name, nn);
       const out = { ...f, name: nn };
       if (F.tableDirty(tableNode) || isNew) out.points = rows.map(r => [r.T, r.Sa]);
+      if (F.tableDirty(tableNode)) delete out.source;   // edited points are no longer the code spectrum (js/loadcodes.js)
       D.spectrum_functions[nn] = out;
       done && done(nn);
     },

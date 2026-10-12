@@ -19,6 +19,7 @@
 import * as dcME from "./modeledit.js";
 import dcU from "./units.js";
 import * as dcCX from "./combo_refs.js";
+import { lcOpenDesignCombos as dcLcDesignCombos } from "./loadcodes.js";   // design combos by code (js/loadcodes.js)
 import {
   el, esc, clone, isNum, dkForm, dkGroup, dkAdvanced, dkTabs, dkList, dkNote, dkDialog,
   dkDraft, dkCommit, uniqueName,
@@ -416,6 +417,7 @@ export function openCombinations(sky, { select } = {}) {
       { label: "Add Copy of Combo…", id: "dcComboCopy", needsSel: true, fn: k => edit(null, k) },
       { label: "Add Default Design Combos…", id: "dcComboAuto", title: "ASCE 7 strength combinations from the patterns (applies these edits first)",
         fn: () => thenLegacy(dlg, sky, D, () => sky.etabs && sky.etabs.gotoLoads && sky.etabs.gotoLoads("ls-codetools")) },
+      { label: "Add Design Combos by Code…", id: "dcComboCode", title: "EN 1990 · IS 456 / 875-5 · IS 800 · NBCC 2020 · AS/NZS 1170.0", fn: () => dcLcDesignCombos(sky, D, { done: () => refresh() }) },   // js/loadcodes.js
       { sep: "Selected" },
       { label: "Modify/Show Combo…", id: "dcComboModify", needsSel: true, fn: k => edit(k) },
       { label: "Delete Combo", id: "dcComboDelete", needsSel: true, fn: k => {

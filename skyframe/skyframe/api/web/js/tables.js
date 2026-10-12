@@ -72,7 +72,8 @@ export function colSpec(col) {
     return { kind, unit: U.label(kind), dec: kind === "disp" ? 3 : 3 };
   }
   const map = { force: ["force", 2], moment: ["moment", 2], stiffness: ["stiffness", 1],
-    mass: ["mass", 3], angle: ["rotation", 6], time: ["period", 4], frequency: ["frequency", 4] };
+    mass: ["mass", 3], angle: ["rotation", 6], time: ["period", 4], frequency: ["frequency", 4],
+    area: ["area", 2] };   // area: live-load reduction tributary area (js/loadcodes.js)
   if (map[q]) return { kind: map[q][0], unit: U.label(map[q][0]), dec: map[q][1] };
   const fx = FIXED[q] || ["", 4];
   return { kind: "none", unit: fx[0], dec: fx[1], na: tblRnaKeys.has(col.key) ? tblRnaText : undefined };

@@ -2335,6 +2335,10 @@ def create_app() -> Flask:
     from skyframe.api.section_fem_api import register as _sfem_register
     _sfem_register(app, _state)
 
+    # Code spectra / design combos / pattern types / live-load reduction
+    from skyframe.api.loadcodes_api import register as _lc_register
+    _lc_register(app, _state)
+
     return app
 
 
