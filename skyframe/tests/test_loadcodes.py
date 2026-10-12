@@ -440,7 +440,7 @@ def test_llr_formulas_worked_examples():
              0, 3) == A(0.8)
     for bad in ({"code": "x"}, {"code": "ec1", "params": {"psi0": 2}},
                 {"code": "user", "params": {"curve": [[1, 1], [0, 1]]}},
-                {"kinds": "live"}, {"apply_to": ["beams"]}, {"foo": 1}):
+                {"kinds": "live"}, {"apply_to": ["slabs"]}, {"foo": 1}):
         with pytest.raises(ValueError):
             llr.normalize_settings(bad)
 

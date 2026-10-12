@@ -862,6 +862,11 @@ def applied_pattern_totals(model, pattern: str,
         elif direction == "local_y":
             for k in range(3):
                 F[k] += w * ya[k]
+        elif direction in ("local_1", "local_3"):    # Wave C local 1 / 3
+            xa_, _, za_, _, _ = _local_axes_fn()(m)
+            ax = xa_ if direction == "local_1" else za_
+            for k in range(3):
+                F[k] += w * ax[k]
 
     def area(region) -> float:
         if region.behavior == "shell" and region.uid in trib:
@@ -1337,3 +1342,7 @@ _tables_results.register()
 # Wave B: Irregularity Checks table (core/irregularity_ext.py)
 from . import irregularity_ext as _irregularity_ext  # noqa: E402
 _irregularity_ext.register()
+
+# Wave C: Diaphragm Design Forces (ASCE 7 12.10) table (core/fpx.py)
+from . import fpx as _wc_fpx  # noqa: E402
+_wc_fpx.register()

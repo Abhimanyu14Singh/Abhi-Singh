@@ -2407,6 +2407,10 @@ def create_app() -> Flask:
     from skyframe.api.buckling_api import register as _bfem_register
     _bfem_register(app, _state)
 
+    # Wave C: Fpx diaphragm forces · beam LLR · static ecc (wavec_api)
+    from skyframe.api.wavec_api import register as _wc_register
+    _wc_register(app, _state)
+
     return app
 
 

@@ -413,7 +413,7 @@ export function openJointTemperature() {
 /* ================================================================
    Assign → Frame Loads → Distributed (uniform / trapezoidal + Projected)
    ================================================================ */
-const DIST_DIRS = [["gravity", "Gravity (−Z)"], ["local_y", "Local 2"], ["global_x", "Global X"], ["global_y", "Global Y"], ["global_z", "Global Z"]];
+const DIST_DIRS = [["gravity", "Gravity (−Z)"], ["local_1", "Local 1 (axial)"], ["local_y", "Local 2"], ["local_3", "Local 3"], ["global_x", "Global X"], ["global_y", "Global Y"], ["global_z", "Global Z"]];   // + Wave C local 1 / 3
 const PROJ_DIRS = ["gravity", "global_x", "global_y", "global_z"];
 const DIR_VEC = { gravity: [0, 0, -1], global_x: [1, 0, 0], global_y: [0, 1, 0], global_z: [0, 0, 1] };
 /** sqrt(1 − (x·d)²) — thermal_ext.projected_factor (1 when not projected). */

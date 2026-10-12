@@ -307,7 +307,9 @@ export function lcOpenLlr(sky) {
   const params = {};
   for (const [k, v] of Object.entries(LC_LLR_DEFAULTS)) params[k] = { ...lcClone(v), ...(s0 && s0.code === k ? lcClone(s0.params || {}) : {}) };
   const kinds = { reducible: !s0 || !s0.kinds || s0.kinds.includes("reducible_live"), live: !!(s0 && s0.kinds && s0.kinds.includes("live")) };
-  const apply = { columns: !s0 || !s0.apply_to || s0.apply_to.includes("columns"), piers: !s0 || !s0.apply_to || s0.apply_to.includes("piers") };
+  const apply = { columns: !s0 || !s0.apply_to || s0.apply_to.includes("columns"), piers: !s0 || !s0.apply_to || s0.apply_to.includes("piers"),
+    beams: !!(s0 && s0.apply_to && s0.apply_to.includes("beams")) };   // + Wave C beams
+  const beamP = { KLL: (s0 && s0.beam_params && s0.beam_params.KLL) ?? 2 };   // Wave C beam KLL
   const piers = [...new Set((D.shells || []).filter(r => r.kind === "wall" && (r.pier || D.auto_pier_walls)).map(r => r.pier || r.uid))];
   const pierRows = piers.map(p => ({ pier: p, A: s0 && s0.pier_areas && s0.pier_areas[p] != null ? s0.pier_areas[p] : null }));
   const curveRows = (params.user.curve || []).map(([x, R]) => ({ x, R }));
@@ -324,8 +326,10 @@ export function lcOpenLlr(sky) {
     if (Object.keys(diff).length) out.params = diff;
     const ks = [kinds.reducible && "reducible_live", kinds.live && "live"].filter(Boolean);
     if (!(ks.length === 1 && ks[0] === "reducible_live")) out.kinds = ks.length ? ks : ["reducible_live"];
-    const ap = [apply.columns && "columns", apply.piers && "piers"].filter(Boolean);
-    if (ap.length !== 2) out.apply_to = ap;
+    const ap = [apply.columns && "columns", apply.piers && "piers", apply.beams && "beams"].filter(Boolean);   // + Wave C beams
+    if (!(ap.length === 2 && !apply.beams)) out.apply_to = ap;
+    if (apply.beams && st.code === "asce7_16" && beamP.KLL !== 2) out.beam_params = { KLL: beamP.KLL };
+    if (s0 && s0.beam_areas) out.beam_areas = s0.beam_areas;
     const pa = Object.fromEntries(pierRows.filter(r => r.A != null && r.A > 0).map(r => [r.pier, r.A]));
     if (Object.keys(pa).length) out.pier_areas = pa;
     return out;
@@ -339,7 +343,8 @@ export function lcOpenLlr(sky) {
       const f = await lcLlrFactors(sky, D, s);
       if (my !== seq) return;
       const rows = [...Object.entries(f.columns).map(([k, v]) => ["Column", k, v]),
-        ...Object.entries(f.piers).flatMap(([k, by]) => Object.entries(by).map(([s2, v]) => ["Pier", `${k} @ ${s2}`, v]))];
+        ...Object.entries(f.piers).flatMap(([k, by]) => Object.entries(by).map(([s2, v]) => ["Pier", `${k} @ ${s2}`, v])),
+        ...Object.entries(f.beams || {}).map(([k, v]) => ["Beam", k, v])];   // + Wave C beams
       const t = lcEl("table", { class: "data-table dk-table" });
       t.appendChild(lcEl("thead", {}, [lcEl("tr", {}, ["Element", "Name", `Tributary area (${lcU.label("area")})`, "Floors", "RLL factor"].map(h => lcEl("th", { class: "txt", text: h })))]));
       const tb = lcEl("tbody");
@@ -378,6 +383,8 @@ export function lcOpenLlr(sky) {
         F.check(kinds, "live", { label: "Also reduce Live patterns", id: "dsLlrKindL", onChange: on }),
         F.check(apply, "columns", { label: "Columns", id: "dsLlrCols", onChange: on }),
         F.check(apply, "piers", { label: "Wall piers", id: "dsLlrPiers", onChange: on }),
+        F.check(apply, "beams", { label: "Beams (half-spacing tributary area, one floor)", id: "dsLlrBeams", onChange: on }),   // Wave C
+        ...(c === "asce7_16" ? [F.num(beamP, "KLL", { label: "Beam KLL", gt: 0, def: 2, id: "dsLlrBeamKLL", onChange: on, hint: "Table 4.7-1: 2 interior / edge beams without cantilever, 1 other" })] : []),
       ];
       host.appendChild(lcGroup("Apply to", scope));
       if (pierRows.length) host.appendChild(lcAdvanced([F.table(pierRows, [{ key: "pier", label: "Pier", type: "ro", get: r => r.pier },

@@ -195,8 +195,8 @@ def _scale_records(recs: Dict, fef: Dict, lam: float):
     for key, lst in recs.items():
         new = []
         for r in lst:
-            if r[0] == "trap":
-                new.append(("trap", tuple(v * lam for v in r[1]),
+            if r[0] in ("trap", "mtrap"):           # Wave C: + dist. moment
+                new.append((r[0], tuple(v * lam for v in r[1]),
                             tuple(v * lam for v in r[2]), r[3], r[4]))
             else:
                 new.append((r[0], tuple(v * lam for v in r[1]), r[2]))

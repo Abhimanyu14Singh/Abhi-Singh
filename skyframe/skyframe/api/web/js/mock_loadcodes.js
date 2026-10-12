@@ -14,6 +14,7 @@
    live-load factors use the plan-area / column-count tributary fallback
    (the backend uses the half-bay rule) — plausible, not exact. SI. */
 
+import { wcBeamFactors as wcMockBeams } from "./mock_wavec3.js";   // Wave C beam LLR
 import { LC_SPECTRA_CATALOGUE as lcSpecCat, LC_COMBO_CATALOGUE as lcComboCat } from "./mock_loadcodes_data.js";
 
 export const LC_MPRS_PERIODS = [0.0, 0.01, 0.02, 0.03, 0.05, 0.075, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5,
@@ -430,6 +431,7 @@ export function lcMockLlrFactors(model, settings) {
   let live = pick(kinds);
   if (!live.length && !st.kinds) { live = pick(["live"]); if (live.length) out.warnings.push(`no Reducible Live load patterns: the Live-type cases ${JSON.stringify(live)} are reduced instead`); }
   out.live_cases = live;
+  if ((st.apply_to || []).includes("beams")) out.beams = wcMockBeams(model, { ...st, code });   // Wave C beams
   return out;
 }
 

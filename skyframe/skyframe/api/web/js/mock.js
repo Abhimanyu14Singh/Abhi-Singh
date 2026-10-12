@@ -38,7 +38,8 @@ import { rsxMockAugment } from "./mock_rs_ext.js";   // RS ext: U3 / angle / CQC
 import { wcMockAugment as wcMockAugmentResults } from "./mock_wavec.js";   // Wave C: RS/TH/max-min cut forces, TH shells / frames
 import { poxMockAugment as poxMockAugmentResults } from "./mock_pomethods.js";   // pushover ATC-40 / FEMA 440 / N2 (js/mock_pomethods.js)
 
-import { tdMockAugment as tdMockAugmentResults } from "./mock_timedep.js";   // step creep time history + tendon elements
+import { tdMockAugment as tdMockAugmentResults } from "./mock_timedep.js";
+import { wcMockAugment as wc3MockAugmentResults } from "./mock_wavec3.js";   // Wave C frame pier forces   // step creep time history + tendon elements
 const G = 9.80665;
 
 function mulberry32(seed) {
@@ -3340,6 +3341,7 @@ export function mockResults(model) {
 
   tdMockAugmentResults(model, r);                 // step creep time history + tendon elements (js/mock_timedep.js)
   wcMockAugmentResults(model, r);                 // Wave C cut forces / TH shells / frames (js/mock_wavec.js)
+  wc3MockAugmentResults(model, r);                // Wave C frame pier forces (js/mock_wavec3.js)
   return r;
 }
 

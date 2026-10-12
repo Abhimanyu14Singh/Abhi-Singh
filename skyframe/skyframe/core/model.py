@@ -46,6 +46,8 @@ from skyframe.core import towers as _towers  # C9 multiple towers
 from skyframe.core import rhino_exchange_fields as _xch  # Rhino/GH exchange
 from skyframe.core import towers_ext as _towers_ext  # C9 follow-ups
 from skyframe.core import spandrels as _spd  # spandrel labels (A8)
+from skyframe.core import frame_loads_ext as _fle  # Wave C frame loads
+from skyframe.core import wavec_model as _wcm  # Wave C model fields
 
 from skyframe.core import similar_stories as _simst  # W8 master/similar
 from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
@@ -822,6 +824,7 @@ class FrameMember:
     end_releases: Optional[dict] = None
 
     spandrel: str = ""  # spandrel label ("" = none; core.spandrels)
+    pier: str = ""      # Wave C frame pier label (core.frame_piers)
 
     @property
     def length(self) -> float:
@@ -873,6 +876,7 @@ class FrameMember:
                 **_rel_member_to_dict(self),       # end releases (if set)
 
                 **_spd.tag_to_dict(self),          # spandrel (when set)
+                **_wcm.member_to_dict(self),       # Wave C pier (when set)
                 "length": self.length}
 
 
@@ -960,6 +964,9 @@ class ShellRegion:
 
     spandrel: str = ""                     # spandrel label (core.spandrels)
     distribution_override: bool = False    # Wave B: keep own distribution
+    # Wave C per-area auto edge constraints (None = model-wide switch;
+    # core.edge_constraints_ext)
+    edge_constraint: Optional[bool] = None
 
     @property
     def area(self) -> float:
@@ -1025,7 +1032,8 @@ class ShellRegion:
                 **_towers.tag_to_dict(self),       # C9 tower (when set)
                 **_xch.ref_to_dict(self),          # exchange (when set)
                 **_spd.tag_to_dict(self),          # spandrel (when set)
-                **_wbp.region_to_dict(self)}       # Wave B (when set)
+                **_wbp.region_to_dict(self),       # Wave B (when set)
+                **_wcm.shell_to_dict(self)}        # Wave C (when set)
 
 
 # --------------------------------------------------------------------------- #
@@ -1044,7 +1052,8 @@ class MemberUDL:
 
 MEMBER_LOAD_KINDS = ("udl", "point", "trapezoid")
 MEMBER_LOAD_DIRECTIONS = ("gravity", "local_y", "global_x", "global_y",
-                          "global_z")
+                          "global_z",
+                          "local_1", "local_3")  # Wave C (frame_loads_ext)
 
 
 @dataclass
@@ -1078,6 +1087,9 @@ class MemberLoad:
     # v1.16 projected load (per length projected normal to the direction;
     # udl/trapezoid, global directions) — core.thermal_ext.projected_factor
     projected: bool = False
+    # Wave C distributed moment on kind "moment" ("" = concentrated couple;
+    # "uniform" | "trapezoid" over [a, b], kN*m/m; core.frame_loads_ext)
+    moment_dist: str = ""
 
 
 @dataclass
@@ -1281,6 +1293,9 @@ class LoadPattern:
     # v1.19 ASCE 7 wind case 4 (core.wind_codes_ext): eccentricity ratio for
     # the fy story torque; None (default, omitted from to_dict) = ecc.
     ecc_y: Optional[float] = None
+    # Wave C static per-story / story-diaphragm eccentricity overrides
+    # ({key: ratio | {"length": m}}; core.static_ecc; None = none)
+    ecc_overrides: Optional[dict] = None
 
     def all_member_loads(self) -> List[MemberLoad]:
         """member_loads plus legacy member_udls expressed as MemberLoads."""
@@ -1307,6 +1322,7 @@ class LoadPattern:
                if self.ground_displacements else {}),
             **_thx.pattern_ext_to_dict(self),
             **({"ecc_y": self.ecc_y} if self.ecc_y is not None else {}),
+            **_wcm.pattern_to_dict(self),        # Wave C ecc overrides
         }
 
 
@@ -2317,6 +2333,10 @@ class BuildingModel:
     # reference points / planes (skyframe.core.workspace; no analysis
     # effect).  Each key emitted by to_dict only when non-empty.
     workspace: Dict[str, list] = field(default_factory=dict)
+    # Wave C (core.wavec_model): defined pier labels (core.frame_piers) and
+    # ASCE 7 12.10 Fpx inputs (core.fpx); emitted only when set
+    pier_labels: List[str] = field(default_factory=list)
+    fpx_settings: Optional[dict] = None
 
     # Wave C: eigen shift / cutoff / tolerance of the default MODAL case
     # (skyframe.core.wavec_dyn); {} = legacy, emitted only when set.
@@ -4003,6 +4023,7 @@ class BuildingModel:
                     raise ValueError(f"Pattern {pat.name}: member load "
                                      f"references unknown member "
                                      f"{ml.member_uid!r}")
+                _fle.validate(ml, pat.name)   # Wave C distributed moments
                 if ml.kind == "moment":
                     validate_member_moment(ml, pat.name)
                     continue
@@ -4125,6 +4146,7 @@ class BuildingModel:
         from skyframe.core.releases import validate_model as _rel_validate
         _rel_validate(self)                 # end releases / joint axes
         _spd.validate(self)                 # spandrel labels
+        _wcm.validate(self)                 # Wave C piers/edges/ecc/Fpx
         _mcs.validate(self)                 # mass sources / modal cases
         from skyframe.core import th_output as _tho
         _tho.validate(self)                 # Wave C TH shell output
@@ -4391,6 +4413,7 @@ class BuildingModel:
             **_rel_model_to_dict(self),  # joint local axes (if any)
 
             **_spd.model_to_dict(self),  # spandrel labels (if any)
+            **_wcm.model_to_dict(self),  # Wave C piers / Fpx (if any)
 
             **_mcs.model_to_dict(self),  # mass sources / modal cases (if any)
 
@@ -4627,7 +4650,8 @@ class BuildingModel:
                     w=float(m.get("w", 0.0)), w2=float(m.get("w2", 0.0)),
                     a=float(m.get("a", 0.0)), b=float(m.get("b", 1.0)),
                     direction=m.get("direction", "gravity"),
-                    projected=bool(m.get("projected", False))))
+                    projected=bool(m.get("projected", False)),
+                    moment_dist=str(m.get("moment_dist") or "")))
             for a in pd.get("area_loads") or []:
                 jp = a.get("joint_pattern")
                 pat.area_loads.append(AreaLoad(
@@ -4857,6 +4881,7 @@ class BuildingModel:
         _rel_from(mdl, d)                   # end releases / joint axes
 
         _spd.model_from_dict(mdl, d)        # spandrel labels / tags
+        _wcm.model_from_dict(mdl, d)        # Wave C piers/edges/ecc/Fpx
 
         _mcs.model_from_dict(mdl, d)        # mass sources / modal cases
         from skyframe.core import th_output as _tho
