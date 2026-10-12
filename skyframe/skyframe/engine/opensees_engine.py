@@ -2726,6 +2726,10 @@ class OpenSeesEngine:
                        else ("PDelta" if pdelta else "Linear"))
         # model-wide P-Delta options (engine/pdelta.py): False for "none"
         _pdx = _pdelta.prepare(self, transf_name, hinge_case)
+        # Wave B auto / PMM hinges: gravity axial loads solved BEFORE the
+        # wipe (engine/auto_hinges.py; returns at once when unused)
+        from skyframe.engine import auto_hinges as _ahx
+        _ahx.prepare(self, hinge_case)
         coro_release_fallback: List[str] = []
         timo_fallback: Dict[str, List[str]] = {}   # reason -> member uids
         if self._mesh is None:
@@ -3357,6 +3361,11 @@ class OpenSeesEngine:
             # nonlinear sections are never scaled (cracked runs are linear
             # builds, where layered sections use the elastic path anyway).
             scaled_tags: Dict[Tuple[str, float], int] = {}
+            # Wave B wall fiber hinges (engine/wall_hinges.py; {} unless
+            # model.wall_hinges is set in a hinged build): ghost quads
+            from skyframe.engine import wall_hinges as _whx
+            wh_plan = _whx.plan(self, hinge_case)
+            wh_cache: Dict[str, int] = {}
             for qi, quad in enumerate(mesh.quads):
                 etag += 1
                 node_tags = [n + 1 for n in quad.nodes]
@@ -3375,6 +3384,9 @@ class OpenSeesEngine:
                             stag, ssec_q, mat_q, scale, nd_tag)
                         scaled_tags[key] = stag
                     stag_q = scaled_tags[key]
+                if wh_plan:                                   # Wave B
+                    stag_q = _whx.quad_section(self, asm, wh_plan, region,
+                                               stag_q, wh_cache)
                 # shell_type element family (CONTRACT "Shell element
                 # types"): default "shell" = ShellMITC4 quads / ShellDKGT
                 # polygon triangles (legacy)
@@ -3385,6 +3397,9 @@ class OpenSeesEngine:
                 asm.quad_ele.append(etag)
                 for n in quad.nodes:
                     rot_add(n, eye3)   # shells stiffen all three rotations
+            if wh_plan:                       # Wave B wall wide columns
+                tag, mtag, etag = _whx.build(self, asm, wh_plan, tag, mtag,
+                                             etag, transf_name)
 
             # --- v0.22 auto edge constraints (the "zipper") ------------------
             # For every hanging node (a node strictly inside another shell's

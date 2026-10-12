@@ -26,6 +26,7 @@ import { mockAugmentB9 as b9MockAugment } from "./mock_b9.js";
 import { mockNpAdjustResults as npMockAdjustResults } from "./mock_np.js";   // nonprismatic deflections + joint panel zones
 // B10 — user-defined hinge result histories in mock results (js/mock_userhinge.js)
 import { mockAugmentUserHinges as uhMockAugment } from "./mock_userhinge.js";
+import { hbMockAugment as hbMockAugmentResults } from "./mock_hingeb.js";   // Wave B auto / PMM / wall hinge histories
 // PT tendons — results.tendons (P(x) after losses) + results.hyperstatic (js/mock_tendons.js)
 import { mockAugmentTendons as ptMockAugment } from "./mock_tendons.js";
 import { pfMockExtend as pfMockExtendResults } from "./mock_plotfn.js";   // plot functions (TH output_requests)
@@ -3325,6 +3326,7 @@ export function mockResults(model) {
   b9MockAugment(model, r);                        // B9: variable output stations (js/mock_b9.js)
   npMockAdjustResults(model, r);                  // nonprismatic sections + joint panel zones (js/mock_np.js)
   uhMockAugment(model, r);                        // B10: user hinge histories (js/mock_userhinge.js)
+  hbMockAugmentResults(model, r);                 // Wave B: auto / PMM / wall hinges (js/mock_hingeb.js)
   ptMockAugment(model, r);                        // PT tendons + hyperstatic cases (js/mock_tendons.js)
   a8MrtMockAugment(model, r);                     // A8: results.spandrels (js/mock_restables.js)
   pfMockExtendResults(model, r);                  // plot functions: th_cases[*].plot_functions (js/mock_plotfn.js)

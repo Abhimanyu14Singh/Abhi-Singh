@@ -2372,6 +2372,10 @@ def create_app() -> Flask:
     from skyframe.api.timedep_api import register as _tdp_register
     _tdp_register(app, _state)
 
+    # Wave B hinges: code-table catalogue / auto + surface previews
+    from skyframe.api.hinges_api import register as _hng_register
+    _hng_register(app, _state)
+
     return app
 
 

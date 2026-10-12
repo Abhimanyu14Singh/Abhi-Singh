@@ -13197,3 +13197,211 @@ shortening and tendon force vs time).
   reactions, camber 5 P_eff e L²/(48 EI) within 5 %.
 * Model tables / HTTP endpoints round-trip; legacy models hash-identical
   (results + to_dict) before / after.
+
+## Auto hinges from code tables, V3 / T hinges, parametric interacting hinges and wall fiber hinges (Wave B)
+
+Modules: `design/hinge_tables.py` (table generators), `core/interaction_hinges.py`
++ `engine/interaction_hinges.py` (PMM / M2M3), `engine/auto_hinges.py` (gravity
+axial load + auto -> B10 plan entries), `core/wall_hinges.py` +
+`engine/wall_hinges.py`, `core/modeltables_hinges.py` (DB-edit),
+`api/hinges_api.py`.  Hooks: `_build` (one `auto_hinges.prepare` line before the
+wipe; `wall_hinges` plan / ghost-quad / build lines in the shell loop),
+`model.py` (`wall_hinges` field, to/from dict, validate), `server.py` (register),
+`modeltables_ext.extend_catalogue` (one line).  Every default is byte-identical:
+`wall_hinges` is emitted only when non-empty, and models without auto / PMM /
+wall hinges never reach the new code (representative model + full `run()` JSON
+hashed before / after: identical).
+
+### Model JSON
+
+```jsonc
+"hinge_properties": {
+  "AC": {"type": "auto",
+         "auto": {"code": "ASCE41-17" | "ASCE41-23" | "FEMA356" | "EC8-3",
+                  "component": "steel_beam" | "steel_column" | "steel_brace"
+                             | "rc_beam" | "rc_column" | "rc_column_shear",
+                  "dof": "M3" | "M2" | "PMM" | "P" | "V2" | "V3",
+                  "params": {...},          // PARAM_DEFAULTS keys only
+                  "gravity": null | {pattern: factor},
+                  "P": null | kN},          // fixed P_G (compression +)
+         "hysteresis": "kinematic", "k_elastic": null, "hysteresis_params": null},
+  "PM": {"type": "PMM" | "M2M3",
+         "surface": {"curves": [{"angle": deg, "points": [[P, M], ...]}]},
+         "axial": {"source": "gravity" | "value", "value": P, "gravity": null},  // PMM; M2M3: null
+         "backbone": [[0,0],[0,1.0],[0.03,1.1]],   // M/My vs plastic rotation
+         "scale": {...}, "acceptance": {...}, "hysteresis": "kinematic",
+         "drop_strength": "holds", "k_elastic": null, "hysteresis_params": null},
+  "V3H": {"type": "V3" | "T", ...B10 lumped property...}
+},
+"wall_hinges": {"P1": {"rho_v": 0.0025, "rho_b": 0.0, "boundary_ratio": 0.1,
+                       "fy": 420000, "fc": null, "n_fibers": 20, "lp_ratio": 0.5,
+                       "confined": false, "stories": null}}
+```
+
+Assignment uses the existing `FrameMember.hinges` list (`{property,
+relative_distance}`).  Validation errors (400): unknown keys, a code without
+that component / dof, params out of range (ratios < 0.1, cover < 0.5),
+interacting hinges with non-kinematic hysteresis, `drop_strength: "drops"`, an
+asymmetric backbone, < 2 curves, a missing 0/180 or 90/270 curve, repeated P,
+M2M3 curves that are not a single `[0, M]`, axial on M2M3; wall hinges with
+unknown keys / stories, ratios out of range, `n_fibers` outside [4, 200].
+
+### V3 / T
+
+Lumped B10 hinges on local DOF 3 / 4: `k_member` = 12 E I22 / L^3 (V3), G J / L (T).
+
+### Auto hinges (engine)
+
+* `prepare` (start of every HINGED build): for members with an auto property
+  whose component uses the axial load (steel / RC column, RC shear) or a PMM
+  property with `axial.source == "gravity"`, the gravity mapping (the
+  property's own `gravity`, else the hinged case's `gravity`, else none ->
+  P_G = 0) is solved LINEARLY on a deep copy of the model (one extra static
+  case) and the station axial forces are cached; P_G at the hinge station is
+  interpolated (compression +).  This is the ETABS "axial force from
+  case/combo" option; the axial force is NOT updated during the push.
+* each auto hinge resolves per member into B10 lumped hinges (`PMM` = an M2
+  and an M3 hinge in series at the same station, each sized at P_G); backbone
+  plastic points A(0,0) B(0,F_B) C(a, F_C) D(a, cF_B) E(b, cF_B), then "drops";
+  F_C = F_B + 0.03 k_member a (ASCE 41 9.4.2.2 hardening; none for a brace in
+  compression or a force-controlled shear hinge; a flat plateau gets a 1e-6
+  relative rise because OpenSees HystereticSM aborts on a flat first segment);
+  acceptance = the table IO / LS / CP (absolute plastic).  Two-sided (brace)
+  backbones use takeda when kinematic is chosen; an end-j axial hinge swaps
+  sides so tension stays positive; states use the side's acceptance
+  (`acceptance_negative`).
+* a generator that cannot size the member (no library W shape, no rectangular
+  dims, force-controlled column) warns and leaves the member hinge-free.
+
+Tables (`TABLE_INFO`; `preliminary` = not `verified`):
+
+| code / component | rule | verified |
+|---|---|---|
+| ASCE41-17 steel_beam | Table 9-7.1 beam ladder (= v0.19 auto_m3) | yes |
+| ASCE41-17 steel_column | Table 9-7.1 columns: a = 0.8(1-r)^2.2/(0.1L/ry+0.8h/tw) - 0.0035, b = 7.4(1-r)^2.3/(0.5L/ry+2.9h/tw) - 0.006, c = 0.9-0.9r; M_pCE = ZFye(1-r/2) (r<0.2), 9/8 ZFye(1-r); IO 0.5a, LS 0.75b, CP b; r>0.6 or a=0 force-controlled | no |
+| ASCE41-17 steel_brace | P_CE AISC 360-16 E3 with Fye, T_CE = A Fye; Delta_c / Delta_T multiples per shape class, stocky 2.1 rt / slender 4.2 rt interpolation | no (strength exact) |
+| ASCE41-17 rc_beam | Table 10-7 condition i (= v0.19) | yes |
+| ASCE41-17 rc_column | Table 10-8: a = 0.042-0.043n+0.63rho_t-0.023VyE/VColOE, b = 0.5/(5+n/0.8/rho_t fc/fyt)-0.01 >= a (n >= 0.1 in b), c = 0.24-0.4n; IO = min(0.15a, 0.005), LS 0.5b, CP 0.7b; Mn by ACI strain compatibility at P_G; EI_eff Table 10-5 (info) | yes |
+| ASCE41-17 rc_column_shear | Eq. 10-3 V_ColOE (k_nl = 1, d = 0.8h, M/Vd in [2,4], alpha_col by s/d); force-controlled: plateau 1e-3 L, c = 0.2, IO = LS = CP = 0 | yes |
+| FEMA356 steel_beam / steel_column / rc_beam | Table 5-6 (primary; Eqs. 5-2, 5-4; P/PCL 0.2..0.5 footnote rows; > 0.5 force-controlled) / Table 6-7 | no |
+| EC8-3 rc_beam / rc_column | Annex A: theta_y (A.10b) with phi_y, My from (A.10)-(A.12); theta_um (A.1) with gamma_el; DL / SD / NC -> IO 0 / LS 0.75 theta_um - theta_y / CP theta_um - theta_y; drops after theta_um | yes |
+| ASCE41-23 (all) | the 41-17 values unchanged (41-23 numeric revisions not transcribed) | no |
+
+### Parametric interacting hinges (PMM / M2M3)
+
+Two elements join the hinge station to the duplicate node:
+
+* a `zeroLengthSection` with an OpenSees `Elliptical` section (codes My Mz =
+  member M2 / M3; k_e per axis = `k_elastic` or 10 x 6EI/L; yield ellipse
+  (M2/M2y)^2 + (M3/M3y)^2 = 1; linear kinematic hardening H = (r_C - 1) My /
+  d_C from the backbone B -> C, floored at 1e-9 k_member);
+* a stiff `zeroLength` on P, V2, V3, T.
+
+M2y / M3y are the means of the 0/180 and 90/270 curve moments, interpolated at
+the hinge's axial force (gravity or fixed; ETABS sign, compression negative).
+The other angles are reported against the ellipse (`surface_fit`).  If P lies
+outside the surface, the hinge is rigid and a warning is issued.  Points past C
+are state markers only, because OpenSees has no degrading coupled-plasticity
+section.  States use the normalized resultant plastic rotation.
+
+### Wall fiber hinges
+
+Hinged builds only.  Each planar rectangular (4-corner, no openings) shell wall
+of the pier keeps its quads, but with a ghost section (1e-4 E).  Per story it
+gets a `forceBeamColumn` between centre nodes at the story levels:
+
+* HingeRadau, with the fiber section at both ends;
+* lp = lp_ratio lw, capped at H/2;
+* an elastic gross interior;
+* both sections aggregated with an elastic in-plane shear G (5/6) t lw.
+
+Stiff elastic arms (100 x) join each centre node to every wall node on that
+level line.
+
+Fibers: Concrete01 (fc, eps0 = 2fc/Ec, 0.2fc at 0.006, no tension) over n x 2
+cells.  Steel01 bars (fy, 200 GPa, b = 0.01): the distributed rho_v t lw over n
+bars, plus rho_b t lb at each boundary centre.  Stories outside `stories` get an
+elastic wide column.
+
+States: theta_pl = max(0, |kappa| - kappa_y) lp, with kappa_y = 2 eps_y / lw
+(Priestley).  They are classified against ASCE 41-17 Table 10-19, interpolated
+in the axial ratio (gravity, step 0) and the peak shear stress (preliminary).
+Loads on interior wall nodes act on the ghost shell.
+
+### Results
+
+Entries are appended to the pushover / nonlinear static / TH hinge lists:
+
+* **auto:** the B10 entry, plus `kind: "auto"`, `auto: {code, component,
+  table, clause, preliminary, inputs, P_G, axial_source, thy, dof}`,
+  `acceptance_negative` and `preliminary`.
+* **PMM / M2M3:** `kind: "user_interaction"`, `My2`, `My3`, `P`,
+  `axial_source`, `surface_fit`, `k_elastic: [k2, k3]`, `hardening`, `rot2`,
+  `rot3`, `m2` and `m3` (`rot` / `moment` are resultants).
+* **wall:** `uid: "<pier>@<story>"`, `kind: "wall"`, `type: "P-M3"`, `pier`,
+  `story`, `region`, `lp`, `kappa_y`, `My` (hand M at kappa_y), `a b c IO LS
+  CP` (Table 10-19), `axial`, `curvature` and `shear`.
+
+### API
+
+* `GET /api/hinges/catalog` -> `{codes: {code: {component: {dofs, table,
+  clause, verified, note}}}, params, brace_shapes, hinge_types,
+  interaction_types, wall_defaults}`.
+* `POST /api/hinges/auto-preview` `{property, members, P_G?, model?}` ->
+  `{previews: [{uid, P_G, reason, hinges: [{type, property,
+  acceptance_negative, thy, meta}]}]}`; 400 on a bad property / unknown uid.
+* `POST /api/hinges/surface-preview` `{property, P?}` -> `{M2y, M3y, P, fit}`.
+
+DB-edit changes:
+
+* "Frame Hinge Properties" gains `auto_code / auto_component / auto_dof /
+  auto_params (JSON)`.
+* New tables: "Frame Hinge Properties - Interaction Surface" (hinge, angle, P,
+  M) and "Wall Hinges (Fiber P-M3)".
+* The backbone table no longer writes an empty backbone into a property that
+  has none.
+
+### UI
+
+* Define > Frame Hinge Properties offers these types:
+  * V3 and T, with the backbone editor;
+  * P-M2-M3 / M2-M3: surface table, M2-M3 contour with the fitted ellipse at a
+    chosen P, normalized M-theta, acceptance and axial source;
+  * Auto: code / component / DOF, table + verified flag, parameters and
+    preview.
+* Assign > Frame > Hinges > Auto Hinges (Code Tables)… (`asn-hb-auto`).
+* Assign > Shell > Wall Hinges (Fiber P-M3)… (`asn-hb-wall`).
+* Hinge Results show an info line for each new kind.
+* Mock: `js/mock_hingeb.js` (approximate generator, `meta.mock`).
+
+### Validation (`tests/test_wave_b_hinges.py`, 24 tests)
+
+* **Table pins** (each formula re-derived in the test):
+  * steel beam = legacy auto_m3;
+  * steel column equations at r = 0 / 0.1 / 0.3, and the r > 0.6 cut;
+  * brace E3 inelastic branch (KL/r 69) plus the interpolated multiples;
+  * RC Mn closed form As fy (d - a/2);
+  * Table 10-8 + Eq. 10-3, and the shear hinge;
+  * FEMA 356 caps;
+  * EC8-3 theta_y / theta_um.
+* **Auto P-M column:** W14x90 cantilever with an auto P-M hinge at P_G =
+  500 kN.  V L = envelope(theta) at every step (1e-6), and first yield is
+  bracketed.
+* **Interaction surface:** diamond surface at P = -900 kN.
+  * Yield V = 0.7 M0 / L about both axes.
+  * Elastic and hardening slopes exact (1e-6).
+  * Ellipse fit matches its closed form.
+  * A 45-degree material path yields on the ellipse.
+* **Brace:** the hinge (mid and end j) caps compression at P_CE (2e-6).
+* **V3 / T:** caps and elastic series stiffnesses (1e-6).
+* **Wall fiber section vs hand strain-compatibility M-phi:** within 0.5 %.
+  * P = 0: compared from 0.05 phi_y.
+  * P = 1500 kN: compared from 0.25 phi_y.  Below that, Concrete01 unloading
+    of the pre-compressed fibers departs from the monotonic hand envelope
+    (measured 1.2 % at 0.01 phi_y).
+  * The hand routine is pinned to the parabola closed form (1e-5).
+* **Wall pushover:** base moment = V H (0.5 %); linear analyses are unchanged
+  by wall hinges.
+* **Plumbing:** round trip, DB-edit round trip + edits, API, and byte identity
+  with an unused property.
+* **Playwright:** mock 35/35, live 39/39.

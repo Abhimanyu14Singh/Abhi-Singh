@@ -300,6 +300,7 @@ export function initHingeResults(sky, { redraw } = {}) {
         info.innerHTML = `<b>${hrEsc(h.uid)}</b> @ ${hrEsc(String(h.end))}` + (h.property ? ` · ${hrEsc(h.property)} (${hrEsc(h.type)}, ${hrEsc(h.hysteresis || "")}${h.material ? " → " + hrEsc(h.material) : ""})` : h.kind ? ` · ${hrEsc(h.kind)}` : "") +
           ` · F<sub>B</sub> = ${hrEsc(HRU.fmtU(kd.f, h.My, 1))}` + (isNum(h.k_elastic) ? ` · k<sub>e</sub> = ${hrEsc(HRU.fmtU(kd.k, h.k_elastic, 0))}` : "") +
           ` · state <b style="color:${UH_STATE_COLORS[uhStateAt(h, kk)]}">${hrEsc(uhStateAt(h, kk))}</b>`;
+        if (sky.hbHingeInfo) info.innerHTML += sky.hbHingeInfo(h, kk);   // Wave B auto / PMM / wall detail (js/hingeb.js)
       }
       note.textContent = `Deformed shape: ${pc.def.note}. ${c.hinges.length} hinge${c.hinges.length === 1 ? "" : "s"}; click a dot or a table row to plot that hinge.`;
       // table

@@ -1305,3 +1305,6 @@ def extend_catalogue(T: List[Table]) -> None:
     _new_tables(T)
     from .modeltables_td import extend as _td_extend
     _td_extend(T)          # time-dependent materials + tendon element cols
+
+    from .modeltables_hinges import extend as _hinges_extend
+    _hinges_extend(T)                   # Wave B hinge tables / columns

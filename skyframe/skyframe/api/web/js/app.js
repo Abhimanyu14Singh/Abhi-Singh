@@ -65,6 +65,8 @@ import { initNp as npInitNp } from "./npsect.js";
 import { mockValidateNp as npMockValidateNp } from "./mock_np.js";
 // B10 — user-defined plastic hinges: properties / assign / overwrites / hinge results (aliased imports)
 import { initUserHinges as uhInitUserHinges } from "./uhdlg.js";
+import { initHingeB as hbInitHingeB } from "./hingeb.js";   // Wave B auto / PMM / wall hinges (js/hingeb.js)
+import { hbMockValidate as hbMockValidateModel } from "./mock_hingeb.js";   // Wave B ?mock=1 wall-hinge validation
 import { mockValidateUserHinges as uhMockValidate } from "./mock_userhinge.js";
 // PT tendons + hyperstatic case — draw / profile / properties / results (aliased imports)
 import { initTendons as ptInitTendons } from "./tendons.js";
@@ -311,6 +313,7 @@ async function postModel(payload) {
       || l116MockValidateLoads(payload)                                        // v1.16 temperature / projected loads
       || npMockValidateNp(payload)   // nonprismatic sections + joint panel zones
       || uhMockValidate(payload)   // B10 user-defined hinges
+      || hbMockValidateModel(payload)   // Wave B wall hinges
       || ptMockValidate(payload)   // PT tendons / hyperstatic cases
       || pfMockValidateModel(payload)   // plot functions: TH output_requests
       || owMockValidateModel(payload)   // open-structure wind member params
@@ -8581,6 +8584,7 @@ async function boot() {
 
   try { npInitNp(window.__sky); } catch (err) { console.error("nonprismatic / panel zone init failed", err); }   // NP sections + joint panel zones
   try { uhInitUserHinges(window.__sky); } catch (err) { console.error("user hinges init failed", err); }   // B10 user-defined hinges + hinge results
+  try { hbInitHingeB(window.__sky); } catch (err) { console.error("wave B hinges init failed", err); }   // Wave B auto / PMM / wall hinges (js/hingeb.js)
   try { ptInitTendons(window.__sky); } catch (err) { console.error("PT tendons init failed", err); }   // PT tendons + hyperstatic case
   try { pfInitPlotFn(window.__sky); } catch (err) { console.error("plot functions init failed", err); }   // Display > Plot Functions / Story Response / 3D force diagrams
   try { vxInitViewExt(window.__sky); } catch (err) { console.error("display options / extrude init failed", err); }   // View > Set Display Options / Extrude (js/viewext.js)
