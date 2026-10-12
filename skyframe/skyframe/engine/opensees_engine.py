@@ -186,6 +186,7 @@ from skyframe.core import springprops as _sprp     # B9/B11 named springs
 from skyframe.engine import hysteresis as _hyst    # B9/B11 builders
 from skyframe.engine import hinge_ties as _hinge_ties  # sprung hinge bases
 from skyframe.engine import link_rayleigh as _lrl  # Rayleigh on links/springs
+from skyframe.engine import pushover_performance as _ppf  # ATC-40/FEMA 440/N2
 
 from skyframe.engine import solver_policy as _slv   # solver per problem size
 from skyframe.core import mesh_cache as _mesh_cache  # cross-run mesh cache
@@ -1466,6 +1467,9 @@ class PushoverResults:
     # {type, story_forces (normalised), reference_base_shear, params}.
     control: Optional[dict] = None
     distribution: Optional[dict] = None
+    # ATC-40 / FEMA 440 / N2 / ADRS block (engine/pushover_performance.py);
+    # None (no case.performance) -> not emitted
+    performance: Optional[dict] = None
 
     def to_dict(self) -> dict:
         d = {
@@ -1483,6 +1487,8 @@ class PushoverResults:
                 "base_shear": list(self.base_shear)})
         if self.distribution is not None:
             d["distribution"] = dict(self.distribution)
+        if self.performance is not None:          # pushover_performance
+            d["performance"] = self.performance
         return d
 
 
@@ -1970,6 +1976,8 @@ class OpenSeesEngine:
                     res = attempt(name, lambda n=name: self.run_pushover(n))
                     if res is not None:
                         pushover[name] = res
+                for name, res in pushover.items():   # ATC-40/FEMA 440/N2
+                    _ppf.attach(self, model.pushover_cases[name], res)
         staged: Dict[str, StagedResults] = {}
         for name in model.staged_cases:
             if runs(name):

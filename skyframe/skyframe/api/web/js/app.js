@@ -112,6 +112,7 @@ import { mockValidateReleases as relMockValidate } from "./mock_releases.js";   
 import { initA8Results as a8InitResults } from "./a8results.js";   // A8: spandrels · results export xlsx/sqlite · report tables/snapshots/.docx
 
 import { initModalX as mxInitModalX } from "./modalx.js";   // TH function tools · named mass sources · modal cases (js/modalx.js)   // File › Import ▸ / Export ▸ E2K · IFC · DXF · Excel (js/exchange.js)
+import { initPoMethods as poxInitPoMethods } from "./pomethods.js";   // pushover ATC-40 / FEMA 440 / N2 + ADRS (js/pomethods.js)
 
 import { initW8 as w8InitW8 } from "./w8_init.js";   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_*.js)
 import { mockValidateW8 as w8MockValidate } from "./mock_w8.js";   // W8 ?mock=1 validation
@@ -4865,6 +4866,7 @@ function renderPoTab() {
                      label: `δt ${U.fmtU("disp", perf.delta_t, 0)}` } : null,
   }));
   renderPerfOut();
+  if (window.__sky && window.__sky.poxRender) window.__sky.poxRender();   // ATC-40 / FEMA 440 / N2 ADRS card (js/pomethods.js)
 
   /* hinge rotations, sorted descending. v0.19: asce41 pushovers carry a
      per-hinge state history — show the FINAL acceptance state per member
@@ -8592,6 +8594,7 @@ async function boot() {
   try { a8InitResults(window.__sky); } catch (err) { console.error("A8 results init failed", err); }   // spandrels · results export · report plus (js/a8results.js)
 
   try { w8InitW8(window.__sky); } catch (err) { console.error("W8 init failed", err); }   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_init.js)
+  try { poxInitPoMethods(window.__sky); } catch (err) { console.error("pushover methods init failed", err); }   // pushover performance methods + ADRS (js/pomethods.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)

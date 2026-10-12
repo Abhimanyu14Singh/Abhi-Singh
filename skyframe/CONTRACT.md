@@ -12523,3 +12523,153 @@ unchanged: every new key is modelling metadata or an existing engine field.
 * Playwright, mock and live 90/90: every dialog opens from its menu, OK
   with defaults is byte-identical, the POST /api/model double echo is
   identical, kip-in inputs convert, live runs succeed, zero console errors.
+
+## Pushover performance methods (ATC-40, FEMA 440 EL, EN 1998 N2) and the ADRS plot
+
+Code: `skyframe/core/pushover_methods.py` (pure math, every formula in its
+docstring), `skyframe/engine/pushover_performance.py` (modal properties +
+run hook), `skyframe/api/pushover_perf_api.py` (endpoint);
+`js/pomethods.js` (dialog + ADRS card), `js/mock_pomethods.js` (exact JS
+port for `?mock=1`). Analysis results only: no acceptance checks.
+
+### Model
+
+`PushoverCase.performance` (`pushover_cases[name].performance`):
+`None` (default, the key is not emitted, legacy files byte-identical) or
+
+```json
+{"methods": ["asce41", "atc40", "fema440", "n2"],
+ "spectrum": {"code": "asce7", "SDS": 1.0, "SD1": 0.6, "TL"?: s}
+            | {"code": "ec8", "ag": g, "ground_type"?: "A".."E" (C),
+               "spectrum_type"?: 1|2 (1), "S"?, "TB"?, "TC"?, "TD"?},
+ "site_class": "A".."F" (D), "behavior": "A"|"B"|"C" (A),
+ "atc40_procedure": "A"|"B" (A)}
+```
+
+Missing keys take the defaults shown. The stored object is kept verbatim
+(validated only); unknown keys, an empty or duplicated `methods` list,
+non-positive spectrum values or `TB >= TC` raise `ValueError`. EC8 S/TB/TC/TD
+default to EN 1998-1 Table 3.2 (type 1) / 3.3 (type 2).
+
+### Method summary (SI; Sa in g)
+
+* **ADRS:** `Sa = V/(alpha1 W)`, `Sd = d_roof/(PF1 phi_roof)`. The values
+  come from the elastic mode with the largest effective mass ratio in the
+  push direction. `phi_roof` is read at the push's own monitored joint
+  (`resolve_control`). `W = g * (total push-direction mass)`.
+* **Bilinear (ATC-40 / FEMA 440):** initial slope = secant to the first
+  point, equal area up to the trial `dpi`:
+  `dy = (2A - dpi api)/(K dpi - api)`.
+* **ATC-40:** `beta_eff = kappa beta0 + 5`, with
+  `beta0 = 63.7 (ay dpi - dy api)/(api dpi)`. kappa follows Table 8-1
+  (A, B, C). SRA and SRV come from Eqs. 8-9 and 8-10 with the Table 8-2
+  minimums. Procedure A iterates `dpi <- di` (falling back to bisection).
+  Procedure B builds one bilinear at the curve end and intersects the
+  locus with it.
+* **FEMA 440 EL:** the §6.2.1 "any capacity curve" coefficients for
+  `Teff` and `beta_eff` (three ductility ranges),
+  `B = 4/(5.6 - ln beta_eff)`, and the MADRS factor
+  `M = (Teff/T0)^2 (1 + alpha(mu-1))/mu`. The performance point is where
+  the MADRS meets the capacity spectrum, found by the iteration above.
+  `d_max_radial` (where the Teff radial line meets the reduced spectrum)
+  equals it at convergence.
+* **N2 (EN 1998-1 Annex B):** `Gamma = PF1 phi_roof`,
+  `m* = alpha1 M / Gamma`, `F* = V/Gamma`, `d* = d/Gamma`. EPP
+  idealisation: `F*y` is the peak, `d*m` is the end of the peak plateau,
+  `d*y = 2(d*m - E*m/F*y)`. Then `T*` follows, and `d*t` is set by one of:
+  * equal displacement for `T* >= TC`;
+  * elastic response when `F*y/m* >= Se(T*)`;
+  * otherwise `d*et/qu (1 + (qu-1) TC/T*) >= d*et`.
+
+  `dt = Gamma d*t`. The optional B.6 iteration is not applied.
+* **ASCE 41:** the existing coefficient method
+  (`design/performance.target_displacement`), with Sa(Te) read from the
+  selected spectrum. For an ASCE spectrum without TL the results are
+  identical. Here `W` is the modal-mass W from the ADRS item above.
+
+### Results
+
+`results.pushover[name].performance` is emitted only when the case has
+`performance` (run hook). `POST /api/results/pushover-performance`
+`{case, performance?, model?}` returns the same block plus
+`case, direction, curve {disp, base_shear}`. It returns 400 for an
+unknown case, bad options or fewer than 2 steps. The block:
+
+```json
+{"options": {...normalised...},
+ "modal": {"mode", "T", "gamma", "phi_ctrl", "pf_phi", "alpha", "mass", "W", "control_node"},
+ "spectrum": {"code": "asce7", "SDS", "SD1", "TL", "Ts", "T0"} | {"code": "ec8", "ag", "S", "TB", "TC", "TD", "ground_type", "spectrum_type"},
+ "capacity": {"Sd": [...], "Sa": [...]}, "demand": {"Sd": [...], "Sa": [...]},
+ "methods": {
+   "asce41": {...target_displacement keys...},
+   "atc40": {"procedure", "behavior", "converged", "solver", "iterations": [...],
+             "beta0", "kappa", "beta_eff", "SRA", "SRV", "bilinear", "reduced_demand",
+             "performance_point": {"Sd", "Sa"} | null, "Teff", "locus"? (B), "bilinear_fixed"? (B)},
+   "fema440": {"converged", "solver", "iterations", "bilinear", "mu", "alpha", "T0", "Teff", "Tsec",
+               "beta_eff", "B", "M", "reduced_demand", "madrs", "performance_point", "d_max_radial"},
+   "n2": {"gamma", "m_star", "F_star_y", "d_star_y", "d_star_m", "E_star_m", "T_star", "TC", "Se",
+          "d_star_et", "qu", "d_star_t", "rule", "dt", "epp": {"d_star", "F_star"}}},
+ "summary": [{"method", "label", "roof_disp", "base_shear", "Sd", "Sa", "Teff", "beta_eff",
+              "converged", "beyond_curve", "step", "hinge_summary"?}],
+ "warnings": [...]}
+```
+
+`roof_disp: null` means the demand stays above the capacity curve, so
+there is no performance point. `beyond_curve: true` means the target lies
+past the last converged step. A method that fails reports
+`{"error": msg}` in `methods` and adds a warning.
+
+### UI
+
+* **Define › Load Cases › Pushover Performance Methods…** (`def-po-methods`)
+  opens the dlgkit dialog `poxMethodsDlg`. It has a case selector and these
+  groups: Methods, Demand Spectrum (ASCE 7 or EC8, with an Advanced section
+  for S/TB/TC/TD), ATC-40, and ASCE 41 site class.
+  * Only edited cases are written, in canonical key order.
+  * **Clear** removes the key.
+  * OK with defaults is byte-identical.
+* **Display › Nonlinear Results › Pushover Performance (ADRS)**
+  (`dis-po-adrs`) opens the "Performance methods" card in the pushover
+  tab.
+  * The ADRS plot shows:
+    * the capacity spectrum and the 5 % demand;
+    * the ATC-40 reduced demand (and the locus for B);
+    * the FEMA 440 reduced demand and MADRS;
+    * the bilinear representations (FEMA 440 / ATC-40 and ASCE 41);
+    * the N2 EPP and the performance points.
+
+    Each series has its own toggle.
+  * One results table holds the ASCE 41 / ATC-40 / FEMA 440 / N2 rows,
+    with these columns: roof displacement, base shear, Sd, Sa, Teff,
+    beta_eff, step and details.
+  * A footer gives the modal ADRS factors.
+  * **Compute** calls the endpoint and sends the client model.
+* `js/helpdocs.js`: `dis-pushover` now describes what exists. `def-pushover`,
+  `def-po-methods` and `dis-po-adrs` are added.
+
+### Validation
+
+* `tests/test_pushover_methods.py` (36 tests):
+  * FEMA 440 coefficients at mu = 3 / 5 / 8: 15.8 % and 1.496 T0;
+    20.28 % and 1.80 T0; Teff/T0 = 2.17522; then B, M and Tsec.
+  * ATC-40 kappa for types A/B/C, continuity at 16.25 % and 25 %, the
+    SRA/SRV floors.
+  * Equal-area bilinear, exact on a bilinear curve.
+  * The FEMA 440 iteration matches the hand fixed point
+    `dp = Sa(Teff)/B Teff^2 g/4pi^2` to 1e-5 for three spectra.
+  * ATC-40 procedures A and B match the hand velocity-region intersection
+    for types A, B and C.
+  * N2 by hand: Gamma 1.25, m* 100 t, F*y 500 kN, d*m 0.10 m give
+    T* = 0.397384 s, qu = 1.692225 and d*t = 0.0409035 m. The
+    equal-displacement and elastic branches are also covered.
+  * Tables 3.2 and 3.3.
+* `tests/test_pushover_performance_engine.py` (5 tests):
+  * the 2-DOF shear building's T, PF1 phi_roof, alpha1 and m* match the
+    closed-form 2x2 eigen solution (1e-3);
+  * the first-mode elastic push in ADRS is the line `Sa g/Sd = w1^2`
+    (1e-6);
+  * the run hook (no key when unset);
+  * model round trip and validation;
+  * the endpoint.
+* The JS mock reproduces the Python rows exactly (max relative difference
+  0) on three option sets.

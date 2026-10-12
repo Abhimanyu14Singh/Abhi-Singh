@@ -57,6 +57,7 @@ from skyframe.core import rs_ext as _rsx  # RS ecc / U3 / angle / CQC3
 from skyframe.core import modal_cases as _mcs  # mass sources / modal cases
 from skyframe.core.builtup import (  # v1.21 built-up sections
     model_to_dict as _builtup_to_dict, model_from_dict as _builtup_from_dict)
+from skyframe.core import pushover_methods as _po_methods  # ATC-40/FEMA 440/N2
 
 G_ACCEL = 9.80665  # m/s^2
 _PLANAR_TOL = 1e-6  # m
@@ -1521,7 +1522,8 @@ PUSHOVER_DIST_DEFAULTS = {
     "control_dof": None, "target_disp": None,
     "control_mode": "displacement_control", "target_load": 1.0,
     "start_from": None,
-    "control_tower": None}             # C9 follow-up: monitored tower roof
+    "control_tower": None,             # C9 follow-up: monitored tower roof
+    "performance": None}               # pushover performance methods (core/pushover_methods.py)
 
 
 def _coerce_pushover_dist(d: dict) -> dict:
@@ -1611,6 +1613,7 @@ class PushoverCase:
     target_load: float = 1.0               # load_control final load factor
     start_from: Optional[str] = None       # static LoadCase held as gravity
     control_tower: Optional[str] = None    # C9 follow-up: tower roof control
+    performance: Optional[dict] = None     # ATC-40/FEMA 440/N2 options (core/pushover_methods.py)
 
     def to_dict(self) -> dict:
         d = {"name": self.name, "direction": self.direction,
@@ -1625,7 +1628,8 @@ class PushoverCase:
         for key, dflt in PUSHOVER_DIST_DEFAULTS.items():
             val = getattr(self, key)
             if val != dflt:
-                d[key] = list(val) if key == "control_point" else val
+                d[key] = list(val) if key == "control_point" else \
+                    copy.deepcopy(val)          # performance: nested dict
         return d
 
 
@@ -3065,6 +3069,7 @@ class BuildingModel:
         self._validate_pushover_distribution(po)
         _towers_ext._check_control_tower(self, f"Pushover case {po.name}",
                                          po)       # C9 follow-up
+        _po_methods.validate_case(po)    # ATC-40 / FEMA 440 / N2 options
 
     def _validate_pushover_distribution(self, po: PushoverCase) -> None:
         """Load distribution / control / start_from fields of a pushover."""
