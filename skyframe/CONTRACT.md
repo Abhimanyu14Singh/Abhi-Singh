@@ -11162,3 +11162,139 @@ absent from `to_dict`) or `"exact"`.
 * an analysis runs;
 * kip-in readouts are in in⁴;
 * zero console errors.
+
+## Auto lateral loads: international seismic and wind codes, ASCE 7 wind load cases
+
+**Scope (v1.19).** Define › Auto Lateral Loads gains seven seismic and
+five wind generators. It also gains the ASCE 7 Fig. 27.3-8 wind load
+cases, with the topographic and gust-effect factors, for 7-16 and 7-22.
+
+The bulk code lives in `core/seismic_codes_ext.py` and
+`core/wind_codes_ext.py`. A hook at the end of `core/autolateral.py`
+registers them. The existing endpoints, `autolateral.compute` /
+`generate`, towers support and the summary shape are therefore
+unchanged. With towers, each tower uses its own weights, heights and
+facade width.
+
+* `POST /api/pattern/auto-lateral/preview {code, <params>}` → summary.
+* `POST /api/pattern/auto-lateral {code, name?, ecc?, <params>}` → model.
+* Summary: `{"code", "direction", "T", "W", "V", <coefficients>,
+  "stories": [{"story", "h", "w", "F", ...}]}`.
+  * Wind rows have `w: null` and `qz` (kPa).
+  * Rows of ASCE cases 3/4 also carry `fx` / `fy`.
+  * Rows of ASCE cases 2/4 also carry `Mz` (kN·m, informative).
+* Patterns: wind codes write kind `"wind"`, seismic codes kind `"quake"`.
+* Units are SI throughout: m, m/s, kPa (GB `w0` in kN/m²), kN.
+
+### Seismic codes
+
+Optional parameters are in brackets, with their defaults.
+
+| code | method | parameters |
+|---|---|---|
+| `nzs1170_5` | NZS 1170.5:2004 §6.2. `Cd = Ch Z R N Sp/kmu ≥ max((Z/20+0.02)R, 0.03R)`. Ft = 0.08 V at the top, 0.92 V by w·h. | `Z` [`mu` 4, `soil` A–E "C", `R` 1, `N` 1, `Sp` (from mu), `T`, `structure`] |
+| `as1170_4` | AS 1170.4-2007 §6.2. `V = kp Z Ch(T1) Sp/mu W`, kpZ ≥ 0.08, coefficient ≥ 0.01. Distributed by w·h^k. | `Z` [`kp` 1, `site` Ae–Ee "Ce", `mu` 2, `Sp` 0.77, `T`, `structure`, `kpZ_min` 0.08] |
+| `gb50011` | GB 50011-2010 §5.2.1. `FEk = α1 0.85 GE`; δn·FEk at the top. | `T` [`intensity` "6"/"7"/"7.5"/"8"/"8.5"/"9", `level` frequent/rare, `site` I0–IV, `group` 1–3, `alpha_max`, `Tg`, `zeta` 0.05, `geq_factor`, `top_force`] |
+| `tsc2018` | TBDY 2018 §4.7. `V = W Sae/Ra ≥ 0.04 W I SDS`; ΔFN = 0.0075 N V at the top. | `SS`, `S1`, `R`, `D` [`I` 1, `site` ZA–ZE, `FS`, `F1`, `T`, `structure`, `TL` 6] |
+| `kds41` | KDS 41 17 00:2019 §7.2. `Cs = SD1/((R/IE)T) ≤ SDS/(R/IE)`, ≥ 0.01. | `S`, `R` [`IE`, `Fa`, `Fv`, `SDS`, `SD1`, `T`, `structure`] |
+| `nscp2015` | NSCP 2015 §208.5. `V = Cv I W/(R T)`, within the 208-9/10/11 bounds; Ft = 0.07 T V. | `R` [`Z` 0.2/0.4, `soil` SA–SE, `I`, `Na`, `Nv`, `Ca`, `Cv`, `T`, `structure`] |
+| `ntc_cdmx` | NTC-Sismo CDMX 2017 §3 / §7. `V = a(T)/(Q' R) W`, distributed by w·h. | `T`, `a0`, `c`, `Ta`, `Tb` [`k` 1, `Q` 2, `R0` 2, `k1` 1, `beta` 1] |
+
+Notes on the seismic table:
+* `structure` selects the empirical period formula: `steel_mrf`,
+  `concrete_mrf` (default), `ebf` or `other`.
+* A given T is capped where the code caps it: KDS at Cu·Ta, TSC at
+  1.4·TpA, NSCP at 1.3·TA / 1.4·TA.
+
+### Wind codes
+
+| code | method | parameters |
+|---|---|---|
+| `asce7_16_wind` | ASCE 7-16 Ch. 27 directional. `qz = 0.613 Kz Kzt Kd Ke V²`, `p = G(qz Cp_w + qh·abs(Cp_l))`. Defaults: G 0.85, Cp_w 0.8, Cp_l from L/B. | `V` [`exposure`, `Kzt`, `Kd`, `ze`, `Ke`, `G`, `cp_total`, `cp_windward`, `cp_leeward`, plus the case and topo/gust keys below] |
+| `asce7_22_wind` | The v1.16 generator, extended with the same case and topo/gust keys. Without them it calls the v1.16 function, so the output is identical. | v1.16 parameters plus the keys below |
+| `en1991_wind` | EN 1991-1-4. qp(z) per §4.5; cpe D/E from Table 7.1 (by h/d); ze per Fig. 7.4; lack-of-correlation factor 0.85–1.0; cs·cd. | `vb0` [`terrain` "0"/I–IV "II", `cdir`, `cseason`, `rho` 1.25, `co`, `kI`, `cpe_D`, `cpe_E`, `cscd`, `n1` (Annex B), `delta` 0.1, `correlation`, `ze_rule` fig7_4/story] |
+| `is875_wind` | IS 875-3:2015. `Vz = Vb k1 k2 k3 k4`, `pd = Kd Ka Kc 0.6 Vz² ≥ 0.7 pz`. | `Vb` [`terrain` 1–4, `k1`, `k3`, `k4`, `Kd` 0.9, `Ka` 1, `Kc` 0.9, `cp_windward` 0.8, `cp_leeward` -0.5] |
+| `as1170_2_wind` | AS/NZS 1170.2:2021. `Vdes = max(VR Md Mz,cat Ms Mt, vdes_min)`, `p = 0.6 Vdes² Cfig Cdyn`. | `VR` [`terrain` "1"/"2"/"2.5"/"3"/"4", `Md`, `Ms`, `Mt`, `cpe_windward` 0.7, `cpe_leeward` (from d/b), `Ka`, `Kc`, `Cdyn`, `rho_air` 1.2, `vdes_min` 30] |
+| `gb50009_wind` | GB 50009-2012. `wk = βz μs μz w0`; μz from Table 8.2.1; βz from T1 per §8.4.3. | `w0` [`terrain` A–D "B", `mu_s` 1.3, `beta_z`, `T1`, `zeta1` 0.05] |
+
+Story force = net pressure × tributary facade area, the same rule as
+`make_wind_pattern`:
+* the height is half the story below plus half the story above;
+* the width is the plan width normal to the wind.
+
+Windward pressure is taken at the story height (EN: at ze). Leeward
+pressure is taken at the roof height.
+
+### ASCE 7 wind load cases, topography and gust (7-16 and 7-22)
+
+`load_case` follows Fig. 27.3-8:
+
+| Case | Loading | Torsion |
+|---|---|---|
+| 1 | full P | none |
+| 2 | 0.75 P | `MT = 0.75 P B e` |
+| 3 | 0.75 Px + 0.75 Py | none |
+| 4 | 0.5625 × (Px + Py) | `MT = 0.5625 (Px Bx + Py By) e` |
+
+* The case 4 factor is 0.75 × 0.75 = 0.5625; the figure prints 0.563.
+* `e = ecc_sign × e_ratio × B`, with `e_ratio` = 0.15.
+* `transverse_sign` (±1) sets the sign of the second component in cases
+  3 and 4.
+
+Torsion goes through the pattern's accidental torsion:
+* The summary carries `case_ecc`. `generate` writes it as
+  `pattern.ecc`, unless the user gave `ecc`.
+* In case 4 with a negative component, the summary also carries
+  `case_ecc_y` so that the two torques add. This value goes into the new
+  optional field `LoadPattern.ecc_y`:
+  * the engine applies `Mz = fx·ecc·Ly + fy·ecc_y·Lx`;
+  * `ecc_y` defaults to `None` and is then omitted from `to_dict`, so
+    legacy models stay byte-identical;
+  * validation requires `|ecc_y| ≤ 0.5`;
+  * the DB-edit "Load Pattern Definitions" table has an optional
+    "Ecc. Ratio (Fy)" column.
+
+Topography (§26.8.2, Fig. 26.8-1):
+* `topo_feature` (ridge / escarpment / hill), with `topo_H`, `topo_Lh`,
+  `topo_x` and `topo_upwind`, gives `Kzt(z) = (1 + K1 K2 K3)²`.
+* Kzt = 1 unless H/Lh ≥ 0.2 and H ≥ 15 ft (60 ft for exposure B).
+* For H/Lh > 0.5, K1 uses H/Lh = 0.5, and K2 and K3 use Lh = 2H.
+
+Gust:
+* `gust: "rigid"` uses Eq. 26.11-6.
+* `gust: "flexible"` uses Eq. 26.11-10 and needs `n1` < 1 Hz plus
+  `damping`.
+* The computed G replaces `G`, and the summary carries `gust_factor`.
+
+`wind_codes_ext.generate_asce7_wind_cases(model, code, base, **p)`
+writes 12 patterns:
+* `<base>-1X` and `<base>-1Y`;
+* `<base>-2X±e` and `<base>-2Y±e`;
+* `<base>-3X+Y` and `<base>-3X-Y`;
+* `<base>-4X±Y±e`.
+
+The UI's "Create all 12 cases" button posts the same 12 bodies.
+
+**Validation.** `tests/test_autolateral_codes_ext.py` has one
+hand-worked example per code. Each test computes base shear, vertical
+distribution, pressures and coefficients independently from the code
+formulas, with the clauses cited in comments. The file also covers:
+* the case 2 torque values;
+* the case 3/4 factors (0.75 and 0.5625);
+* an analysed case 4 base-torque check: the difference between torsion
+  on and torsion off equals −ΣMT;
+* the hand values for Kzt and the gust factor, rigid and flexible;
+* EN Annex B cs·cd;
+* towers;
+* the API.
+
+Model and results JSON for legacy models and the v1.16 generators hash
+identically before and after this change.
+
+**Limitations.**
+* NTC-Sismo omits the §7.2.2 reduced two-term distribution for T > Tb.
+* GB 50009 βz uses a linear mode shape φ1 = z/H.
+* EN cs·cd uses procedure 1 with a total logarithmic decrement `delta`,
+  which must include aerodynamic damping.
+* The 7-22 Kzt and gust constants are assumed unchanged from 7-16.
+* There are no TSC, KDS or Mexican wind generators.

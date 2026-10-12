@@ -541,7 +541,7 @@ def _group_weight(asm, g: dict) -> float:
 
 
 def apply_story_force(eng, asm, sf, fx: float, fy: float, acc: bool,
-                      ecc: float) -> bool:
+                      ecc: float, ecc_y=None) -> bool:
     """Story force on a named story: split over its diaphragms (and free
     nodes) by lateral mass (node count when massless); each diaphragm's
     accidental torsion uses ITS plan extents.  False = not named."""
@@ -568,7 +568,8 @@ def apply_story_force(eng, asm, sf, fx: float, fy: float, acc: bool,
         gx, gy = fx * wi / ws, fy * wi / ws
         x0, x1, y0, y1 = g["bbox"]
         mz_x = gx * ecc * (y1 - y0) if acc else 0.0
-        mz_y = gy * ecc * (x1 - x0) if acc else 0.0
+        mz_y = (gy * (ecc if ecc_y is None else ecc_y) * (x1 - x0)
+                if acc else 0.0)                 # v1.19 ecc_y (wind case 4)
         if g["master"] is not None:
             ops.load(g["master"], gx, gy, 0.0, 0.0, 0.0, mz_x + mz_y)
         else:

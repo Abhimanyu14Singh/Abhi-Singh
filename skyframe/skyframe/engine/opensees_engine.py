@@ -4706,16 +4706,19 @@ class OpenSeesEngine:
 
         acc_tors = getattr(pat, "accidental_torsion", False)
         ecc = getattr(pat, "ecc", 0.05)
+        # v1.19 ASCE 7 wind case 4: optional separate fy eccentricity
+        ecc_y = ecc if getattr(pat, "ecc_y", None) is None else pat.ecc_y
         lx0, ly0 = model.plan_extents()
         for sf in pat.story_forces:
             lx, ly = _tw.story_extents(self, sf.story, lx0, ly0)  # C9 tower
             fx, fy = sf.fx * scale, sf.fy * scale
-            if _dgm.apply_story_force(self, asm, sf, fx, fy, acc_tors, ecc):
+            if _dgm.apply_story_force(self, asm, sf, fx, fy, acc_tors, ecc,
+                                      ecc_y=ecc_y):
                 continue                              # named diaphragms
             if sf.story in asm.masters:
                 # v0.8 accidental torsion (§12.8.4.2): fx -> Mz = fx*ecc*Ly,
                 # fy -> Mz = fy*ecc*Lx, applied at the master's rz dof.
-                mz = (fx * ecc * ly + fy * ecc * lx) if acc_tors else 0.0
+                mz = (fx * ecc * ly + fy * ecc_y * lx) if acc_tors else 0.0
                 ops.load(asm.masters[sf.story], fx, fy, 0.0, 0.0, 0.0, mz)
                 continue
             nodes = asm.story_nodes.get(sf.story)
@@ -4753,7 +4756,7 @@ class OpenSeesEngine:
                 iw_y = sum(wi * (y - y_bar) ** 2 for wi, y in zip(w, ys))
                 iw_x = sum(wi * (x - x_bar) ** 2 for wi, x in zip(w, xs))
                 mz_x = fx * ecc * ly
-                mz_y = fy * ecc * lx
+                mz_y = fy * ecc_y * lx
                 if mz_x != 0.0:
                     if iw_y > 1e-12:
                         mu = mz_x / iw_y

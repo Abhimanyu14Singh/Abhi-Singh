@@ -25,6 +25,10 @@ import { dialog as l116Dialog, closeDialog as l116CloseDialog, btn as l116Btn, f
   errorLine as l116ErrorLine, showError as l116ShowError } from "./analysisdlg.js";
 import { mockAutoLateralPreview as l116MockPreview, mockAutoLateralGenerate as l116MockGenerate,
   EC8_SPECTRA as L116_EC8_SPECTRA } from "./mock_loads116.js";
+// v1.19 hook: international seismic / wind codes + ASCE 7 wind cases (js/autolat_ext.js)
+import { ALX_OPTIONS as alxOptions, ALX_SPEC as alxSpec, ALX_DEFAULT_NAME as alxDefaultName,
+  ALX_COEF_ROWS as alxCoefRows, ALX_ASCE22_EXTRA as alxAsce22Extra, ALX_ASCE22_COEF as alxAsce22Coef,
+  alxBuildExtras as l116AlxBuildExtras } from "./autolat_ext.js";
 
 const U = L116U;
 const ME = L116ME;
@@ -551,10 +555,12 @@ export const AL_OPTIONS = [
   ["user_coefficient", "User Coefficient"],
   ["user_loads", "User Loads"],
   ["asce7_22_wind", "ASCE 7-22 Wind"],
+  ...alxOptions,                                   // v1.19 hook
 ];
 const AL_LABEL = Object.fromEntries(AL_OPTIONS);
 const AL_DEFAULT_NAME = { asce7_16: "ELF", asce7_22: "ELF22", ec8: "EC8", is1893: "IS1893",
   user_coefficient: "UCOEF", user_loads: "ULOADS", asce7_22_wind: "WIND22" };
+Object.assign(AL_DEFAULT_NAME, alxDefaultName);    // v1.19 hook
 
 /* Parameter specs: [key, label, units kind, default SI, {opt (blank → omitted), sel: [[v,t]…], int, hint}] */
 const SPEC = {
@@ -614,6 +620,9 @@ const SPEC = {
     ["cp_total", "G·C<sub>p</sub> windward + leeward", "none", 1.3],
   ],
 };
+
+Object.assign(SPEC, alxSpec);                      // v1.19 hook
+SPEC.asce7_22_wind.push(...alxAsce22Extra);        // v1.19 hook: ASCE 7 cases / Kzt / gust
 
 const DEFAULT_MPRS = [[0, 0.4], [0.2, 1.0], [0.5, 1.0], [1, 0.6], [2, 0.3], [4, 0.12], [8, 0.035]];
 const alMemory = new Map();      // pattern name → {code, params, ecc, direction} (this session)
@@ -707,6 +716,8 @@ const COEF_ROWS = {   // [key, label, kind | "fmt"]
   user_loads: [],
   asce7_22_wind: [["Ke", "K<sub>e</sub>", "none"], ["width", "Facade width", "length"]],
 };
+Object.assign(COEF_ROWS, alxCoefRows);             // v1.19 hook
+COEF_ROWS.asce7_22_wind.push(...alxAsce22Coef);    // v1.19 hook
 const fmtSig = (v, d = 4) => (v == null || !isFinite(v)) ? "—" : String(+(+v).toPrecision(d));
 
 export function openAutoLateral(patternName, code) {
@@ -861,7 +872,23 @@ export function openAutoLateral(patternName, code) {
       extras.appendChild(el("p", { class: "muted asn-note", html: "Existing ASCE 7-16 §12.8 ELF (POST /api/pattern/elf): T<sub>a</sub> = 0.0466·h<sub>n</sub><sup>0.9</sup>, C<sub>s</sub> = min(S<sub>DS</sub>, S<sub>D1</sub>/T<sub>a</sub>)/(R/I<sub>e</sub>) ≥ max(0.044·S<sub>DS</sub>·I<sub>e</sub>, 0.01)." }));
     } else if (c === "asce7_22_wind") {
       extras.appendChild(el("p", { class: "muted asn-note", html: "q<sub>z</sub> = 0.613·K<sub>z</sub>·K<sub>zt</sub>·K<sub>e</sub>·V² (Table 26.10-1, z ≥ 15 ft); p = q<sub>z</sub>·K<sub>d</sub>·GC<sub>p</sub>; story force = p × tributary facade." }));
-    }
+      l116AlxBuildExtras(c, extras, alxApi());     // v1.19 hook: case notes + all-cases
+    } else l116AlxBuildExtras(c, extras, alxApi()); // v1.19 hook: new codes
+  }
+  /* v1.19 hook: context for js/autolat_ext.js extras ("Create all 12 cases") */
+  function alxApi() {
+    return { el, btn: l116Btn, readBody, name: () => nameIn.value.trim(),
+      generate: (b, ecc) => alGenerate(st.code, b, ecc),
+      error: msg => l116ShowError(err, msg),
+      done: names => {
+        for (const n of names) alMemory.set(n, { code: st.code, params: Object.fromEntries(Object.entries(readBody().body || {}).filter(([k]) => !["code", "direction"].includes(k))), ecc: 0, direction: "X" });
+        SKY.store.loadPattern = names[0];
+        dlg.close();
+        try { if (SKY.store.mode === "loads" && SKY.loadsEditor) SKY.loadsEditor.render(); } catch (e2) { console.error(e2); }
+        try { SKY.renderProps && SKY.renderProps(); } catch (e2) { console.error(e2); }
+        SKY.toast && SKY.toast("ASCE 7 wind load cases generated", `${names.length} patterns: ${names[0]} … ${names[names.length - 1]}`, "info", 6000);
+        document.dispatchEvent(new CustomEvent("sky:l116-autolateral", { detail: { names, code: st.code } }));
+      } };
   }
   paramG.appendChild(extras);
 
@@ -873,7 +900,7 @@ export function openAutoLateral(patternName, code) {
       const f = fields[key];
       if (!f) continue;
       const v = f.get();
-      if (o.sel) { b[key] = v; continue; }
+      if (o.sel) { if ("omit" in o && v === o.omit) continue; b[key] = v; continue; }   // v1.19: omit = backend default
       if (v == null) { if (o.opt) continue; return { error: `${lbl.replace(/<[^>]+>/g, "")}: enter a value.` }; }
       if (!isFinite(v)) return { error: `${lbl.replace(/<[^>]+>/g, "")}: must be a number.` };
       b[key] = v;
