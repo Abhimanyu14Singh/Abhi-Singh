@@ -93,6 +93,10 @@ export function openMaterials(sky, { select } = {}) {
     if (n) { err.textContent = `${k} is used by ${n} section${n > 1 ? "s" : ""} — reassign them first.`; return; }
     err.textContent = "";
     delete D.materials[k];
+    if (D.material_time_dependent && D.material_time_dependent[k]) {   // drop its time-dependent props (js/timedep.js)
+      delete D.material_time_dependent[k];
+      if (!Object.keys(D.material_time_dependent).length) delete D.material_time_dependent;
+    }
     list.render(); sync();
   };
   libBtn.addEventListener("click", () => {
@@ -188,6 +192,7 @@ export function editMaterial(sky, D, name, { copyOf, type = "concrete", done } =
     id: "dsMaterialData", title: "Material Property Data", iconId: "exleaf-materials", size: "md", form: F,
     intro: isNew ? (copyOf ? `New material copied from <b>${esc(copyOf)}</b>.` : "New material — values are typical for the chosen type.") : null,
     body,
+    extra: sky.tdMaterialButton && !isNew ? [sky.tdMaterialButton(D, () => name)] : undefined,   // Time Dependent… (js/timedep.js)
     onOk: () => {
       if (!F.touched && !isNew) { done && done(name); return; }
       const nn = draftName.v.trim();

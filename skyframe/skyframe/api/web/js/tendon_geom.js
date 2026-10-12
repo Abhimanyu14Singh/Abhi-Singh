@@ -62,10 +62,12 @@ export function canonical(t) {
     material: t.material || DEFAULT_MATERIAL,
     area: +t.area, jacking_stress: +t.jacking_stress,
     jacking_end: JACKING_ENDS.includes(t.jacking_end) ? t.jacking_end : "start",
-    losses: Object.fromEntries(LOSS_KEYS.map(k => [k, isNum(lo[k]) ? lo[k] : 0])),
+    losses: { ...Object.fromEntries(LOSS_KEYS.map(k => [k, isNum(lo[k]) ? lo[k] : 0])),
+      ...(isNum(lo.es_factor) ? { es_factor: lo.es_factor } : {}) },   // hand ES loss (js/timedep.js; only when set)
     host: Array.isArray(t.host) ? t.host.slice() : (t.host ? [t.host] : []),
     pattern: t.pattern,
     n_sub: Number.isInteger(t.n_sub) ? t.n_sub : DEFAULT_N_SUB,
+    ...(t.model_as === "elements" ? { model_as: "elements" } : {}),     // bonded tendon elements (js/timedep.js)
   };
 }
 
@@ -80,10 +82,12 @@ export function emitCanonical(c) {
     area: c.area,
     jacking_stress: c.jacking_stress,
     jacking_end: c.jacking_end,
-    losses: Object.fromEntries(LOSS_KEYS.map(k => [k, c.losses[k]])),
+    losses: { ...Object.fromEntries(LOSS_KEYS.map(k => [k, c.losses[k]])),
+      ...(isNum(c.losses.es_factor) ? { es_factor: c.losses.es_factor } : {}) },   // only when set (js/timedep.js)
     host: c.host.slice(),
     pattern: c.pattern,
     n_sub: c.n_sub,
+    ...(c.model_as === "elements" ? { model_as: "elements" } : {}),     // bonded tendon elements (js/timedep.js)
   };
 }
 

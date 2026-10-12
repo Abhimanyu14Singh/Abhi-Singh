@@ -2368,6 +2368,10 @@ def create_app() -> Flask:
     from skyframe.api.waveb_api import register as _wb_register
     _wb_register(app, _state, _tables_lookup)
 
+    # time-dependent material curves / tendon losses (timedep_api)
+    from skyframe.api.timedep_api import register as _tdp_register
+    _tdp_register(app, _state)
+
     return app
 
 

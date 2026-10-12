@@ -1303,3 +1303,5 @@ def extend_catalogue(T: List[Table]) -> None:
     """Hook called once by ``modeltables._build_catalogue``."""
     _extend_columns(T)
     _new_tables(T)
+    from .modeltables_td import extend as _td_extend
+    _td_extend(T)          # time-dependent materials + tendon element cols

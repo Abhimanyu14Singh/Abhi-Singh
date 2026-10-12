@@ -42,7 +42,7 @@ export function mockValidateTendons(model) {
     if (!(isNum(c.area) && c.area > 0)) return `${tag}: area must be > 0`;
     if (!(isNum(c.jacking_stress) && c.jacking_stress > 0)) return `${tag}: jacking_stress must be > 0`;
     if (t.jacking_end != null && !TG_JACKING_ENDS.includes(t.jacking_end)) return `${tag}: jacking_end must be one of start, end, both`;
-    const bad = Object.keys(t.losses || {}).filter(k => !TG_LOSS_KEYS.includes(k));
+    const bad = Object.keys(t.losses || {}).filter(k => !TG_LOSS_KEYS.includes(k) && k !== "es_factor");   // es_factor: js/mock_timedep.js
     if (bad.length) return `${tag}: unknown losses keys ${JSON.stringify(bad)}`;
     for (const k of TG_LOSS_KEYS) if (!(c.losses[k] >= 0)) return `${tag}: losses.${k} must be >= 0`;
     if (c.losses.long_term_fraction >= 1) return `${tag}: losses.long_term_fraction must be < 1`;

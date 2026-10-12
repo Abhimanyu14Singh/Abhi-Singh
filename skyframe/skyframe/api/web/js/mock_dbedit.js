@@ -15,6 +15,8 @@ import { relMockTables as mdbRelTables } from "./mock_releases.js";   // frame r
 const clone = o => JSON.parse(JSON.stringify(o));
 import { mdbW8Extend } from "./mock_w8.js";   // W8 DB-edit coverage tables
 import { wbMockTables as mdbWbTables } from "./mock_wbdamp.js";   // wave B: material damping / freq-dependent link tables
+
+import { tdMdbExtend } from "./mock_timedep.js";   // time-dependent materials table + tendon element columns
 const QUANTITIES = {
   none: "", length: "m", dim: "m", area: "m^2", inertia: "m^4", force: "kN", moment: "kN*m",
   line_force: "kN/m", pressure: "kPa", stress: "kPa", modulus: "kPa", unit_weight: "kN/m^3",
@@ -478,7 +480,7 @@ function buildCatalogue() {
     { container, keycol: "name", onRename: CASC.case, deleteRefs: REFS.case, newObj });
   // W8 hook — DB-edit coverage tables / columns (js/mock_w8.js mirrors core/modeltables_ext.py)
   const W8H = { col, obj, names, optNames, optStories, getv, putv, parseCell, rowValues, same, E, clone, RowErr, mergeOrdered, CASC, REFS, isNum, G };
-  return mdbW8Extend([
+  return tdMdbExtend(mdbW8Extend([   // + time-dependent materials / tendon element columns (js/mock_timedep.js)
     obj("materials", "Material Properties", G.DEF, [
       col("name", "Name", "text", "none", { required: true }),
       col("material_type", "Type", "enum", "none", { enum: withCurrent(MATERIAL_TYPES, "materials", "material_type"), def: "concrete" }),
@@ -659,7 +661,7 @@ function buildCatalogue() {
       cols: [col("mode", "Self Mass Mode", "enum", "none", { enum: ["weight", "element_self_mass"] }),
         ...[["self_mass", "Element Self Mass"], ["patterns", "Additional Mass from Patterns"], ["include_lateral", "Lateral Mass"],
           ["include_vertical", "Vertical Mass"], ["lump_at_stories", "Lump at Stories"]].map(([k, l]) => col(k, l, "bool"))] },
-  ], W8H);
+  ], W8H), W8H);
 }
 let CAT = null;
 const catalogue = () => (CAT = CAT || [...buildCatalogue(), ...mdbRelTables({ obj, col, G }),

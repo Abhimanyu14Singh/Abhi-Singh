@@ -122,6 +122,9 @@ import { wbMockAugment as wbMockAugmentResults } from "./mock_wbdamp.js";   // w
 import { initWaveB as wbInitWaveB } from "./waveb.js";   // Wave B: Irregularity Checks · joint-local reactions (js/waveb.js)
 import { wbMockGroupedApplies as wbMockGrouped, wbMockAsce7Grouped as wbMockAsce7 } from "./mock_waveb.js";   // Wave B ?mock=1 grouped ASCE 7 combos
 
+import { initTimeDep as tdInitTimeDep } from "./timedep.js";   // time-dependent materials · step creep · tendon elements (js/timedep.js)
+import { tdMockValidate as tdMockValidateModel } from "./mock_timedep.js";   // ?mock=1 time-dependent / tendon-element validation
+
 /* ------------------------------------------------ state */
 const store = {
   model: null,
@@ -315,7 +318,8 @@ async function postModel(payload) {
       || c9fMockValidate(payload)   // C9 follow-ups: control_tower
       || relMockValidate(payload)   // end releases / partial fixity / joint local axes
       || w8MockValidate(payload)   // W8 master/similar stories · curves · shell options
-      || wbMockValidate(payload);   // wave B link types · link_freq_props · material_damping
+      || wbMockValidate(payload)   // wave B link types · link_freq_props · material_damping
+      || tdMockValidateModel(payload);   // time-dependent materials · step creep · tendon elements (js/mock_timedep.js)
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -2909,7 +2913,9 @@ function renderMaterialEditor(m, box) {
     const used = ME.materialInUse(m, name);
     const del = mgrDel(used, used ? "In use by sections" : "Delete material", e => {
       e.stopPropagation();
-      delete m.materials[name]; matExpanded.delete(name); markDirty(); renderSectionMgr();
+      delete m.materials[name]; matExpanded.delete(name);
+      if (m.material_time_dependent && m.material_time_dependent[name]) { delete m.material_time_dependent[name]; if (!Object.keys(m.material_time_dependent).length) delete m.material_time_dependent; }   // js/timedep.js
+      markDirty(); renderSectionMgr();
     });
 
     head.append(caret, swatch, nameSpan, badge, spacer, del);
@@ -8590,6 +8596,7 @@ async function boot() {
   try { accInitAccuracy(window.__sky); } catch (err) { console.error("accuracy tools init failed", err); }   // Analyze > Mesh Sensitivity Study · Model > Accuracy Advisor (js/accuracy.js)
   try { faInitFrameAxesUi(window.__sky); } catch (err) { console.error("frame axes init failed", err); }   // frame local axes (js/frameaxes_ui.js)
   try { mlInitMatLib(window.__sky); } catch (err) { console.error("material library init failed", err); }   // v1.21 material library (js/matlib.js)
+  try { tdInitTimeDep(window.__sky); } catch (err) { console.error("time-dependent init failed", err); }   // time-dependent materials · step creep · tendon elements (js/timedep.js)
 
   try { buInitBuiltup(window.__sky); } catch (err) { console.error("built-up sections init failed", err); }   // Define › Section Properties › Built-up Section… (js/builtup.js)
   try { xcInitExchange(window.__sky); } catch (err) { console.error("model exchange init failed", err); }   // File › Import ▸ / Export ▸ (js/exchange.js)

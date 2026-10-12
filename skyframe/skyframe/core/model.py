@@ -55,6 +55,7 @@ from skyframe.core import analysis_options as _aopt  # solver/convergence
 from skyframe.core import rs_ext as _rsx  # RS ecc / U3 / angle / CQC3
 
 from skyframe.core import modal_cases as _mcs  # mass sources / modal cases
+from skyframe.core import timedep as _tdm      # material time-dependent props
 from skyframe.core.builtup import (  # v1.21 built-up sections
     model_to_dict as _builtup_to_dict, model_from_dict as _builtup_from_dict)
 from skyframe.core import pushover_methods as _po_methods  # ATC-40/FEMA 440/N2
@@ -2225,6 +2226,11 @@ class BuildingModel:
     link_freq_props: Dict[str, dict] = field(default_factory=dict)
     material_damping: Dict[str, float] = field(default_factory=dict)
 
+    # Per-material time-dependent properties (skyframe.core.timedep):
+    # {material: {"law": "cebfip2010"|"aci209"|"gl2000"|"user", ...}}.
+    # Emitted by to_dict only when non-empty.
+    material_time_dependent: Dict[str, dict] = field(default_factory=dict)
+
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
         self.materials[mat.name] = mat
@@ -2886,7 +2892,8 @@ class BuildingModel:
 
     # allowed time_dependent keys (v0.25); days_per_story is required
     _TD_KEYS = ("days_per_story", "creep_coeff", "shrinkage", "aging",
-                "t_eval", "materials")
+                "t_eval", "materials",
+                "method", "steps_per_stage", "output_times")  # step method
 
     def _validate_staged_case(self, sc: StagedCase) -> None:
         user = isinstance(sc.stages, list)       # user-defined stage list
@@ -2932,6 +2939,7 @@ class BuildingModel:
                 raise ValueError(f"Staged case {sc.name}: "
                                  f"time_dependent[{key!r}] must be a finite "
                                  f"value {'>= 0' if allow_zero else '> 0'}")
+        _tdm.validate_staged_td(self, sc)   # step method keys (no-op aaem)
         _pos("days_per_story", required=not user)
         _pos("creep_coeff", allow_zero=True)
         _pos("shrinkage", allow_zero=True)
@@ -3841,6 +3849,7 @@ class BuildingModel:
             for ds in self.designer_sections.values():
                 validate_designer_section(ds, self.materials)
         self._validate_builtup()            # v1.21 built-up sections
+        _tdm.validate_model(self)           # material time-dependent props
         if self.llr_settings is not None:   # live-load reduction settings
             from skyframe.core.llr_codes import normalize_settings
             normalize_settings(self.llr_settings)
@@ -4266,6 +4275,8 @@ class BuildingModel:
 
             **_lfq.model_to_dict(self),  # wave B freq-dependent links (if any)
             **_cpd.model_to_dict(self),  # wave B material damping (if any)
+
+            **_tdm.model_to_dict(self),  # material time-dependent (if any)
         }
 
     @classmethod
@@ -4721,6 +4732,8 @@ class BuildingModel:
         _mcs.model_from_dict(mdl, d)        # mass sources / modal cases
         _lfq.model_from_dict(mdl, d)        # wave B freq-dependent links
         _cpd.model_from_dict(mdl, d)        # wave B material damping
+
+        _tdm.model_from_dict(mdl, d)        # material time-dependent props
         mdl.validate()
         return mdl
 

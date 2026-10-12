@@ -13041,3 +13041,159 @@ long_period`.
 | RS combo shell forces | Box 1.2s ± \|r\|, envelope, SRSS. |
 | Wind | TS 498: 12.6 / 10.8 / 8.64 kN. KDS: q = 551.25 Pa. CFE: q = 980.8 Pa. |
 | NTC | kh1 = 0.0654971, kh2 = 0.0160920. |
+
+## Time-dependent materials, incremental creep and tendon elements
+
+ETABS Material > Time Dependent Properties, staged construction with
+step-by-step creep / shrinkage / relaxation, and tendons modelled as bonded
+elements.  Every default reproduces the previous results byte-identically:
+`material_time_dependent` is emitted by `to_dict` only when non-empty, the
+staged-case keys `method` / `steps_per_stage` / `output_times` only when
+set, and the tendon keys `model_as` / `losses.es_factor` only when set
+(`"loads"` = the equivalent-load model, unchanged).
+
+### Material laws (`skyframe.core.timedep`)
+
+```
+"material_time_dependent": {"<material>": {
+   "law": "cebfip2010" | "aci209" | "gl2000" | "user",   # default cebfip2010
+   "rh": 70,             # %, 40..100
+   "h0": 0.15,           # m, notional size 2Ac/u (V/S = h0/2)
+   "cure_days": 7,       # age at the end of curing = start of drying ts
+   "cement": "N",        # MC2010 SL|N|R · ACI 209 I|III · GL2000 I|II|III
+   "curing": "moist",    # ACI 209 moist|steam
+   "fcm": null,          # kPa; null = fc + 8 MPa (MC2010), 1.1 fc + 5 MPa (GL2000)
+   "creep": true, "shrinkage": true, "aging": true,
+   "phi_u": null, "eps_shu": null,          # ACI 209 overrides
+   "creep_curve": [[dt, phi]], "shrinkage_curve": [[dt, eps]],
+   "modulus_curve": [[age, E/E28]], "strength_curve": [[age, fc/fc28]],
+   "relaxation": null | {"law": "ec2", "class": 1|2|3, "rho1000": %, "fpk"?}
+                      | {"law": "aci", "K": 45, "fpy"?}}}
+```
+
+Validation normalises every entry (all keys present after a load); a key
+must name a model material; unknown keys / laws / cement classes are
+rejected.  Material renames move the entry (model tables and the UI).
+
+Functions (ages in days, kPa): `creep_coefficient(p, t, t0)`,
+`compliance(p, E28, t, t0)`, `shrinkage_strain(p, t)` (positive
+contraction, drying from `cure_days`), `modulus_ratio(p, t)`,
+`strength_ratio(p, t)`, `relaxation_ratio(r, sigma_pi, t_days, fpk, fpy)`.
+
+* **fib MC2010** (5.1-63 .. 5.1-81, T = 20 °C): `phi = phi_bc + phi_dc`,
+  `phi_bc = 1.8/fcm^0.7 ln((30/t0adj + 0.035)^2 (t - t0) + 1)`,
+  `phi_dc = 412/fcm^1.4 (1 - RH/100)/(0.1 h)^(1/3) / (0.1 + t0adj^0.2)
+  ((t - t0)/(beta_h + t - t0))^gamma`, `t0adj = t0 (9/(2 + t0^1.2) +
+  1)^alpha >= 0.5`; shrinkage `|eps_cas| + |eps_cds|` with `beta_RH =
+  -1.55(1 - (RH/100)^3)` (0.25 above 99 beta_s1); `beta_cc = exp(s(1 -
+  sqrt(28/t)))`, `E(t) = sqrt(beta_cc) E28`; `J = 1/E(t0) + phi/E28`.
+* **ACI 209R-92**: `phi = (t - t0)^0.6/(10 + (t - t0)^0.6) phi_u`,
+  `phi_u = 2.35 gamma_la gamma_lambda gamma_vs` (`1.25 t0^-0.118` moist /
+  `1.13 t0^-0.094` steam, `1.27 - 0.67 h`, `2/3(1 + 1.13 e^(-0.0213
+  V/S))`); `eps_sh = (t - ts)/(35|55 + t - ts) 780e-6 gamma_RH gamma_tc
+  gamma_vs`; `fc(t)/fc28 = t/(a + b t)` (a, b per cement / curing),
+  `E ~ sqrt(fc)`; `J = (1 + phi)/E(t0)`.
+* **GL2000**: `phi28 = Phi(tc)[2 dt^0.3/(dt^0.3 + 14) + sqrt(7/t0)
+  sqrt(dt/(dt + 7)) + 2.5(1 - 1.086 h^2) sqrt(dt/(dt + 0.12 (V/S)^2))]`;
+  `eps_sh = 900 k sqrt(30/fcm) 1e-6 (1 - 1.18 h^4) sqrt((t - ts)/(t - ts
+  + 0.12 (V/S)^2))`; `fcm(t) = exp(s(1 - sqrt(28/t))) fcm28`, `E(t) = 3500
+  + 4300 sqrt(fcm(t))` (as a ratio to E28); `J = 1/E(t0) + phi28/E28`.
+* **user**: linear interpolation of the tables (clamped);
+  `J = (1 + phi(t - t0))/E(t0)`.
+* **relaxation**: EN 1992-1-1 3.28-3.30 (`c rho1000 e^(k mu) (t/1000
+  h)^(0.75(1 - mu)) 1e-5`, mu = sigma_pi/fpk) or Magura `log10(24 t)/K
+  (sigma_pi/fpy - 0.55)`.
+
+### Step-by-step staged construction (`skyframe.engine.staged_creep`)
+
+`StagedCase.time_dependent` gains `method: "aaem" (default, unchanged) |
+"step"`, `steps_per_stage` (int 1..50, default 4) and `output_times`
+(days); `t_eval` = end time (default: end of the last stage; must not be
+earlier).  `method: "step"` needs a user stage list (`per_story` is
+refused).  Creeping members: materials with time-dependent properties;
+without any, every material (legacy) with the staged case's own ACI 209
+curves (`creep_coeff`, `shrinkage`, `aging`); an explicit `materials`
+list adds those with the case curves.
+
+Method (Bazant step-by-step superposition): stage operations act at
+`T_s` with `E = 1/J(T_s, T_s)`; the stage duration (then `t_eval -
+T_end`) is cut into doubling creep steps plus every output time; step i
+solves the active structure with `E'' = 1/J(t_i, tau_i)` (tau_i the
+mid-step time) and the imposed stress-free strains `sum_j dsigma_j [J(t_i,
+tau_j) - J(t_{i-1}, tau_j)] - d eps_sh` for N/A, M3/I33 and M2/I22
+(segment-end values, piecewise linear; exact fixed-end vectors, member
+results corrected like temperature loads).  Released members creep axially
+only.  Shells: ageing modulus only.  Element tendons are stressed by the
+first `load` op of their pattern once all hosts are active, stay as bonded
+stiffness afterwards and lose `Ap sigma_pi d rho` per step to relaxation.
+`include_live` is elastic (E28).
+
+```
+results["staged"][name] += {
+  "shortening": {story: {"uz_elastic", "uz_time_dependent", "delta"}},
+  "time_history": {"method": "step", "times": [...], "stage": [...],
+     "story_uz": {story: [mean column-top uz]},
+     "tendon_force": {uid: [mean element force]},
+     "outputs": [{"t", "node_disp", "member_forces", "base", "tendon_force"}],
+     "tendons": {uid: {"P", "sigma_pi", "t_stress"}}}}
+```
+
+### Tendon elements (`skyframe.core/engine.tendon_elements`)
+
+`tendons[k].model_as = "elements"`: each sub-piece (`n_sub` per segment,
+split at host changes) is a bonded elasticBeamColumn (A = area, E =
+tendon E, I = A²/4π) between host nodes with rigid `-jntOffset`s to the
+chord end points; frame hosts are split by the mesher under every piece
+boundary (`interior_points`), shell hosts use the nearest region node.
+The prestress is an initial stress: ±P_e·t_e at the chord ends (P_e = the
+load model's piece force after friction / wobble / anchor set / long-term)
+whenever the tendon pattern is applied.  Element force in a static case =
+`scale P_e + (EA/L) dL` (elastic shortening and live-load changes come out
+of the analysis).  `results["tendons"][uid]["element"] = {"n", "points",
+"length", "P_initial", "stiffness", "cases": {case: {"P", "P_initial",
+"loss", "P_mean"}}}`.  `losses.es_factor` (loads model, frame hosts):
+`dP = K_es (Ep/Ec) P (1/A + e2²/I33 + e3²/I22) Ap` per piece.
+
+### API (`skyframe.api.timedep_api`)
+
+* `POST /api/timedep/curves {props, material?, E?, fc?, t0?, times?,
+  model?}` → `{t0, times, creep, compliance, shrinkage, modulus_ratio,
+  strength_ratio}`;
+* `POST /api/timedep/tendon_losses {tendon | uid, model?}` → `{P0, length,
+  s, P, anchor_set_length, model_as, elements?}`;
+* `POST /api/timedep/relaxation {relaxation, sigma_pi, fpk?, fpy?, times?}`
+  → `{times, ratio}`.
+
+Model tables: `material_time_dependent` ("Material Properties - Time
+Dependent") and the `tendons` columns `model_as`, `es_factor`.
+
+### UI
+
+Define › Section Properties › Material Time-Dependent Properties…
+(`def-td-matprops`; also Material Property Data › Time Dependent…) with
+tabs Creep & Shrinkage / User Curves / Relaxation / Preview; the staged
+case card's Creep integration select + Time Options… (steps, output times,
+end time; durations stay in Stage Data); Tendon Properties › Model tendon
+as / ES loss factor and the Tendon Forces element card; Display ›
+Nonlinear Results › Staged Time History (Creep)… (`dis-td-history`,
+shortening and tendon force vs time).
+
+### Validation (`tests/test_timedep_creep.py`, 35 tests)
+
+* MC2010 / ACI 209 / GL2000 creep, shrinkage and ageing at given t, t0,
+  h0, RH from the code equations (1e-12); user curves; EN 1992 / Magura
+  relaxation.
+* Column under constant load: `eps = sigma/E(t0) (1 + phi)` exactly for
+  1, 3, 8 steps and every intermediate time; code-law compliance to 1e-11;
+  free shrinkage; cantilever curvature creep (1 + phi) in both axes.
+* Two-stage column (MC2010, ageing, shrinkage): superposed loading-age
+  compliances to 1e-10.  Composite column: ACI 209 converged step solution
+  = AAEM chi = 0.8 to 0.1 %; saturated non-ageing creep = chi = 1.
+* Bonded straight tendon: P_eff from the section equations to 1e-9, camber
+  `P_eff e L²/(8 EI)` to 1e-9, ES loss = (Ep/Ec) f_cgp Ap; the equivalent
+  load model with P_eff gives the same camber.  Friction / anchor set
+  (exponential closed form), ES factor, relaxation loss `-dP_r/(1 + Ep Ap
+  f)`, creep loss bounds.  Shell-hosted element tendon: zero net
+  reactions, camber 5 P_eff e L²/(48 EI) within 5 %.
+* Model tables / HTTP endpoints round-trip; legacy models hash-identical
+  (results + to_dict) before / after.
