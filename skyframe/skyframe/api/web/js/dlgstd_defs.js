@@ -849,6 +849,7 @@ export function openGridStories(sky, { tab = "stories" } = {}) {
     systems.forEach((s, i) => sysSel.appendChild(el("option", { value: String(i), selected: i === st.sys }, [`${s.name || "G" + (i + 1)} · ${s.kind === "radial" ? "radial" : "orthogonal"}${i === 0 ? " (primary)" : ""}`])));
     gridBox.textContent = "";
     const sys = systems[st.sys];
+    if (sys.kind === "general") { gridBox.appendChild(dkNote(`General system: ${(sys.lines || []).length} lines — edit it with <b>Define › Stories, Grids &amp; Towers › General Grid…</b>.`)); return; }   // Wave B (js/wb_grid.js)
     if (sys.kind === "radial") {
       gridBox.appendChild(dkNote(`Radial system: ${sys.radii.length} circles, ${sys.theta_deg.length} spokes — edit it with <b>Multiple Grid Systems…</b>.`));
       return;

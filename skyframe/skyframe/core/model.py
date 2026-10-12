@@ -58,6 +58,9 @@ from skyframe.core import modal_cases as _mcs  # mass sources / modal cases
 from skyframe.core import timedep as _tdm      # material time-dependent props
 
 from skyframe.core import props_ext as _wbp  # Wave B ortho/slab/CF/springs
+
+from skyframe.core import grid_general as _ggrid  # general (line) grids
+from skyframe.core import workspace as _wks  # named views / report sets / aids
 from skyframe.core.builtup import (  # v1.21 built-up sections
     model_to_dict as _builtup_to_dict, model_from_dict as _builtup_from_dict)
 from skyframe.core import pushover_methods as _po_methods  # ATC-40/FEMA 440/N2
@@ -472,7 +475,7 @@ class ShellSection:
 # --------------------------------------------------------------------------- #
 # Geometry
 # --------------------------------------------------------------------------- #
-GRID_KINDS = ("orthogonal", "radial")
+GRID_KINDS = ("orthogonal", "radial", "general")   # general: core/grid_general
 _GRID_CIRCLE_SEGMENTS = 72          # polyline resolution for radial circles
 
 
@@ -505,6 +508,9 @@ class GridSystem:
     kind: str = "orthogonal"                    # "orthogonal" | "radial"
     radii: List[float] = field(default_factory=list)      # radial only
     theta_deg: List[float] = field(default_factory=list)  # radial only
+    # general only: [{"label", "p1": [x, y], "p2": [x, y]}] (local frame;
+    # skyframe.core.grid_general; emitted by to_dict for general grids only)
+    lines: List[dict] = field(default_factory=list)
 
     # ---------------- labels ----------------
     @property
@@ -536,6 +542,8 @@ class GridSystem:
         """
         if self.kind == "radial":
             return self._radial_lines()
+        if self.kind == "general":                  # core/grid_general
+            return _ggrid.lines_global(self)
         lines: List[dict] = []
         xs, ys = self.x_lines, self.y_lines
         ymin = ys[0] if ys else 0.0
@@ -576,6 +584,8 @@ class GridSystem:
         Radial: every circle x spoke crossing, label ``"R1-30°"``.
         Each entry is ``{"label": str, "point": [x, y]}``.
         """
+        if self.kind == "general":                  # core/grid_general
+            return _ggrid.intersections_global(self)
         out: List[dict] = []
         if self.kind == "radial":
             for ri, r in enumerate(self.radii):
@@ -613,7 +623,8 @@ class GridSystem:
                 "y_lines": [float(y) for y in self.y_lines],
                 "x_labels": self.x_labels, "y_labels": self.y_labels,
                 "radii": [float(r) for r in self.radii],
-                "theta_deg": [float(t) for t in self.theta_deg]}
+                "theta_deg": [float(t) for t in self.theta_deg],
+                **_ggrid.lines_to_dict(self)}       # general grids only
 
     @classmethod
     def from_dict(cls, d: dict) -> "GridSystem":
@@ -626,7 +637,8 @@ class GridSystem:
             rotation=float(d.get("rotation", 0.0)),
             kind=str(d.get("kind", "orthogonal")),
             radii=[float(r) for r in (d.get("radii") or [])],
-            theta_deg=[float(t) for t in (d.get("theta_deg") or [])])
+            theta_deg=[float(t) for t in (d.get("theta_deg") or [])],
+            lines=_ggrid.lines_from_dict(d))      # general grids only
 
 
 @dataclass
@@ -2274,6 +2286,11 @@ class BuildingModel:
     line_spring_properties: Dict[str, dict] = field(default_factory=dict)
     area_spring_properties: Dict[str, dict] = field(default_factory=dict)
 
+    # Named views, report templates, saved table sets, dimension lines and
+    # reference points / planes (skyframe.core.workspace; no analysis
+    # effect).  Each key emitted by to_dict only when non-empty.
+    workspace: Dict[str, list] = field(default_factory=dict)
+
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
         self.materials[mat.name] = mat
@@ -3623,6 +3640,9 @@ class BuildingModel:
             if g.kind == "radial":
                 if not g.radii:
                     continue
+            elif g.kind == "general":               # core/grid_general
+                if not g.lines:
+                    continue
             elif not (g.x_lines and g.y_lines):
                 continue
             for ln in g.lines_global():
@@ -4157,6 +4177,11 @@ class BuildingModel:
         _lfq.validate(self)                 # wave B freq-dependent links
         _cpd.validate(self)                 # wave B material damping
 
+        self._validate_workspace()          # named views / report sets
+
+    def _validate_workspace(self) -> None:
+        _wks.validate(self)                 # core.workspace
+
     def _validate_open_wind(self) -> None:
         from skyframe.core.openwind import validate_model as _ow_validate
         _ow_validate(self)
@@ -4200,6 +4225,8 @@ class BuildingModel:
                            for v in vals):
                     raise ValueError(f"Grid {g.name!r}: {key} must be finite "
                                      "numbers")
+        elif g.kind == "general":                   # core/grid_general
+            _ggrid.validate(g)
         else:  # radial
             if not g.radii:
                 raise ValueError(f"Grid {g.name!r}: a radial grid needs at "
@@ -4329,6 +4356,8 @@ class BuildingModel:
             **_tdm.model_to_dict(self),  # material time-dependent (if any)
 
             **_wbp.model_to_dict(self),  # Wave B line/area spring props
+
+            **_wks.model_to_dict(self),  # named views / report sets (if any)
         }
 
     @classmethod
@@ -4787,6 +4816,8 @@ class BuildingModel:
         _tdm.model_from_dict(mdl, d)        # material time-dependent props
 
         _wbp.model_from_dict(mdl, d)        # Wave B ortho/slab/springs
+
+        _wks.model_from_dict(mdl, d)        # named views / report sets / aids
         mdl.validate()
         return mdl
 

@@ -130,6 +130,9 @@ import { tdMockValidate as tdMockValidateModel } from "./mock_timedep.js";   // 
 import { initWbProps as wbInitProps } from "./wb_init.js";   // Wave B ortho / slab / deck / CF / composite / line-area springs (js/wb_*.js)
 import { wbMockValidate as wbMockValidateProps } from "./mock_wb.js";   // Wave B ?mock=1 validation
 
+import { initWb as wbInitWb } from "./wbi_init.js";   // Wave B: templates · general grids · named views / windows · Edit Shells · quick draw · report templates (js/wb_*.js)
+import { wbMockValidate as wbMockValidateIface } from "./mock_wbi.js";   // Wave B ?mock=1 validation
+
 /* ------------------------------------------------ state */
 const store = {
   model: null,
@@ -326,7 +329,8 @@ async function postModel(payload) {
       || w8MockValidate(payload)   // W8 master/similar stories · curves · shell options
       || wbMockValidate(payload)   // wave B link types · link_freq_props · material_damping
       || tdMockValidateModel(payload)   // time-dependent materials · step creep · tendon elements (js/mock_timedep.js)
-      || wbMockValidateProps(payload);   // Wave B properties (js/mock_wb.js)
+      || wbMockValidateProps(payload)   // Wave B properties (js/mock_wb.js)
+      || wbMockValidateIface(payload);   // Wave B named views · report sets · drawing aids · general grids (js/mock_wbi.js)
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -3127,7 +3131,7 @@ function renderGridSysList(systems) {
     const name = document.createElement("span");
     name.className = "gs-name"; name.textContent = sys.name;
     const kind = document.createElement("span");
-    kind.className = "gs-kind"; kind.textContent = sys.kind === "radial" ? "radial" : "ortho";
+    kind.className = "gs-kind"; kind.textContent = sys.kind === "radial" ? "radial" : sys.kind === "general" ? "general" : "ortho";   // Wave B general
     chip.append(name, kind);
     if (i === 0) { const p = document.createElement("span"); p.className = "gs-primary"; p.textContent = "primary"; p.title = "Legacy single grid"; chip.appendChild(p); }
     if (i > 0) {
@@ -3189,6 +3193,7 @@ function renderGridSysEditor(sys) {
   box.appendChild(meta);
 
   if (sys.kind === "orthogonal") box.appendChild(orthoLineEditor(sys));
+  else if (sys.kind === "general") { const p = document.createElement("p"); p.className = "muted"; p.textContent = `${(sys.lines || []).length} general grid lines — edit them with Define › Stories, Grids & Towers › General Grid…`; box.appendChild(p); }   // Wave B (js/wb_grid.js)
   else box.appendChild(radialEditor(sys));
 }
 
@@ -8621,6 +8626,8 @@ async function boot() {
   try { poxInitPoMethods(window.__sky); } catch (err) { console.error("pushover methods init failed", err); }   // pushover performance methods + ADRS (js/pomethods.js)
 
   try { wbInitWaveB(window.__sky); } catch (err) { console.error("Wave B init failed", err); }   // Irregularity Checks · joint-local reactions (js/waveb.js)
+
+  try { wbInitWb(window.__sky); } catch (err) { console.error("Wave B init failed", err); }   // Wave B interface & modelling tools (js/wb_init.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)

@@ -962,7 +962,7 @@ def create_app() -> Flask:
         Join / Delete: ``{selection, params, model?, dry_run?}`` ->
         ``{model, summary}`` (400 on bad input; the stored model is
         replaced unless ``dry_run``)."""
-        from skyframe.core.edit import EDIT_OPS, apply_edit
+        from skyframe.core.edit import ALL_EDIT_OPS as EDIT_OPS, apply_edit  # + edit_shells ops
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
             return jsonify({"error": "Request body must be a JSON object"}), 400
@@ -998,8 +998,9 @@ def create_app() -> Flask:
         if not isinstance(name, str) or not name.strip():
             return jsonify({"error": "'name' is required"}), 400
         kind = body.get("kind", "orthogonal")
-        if kind not in ("orthogonal", "radial"):
-            return jsonify({"error": "'kind' must be orthogonal|radial"}), 400
+        if kind not in ("orthogonal", "radial", "general"):   # + general
+            return jsonify({"error": "'kind' must be orthogonal|radial|"
+                                     "general"}), 400
 
         def _numlist(key):
             v = body.get(key)
@@ -1027,6 +1028,9 @@ def create_app() -> Flask:
                 origin=(float(origin[0]), float(origin[1])),
                 rotation=float(rotation), kind=kind,
                 radii=_numlist("radii"), theta_deg=_numlist("theta_deg"))
+            if kind == "general":            # core/grid_general line list
+                from skyframe.core.grid_general import normalize_lines
+                gs.lines = normalize_lines(body.get("lines"))
             _state["model"].set_grid_system(gs)
         except (ValueError, TypeError) as exc:
             return jsonify({"error": str(exc)}), 400
@@ -2375,6 +2379,10 @@ def create_app() -> Flask:
     # Wave B hinges: code-table catalogue / auto + surface previews
     from skyframe.api.hinges_api import register as _hng_register
     _hng_register(app, _state)
+
+    # Model templates + .rtf report (skyframe.api.wb_iface_api)
+    from skyframe.api.wb_iface_api import register as _wbi_register
+    _wbi_register(app, _state)
 
     return app
 

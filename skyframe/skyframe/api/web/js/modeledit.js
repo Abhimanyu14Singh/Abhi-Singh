@@ -3,6 +3,7 @@
 
 import { mxRenamePattern as mxRefsRenamePattern, mxPatternRefs as mxRefsPatternRefs } from "./modalx_refs.js";   // named mass sources / modal cases
 import { normalizeUnits } from "./units.js";   // v1.13 — model.display_units
+import { normalizeGeneral as wbNormalizeGeneral, generalGeometry as wbGeneralGeometry, snapGeneral as wbSnapGeneral } from "./wb_shellgeom.js";   // Wave B general (line) grids
 import { recomputeTowerElevations as c9RecomputeTowers, inheritTower as c9InheritTower,
   renameTowerStory as c9RenameTowerStory } from "./towers.js";   // C9 multiple towers
 import * as CXR from "./combo_refs.js";        // extended combos / P-Delta / TH components refs
@@ -1783,6 +1784,7 @@ export function removeGridLine(model, axis, idx) {
 /** Normalise one grid system in place (fills defaults, sorts, relabels). */
 export function normalizeGridSystem(s, i = 0) {
   if (!s || typeof s !== "object") return s;
+  if (s.kind === "general") return wbNormalizeGeneral(s, i);   // Wave B general grid (js/wb_shellgeom.js)
   s.kind = s.kind === "radial" ? "radial" : "orthogonal";
   s.name = (typeof s.name === "string" && s.name.trim())
     ? s.name : (s.kind === "radial" ? `R${i + 1}` : `G${i + 1}`);
@@ -1877,6 +1879,7 @@ const _num = v => (Math.round(v * 100) / 100).toString();
     { kind, name, segments:[[ax,ay,bx,by]], circles:[[cx,cy,r]],
       intersections:[[x,y]], labels:[{x,y,text}], center?:[x,y] }. */
 export function gridSystemGeometry(sys) {
+  if (sys && sys.kind === "general") return wbGeneralGeometry(sys);   // Wave B general grid
   const T = gridTransform(sys);
   const g = { kind: sys.kind, name: sys.name, segments: [], circles: [],
     intersections: [], labels: [] };
@@ -1938,6 +1941,7 @@ export function snapGrids(model, w) {
     if (d < bd) { bd = d; best = [x, y]; }
   };
   for (const sys of systems) {
+    if (sys.kind === "general") { const q = wbSnapGeneral(sys, w); if (q) consider(q.x, q.y); continue; }   // Wave B general grid
     if (sys.kind === "radial") {
       consider(sys.origin[0], sys.origin[1]);          // centre
       const geo = gridSystemGeometry(sys);
