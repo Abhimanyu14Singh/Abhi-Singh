@@ -860,8 +860,16 @@ def mesh_model(model: BuildingModel) -> MeshedModel:
     quads: List[ShellQuad] = []
     region_trib: Dict[str, Dict[int, float]] = {}
     poly_pieces: Dict[str, List[List[int]]] = {}
+    from .slab_props import (is_drop as _wb_is_drop,          # Wave B
+                             retag_quads as _wb_retag,
+                             assign_drop_overlaps as _wb_overlaps,
+                             effective_distribution as _wb_dist,
+                             distribution_view as _wb_dist_view)
+    _wb_overlaps(model)
     for region in model.shells:
         if region.behavior == "shell":
+            if _wb_is_drop(model, region):
+                continue            # Wave B drop panel: retagged below
             if is_polygon_region(region) or uses_polygon_mesher(region):
                 # polygon auto mesh: pieces now, elements after every
                 # region has added its nodes (conformity pass)
@@ -873,6 +881,7 @@ def mesh_model(model: BuildingModel) -> MeshedModel:
     if poly_pieces:
         finalize_pieces(model, poly_pieces, pool, quads, region_trib,
                         ShellQuad)
+    _wb_retag(model, quads, region_trib, pool.points)   # Wave B drops
 
     shell_pts = sorted({n for q in quads for n in q.nodes})
     near = _NearPoints(pool, shell_pts)
@@ -888,9 +897,10 @@ def mesh_model(model: BuildingModel) -> MeshedModel:
             if is_polygon_region(region):
                 loads, nodal = _membrane_distribution_polygon(model, region,
                                                               pool)
-            elif getattr(region, "distribution", "two_way") == "one_way":
+            elif _wb_dist(model, region)[0] == "one_way":   # + Wave B
                 from .oneway import distribution as _one_way   # B3
-                loads, nodal = _one_way(model, region, pool)
+                loads, nodal = _one_way(
+                    model, _wb_dist_view(model, region), pool)
             else:
                 loads, nodal = _membrane_distribution(model, region, pool)
             membrane_loads[region.uid] = loads

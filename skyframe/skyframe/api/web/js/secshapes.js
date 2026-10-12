@@ -14,6 +14,9 @@
    Coordinates: x = local 3, y = local 2; standard placements as in the
    Python module. Everything SI (m); the model stays SI. */
 
+import { CF_TYPES as wbCfTypes, CF_SS_TYPES as wbCfSsTypes, CF_REQ as wbCfReq, CF_OPT as wbCfOpt, CF_SHEAR as wbCfShear,
+  cfIs as wbCfIs, cfCheck as wbCfCheck, cfProps as wbCfProps, cfShearAreas as wbCfShearAreas, cfPreview as wbCfPreview } from "./cfshapes.js";   // Wave B cold-formed (js/cfshapes.js)
+
 const PI = Math.PI;
 
 export const SS_TYPES = [
@@ -34,7 +37,8 @@ export const SS_TYPES = [
   { key: "L_concrete", group: "Concrete", label: "L-Beam", dims: [["bf", "Flange Width, bf"], ["hf", "Flange Depth, hf"], ["bw", "Web Width, bw"], ["h", "Total Depth, h"]], def: { bf: 0.8, hf: 0.15, bw: 0.3, h: 0.6 } },
   { key: "general", group: "Other", label: "General (enter A, I, J)", dims: null },
 ];
-export const SS_PARAM = ["I", "I_mono", "channel", "angle", "double_angle", "tee", "rect_tube", "round_tube", "rect_solid", "plate", "round_solid", "tee_concrete", "L_concrete"];
+SS_TYPES.splice(SS_TYPES.findIndex(t => t.key === "rect"), 0, ...wbCfSsTypes);   // Wave B cold-formed shapes (js/cfshapes.js)
+export const SS_PARAM = ["I", "I_mono", "channel", "angle", "double_angle", "tee", "rect_tube", "round_tube", "rect_solid", "plate", "round_solid", "tee_concrete", "L_concrete", ...wbCfTypes];
 export const SS_LABEL = Object.fromEntries(SS_TYPES.filter(t => !t.alias).map(t => [t.key, t.label]));
 export const ssTypeInfo = key => SS_TYPES.find(t => t.key === key) || SS_TYPES.find(t => t.alias === key) || null;
 export const SHEAR_AREA_FORMULAS = {
@@ -43,6 +47,7 @@ export const SHEAR_AREA_FORMULAS = {
   double_angle: "As2 = 5/3·d·t; As3 = 5/3·b·t", rect_tube: "As2 = 2·d·t; As3 = 2·b·t", round_tube: "As2 = As3 = A/2",
   rect_solid: "As2 = As3 = 5/6·A", plate: "As2 = As3 = 5/6·A", round_solid: "As2 = As3 = 0.9·A",
   tee_concrete: "As2 = 5/6·bw·h; As3 = 5/6·bf·hf", L_concrete: "As2 = 5/6·bw·h; As3 = 5/6·bf·hf",
+  ...wbCfShear,   // Wave B cold-formed
 };
 
 const REQ = {
@@ -50,8 +55,9 @@ const REQ = {
   angle: ["d", "b", "t"], double_angle: ["d", "b", "t"], tee: ["d", "bf", "tf", "tw"], rect_tube: ["d", "b", "t"],
   round_tube: ["D", "t"], rect_solid: ["d", "b"], plate: ["d", "b"], round_solid: ["D"],
   tee_concrete: ["bf", "hf", "bw", "h"], L_concrete: ["bf", "hf", "bw", "h"],
+  ...wbCfReq,   // Wave B cold-formed
 };
-const OPT = { double_angle: ["s"], rect_tube: ["r_out"] };
+const OPT = { double_angle: ["s"], rect_tube: ["r_out"], ...wbCfOpt };
 
 /** Checked dims or a plain-language error string. */
 export function ssValidate(typ, dims) {
@@ -86,7 +92,7 @@ export function ssValidate(typ, dims) {
   } else if (typ === "tee_concrete" || typ === "L_concrete") {
     if (g.hf >= g.h) bad = "The flange is deeper than the whole section.";
     else if (g.bw > g.bf) bad = "The web is wider than the flange.";
-  }
+  } else if (wbCfIs(typ)) bad = wbCfCheck(typ, g);   // Wave B cold-formed
   return bad ? { error: bad } : { g };
 }
 
@@ -190,6 +196,7 @@ export function ssShearAreas(typ, g, A) {
     case "round_solid": return [0.9 * A, 0.9 * A];
     case "tee_concrete": case "L_concrete": return [5 / 6 * g.bw * g.h, 5 / 6 * g.bf * g.hf];
   }
+  if (wbCfIs(typ)) return wbCfShearAreas(typ, g);   // Wave B cold-formed
   throw new Error(typ);
 }
 
@@ -202,7 +209,7 @@ export function ssPrincipal(I33, I22, I23) {
 function finish(typ, g, A, I33, I22, I23, J, Cw, S33, S22, Z33, Z22, x0, y0, cx, cy, b, h) {
   const [As2, As3] = ssShearAreas(typ, g, A);
   const out = { A, I33, I22, I23, J, Cw, S33, S22, Z33, Z22, As2, As3, r33: Math.sqrt(I33 / A), r22: Math.sqrt(I22 / A), x0, y0, cx, cy, b, h };
-  if (typ === "angle" || typ === "L_concrete") Object.assign(out, ssPrincipal(I33, I22, I23));
+  if (typ === "angle" || typ === "L_concrete" || typ === "Z_lipped") Object.assign(out, ssPrincipal(I33, I22, I23));
   return out;
 }
 
@@ -227,6 +234,7 @@ export function ssProps(typ, dims) {
     const I33 = o.I33 - i.I33, I22 = o.I22 - i.I22;
     return finish(typ, g, o.A - i.A, I33, I22, 0, 4 * Am * Am * t / pm, 0, I33 / (d / 2), I22 / (b / 2), o.Z33 - i.Z33, o.Z22 - i.Z22, 0, 0, b / 2, d / 2, b, d);
   }
+  if (wbCfIs(typ)) { const c = wbCfProps(typ, g); return finish(typ, g, c.A, c.I33, c.I22, c.I23, c.J, c.Cw, c.S33, c.S22, c.Z33, c.Z22, c.x0, c.y0, c.cx, c.cy, c.b, c.h); }   // Wave B
   const p = rectSet(ssRects(typ, g));
   const [J, Cw, sc] = torsion(typ, g, p.cx, p.cy);
   return finish(typ, g, p.A, p.I33, p.I22, p.I23, J, Cw, p.I33 / p.c2, p.I22 / p.c3, p.Z33, p.Z22, sc[0] - p.cx, sc[1] - p.cy, p.cx, p.cy, p.xmax - p.xmin, p.ymax - p.ymin);
@@ -271,6 +279,7 @@ export function ssPreview(sec) {
   if (!sec || !sec.dims || typeof sec.dims !== "object" || !SS_PARAM.includes(sec.shape)) return null;
   const d = sec.dims, typ = sec.shape, f = { ...sec };
   delete f.dims;
+  if (wbCfIs(typ)) { const pv = wbCfPreview(typ, d); return pv || { sec: { ...f, shape: "general" } }; }   // Wave B cold-formed outline
   const set = o => Object.assign(f, o, { shape: PREVIEW_SHAPE[typ] });
   switch (typ) {
     case "I": set({ d: d.d, bf: d.bf, tf: d.tf, tw: d.tw }); break;

@@ -98,12 +98,15 @@ from __future__ import annotations
 import math
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from skyframe.core import coldformed as _cf   # Wave B cold-formed shapes
+
 Rect = Tuple[float, float, float, float]          # x0, x1, y0, y1
 
 #: every section ``type`` this module understands (steel + concrete)
 SHAPE_TYPES = ("I", "I_mono", "channel", "angle", "double_angle", "tee",
                "rect_tube", "round_tube", "rect_solid", "round_solid",
-               "plate", "tee_concrete", "L_concrete")
+               "plate", "tee_concrete", "L_concrete",
+               "C_lipped", "Z_lipped", "hat")     # Wave B cold-formed
 
 #: required / optional dimension keys per type
 DIM_KEYS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
@@ -120,6 +123,7 @@ DIM_KEYS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "round_solid": (("D",), ()),
     "tee_concrete": (("bf", "hf", "bw", "h"), ()),
     "L_concrete": (("bf", "hf", "bw", "h"), ()),
+    **_cf.DIM_KEYS,                    # Wave B cold-formed (core/coldformed)
 }
 
 #: torsion / shear methods of :func:`shape_properties`
@@ -140,6 +144,7 @@ SHEAR_AREA_FORMULAS = {
     "round_solid": "As2 = As3 = 0.9*A",
     "tee_concrete": "As2 = 5/6*bw*h; As3 = 5/6*bf*hf",
     "L_concrete": "As2 = 5/6*bw*h; As3 = 5/6*bf*hf",
+    **_cf.SHEAR_AREA_FORMULAS,         # Wave B cold-formed
 }
 
 
@@ -204,6 +209,8 @@ def validate_dims(typ: str, dims: dict) -> Dict[str, float]:
             bad = "the flange is deeper than the whole section"
         elif g("bw") > g("bf"):
             bad = "the web is wider than the flange"
+    elif typ in _cf.TYPES:                       # Wave B cold-formed
+        bad = _cf.check(typ, out)
     if bad:
         raise ValueError(f"{typ}: {bad} ({_fmt(out)})")
     return out
@@ -379,6 +386,8 @@ def shape_properties(typ: str, dims: dict, torsion: str = "closed") -> dict:
 def exact_regions(typ: str, g: Dict[str, float]) -> List[dict]:
     """:mod:`skyframe.core.section_fem` regions of a validated shape."""
     from skyframe.core import section_fem
+    if typ in _cf.TYPES:                         # Wave B cold-formed
+        return _cf.regions(typ, g)
     if typ in ("I", "I_mono", "channel", "tee", "angle", "rect_tube",
                "round_tube", "round_solid"):
         return section_fem.shape_regions(typ, g)
@@ -412,6 +421,12 @@ def _apply_exact(out: dict, typ: str, g: Dict[str, float]) -> None:
 
 def _closed_properties(typ: str, dims: dict) -> dict:
     g = validate_dims(typ, dims)
+    if typ in _cf.TYPES:                         # Wave B cold-formed
+        p = _cf.properties(typ, g)
+        return _finish(typ, g, p["A"], p["I33"], p["I22"], p["I23"],
+                       p["J"], p["Cw"], p["S33"], p["S22"], p["Z33"],
+                       p["Z22"], p["x0"], p["y0"], p["cx"], p["cy"],
+                       p["b"], p["h"])
     if typ == "round_tube":
         D, t = g["D"], g["t"]
         di = D - 2 * t
@@ -527,6 +542,8 @@ def shear_areas(typ: str, g: Dict[str, float], A: float
         return 0.9 * A, 0.9 * A
     if typ in ("tee_concrete", "L_concrete"):
         return 5.0 / 6.0 * g["bw"] * g["h"], 5.0 / 6.0 * g["bf"] * g["hf"]
+    if typ in _cf.TYPES:                         # Wave B cold-formed
+        return _cf.shear_areas(typ, g)
     raise ValueError(typ)
 
 
@@ -549,7 +566,7 @@ def _finish(typ, g, A, I33, I22, I23, J, Cw, S33, S22, Z33, Z22, x0, y0,
            "As2": As2, "As3": As3, "r33": math.sqrt(I33 / A),
            "r22": math.sqrt(I22 / A), "x0": x0, "y0": y0, "cx": cx,
            "cy": cy, "b": b, "h": h}
-    if typ in ("angle", "L_concrete"):
+    if typ in ("angle", "L_concrete", "Z_lipped"):
         out["I_major"], out["I_minor"], out["alpha"] = principal(I33, I22,
                                                                  I23)
     return out
@@ -565,7 +582,7 @@ def section_kwargs(typ: str, dims: dict, torsion: str = "closed") -> dict:
 
 def principal_of(typ: str, dims: dict) -> Optional[dict]:
     """``{"I_major", "I_minor", "alpha"}`` for unsymmetric types, else None."""
-    if typ not in ("angle", "L_concrete"):
+    if typ not in ("angle", "L_concrete", "Z_lipped"):
         return None
     p = shape_properties(typ, dims)
     return {"I_major": p["I_major"], "I_minor": p["I_minor"],

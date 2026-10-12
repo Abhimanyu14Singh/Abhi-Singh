@@ -60,6 +60,7 @@ export function shellPut(s, k, v) {
   if (k === "distribution") { if (v === "two_way") { delete s.distribution; delete s.one_way_dir; } else s.distribution = v; return true; }
   if (k === "one_way_dir") { if (v === 1 || s.distribution !== "one_way") delete s.one_way_dir; else s.one_way_dir = v; return true; }
   if (k === "load_set") { if (!v) delete s.load_set; else s.load_set = v; return true; }
+  if (k === "distribution_override") { if (v) s.distribution_override = true; else delete s.distribution_override; return true; }   // Wave B
   return false;
 }
 
@@ -67,11 +68,13 @@ export function shellPut(s, k, v) {
    Slab / Wall Property Data: shell type + one-way distribution
    ================================================================ */
 export function w8ShellSectionFields(F, s, D, name) {
-  const st = { type: s.shell_type || "shell", dist: null };
+  // Wave B: the load distribution is a SECTION property (ShellSection.distribution
+  // / one_way_dir) inherited by every membrane slab using the section; a slab's
+  // own value (Assign › Shell, distribution_override) stays an override.
+  const st = { type: s.shell_type || "shell", dist: s.distribution === "one_way" ? `one_way:${s.one_way_dir || 1}` : "two_way" };
   const users = () => (D.shells || []).filter(r => name && r.section === name && r.kind === "slab" && (r.behavior || "shell") === "membrane");
   const u0 = users();
-  const keys = [...new Set(u0.map(distKey))];
-  st.dist = keys.length === 1 ? keys[0] : (keys.length ? null : "two_way");
+  const own = u0.filter(r => r.distribution === "one_way" || r.distribution_override).length;
   const typeRow = F.select(st, "type", SHELL_TYPES, {
     label: "Shell type", id: "w8ShType",
     title: "ETABS modelling type: element family + which stiffness (membrane / bending) is carried",
@@ -79,28 +82,22 @@ export function w8ShellSectionFields(F, s, D, name) {
     write: v => { st.type = v; if (v === "shell") delete s.shell_type; else s.shell_type = v; },
   });
   const distRow = F.select(st, "dist", DIST, {
-    label: "Load distribution", id: "w8ShDist", mixed: st.dist == null,
-    title: "Membrane slabs only: how area loads go to the edge beams",
-    write: v => { st.dist = v; st.distTouched = true; },
+    label: "Load distribution", id: "w8ShDist",
+    title: "Membrane slabs: how area loads go to the edge beams (section property, inherited by the slabs)",
+    write: v => {
+      st.dist = v;
+      const [d, dir] = v.split(":");
+      if (d === "two_way") { delete s.distribution; delete s.one_way_dir; }
+      else { s.distribution = d; s.one_way_dir = dir ? +dir : 1; }
+    },
   });
   const note = shNote(u0.length
-    ? `Load distribution applies to the <b>${u0.length}</b> membrane slab${u0.length > 1 ? "s" : ""} using this section (stored per slab; also in Assign › Shell).`
-    : "Load distribution applies to membrane slabs using this section (none yet — assign the section, or use Assign › Shell per slab).", "w8-sh-note");
+    ? `Section property: inherited by the <b>${u0.length}</b> membrane slab${u0.length > 1 ? "s" : ""} using this section${own ? ` (${own} keep${own > 1 ? "" : "s"} its own value — Assign › Shell)` : ""}. Polygon / non-convex slabs stay two-way.`
+    : "Section property: inherited by every membrane slab using this section (a slab's own value from Assign › Shell overrides it).", "w8-sh-note");
   return {
     nodes: [typeRow, distRow, note],
-    /** after the dialog stored the section as `nn`: write the distribution */
-    apply(nn) {
-      if (!st.distTouched || !st.dist) return "";
-      const [d, dir] = st.dist.split(":");
-      let skipped = 0;
-      for (const r of (D.shells || [])) {
-        if (r.section !== nn || r.kind !== "slab" || (r.behavior || "shell") !== "membrane") continue;
-        if (d === "one_way" && oneWayProblem(r)) { skipped++; continue; }
-        shellPut(r, "distribution", d);
-        shellPut(r, "one_way_dir", dir ? +dir : 1);
-      }
-      return skipped ? `${skipped} slab(s) kept two-way (not a convex 4-corner region)` : "";
-    },
+    /** kept for the editShellSection hook: the distribution is stored on the section itself */
+    apply() { return ""; },
   };
 }
 
@@ -131,7 +128,8 @@ export function w8AssignShellFields(F, sh, P, model) {
   ];
   const distRows = slabsMembrane ? [F.select(V, "dist", DIST, { label: "Load distribution", id: "w8ShAsnDist", mixed: cd.mixed,
     title: "Membrane slabs: two-way (45°) or one-way along region local 1 / 2",
-    write: v => { V.dist = v; const [d, dir] = v.split(":"); P.distribution = d; P.one_way_dir = dir ? +dir : 1; } })] : [];
+    write: v => { V.dist = v; const [d, dir] = v.split(":"); P.distribution = d; P.one_way_dir = dir ? +dir : 1;
+      if (sh.some(r => ((model.shell_sections || {})[r.section] || {}).distribution)) P.distribution_override = true; } })] : [];   // Wave B: own value overrides the section
   const lsRow = F.select(V, "ls", [["", "None"], ...sets.map(n => [n, n])], { label: "Uniform load set", id: "w8ShLoadSet", mixed: cl.mixed,
     write: v => { V.ls = v; P.load_set = v; } });
   return [

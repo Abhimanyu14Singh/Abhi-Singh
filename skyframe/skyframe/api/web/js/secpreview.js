@@ -29,7 +29,9 @@ import spvU from "./units.js";
 import { rectSectionProps as spvRectProps } from "./modeledit.js";
 import { buPreviewPolys as spvBuPolys } from "./builtup_geom.js";   // v1.21 built-up section outlines (js/builtup.js)
 
-import { ssPreview as spvSsPreview } from "./secshapes.js";   // v1.21 parametric / database shapes (shape + dims)
+import { ssPreview as spvSsPreview } from "./secshapes.js";
+import { ccGeometry as spvWbCcGeometry } from "./wb_composite.js";   // Wave B composite SRC / CFT drawing
+import { wbSlabSvg as spvWbSlabSvg, wbSecOneWay as spvWbOneWay } from "./wb_slab.js";   // Wave B ribbed / waffle / deck / CLT cross-sections   // v1.21 parametric / database shapes (shape + dims)
 import { seJMethod as spvJMethod } from "./secexact.js";   // v1.22 J method (exact / closed form / approx) of the readout
 
 const NS = "http://www.w3.org/2000/svg";
@@ -146,6 +148,13 @@ const SHAPE_LABEL = {
 export function spvGeometry(sec, model = {}, name = "") {
   sec = sec || {};
   name = name || sec.name || "";
+  /* Wave B: composite SRC / CFT (js/wb_composite.js) */
+  const ccx = spvWbCcGeometry(sec);
+  if (ccx) {
+    const o = { ...ccx, notes: [], approx: {}, invalid: "", dims: ccx.dims.map(x => ({ ...x, label: dimTxt(x.sym, x.v) })), J: isNum(sec.J) ? sec.J : null };
+    o.geo = spvPolyProps(o.polys.filter(p => !p.hole).slice(0, 1)); o.bbox = bboxOf(o.polys);
+    return o;
+  }
   /* v1.21: a section with shape + dims (js/secshapes.js) is drawn from its dimensions */
   const ssx = spvSsPreview(sec);
   if (ssx && ssx.poly) {
@@ -762,12 +771,12 @@ export function spvShellPanel(opts = {}) {
     const layers = sec0.layered && Array.isArray(sec0.layered.layers) ? sec0.layered.layers : null;
     const t = layers ? layers.reduce((a, l) => a + (+l.t || 0), 0) : +sec0.thickness;
     const users = (model.shells || []).filter(s => s.section === name);
-    const oneWay = users.filter(s => s.distribution === "one_way");
+    const oneWay = spvWbOneWay(sec0, users.filter(s => s.distribution === "one_way"));   // Wave B: + section-level one-way
     const walls = users.filter(s => s.kind === "wall").length;
     head.append(h("span", { class: "spv-title", text: val(opts.title) || name || "Section" }), h("span", { class: "spv-chip", "data-shell-type": st, text: T[0] }));
     if (!(t > 0) && !msg) msg = "Thickness must be greater than zero.";
     body.appendChild(shellIso(model, sec0, { t: t > 0 ? t : 0.2, invalid: !!msg, st, oneWay, isWall: walls > 0 && walls === users.length }));
-    body.appendChild(shellLayers(model, sec0, layers, t > 0 ? t : 0.2, !!msg));
+    body.appendChild(spvWbSlabSvg(model, sec0) || shellLayers(model, sec0, layers, t > 0 ? t : 0.2, !!msg));   // Wave B slab-type cross-section
     if (msg) body.appendChild(h("p", { class: "spv-msg is-bad", role: "alert", text: msg }));
     const tb = h("table", { class: "spv-props" });
     const row = (k, v, a = {}) => tb.appendChild(h("tr", a, [h("th", { text: k }), h("td", { text: v })]));

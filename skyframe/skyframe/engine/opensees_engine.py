@@ -178,6 +178,7 @@ from skyframe.engine import diaphragms as _dgm     # named diaphragms/add. mass
 from skyframe.engine import tendons as _tdn        # PT tendons / hyperstatic
 from skyframe.engine import story_shear as _ssx    # story shear, all loads
 from skyframe.core import ratio_significance as _rsig  # n/a noise ratios
+from skyframe.core import spring_dist as _wbsd   # Wave B line/area props
 
 from skyframe.engine import thermal_ext as _thx    # v1.16 temperature loads
 from skyframe.core.thermal_ext import projected_factor as _proj_f  # v1.16
@@ -2803,6 +2804,8 @@ class OpenSeesEngine:
             spring_cover.setdefault(rt, set()).add(2)
 
         for ls in getattr(model, "line_springs", []):
+            if getattr(ls, "property", None):
+                continue        # Wave B named line spring (below)
             p1 = tuple(float(v) for v in ls.p1)
             p2 = tuple(float(v) for v in ls.p2)
             dvec = (p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2])
@@ -2838,12 +2841,17 @@ class OpenSeesEngine:
                     cover |= {d for d in (0, 1) if horiz[d] > 0.0}
         for region in model.shells:
             asp = getattr(region, "area_spring", None)
-            if not asp:
-                continue
+            if not asp or asp.get("property"):
+                continue        # none / Wave B named area spring (below)
             kz_a = float(asp["kz"])
             comp_only = bool(asp.get("compression_only", False))
             for pidx, trib_a in mesh.region_trib[region.uid].items():
                 _add_vertical(pidx + 1, kz_a * trib_a, comp_only)
+        # Wave B named line / area spring properties (core.spring_dist):
+        # per-node grounded named springs on the B9 machinery
+        for rt, spec in _wbsd.engine_specs(model, mesh, _TOL):
+            named_specs.append((rt, spec))
+            spring_cover.setdefault(rt, set()).update(spec.global_dofs())
 
         # --- supports ----------------------------------------------------
         def record_fix(ntag: int, restr: Sequence[int]) -> None:
@@ -3331,7 +3339,7 @@ class OpenSeesEngine:
                     # (skyframe.engine.shell_modifiers; defaults = the
                     # legacy ElasticMembranePlateSection call)
                     nd_tag, _ = _shel.build_section(stag, ssec, mat, 1.0,
-                                                      nd_tag)
+                                                      nd_tag, model.materials)
                 sec_tags[name] = stag
             regions = {r.uid: r for r in model.shells}
             # v0.25 cracked-slab iteration: per-quad stiffness scale factors
@@ -3358,7 +3366,8 @@ class OpenSeesEngine:
                         mat_q = model.materials[ssec_q.material]
                         stag += 1
                         nd_tag, _ = _shel.build_section(
-                            stag, ssec_q, mat_q, scale, nd_tag)
+                            stag, ssec_q, mat_q, scale, nd_tag,
+                            model.materials)
                         scaled_tags[key] = stag
                     stag_q = scaled_tags[key]
                 # shell_type element family (CONTRACT "Shell element

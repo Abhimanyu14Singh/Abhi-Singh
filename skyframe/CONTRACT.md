@@ -12523,3 +12523,272 @@ unchanged: every new key is modelling metadata or an existing engine field.
 * Playwright, mock and live 90/90: every dialog opens from its menu, OK
   with defaults is byte-identical, the POST /api/model double echo is
   identical, kip-in inputs convert, live runs succeed, zero console errors.
+
+## Orthotropic materials, slab / deck property types, cold-formed and composite sections, named line / area springs
+
+Wave B property parity. Every new key below is emitted by `to_dict` only when it
+is set, so a model without them saves byte-identically (proved by hashing the
+model JSON and the full results JSON of a frame + shell + membrane one-way +
+line-spring model before and after the change: identical).
+Code: `core/ortho.py`, `core/slab_props.py`, `core/coldformed.py`,
+`core/composite_col.py`, `core/spring_dist.py`, `core/props_ext.py` (hub),
+`core/props_tables.py` (DB-edit), `engine/slab_sections.py`. Hooks: one line
+each in `core/model.py`, `core/mesh.py`, `core/shape_props.py`,
+`core/springprops.py`, `core/modeltables.py`, `engine/shell_elements.py`,
+`engine/opensees_engine.py` (two section calls pass `model.materials`; the
+line / area spring loops skip named springs and append their specs).
+
+### Orthotropic materials
+
+```
+materials[name] = {..., "symmetry": "orthotropic",
+                   "E": E1, "nu": nu12,
+                   "ortho": {"E2", "G12", "G13", "G23"}}      # kPa
+```
+
+* `MATERIAL_SYMMETRY` is unchanged; validation accepts
+  `MATERIAL_SYMMETRY_EXT = ("isotropic", "uniaxial", "orthotropic")`.
+  Anisotropic stays out of scope (OpenSees `ElasticOrthotropic` has no
+  normal–shear coupling).
+* Rules: `ortho` needs symmetry orthotropic and vice versa. Every constant is
+  > 0. `nu12 >= 0` and `nu12² E2 / E1 < 1`.
+* Material axes 1 / 2 are the **shell element local axes** (there is no
+  material angle). Frames made of the material use E = E1 and G = G12
+  (`Material.G`).
+* Shells: `A = h Q`, `D = h³/12 Q`, `S13 = 5/6 G13 h`, `S23 = 5/6 G23 h`, with
+  `Q11 = E1/(1−ν12ν21)`, `Q22 = E2/(1−ν12ν21)`, `Q12 = ν12 E2/(1−ν12ν21)`,
+  `Q66 = G12`. These are built exactly as the three-layer
+  `ElasticOrthotropic` + `PlateFiber` `LayeredShell`
+  (`modifiers.skin_core_layers`). ETABS modifiers, `mod`, the cracked-slab
+  scale and the shell-type factors multiply the resultants
+  (`engine/slab_sections.py`).
+* Presets (`ortho.TIMBER_PRESETS`): EN 338 C24, EN 14080 GL24h (mean values).
+
+### Laminated (CLT) shell sections
+
+```
+shell_sections[name].laminate = {"layers": [{"t": m, "material": name,
+                                             "angle": 0 | 90}, ...]}
+```
+
+* Layers are listed from the bottom up. Classical lamination theory gives
+  `A = Σ t Q`, `B = Σ t z̄ Q`, `D = Σ (t³/12 + t z̄²) Q`, and
+  `S13 = 5/6 Σ t G13` (likewise `S23`). A 90° layer swaps 1↔2 and G13↔G23.
+* An unsymmetric lay-up (B ≠ 0) is rejected.
+* `laminate` and `layered` are exclusive.
+* `thickness` is the weight-equivalent thickness of the section material:
+  `Σ t γ_k / γ_ref`.
+* `ortho.CLT_LAYUPS` lists the CLT 100 / 120 / 160 / 200 lay-ups.
+
+### Slab property types
+
+```
+shell_sections[name].slab = {"type": "ribbed" | "waffle" | "deck_filled" |
+                                     "deck_unfilled" | "deck_solid" | "drop",
+                             ...geometry (m), deck_unit_weight (kPa),
+                             rib_dir 1 | 2}
+```
+
+| type | keys |
+|---|---|
+| ribbed | overall_depth, slab_thickness, stem_width_top, stem_width_bottom, rib_spacing [, rib_dir] |
+| waffle | overall_depth, slab_thickness, stem_width_top, stem_width_bottom, rib_spacing_1 (along local 1), rib_spacing_2 |
+| deck_filled | slab_depth, rib_depth, rib_width_top, rib_width_bottom, rib_spacing, deck_thickness, deck_unit_weight [, rib_dir] |
+| deck_unfilled | rib_depth, rib_width_top, rib_width_bottom, rib_spacing, deck_thickness, deck_unit_weight [, rib_dir] |
+| deck_solid | slab_depth [, rib_dir] |
+| drop | — (plain thickness) |
+
+* **Equivalent plate** (per unit width, ribs along local `rib_dir`, section
+  material isotropic E, ν, G):
+  * Ribbed: `A = hf Q + E Ar/s e₁e₁`, `D11 = E I_T/s` (the T of one pitch
+    about its own centroid, exact trapezoidal stem), `D22 = E hf³/12(1−ν²)`,
+    `D12 = ν D22`, `D66 = G hf³/12`, `S13 = 5/6 G (hf + Ar/s)`,
+    `S23 = 5/6 G hf`.
+  * Waffle: the same rule in both directions (ribs ∥ 1 spaced at
+    rib_spacing_2).
+  * Filled deck: the ribbed rule with the concrete above and in the flutes.
+    The steel sheet is not counted.
+  * Unfilled deck (section material = the deck steel): `A11 = E td Ld/sr`,
+    `A22 = E td³/(6 hr²)`, `A66 = G td`, `D11 = E I_deck/sr`,
+    `D22 = E td³/12`, `D66 = G td³/12`, `S = 5/6 G td`.
+  * Solid deck and drop panel: a plain isotropic slab.
+  * Each direction is taken about its own centroid: there is no eccentric-rib
+    coupling.
+* **Self-weight and mass:** `thickness` is the weight-equivalent thickness:
+  * ribbed: `hf + Ar/s`;
+  * waffle: `hf + Ar/s1 + Ar/s2 − w̄² hr/(s1 s2)`;
+  * filled deck: `tc + Ar/sr + wd/γc`;
+  * unfilled deck: `wd/γs`;
+  * solid deck: `tc`.
+
+  It must match the geometry (to 1e-6, validation). `from_dict` rewrites it
+  only when it differs by more than 1e-9 relative, so an exact client value
+  is kept bit for bit.
+* Stress recovery uses the weight-equivalent thickness, which is an
+  approximation for ribbed and deck sections.
+
+### One-way distribution as a section property
+
+* `shell_sections[name].distribution` (`two_way` | `one_way`) and
+  `one_way_dir` (1 | 2). `None` means unset, and the key is omitted.
+* Every membrane slab using the section inherits these values unless it has
+  its own. A slab has its own value when its `distribution` / `one_way_dir`
+  differ from the defaults, or when `shells[i].distribution_override` is
+  `true` (emitted only when true). That own value is the per-slab override.
+* An inherited one-way on a slab that cannot take it (polygon, non-convex or
+  shell behaviour) falls back to two-way with a warning. An explicit per-slab
+  one-way is validated as before.
+* Legacy files (no section key) behave exactly as before.
+
+### Drop panels
+
+* A slab region whose section has `slab.type == "drop"` is a
+  thickness-override region:
+  * It must have shell behaviour, a convex outline and no openings, and it
+    must overlap a coplanar shell-behaviour slab.
+  * It is not meshed. Every host element whose centroid lies inside the
+    outline is handed to the drop region (`ShellQuad.region` and the
+    tributary areas), so it takes the drop section's stiffness, self-weight,
+    mass and area loads. The boundary snaps to the host mesh, like an
+    opening.
+* `net_area`:
+  * of a host excludes the exact geometric overlap;
+  * of the drop region is that overlap.
+
+  Region-level weight and mass totals therefore count the drop zone once.
+  These values are stamped by `slab_props.assign_drop_overlaps`, which is
+  called from `validate`, `compute_story_masses` and `mesh_model`.
+* Area loads on a host do not reach the overridden elements: assign the loads
+  to the drop region too.
+
+### Cold-formed shapes
+
+* `SHAPE_TYPES` gains `C_lipped` (d, b, dl, t [, r]), `Z_lipped` (same keys)
+  and `hat` (d, b, bf, t [, r]). All dimensions are out-to-out; `r` is the
+  inside bend radius.
+* Method: AISI linear method with rounded corners (centre line × t):
+  * exact line integrals, plus the t³/12 self terms;
+  * `J = t³L/3`;
+  * shear centre and Cw from the thin-walled sectorial coordinate;
+  * S from the extreme fibre;
+  * Z from the equal-area axis.
+* Shear areas:
+  * C / Z: `As2 = d t`, `As3 = 5/3 b t`;
+  * hat: `As2 = 2 d t`, `As3 = 5/6 (b + 2bf) t`.
+* `torsion = "exact"` meshes the true outline with `section_fem`.
+* Z sections return their principal axes.
+* `js/cfshapes.js` is the bit-for-bit JS port.
+
+### Composite columns (SRC / CFT)
+
+* A FrameSection with `material` = the steel and `shape` one of:
+  * `SRC_I`: b, h, d, bf, tf, tw [, bar_d, n_bars_3, n_bars_2, cover];
+  * `CFT_rect`: d, b, t;
+  * `CFT_round`: D, t.
+
+  `dims` also hold `"concrete"`, optionally `"rebar"`, and `"code"`
+  (`AISC360` | `EC4`).
+* `A`, `I33`, `I22` are transformed to E_s:
+  * `EI_eff` per AISC 360-16 I2.1b: `Es Is + 0.5 Es Isr + C1 Ec Ic`,
+    `C1 = 0.25 + 3(As + Asr)/Ag ≤ 0.7`;
+  * per I2.2b: `Es Is + Es Isr + C3 Ec Ic`, `C3 = 0.45 + 3(As + Asr)/Ag ≤ 0.9`;
+  * per EN 1994-1-1 6.7.3.3: `Ke = 0.6`.
+* `J = Js + (Gc/Gs) Jc`.
+* `mod_weight` and `mod_mass` restore the real steel + concrete weight and
+  mass.
+* Built by `composite_col.composite_section(model, name, type, dims, steel)`
+  or `js/wb_composite.js`. The two agree to round-off; the stored numbers are
+  authoritative.
+
+### Named line / area spring properties
+
+```
+line_spring_properties / area_spring_properties = {name: {
+    "kind": "linear" | "compression_only" | "tension_only" | "multilinear",
+    "k": [k1, k2, k3],            # line kN/m/m, area kN/m/m²
+    "nonlinear_dof": "U3",        # c/t-only
+    "curves": {"U3": [[d, f], ...]}}}   # f per m / per m²
+line_springs[i].property = name        # inline kx / ky / kz = 0
+shells[i].area_spring = {"property": name}    # shell behaviour
+```
+
+* U1, U2, U3 are global X, Y, Z.
+* Each FE node gets a grounded B9 named spring:
+  * the law is scaled by its tributary length or area (`k·trib`, curve
+    forces `f·trib`);
+  * the tributary rules are those of v0.22.
+* Nonlinear kinds route static cases to Newton (`springprops.any_nonlinear`).
+  Eigen analyses use the initial tangent.
+* Reactions come from the exact force law.
+
+### Database editing (`core/props_tables.py`)
+
+* Columns:
+  * `materials`: `ortho_E2`, `ortho_G12`, `ortho_G13`, `ortho_G23`, plus the
+    symmetry enum + orthotropic;
+  * `shell_sections`: `slab_type` (read-only), `sec_distribution`,
+    `sec_one_way_dir`;
+  * `shell_objects`: `distribution_override`;
+  * `line_springs`: `property`.
+* Tables: "Spring Properties - Line" and "Spring Properties - Area".
+* Untouched rows → apply is the identity.
+
+### UI (dlgkit standard)
+
+* Material Property Data: Directional Symmetry → Orthotropic, with the
+  E1 / E2 / ν12 / G12 / G13 / G23 group and the C24 / GL24h presets
+  (`js/wb_ortho.js`).
+* Slab / Wall Property Data:
+  * Property Type: plain, ribbed, waffle, drop, filled / unfilled / solid
+    deck, CLT laminate;
+  * geometry fields and a read-only weight thickness;
+  * the load distribution is now the section property;
+  * secpreview draws the pitch cross-section or the CLT layer stack
+    (`js/wb_slab.js`).
+* Frame Section Property Data: Cold-Formed shapes in the Shape list, with the
+  outline drawing (`js/cfshapes.js`).
+* Frame Properties → Add Composite Column… and Define › Section Properties ›
+  Composite Column Sections… [`def-wb-composite`] open the SRC / CFT dialog,
+  which has a preview (`js/wb_composite.js`).
+* Define › Section Properties › Line / Area Spring Properties…
+  [`def-wb-springprops`] and Assign › Shell › Line / Area Spring Property…
+  [`asn-wb-springprops`] open the line / area spring dialogs, which include a
+  multilinear backbone plot (`js/wb_springs.js`).
+* Assign › Shell load distribution sets `distribution_override` when the
+  section has its own distribution.
+* `js/mock_wb.js` mirrors the validation in `?mock=1`.
+
+### Validation (`tests/test_wave_b_props.py`, 27 tests)
+
+* SS orthotropic plate 4 × 3 × 0.06 m against the Navier / Lekhnitskii series:
+  * E2 = E1/3: +0.02 %;
+  * E2 = E1: −0.09 %;
+  * CLT 120 L3s plate: +0.14 %.
+* An isotropic material entered as orthotropic reproduces the legacy element
+  to 1e-6.
+* CLT A / D / S by hand.
+* Ribbed I_T = 1.5561667e-3 m⁴ by hand. Waffle weight thickness 0.15344 m.
+* Deck by hand:
+  * filled: A11 = 2.234375e6 kN/m, D11 = 1968.03 kN·m, weight thickness
+    0.090833 m;
+  * unfilled: Ld, I_deck, A22, A66.
+* Deck strip in cylindrical bending vs 5qL⁴/384(D11 − D12²/D22): −0.27 %.
+* Drop panel:
+  * self-weight 192 kN exact;
+  * net areas 32 / 4 m²;
+  * 16 overridden elements;
+  * story mass 192/g.
+* Lipped C 9 × 2.5 × 0.773 × 0.059 in, R = 0.0885 in:
+  * A equals the AISI Manual Part I linear-method formula exactly;
+  * Ix within 0.05 % (the Manual's rounded constants);
+  * the finite-element outline matches on A / J / x0;
+  * the r = 0 limit gives the DG9 channel e and Cw.
+* CFT 400 × 400 × 12: C3 = 0.7992, EI_eff = 1.33481e5 kN·m² (AISC I2.2b by
+  hand); EC4 Ke; SRC C1 by hand; cantilever PL³/3EI_eff to 1e-6.
+* Multilinear area spring: q = 60 kPa on the 0.01 m → 50 kPa, 0.03 m → 80 kPa
+  backbone settles 0.016667 m uniformly (base FZ = qA). Below the knee the
+  initial slope applies.
+* Named linear area / line springs equal the inline ones.
+* One-way inherited equals per-slab (80 kN per X beam). The override keeps
+  two-way.
+* Legacy bytes; DB-edit round trip and edits.

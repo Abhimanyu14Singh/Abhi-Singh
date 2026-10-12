@@ -115,6 +115,8 @@ import { initModalX as mxInitModalX } from "./modalx.js";   // TH function tools
 
 import { initW8 as w8InitW8 } from "./w8_init.js";   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_*.js)
 import { mockValidateW8 as w8MockValidate } from "./mock_w8.js";   // W8 ?mock=1 validation
+import { initWbProps as wbInitProps } from "./wb_init.js";   // Wave B ortho / slab / deck / CF / composite / line-area springs (js/wb_*.js)
+import { wbMockValidate as wbMockValidateProps } from "./mock_wb.js";   // Wave B ?mock=1 validation
 
 /* ------------------------------------------------ state */
 const store = {
@@ -308,7 +310,8 @@ async function postModel(payload) {
       || c9MockValidateTowers(payload)   // C9 towers
       || c9fMockValidate(payload)   // C9 follow-ups: control_tower
       || relMockValidate(payload)   // end releases / partial fixity / joint local axes
-      || w8MockValidate(payload);   // W8 master/similar stories · curves · shell options
+      || w8MockValidate(payload)   // W8 master/similar stories · curves · shell options
+      || wbMockValidateProps(payload);   // Wave B properties (js/mock_wb.js)
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -8591,6 +8594,7 @@ async function boot() {
 
   try { a8InitResults(window.__sky); } catch (err) { console.error("A8 results init failed", err); }   // spandrels · results export · report plus (js/a8results.js)
 
+  try { wbInitProps(window.__sky); } catch (err) { console.error("Wave B properties init failed", err); }   // Wave B (js/wb_init.js)
   try { w8InitW8(window.__sky); } catch (err) { console.error("W8 init failed", err); }   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_init.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass

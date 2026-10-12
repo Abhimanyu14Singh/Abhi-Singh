@@ -2008,6 +2008,8 @@ def _build_catalogue() -> List[Table]:
 
     from .modeltables_ext import extend_catalogue as _w8_extend
     _w8_extend(T)        # W8: DB-edit coverage (core/modeltables_ext.py)
+    from .props_tables import extend_catalogue as _wbp_extend
+    _wbp_extend(T)       # Wave B: ortho / slab / spring props (props_tables)
     return T
 
 

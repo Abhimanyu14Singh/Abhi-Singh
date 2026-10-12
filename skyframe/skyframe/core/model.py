@@ -55,6 +55,7 @@ from skyframe.core import analysis_options as _aopt  # solver/convergence
 from skyframe.core import rs_ext as _rsx  # RS ecc / U3 / angle / CQC3
 
 from skyframe.core import modal_cases as _mcs  # mass sources / modal cases
+from skyframe.core import props_ext as _wbp  # Wave B ortho/slab/CF/springs
 from skyframe.core.builtup import (  # v1.21 built-up sections
     model_to_dict as _builtup_to_dict, model_from_dict as _builtup_from_dict)
 
@@ -94,6 +95,9 @@ def _polygon_area3d(pts: List[Tuple[float, float, float]]) -> float:
 MATERIAL_TYPES = ("steel", "concrete", "rebar", "tendon", "masonry",
                   "aluminum", "coldformed", "other")
 MATERIAL_SYMMETRY = ("isotropic", "uniaxial")
+# Wave B: orthotropic shells / timber (skyframe.core.ortho) - accepted by
+# validation in addition to MATERIAL_SYMMETRY (anisotropic stays out)
+MATERIAL_SYMMETRY_EXT = MATERIAL_SYMMETRY + ("orthotropic",)
 
 # v1.12 self-mass source modes (BuildingModel.mass_source_mode).
 MASS_SOURCE_MODES = ("weight", "element_self_mass")
@@ -179,9 +183,14 @@ class Material:
     # hard-coded fiber / layer laws, bit-identical).  Shape and semantics:
     # skyframe.core.stress_strain / CONTRACT "v1.13 additions".
     stress_strain: Optional[dict] = None
+    # Wave B orthotropic constants {E2, G12, G13, G23} (kPa; E = E1,
+    # nu = nu12) - skyframe.core.ortho; None = isotropic (omitted).
+    ortho: Optional[dict] = None
 
     @property
     def G(self) -> float:
+        if self.ortho is not None and self.symmetry == "orthotropic":
+            return float(self.ortho["G12"])          # Wave B (G12)
         return self.E / (2.0 * (1.0 + self.nu))
 
     @property
@@ -215,7 +224,7 @@ class Material:
         d["mass_per_volume"] = self.mass_per_volume
         d["Fye"] = self.Fye
         d["Fue"] = self.Fue
-        return d
+        return _wbp.material_to_dict(d)     # Wave B ortho (when set)
 
 
 def material_from_dict(md: dict, name: Optional[str] = None) -> "Material":
@@ -250,7 +259,8 @@ def material_from_dict(md: dict, name: Optional[str] = None) -> "Material":
         lam=float(md.get("lam", 1.0)),
         color=str(md.get("color", "")),
         notes=str(md.get("notes", "")),
-        stress_strain=normalize_stress_strain(md.get("stress_strain")))
+        stress_strain=normalize_stress_strain(md.get("stress_strain")),
+        ortho=_wbp._ortho.normalize_ortho(md.get("ortho")))   # Wave B
 
 
 def default_material_library() -> Dict[str, "Material"]:
@@ -428,6 +438,13 @@ class ShellSection:
     # ShellMITC4/ShellDKGT) | shell_thin | shell_thick | membrane |
     # plate_thin | plate_thick
     shell_type: str = "shell"
+    # Wave B (skyframe.core.slab_props / ortho; None = unset, omitted):
+    # slab property type, orthotropic laminate (CLT) and the section-level
+    # one-way load distribution inherited by membrane slabs.
+    slab: Optional[dict] = None
+    laminate: Optional[dict] = None
+    distribution: Optional[str] = None
+    one_way_dir: Optional[int] = None
 
     @property
     def total_thickness(self) -> float:
@@ -440,7 +457,7 @@ class ShellSection:
         d = asdict(self)
         d.pop("shell_type", None)            # emitted only when non-default
         d.update(_sht.section_extra_to_dict(self))
-        return d
+        return _wbp.shell_section_to_dict(d)   # Wave B (when set)
 
 
 # --------------------------------------------------------------------------- #
@@ -920,6 +937,7 @@ class ShellRegion:
     source_ref: Optional[dict] = None      # exchange origin (when set)
 
     spandrel: str = ""                     # spandrel label (core.spandrels)
+    distribution_override: bool = False    # Wave B: keep own distribution
 
     @property
     def area(self) -> float:
@@ -960,8 +978,14 @@ class ShellRegion:
 
     @property
     def net_area(self) -> float:
-        """Gross area minus the exact opening area (m^2)."""
-        return self.area - self.opening_area
+        """Gross area minus the exact opening area (m^2).
+
+        Wave B drop panels (core.slab_props.assign_drop_overlaps): a drop
+        region's area is its overlap with its hosts; a host loses it."""
+        if "_drop_area" in self.__dict__:
+            return self.__dict__["_drop_area"]
+        return (self.area - self.opening_area
+                - self.__dict__.get("_drop_overlap", 0.0))
 
     def to_dict(self) -> dict:
         return {"uid": self.uid, "kind": self.kind, "behavior": self.behavior,
@@ -978,7 +1002,8 @@ class ShellRegion:
                 **_sht.region_extra_to_dict(self),
                 **_towers.tag_to_dict(self),       # C9 tower (when set)
                 **_xch.ref_to_dict(self),          # exchange (when set)
-                **_spd.tag_to_dict(self)}          # spandrel (when set)
+                **_spd.tag_to_dict(self),          # spandrel (when set)
+                **_wbp.region_to_dict(self)}       # Wave B (when set)
 
 
 # --------------------------------------------------------------------------- #
@@ -1152,11 +1177,13 @@ class LineSpring:
     kx: float = 0.0
     ky: float = 0.0
     compression_only: bool = False
+    property: Optional[str] = None         # Wave B named line spring prop
 
     def to_dict(self) -> dict:
         return {"p1": list(self.p1), "p2": list(self.p2),
                 "kz": self.kz, "kx": self.kx, "ky": self.ky,
-                "compression_only": self.compression_only}
+                "compression_only": self.compression_only,
+                **_wbp.line_spring_to_dict(self)}   # Wave B (when set)
 
 
 @dataclass
@@ -2206,6 +2233,11 @@ class BuildingModel:
     mass_sources: Dict[str, dict] = field(default_factory=dict)
     modal_cases: Dict[str, dict] = field(default_factory=dict)
 
+    # Wave B named line / area spring properties (core.spring_dist);
+    # emitted by to_dict only when non-empty.
+    line_spring_properties: Dict[str, dict] = field(default_factory=dict)
+    area_spring_properties: Dict[str, dict] = field(default_factory=dict)
+
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
         self.materials[mat.name] = mat
@@ -3190,6 +3222,8 @@ class BuildingModel:
 
     @staticmethod
     def _validate_line_spring(ls: LineSpring) -> None:
+        if getattr(ls, "property", None) is not None:
+            return          # Wave B named property: core.spring_dist
         for key in ("kz", "kx", "ky"):
             v = getattr(ls, key)
             if not (isinstance(v, (int, float)) and math.isfinite(v)
@@ -3208,8 +3242,8 @@ class BuildingModel:
     @staticmethod
     def _validate_area_spring(region: "ShellRegion") -> None:
         asp = region.area_spring
-        if asp is None:
-            return
+        if asp is None or (isinstance(asp, dict) and "property" in asp):
+            return          # Wave B named property: core.spring_dist
         if not isinstance(asp, dict):
             raise ValueError(f"Shell {region.uid}: area_spring must be a "
                              "dict {kz, compression_only}")
@@ -3631,6 +3665,7 @@ class BuildingModel:
         ``self_mass`` / ``patterns`` (or the explicit arguments) switch each
         part off independently.  With both on (the defaults) the summation
         order is unchanged -> bit-identical to pre-v1.13."""
+        _wbp._slab.assign_drop_overlaps(self)   # Wave B drop panels
         if self.towers:                     # C9: tower by tower
             return _towers.story_masses(self, self_mass, patterns)
         inc_self = (self.mass_option("self_mass") if self_mass is None
@@ -3756,7 +3791,7 @@ class BuildingModel:
         if mat.material_type not in MATERIAL_TYPES:
             raise ValueError(f"Material {mat.name!r}: material_type must be one "
                              f"of {MATERIAL_TYPES}, got {mat.material_type!r}")
-        if mat.symmetry not in MATERIAL_SYMMETRY:
+        if mat.symmetry not in MATERIAL_SYMMETRY_EXT:   # + Wave B ortho
             raise ValueError(f"Material {mat.name!r}: symmetry {mat.symmetry!r} "
                              "not supported (orthotropic/anisotropic are out "
                              "of analysis scope)")
@@ -3985,6 +4020,7 @@ class BuildingModel:
         _spd.validate(self)                 # spandrel labels
         _mcs.validate(self)                 # mass sources / modal cases
         _simst.validate(self)               # W8 master / similar stories
+        _wbp.validate_model(self)           # Wave B ortho/slab/CF/springs
 
     def _validate_exchange(self) -> None:
         """Rhino/GH exchange fields (see core.rhino_exchange_fields)."""
@@ -4235,6 +4271,8 @@ class BuildingModel:
             **_spd.model_to_dict(self),  # spandrel labels (if any)
 
             **_mcs.model_to_dict(self),  # mass sources / modal cases (if any)
+
+            **_wbp.model_to_dict(self),  # Wave B line/area spring props
         }
 
     @classmethod
@@ -4339,10 +4377,7 @@ class BuildingModel:
                 **_dia.member_extra_from_dict(md)))
         for rd in d.get("shells") or []:
             asp = rd.get("area_spring")        # v0.22 (absent/None = none)
-            if asp is not None:
-                asp = {"kz": float(asp["kz"]),
-                       "compression_only": bool(asp.get("compression_only",
-                                                        False))}
+            asp = _wbp.area_spring_from_dict(asp)   # + Wave B named prop
             mdl.shells.append(ShellRegion(
                 uid=rd["uid"], kind=rd["kind"], behavior=rd["behavior"],
                 section=rd.get("section", ""),
@@ -4688,6 +4723,7 @@ class BuildingModel:
         _spd.model_from_dict(mdl, d)        # spandrel labels / tags
 
         _mcs.model_from_dict(mdl, d)        # mass sources / modal cases
+        _wbp.model_from_dict(mdl, d)        # Wave B ortho/slab/springs
         mdl.validate()
         return mdl
 
