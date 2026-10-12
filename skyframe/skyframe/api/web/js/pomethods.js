@@ -26,8 +26,8 @@ import {
   mockPushoverPerformance as poxMockPerformance,
 } from "./mock_pomethods.js";
 
-const POX_SHORT = { asce41: "ASCE 41", atc40: "ATC-40", fema440: "FEMA 440 EL", n2: "EC8 N2" };
-const POX_COLORS = { asce41: "#e05d5d", atc40: "#e5a50a", fema440: "#5ccf8a", n2: "#c58af9" };
+const POX_SHORT = { asce41: "ASCE 41", atc40: "ATC-40", fema440: "FEMA 440 EL", n2: "EC8 N2", fema440_dm: "FEMA 440 DM" };
+const POX_COLORS = { asce41: "#e05d5d", atc40: "#e5a50a", fema440: "#5ccf8a", n2: "#c58af9", fema440_dm: "#4fa3e0" };
 const POX_TOGGLES = [
   ["capacity", "Capacity spectrum", true], ["bilinear", "Bilinear", true], ["demand", "Demand 5 %", true],
   ["atc40", "ATC-40 reduced", true], ["fema440", "FEMA 440 MADRS", true], ["n2", "N2 EPP", true],
@@ -63,8 +63,10 @@ function poxCanonical(w) {
     spec = { code: "asce7", SDS: sp.SDS, SD1: sp.SD1 };
     if (sp.TL != null) spec.TL = sp.TL;
   }
-  return { methods: POX_METHODS.filter(m => (w.methods || []).includes(m)), spectrum: spec,
+  const out = { methods: POX_METHODS.filter(m => (w.methods || []).includes(m)), spectrum: spec,
     site_class: w.site_class, behavior: w.behavior, atc40_procedure: w.atc40_procedure };
+  for (const k of ["cm_system", "Cm", "near_field", "alpha_pdelta"]) if (w[k] != null && w[k] !== "") out[k] = w[k];   // Wave C optional keys
+  return out;
 }
 
 export function initPoMethods(sky) {
@@ -160,6 +162,13 @@ export function initPoMethods(sky) {
         ]),
         poxGroup("ASCE 41 Coefficient Method", [
           F.select(w, "site_class", ["A", "B", "C", "D", "E", "F"].map(c => [c, "Site class " + c]), { label: "Site class (C1)", id: "poxSite" }),
+          /* Wave C: ASCE 41-17 Table 7-4 Cm + FEMA 440 DM near field (core/pushover_coeff.py) */
+          F.select(w, "cm_system", [["", "Cm = 1.0 (not set)"], ["concrete_moment_frame", "Concrete moment frame (0.9)"], ["concrete_shear_wall", "Concrete shear wall (0.8)"],
+            ["concrete_pier_spandrel", "Concrete pier-spandrel (0.8)"], ["steel_moment_frame", "Steel moment frame (0.9)"], ["steel_cbf", "Steel CBF (0.9)"],
+            ["steel_ebf", "Steel EBF (0.9)"], ["other", "Other (1.0)"]], { label: "System for Cm (Table 7-4)", id: "poxCmSys",
+            read: () => w.cm_system || "", write: v => { if (v) w.cm_system = v; else delete w.cm_system; }, hint: "3+ stories and Te ≤ 1 s; also used by FEMA 440 DM" }),
+          F.check(w, "near_field", { label: "Near-field site (FEMA 440 DM λ = 0.2)", id: "poxNear", read: () => !!w.near_field,
+            write: on => { if (on) w.near_field = true; else delete w.near_field; } }),
         ]),
       );
     }

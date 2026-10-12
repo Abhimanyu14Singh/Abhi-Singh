@@ -1930,6 +1930,8 @@ def _build_catalogue() -> List[Table]:
             Col("nonlinear", "Nonlinear", "bool", default=False),
             Col("damping_model", "Damping Model", "enum",
                 enum=TH_DAMPING_MODELS, default="rayleigh"),
+            Col("th_type", "Solution Type", "enum",       # Wave C
+                enum=("direct", "modal", "fna"), default="direct"),
         ], container="th_cases", keycol="name", on_rename=_cascade_case,
         delete_refs=_case_refs,
         new_obj=lambda d: {"accel": [], "dt": 0.0, "damping": 0.05,

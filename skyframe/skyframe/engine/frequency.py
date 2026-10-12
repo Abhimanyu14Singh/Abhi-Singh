@@ -70,6 +70,10 @@ def modal_frf(omegas: np.ndarray, w: np.ndarray, zeta: float,
     """Modal receptances ``H[k, i]`` at circular frequencies ``w[k]``."""
     om = np.asarray(omegas, dtype=float)[None, :]
     ww = np.asarray(w, dtype=float)[:, None]
+    from skyframe.core import wavec_dyn as _wcd     # Wave C per-mode zeta
+    pm = _wcd.per_mode_of(zeta, om.shape[1])
+    if pm is not None:
+        zeta = np.asarray(pm, dtype=float)[None, :]
     if damping_type == "hysteretic":
         return 1.0 / (om * om * (1.0 + 2.0j * zeta) - ww * ww)
     return 1.0 / (om * om - ww * ww + 2.0j * zeta * om * ww)
@@ -385,6 +389,9 @@ def run_steady_state(eng, name: str) -> dict:
     case = getattr(model, "steady_state_cases", {}).get(name)
     if case is None:
         raise ValueError(f"Unknown steady-state case {name!r}")
+    from skyframe.engine import modal_damping as _mdx   # Wave C damping
+    if _mdx.wants(eng, case):
+        return _mdx.run_freq(eng, name, "ss")
     b = _build_basis(eng, case)
     lay = b.layout
     f = frequency_grid(case, b.modal_freqs_hz)
@@ -459,6 +466,9 @@ def run_psd(eng, name: str) -> dict:
     case = getattr(model, "psd_cases", {}).get(name)
     if case is None:
         raise ValueError(f"Unknown PSD case {name!r}")
+    from skyframe.engine import modal_damping as _mdx   # Wave C damping
+    if _mdx.wants(eng, case):
+        return _mdx.run_freq(eng, name, "psd")
     b = _build_basis(eng, case)
     lay = b.layout
     f = frequency_grid(case, b.modal_freqs_hz)

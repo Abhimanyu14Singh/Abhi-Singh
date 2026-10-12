@@ -120,7 +120,7 @@ def test_run_attaches_performance_only_when_configured():
     p = r1["pushover"]["PO"]["performance"]
     # the curve itself is unchanged by the option
     assert r1["pushover"]["PO"]["roof_disp"] == r0["pushover"]["PO"]["roof_disp"]
-    assert [r["method"] for r in p["summary"]] == list(pm.METHODS)
+    assert [r["method"] for r in p["summary"]] == list(pm.LEGACY_METHODS)
     for r in p["summary"]:
         assert r["roof_disp"] is not None and r["roof_disp"] > 0.0, r
         assert r["step"] is not None

@@ -14450,3 +14450,142 @@ byte-identical; pier / spandrel / link diagrams change the canvas (pixel
 diff); TH / mode / deformed videos are non-empty WebM blobs of the requested
 duration (`video.duration` 1.5 s / 2 s); Compare Results flags a deliberately
 changed value; kip-in labels; zero console errors).
+
+## Eigen shift / cutoff / tolerance, modal history and FNA case types, TH initial conditions, FNA links, RS / steady-state modal damping, pushover any DOF, Cm / TL / FEMA 440 DM, shell creep (Wave C dynamics)
+
+Model side `core/wavec_dyn.py` (+ `core/pushover_coeff.py`, `core/fna_devices_ext.py`);
+engine `engine/eigen_shift.py`, `engine/wavec_th.py`, `engine/fna_links_ext.py`,
+`engine/modal_damping.py`, `engine/shell_creep.py`. Every default reproduces the
+previous results byte-identically (nothing new is emitted while unset).
+
+### Eigen parameters
+
+```json
+"eigen_options": {"shift": 2.5, "cutoff": 1.0, "tolerance": 1e-9},
+"modal_cases": {"MSH": {"type": "eigen", "num_modes": 6, "shift": 4.0}}
+```
+
+* `shift` Hz >= 0 (center), `cutoff` Hz >= 0 (radius, 0 = none), `tolerance` in (0, 0.01]
+  (default 1e-9). `eigen_options` = the default MODAL case (emitted only when non-empty);
+  the same keys on an eigen modal case (not with `stiffness_case`, not Ritz, not with
+  `modal_from_case`).
+* Method: exact condensation onto the massed DOFs (`A = M^1/2 G_mm M^1/2`), shift-invert
+  subspace iteration `S = (I - sigma A)^-1 A`, `sigma = (2 pi shift)^2`, Rayleigh-Ritz,
+  stopping when every retained eigenvalue changes by less than `tolerance`. Retained = the
+  `num_modes` modes nearest the shift with `|f - shift| <= cutoff`, reported in ascending
+  frequency. A shift exactly on an eigenvalue is nudged by 1e-7. Cap: 4000 massed DOFs.
+* `modal.eigen` (and `modal_cases[n].eigen`) = `{shift, cutoff, tolerance, sigma, requested,
+  found, iterations, converged}`.
+
+### TH case types (`TimeHistoryCase.th_type`, emitted only when not "direct")
+
+* `"direct"` (default) | `"modal"` (Linear Modal History) | `"fna"` (Nonlinear Modal
+  History). The case stays in `th_cases` (results in `th_cases`, combinations unchanged).
+  `model.case_kinds()` reports `"modal_history"` / `"fna"`. `run()`, Set Load Cases to Run
+  and `run_time_history` run the case by its own method, and the results carry
+  `th_cases[n].th_type`.
+* `modal`: device links are replaced by their FNA linear part, then a device-free modal
+  integration runs. `fna`: `run_fna`. Both reject `nonlinear` (hinges) and DI options;
+  `modal` also rejects gravity / initial_case. DB table `th_cases` has a `th_type` column.
+
+### TH initial conditions (`initial_case`)
+
+* May name a nonlinear static OR a staged case (validation, dependency plan).
+* Direct integration: legacy chains (load control, no hinges) are unchanged. Other NLS
+  chains (hinged / displacement control, geometric none) are replayed in the TH domain;
+  the hinges are the TH case's own if it defines any, else the predecessor's. Staged: the
+  end displacements are imposed (`setNodeDisp`, one zero Linear step, then `F(u_s)` as
+  constant loads), so the domain starts at `u_s` in equilibrium. Staged locked-in
+  self-equilibrated forces are not represented.
+* `th_cases[n].initial_state = {case, kind: "nonlinear_static"|"staged", hinges_from?,
+  max_disp_mismatch?}`. FNA also accepts a staged `initial_case` (device `d0` from `u_s`).
+
+### FNA links (amends "Link types: Plastic (Wen), BRB, bilinear damper, T/C friction isolator")
+
+| type | device | rows | basis |
+|---|---|---|---|
+| `multilinear_takeda` / `multilinear_pivot` (+ C5 `multilinear_degrading` with `points`) | OpenSees `Hysteretic` law transcribed (`pinch_x`/`pinch_y`/`unload_beta`/`points_neg` when present) | 2 shear | `[k1, k1, kv]` |
+| `brb` | Menegotto-Pinto, asymmetric kinematic (Steel4 `-asym -kin`) | 1 axial | none |
+| `damper_bilinear` | Maxwell + bilinear dashpot | 1 axial | none |
+| `tc_fp_isolator` | friction pendulum, zero axial / shear in uplift, hold-down | 3 | `[k0 + N/R, k0 + N/R, kv]` (needs gravity / initial_case) |
+
+`th_cases[n].fna.devices` names `HystereticDevice`, `MenegottoPintoAsym`, `BilinearDamper`
+and `TCFrictionPendulum`. Hinged FNA cases still raise.
+
+### Modal damping of RS / steady-state / PSD cases
+
+```json
+"modal_damping": {"type": "interpolated_period", "points": [[0.1, 0.03], [1.0, 0.05]],
+                  "overrides": {"2": 0.10}, "sa_correction": "ec8", "function_damping": 0.05}
+```
+
+* `type`: constant | interpolated_period | interpolated_frequency | mass_stiffness
+  (`a0`/`a1`, or `periods` + `ratios`) | composite (`material_damping`, strain energy).
+  `overrides` per mode (1-based). `sa_correction` (RS only): none | ec8
+  (`eta = sqrt(10/(5+100 zeta)) >= 0.55`, relative to `function_damping`).
+* RS: Der Kiureghian variable-damping CQC (and per-mode DSC). Results:
+  `rs_cases[n].rs.modal_damping = {type, zetas, sa_factors?, composite?}`.
+  Steady state / PSD: `H_i = 1/(w_i^2 - w^2 + 2 i zeta_i w_i w)`. Results:
+  `steady_state[n].modal_damping` / `psd[n].modal_damping`.
+
+### Pushover
+
+* `PushoverCase.control_dof` is any of UX UY UZ RX RY RZ. UZ / R* with displacement
+  control need `target_disp` (m or rad). A rigid-diaphragm slave drives its master only
+  for UX / UY / RZ. `capacity_curve.dof` is the label. SkyFrame has no generalized
+  displacements, so that control option is not offered.
+* ASCE 41-17: `POST /api/results/performance-point` accepts `TL` (s), and `system` (a
+  Table 7-4 key: concrete_moment_frame 0.9, concrete_shear_wall 0.8, concrete_pier_spandrel
+  0.8, steel_moment_frame 0.9, steel_cbf 0.9, steel_ebf 0.9, other 1.0; applies for 3+
+  stories and Te <= 1 s) or `Cm`. `PushoverCase.performance` accepts `cm_system`, `Cm`,
+  `near_field` and `alpha_pdelta` (emitted only when set). Results add `TL` / `system` only
+  when given.
+* Method `"fema440_dm"` (FEMA 440 displacement modification; not in the default method
+  list): `delta_t = C0 C1 C2 Sa Te^2 g / 4 pi^2`, C1 Eq. 5-1, C2 Eq. 5-2,
+  `R = Sa / (Vy/W) Cm`, `R_max` Eq. 5-4 with `alpha_e` Eq. 5-5 (post-peak slope; lambda 0.8,
+  or 0.2 near field) -> `dynamic_instability`. Keys: `R, Cm, C0, C1, C2, delta_t, alpha_2,
+  alpha_e, lambda, R_max, dynamic_instability` plus the bilinearization.
+
+### Shell creep / shrinkage (step staged)
+
+* `StagedCase.time_dependent.shell_creep: true` (method `step` only). The default (off)
+  keeps the legacy ageing-only shells. The element-average mechanical membrane strain and
+  curvature come from the nodal displacements (boundary integral). Bazant superposition
+  uses the shell law's `J(t, tau)` and shrinkage. The imposed strains enter as the exact
+  work-equivalent nodal loads of a constant strain (membrane `(L/2) N0 n`, bending moment
+  `h2 e1 - h1 e2` with `h = (L/2) M0 n`), and the shell modulus is `1/J` as for frames.
+  Shrinkage is uniform per region; creep is per element.
+
+### UI
+
+* `js/wavec_dyn.js` (+ `js/mock_wavec_dyn.js`): Analyze › Advanced › **Eigen Parameters…**
+  (`an-wc-eigen`) and **Modal Damping (RS / SS)…** (`an-wc-mdamp`); Define › Load Cases ›
+  **Time History Solution Type…** (`def-wc-thtype`). Hooks: `app.js` (1 import, 1 init),
+  `casedlg.js` (pushover DOF options), `pomethods.js` / `mock_pomethods.js` (Cm system,
+  near field, FEMA 440 DM method), `timedep.js` (shell creep checkbox).
+
+### Validation (`tests/test_wavec_dynamics.py`)
+
+* 12-mass shear chain against the hand eigenvalues
+  `lambda_j = 2k/m (1 - cos((2j-1) pi / (2N+1)))`: the shift returns the 3 nearest modes
+  (rel 1e-8); the cutoff keeps exactly 1.
+* Linear modal history = direct integration with 9 modes, within 1e-6 of the peak
+  (measured 4e-16; the last two samples are excluded because of the end-of-record
+  convention).
+* NL TH from staged: domain displacement mismatch <= 1e-9 u_max (measured 1e-18), and a zero
+  record stays at u_s. A hinged load-control NLS predecessor runs.
+* The Takeda / Pivot law equals OpenSees `Hysteretic` on random cyclic paths to 1e-9; FNA vs
+  DI on 4 bearings is within 2 % (measured < 1e-5). The BRB law equals Steel4 on full cycles
+  to 1e-12 (small noisy reversals differ by up to ~5 % because of Steel4 branch memory); FNA
+  vs DI 0.35 %. Bilinear damper 6e-5. T/C isolator FNA 0.8 % vs DI; the device carries 0
+  axial / shear in uplift, plus the hold-down.
+* RS with interpolated + override damping equals independent modal statics + Der Kiureghian
+  CQC (1e-6), with the EC8 eta correction. Composite ratios equal the energy-share hand sums.
+  Steady-state receptance with per-mode zetas matches to 1e-6.
+* Pushover RZ control: final base shear = theta / (rz per kN) (linear, 1e-6).
+* ASCE 41 Cm (Table 7-4) and the TL branch `SD1 TL / T^2`. FEMA 440 C1 = 1 + 2/15 and
+  C2 = 1.02 at R = 3, Te = 0.5 s, site D; R_max Eq. 5-4 by hand.
+* Shell creep: cantilever slab tip deflection = elastic x (1 + phi) within 2 %. Free slab
+  shrinkage = eps_sh L and eps_sh B (1e-6), with zero reactions.
+* Legacy hashes (3-story building run / FNA / pushover performance / ASCE 41 / step-staged
+  slab) are identical. Playwright on port 8726: mock + live 32/32.

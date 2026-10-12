@@ -367,7 +367,7 @@ def test_evaluate_all_methods_consistent():
     out = pm.evaluate(disp, shear, modal=modal, options={
         "spectrum": {"code": "asce7", "SDS": 1.0, "SD1": 0.6}})
     rows = {r["method"]: r for r in out["summary"]}
-    assert list(rows) == list(pm.METHODS)
+    assert list(rows) == list(pm.LEGACY_METHODS)   # Wave C: fema440_dm opt-in
     # FEMA 440 / ATC-40 rows equal the stand-alone solutions
     hand = _hand_fema440_dp(1.0, 0.6)
     assert rows["fema440"]["Sd"] == pytest.approx(hand, rel=1e-5)

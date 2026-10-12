@@ -9,11 +9,16 @@
    PF1·phi_roof = 1.3, W = stories × 500 t × g). */
 
 const G = 9.81;
-export const POX_METHODS = ["asce41", "atc40", "fema440", "n2"];
+export const POX_METHODS = ["asce41", "atc40", "fema440", "n2", "fema440_dm"];   // Wave C: + FEMA 440 DM
 export const POX_LABELS = {
   asce41: "ASCE 41-17 coefficient method", atc40: "ATC-40 capacity spectrum",
   fema440: "FEMA 440 equivalent linearization", n2: "EN 1998-1 Annex B (N2)",
+  fema440_dm: "FEMA 440 displacement modification",
 };
+/* Wave C: ASCE 41-17 Table 7-4 Cm (3+ stories, Te <= 1 s) — mirrors core/pushover_coeff.py */
+export const POX_CM = { concrete_moment_frame: 0.9, concrete_shear_wall: 0.8, concrete_pier_spandrel: 0.8,
+  steel_moment_frame: 0.9, steel_cbf: 0.9, steel_ebf: 0.9, other: 1.0 };
+const poxCm = (o, n, Te) => o.Cm != null ? o.Cm : (!o.cm_system || n <= 2 || Te > 1.0 ? 1.0 : POX_CM[o.cm_system]);
 export const POX_DEFAULTS = {
   methods: ["asce41", "atc40", "fema440", "n2"],
   spectrum: { code: "asce7", SDS: 1.0, SD1: 0.6 },
@@ -30,7 +35,7 @@ const num = v => typeof v === "number" && isFinite(v);
 /** Options with defaults filled; throws on invalid input (backend rules). */
 export function poxNormalize(perf) {
   const p = perf == null ? {} : perf;
-  const allowed = Object.keys(POX_DEFAULTS);
+  const allowed = [...Object.keys(POX_DEFAULTS), "cm_system", "Cm", "near_field", "alpha_pdelta"];   // + Wave C optional keys
   for (const k of Object.keys(p)) if (!allowed.includes(k)) throw new Error(`performance: unknown key ${k}`);
   const o = JSON.parse(JSON.stringify({ ...POX_DEFAULTS, ...p }));
   if (!Array.isArray(o.methods) || !o.methods.length || o.methods.some(m => !POX_METHODS.includes(m)) ||
@@ -47,6 +52,8 @@ export function poxNormalize(perf) {
   if (!["A", "B", "C", "D", "E", "F"].includes(o.site_class)) throw new Error("site_class must be A..F");
   if (!["A", "B", "C"].includes(o.behavior)) throw new Error("behavior must be A, B or C");
   if (!["A", "B"].includes(o.atc40_procedure)) throw new Error("atc40_procedure must be A or B");
+  if (o.cm_system != null && !(o.cm_system in POX_CM)) throw new Error("performance.cm_system must be one of " + Object.keys(POX_CM).join(", "));
+  if (o.Cm != null && !(num(o.Cm) && o.Cm > 0 && o.Cm <= 1)) throw new Error("performance.Cm must be in (0, 1]");
   return o;
 }
 
@@ -292,7 +299,7 @@ function n2(disp, shear, gamma, mStar, spec) {
     d_star_et: det, qu, d_star_t: dt, rule, dt: gamma * dt, epp: { d_star: [0, dy, Math.max(dm, dt)], F_star: [0, Fy, Fy] } };
 }
 
-function asce41(disp, shear, Ti, W, spec, site, stories) {
+function asce41(disp, shear, Ti, W, spec, site, stories, cmOpts = {}) {
   const d = [0, ...disp], v = [0, ...shear];
   let ip = 0;
   v.forEach((x, i) => { if (x > v[ip]) ip = i; });
@@ -312,7 +319,7 @@ function asce41(disp, shear, Ti, W, spec, site, stories) {
   }
   const elastic = Vy >= Vu * (1 - 1e-12);
   const Ke = elastic ? Ki : 0.6 * Vy / interpD(0.6 * Vy);
-  const Te = Ti * Math.sqrt(Ki / Ke), Sa = spec.sa(Te), mu = Sa / (Vy / W);
+  const Te = Ti * Math.sqrt(Ki / Ke), Sa = spec.sa(Te), Cm = poxCm(cmOpts, stories, Te), mu = Sa / (Vy / W) * Cm;
   const aF = { A: 130, B: 130, C: 90, D: 60, E: 60, F: 60 }[site];
   const C1 = Te >= 1 ? 1 : 1 + (mu - 1) / (aF * Math.max(Te, 0.2) ** 2);
   const C2 = Te > 0.7 ? 1 : 1 + ((mu - 1) / Te) ** 2 / 800;
@@ -321,7 +328,7 @@ function asce41(disp, shear, Ti, W, spec, site, stories) {
   let C0 = 1.5;
   for (let i = 0; i + 1 < C0T.length; i++) { const [n1, c1] = C0T[i], [n2_, c2] = C0T[i + 1]; if (n <= n2_) { C0 = n <= n1 ? c1 : c1 + (c2 - c1) * (n - n1) / (n2_ - n1); break; } }
   const delta_t = C0 * C1 * C2 * Sa * (Te / (2 * Math.PI)) ** 2 * G;
-  return { Ki, Ke, Vy, dy: Vy / Ke, du, Vu, area, elastic, Te, Ti, Sa, mu, Cm: 1, C0, C1, C2, W, site_class: site, delta_t };
+  return { Ki, Ke, Vy, dy: Vy / Ke, du, Vu, area, elastic, Te, Ti, Sa, mu, Cm, C0, C1, C2, W, site_class: site, delta_t };
 }
 
 const interp = (xs, ys, x) => {
@@ -350,7 +357,12 @@ export function poxEvaluate(disp, shear, modal, options, numStories = 1) {
   for (const key of opts.methods) {
     try {
       if (key === "asce41") {
-        const res = asce41(disp, shear, modal.T, W, spec, opts.site_class, numStories);
+        const res = asce41(disp, shear, modal.T, W, spec, opts.site_class, numStories, opts);
+        methods[key] = res; row(key, res.delta_t / pf, { Teff: res.Te, beta_eff: null, converged: true });
+      } else if (key === "fema440_dm") {                       // Wave C (core/pushover_coeff.py)
+        const a = asce41(disp, shear, modal.T, W, spec, opts.site_class, numStories, opts);
+        const res = { ...a, R: a.mu, alpha_2: null, alpha_e: null, R_max: null, dynamic_instability: false, lambda: opts.near_field ? 0.2 : 0.8 };
+        delete res.mu;
         methods[key] = res; row(key, res.delta_t / pf, { Teff: res.Te, beta_eff: null, converged: true });
       } else if (key === "atc40") {
         const res = atc40(cap, spec, opts.behavior, opts.atc40_procedure);

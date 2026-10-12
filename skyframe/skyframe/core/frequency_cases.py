@@ -149,8 +149,10 @@ class _FrequencyCaseBase:
     damping: float = 0.05
     damping_type: str = "modal"
     output_points: List[List[float]] = field(default_factory=list)
+    modal_damping: Optional[dict] = None    # Wave C (core.wavec_dyn)
 
     def to_dict(self) -> dict:
+        from skyframe.core.wavec_dyn import md_to_dict_extra
         return {"name": self.name,
                 "loads": [ld.to_dict() for ld in self.loads],
                 "freq_start_hz": float(self.freq_start_hz),
@@ -163,7 +165,8 @@ class _FrequencyCaseBase:
                 "damping": float(self.damping),
                 "damping_type": self.damping_type,
                 "output_points": [[float(c) for c in p]
-                                  for p in self.output_points]}
+                                  for p in self.output_points],
+                **md_to_dict_extra(self)}       # Wave C modal damping
 
 
 @dataclass

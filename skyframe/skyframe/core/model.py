@@ -70,6 +70,7 @@ from skyframe.core import pushover_methods as _po_methods  # ATC-40/FEMA 440/N2
 from skyframe.core import links_ext as _lkx
 from skyframe.core import link_freq as _lfq
 from skyframe.core import composite_damping as _cpd
+from skyframe.core import wavec_dyn as _wcd  # Wave C: eigen shift / TH types / RS damping
 
 G_ACCEL = 9.80665  # m/s^2
 _PLANAR_TOL = 1e-6  # m
@@ -1431,6 +1432,7 @@ class ResponseSpectrumCase:
     ecc_ax: bool = False
 
     modal_case: str = ""    # named modal case (core.modal_cases; "" = MODAL)
+    modal_damping: Optional[dict] = None    # Wave C (core.wavec_dyn)
 
     def to_dict(self) -> dict:
         d = {"name": self.name, "direction": self.direction,
@@ -1449,6 +1451,7 @@ class ResponseSpectrumCase:
 
         if self.modal_case:                     # core.modal_cases (if set)
             d["modal_case"] = self.modal_case
+        d.update(_wcd.md_to_dict_extra(self))   # Wave C RS modal damping
         return d
 
 
@@ -1534,6 +1537,8 @@ class TimeHistoryCase:
     # legacy, key omitted from to_dict)
     th_output: Optional[dict] = None
 
+    th_type: str = "direct"     # Wave C: direct | modal | fna (core.wavec_dyn)
+
     def to_dict(self) -> dict:
         d = {"name": self.name, "direction": self.direction,
              "accel": [float(a) for a in self.accel],
@@ -1559,6 +1564,8 @@ class TimeHistoryCase:
                 d[key] = getattr(self, key)
         if self.th_output is not None:                    # Wave C th_output
             d["th_output"] = dict(self.th_output)
+
+        d.update(_wcd.th_to_dict_extra(self))   # Wave C TH case type
         return d
 
 
@@ -1568,7 +1575,7 @@ PUSHOVER_HINGE_MODES = ("column_base", "all_ends")
 PUSHOVER_DISTRIBUTIONS = ("roof_point", "pattern", "mode", "uniform_accel",
                           "triangular")
 PUSHOVER_CONTROL_MODES = ("displacement_control", "load_control")
-PUSHOVER_CONTROL_DOFS = ("UX", "UY")
+PUSHOVER_CONTROL_DOFS = ("UX", "UY", "UZ", "RX", "RY", "RZ")  # Wave C: any DOF
 PUSHOVER_DIST_DEFAULTS = {
     "load_distribution": "roof_point", "pattern": None, "mode_number": None,
     "k": None, "control_story": None, "control_point": None,
@@ -2311,6 +2318,10 @@ class BuildingModel:
     # effect).  Each key emitted by to_dict only when non-empty.
     workspace: Dict[str, list] = field(default_factory=dict)
 
+    # Wave C: eigen shift / cutoff / tolerance of the default MODAL case
+    # (skyframe.core.wavec_dyn); {} = legacy, emitted only when set.
+    eigen_options: Dict[str, object] = field(default_factory=dict)
+
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
         self.materials[mat.name] = mat
@@ -2973,7 +2984,8 @@ class BuildingModel:
     # allowed time_dependent keys (v0.25); days_per_story is required
     _TD_KEYS = ("days_per_story", "creep_coeff", "shrinkage", "aging",
                 "t_eval", "materials",
-                "method", "steps_per_stage", "output_times")  # step method
+                "method", "steps_per_stage", "output_times",  # step method
+                "shell_creep")                      # Wave C (engine/shell_creep)
 
     def _validate_staged_case(self, sc: StagedCase) -> None:
         user = isinstance(sc.stages, list)       # user-defined stage list
@@ -3743,6 +3755,7 @@ class BuildingModel:
         out.setdefault(MODAL_CASE, "modal")
         for n in getattr(self, "modal_cases", None) or {}:   # named modal
             out.setdefault(n, "modal")
+        _wcd.case_kinds_hook(self, out)     # Wave C modal history / FNA
         return out
 
     def compute_story_masses(self, self_mass: Optional[bool] = None,
@@ -4117,6 +4130,7 @@ class BuildingModel:
         _tho.validate(self)                 # Wave C TH shell output
         _simst.validate(self)               # W8 master / similar stories
         _wbp.validate_model(self)           # Wave B ortho/slab/CF/springs
+        _wcd.validate(self)                 # Wave C dynamics options
 
     def _validate_exchange(self) -> None:
         """Rhino/GH exchange fields (see core.rhino_exchange_fields)."""
@@ -4388,6 +4402,8 @@ class BuildingModel:
             **_wbp.model_to_dict(self),  # Wave B line/area spring props
 
             **_wks.model_to_dict(self),  # named views / report sets (if any)
+
+            **_wcd.model_to_dict(self),  # Wave C eigen options (if set)
         }
 
     @classmethod
@@ -4853,6 +4869,7 @@ class BuildingModel:
         _wbp.model_from_dict(mdl, d)        # Wave B ortho/slab/springs
 
         _wks.model_from_dict(mdl, d)        # named views / report sets / aids
+        _wcd.model_from_dict(mdl, d)        # Wave C eigen / TH type / damping
         mdl.validate()
         return mdl
 

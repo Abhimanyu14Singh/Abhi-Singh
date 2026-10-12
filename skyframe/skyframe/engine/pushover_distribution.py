@@ -270,14 +270,20 @@ def resolve_gravity(model, case) -> Dict[str, float]:
     return case.gravity
 
 
-def drive_node(asm, mon: int) -> int:
+DOF_NAMES = ("UX", "UY", "UZ", "RX", "RY", "RZ")   # Wave C: any control DOF
+
+
+def drive_node(asm, mon: int, dof: int = 1) -> int:
     """The node DisplacementControl drives for monitored joint ``mon``.
 
     A rigid-diaphragm SLAVE has no free ux/uy equation under the
     Transformation handler (DisplacementControl on it is meaningless), so
     its story master is driven instead; the capacity curve still records
-    the slave joint's own displacement.
+    the slave joint's own displacement.  Wave C: UZ / RX / RY of a slave
+    are free DOFs — the joint itself is driven.
     """
+    if dof not in (1, 2, 6):
+        return mon
     for s, mt in asm.masters.items():
         if mon in asm.story_nodes.get(s, ()):
             return mt
@@ -292,8 +298,8 @@ def resolve_control(engine, asm, case, ctrl: int, dof: int, H: float
     pre-feature values, returned untouched).
     """
     mon, mdof, Hc = ctrl, dof, H
-    if case.control_dof is not None:
-        mdof = 1 if case.control_dof == "UX" else 2
+    if case.control_dof is not None:                 # Wave C: any DOF
+        mdof = DOF_NAMES.index(case.control_dof) + 1
     if case.control_story is not None:
         sname = case.control_story
         if sname in asm.masters:

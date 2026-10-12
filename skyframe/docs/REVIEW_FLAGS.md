@@ -147,3 +147,18 @@ Each entry says where it lives.
   round trip still travel as type-only `$SF` patches.
 - DWG: no converter here (see INTEROP "DWG drawings"); DWG files are only
   detected and refused with save-as-DXF guidance.
+
+## Wave C dynamics
+- ASCE 41-17 Table 7-4 Cm values (0.9 / 0.8 / 1.0 by system, 3+ stories, Te <= 1 s) and
+  FEMA 440 Eqs. 5-1 / 5-2 / 5-4 / 5-5 (lambda 0.8 / 0.2) entered from memory - verify
+  (core/pushover_coeff.py).
+- FNA BRB law is Menegotto-Pinto with the Steel02 R rule; it equals Steel4 on full cycles
+  but differs up to ~5 % on small noisy reversals (Steel4 branch memory). BRB and the
+  bilinear damper carry no basis stiffness (use Ritz with link starts for braced frames).
+- NL TH from a staged case starts from the staged displacements with the full-structure
+  internal forces of those displacements (staged locked-in forces are not carried).
+- Eigen shift output modes are sorted by ascending frequency (ETABS lists them in the
+  order found). Shell creep uses element-average strains (O(h^2) on curvature gradients)
+  and is opt-in (time_dependent.shell_creep) so legacy step-staged shell results are kept.
+- RS spectral damping correction uses the EN 1998-1 eta; ETABS' own adjustment rule is
+  not published.

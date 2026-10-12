@@ -1555,7 +1555,9 @@ def create_app() -> Flask:
             out = target_displacement(
                 po.roof_disp, po.base_shear, Ti=Ti, W=W, SDS=sds, SD1=sd1,
                 site_class=site,
-                num_stories=len(model.stories))
+                num_stories=len(model.stories),
+                **{k: body[k] for k in ("TL", "system", "Cm")   # Wave C
+                   if body.get(k) is not None})
         except (ValueError, TypeError, KeyError) as exc:
             return jsonify({"error": str(exc)}), 400
         # nearest converged step to delta_t + its hinge state counts

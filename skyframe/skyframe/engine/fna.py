@@ -94,6 +94,10 @@ def _initial_state(eng, th):
     from skyframe.core.nonlinear_static import NonlinearStaticCase
     from skyframe.engine import nonlinear_static as _nls
     from skyframe.engine.opensees_engine import OpenSeesEngine
+    from skyframe.engine import wavec_th as _wth     # Wave C: staged start
+    _st = _wth.fna_staged_disp_at(eng, th)
+    if _st is not None:
+        return _st
     name = getattr(th, "initial_case", "") or ""
     if not name and not th.gravity:
         return None
@@ -178,6 +182,9 @@ def _devices(eng, th, model, disp_at):
         prm = LinkMember.coerce_params(getattr(lk, "params", {}) or {})
         if lt == "elastic":
             lin.links.append(copy.deepcopy(lk))
+            continue
+        from skyframe.engine import fna_links_ext as _flx   # Wave C links
+        if _flx.add(th, lk, lt, prm, disp_at, lin, recs):
             continue
         pi, pj = tuple(lk.pi), tuple(lk.pj)
         if lt in ("damper", "gap", "hook") or (

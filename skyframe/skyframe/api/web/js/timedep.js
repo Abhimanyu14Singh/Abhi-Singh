@@ -357,6 +357,9 @@ export function initTimeDep(sky) {
         onChange: () => { if (outs.length) td.output_times = outs.map(o => o.t); else delete td.output_times; },
         validateRow: r => r.t >= 0 ? "" : "Times must be ≥ 0 days.",
         empty: "No output times — snapshots at stage ends only." })]),
+      tdGroup("Shells", [F.check(td, "shell_creep", { label: "Creep and shrinkage strains on shells", id: "tdShellCreep",   /* Wave C (engine/shell_creep.py) */
+        read: () => !!td.shell_creep, write: on => { if (on) td.shell_creep = true; else delete td.shell_creep; },
+        hint: "Off = modulus ageing only (legacy). On: imposed membrane / curvature strains per element." })]),
       tdNote(`Stage durations are edited in <b>Stage Data…</b> (total ${tTotal} d).`),
     ];
     return tdDialog({
