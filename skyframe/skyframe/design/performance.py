@@ -149,12 +149,18 @@ def bilinearize(disp: Sequence[float], shear: Sequence[float],
 def target_displacement(disp: Sequence[float], shear: Sequence[float], *,
                         Ti: float, W: float, SDS: float, SD1: float,
                         site_class: str = "D",
-                        num_stories: int = 1) -> Dict[str, float]:
+                        num_stories: int = 1, TL=None, system=None,
+                        Cm=None) -> Dict[str, float]:
     """ASCE 41-17 Eq. 7-28 target displacement (module docstring).
 
     ``Ti`` elastic first-mode period in the push direction (s), ``W``
     seismic weight (kN), ``SDS``/``SD1`` design spectral parameters (g).
     Returns the bilinearization plus Te, Sa, mu, C0/C1/C2 and delta_t (m).
+
+    Wave C (:mod:`skyframe.core.pushover_coeff`): ``TL`` (s) adds the
+    long-period branch ``SD1 TL / T^2``; ``system`` (Table 7-4 key) or an
+    explicit ``Cm`` sets the effective mass factor (defaults: the legacy
+    ``Cm = 1``, no TL — identical results and keys).
     """
     if Ti <= 0.0 or W <= 0.0:
         raise ValueError("target_displacement: Ti and W must be > 0")
@@ -164,8 +170,10 @@ def target_displacement(disp: Sequence[float], shear: Sequence[float], *,
                          f"{site_class!r}")
     bl = bilinearize(disp, shear)
     Te = Ti * math.sqrt(bl["Ki"] / bl["Ke"])          # Eq. 7-27
-    Sa = design_sa(Te, SDS, SD1)
-    Cm = 1.0
+    from skyframe.core import pushover_coeff as _pc   # Wave C Cm / TL
+    Sa = (design_sa(Te, SDS, SD1) if TL is None
+          else _pc.design_sa_tl(Te, SDS, SD1, float(TL)))
+    Cm = _pc.cm_factor(system, num_stories, Te, Cm)
     mu = Sa / (bl["Vy"] / W) * Cm                     # Eq. 7-31
     a = _SITE_A[sc]
     if Te >= 1.0:
@@ -180,4 +188,8 @@ def target_displacement(disp: Sequence[float], shear: Sequence[float], *,
     out.update({"Te": Te, "Ti": Ti, "Sa": Sa, "mu": mu, "Cm": Cm,
                 "C0": C0, "C1": C1, "C2": C2, "W": W,
                 "site_class": sc, "delta_t": delta_t})
+    if TL is not None:                                # Wave C (when set)
+        out["TL"] = float(TL)
+    if system is not None:
+        out["system"] = system
     return out

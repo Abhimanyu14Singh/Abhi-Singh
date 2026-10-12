@@ -51,6 +51,8 @@ def prepare_model(model, name: str):
     _mcs.apply_mass_source(m, spec["mass_source"])
     m.num_modes = int(spec["num_modes"])
     m.modal_from_case = spec["stiffness_case"]
+    from skyframe.core.wavec_dyn import eigen_params    # Wave C shift etc.
+    m.eigen_options = eigen_params(spec)
     for c in list(m.rs_cases.values()) + list(m.th_cases.values()):
         c.modal_case = ""
     for c in m.th_cases.values():
@@ -129,9 +131,10 @@ def run_th(eng, name: str):
         sub = OpenSeesEngine(m)
     if th.initial_case:
         # direct integration: the predecessor's loads become the gravity
-        # stage (applied statically first and held — the legacy rule)
-        sub.model.th_cases[name].gravity = initial_loads(eng.model,
-                                                         th.initial_case)
+        # stage (applied statically first and held — the legacy rule);
+        # Wave C: staged / hinged / displacement-control predecessors
+        from skyframe.engine import wavec_th as _wth
+        _wth.prepare_initial(eng, sub, name, th.initial_case)
         sub._th_cache.pop(name, None)
     res = sub.run_time_history(name)
     eng._th_cache[name] = res

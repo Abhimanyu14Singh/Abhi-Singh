@@ -1202,7 +1202,7 @@ export function openPushoverOptions(ctx, name) {
         if (v !== "") { d.control_point = joints[+v].slice(); draw(); }
       }, "pooPickJoint"));
     }
-    g2.appendChild(row("Monitored DOF", select([["", `Push direction (U${pc.direction === "Y" ? "Y" : "X"})`], ["UX", "UX"], ["UY", "UY"]],
+    g2.appendChild(row("Monitored DOF", select([["", `Push direction (U${pc.direction === "Y" ? "Y" : "X"})`], ["UX", "UX"], ["UY", "UY"], ["UZ", "UZ"], ["RX", "RX (rad)"], ["RY", "RY (rad)"], ["RZ", "RZ (rad)"]],   /* Wave C: any DOF (UZ/R* need a target) */
       d.control_dof || "", v => { d.control_dof = v || null; }, "pooDof")));
     g2.appendChild(row("Target displacement", numInput("disp", d.target_disp, { id: "pooTarget", allowEmpty: true, nonzero: true,
       placeholder: pooTargetPlaceholder(), onSet: v => { d.target_disp = v; } }), "disp",

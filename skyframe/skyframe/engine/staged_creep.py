@@ -82,6 +82,7 @@ from skyframe.engine.opensees_engine import (CaseResults, OpenSeesEngine,
                                              StagedResults, _TOL,
                                              _local_axes, _pkey)
 from skyframe.engine import tendon_elements as _tel
+from skyframe.engine import shell_creep as _shc     # Wave C shell creep
 from skyframe.engine.staged_user import (_active_keys, _apply_td_scales,
                                          _expand_load, _pattern_empty,
                                          _submodel)
@@ -125,6 +126,8 @@ def apply_imposed(eng, asm, imposed: Dict[str, dict], scale: float) -> None:
     piecewise-linear field and records ``f0 = -eq`` as its end-force
     correction (the temperature-load convention)."""
     model = eng.model
+    if imposed.get(_shc.KEY):                    # Wave C shell creep
+        _shc.apply(eng, asm, imposed[_shc.KEY], scale)
     for uid, d in imposed.items():
         member = eng._members_by_uid.get(uid)
         if member is None:
@@ -250,6 +253,8 @@ def run_step_staged(engine: OpenSeesEngine, name: str
             mat = model.materials[ss.material]
             shell_law[r.uid] = (p, mat.E, mat.fc)
     creep_mats = set(model.materials)        # clones gate on the scale map
+    shc = (_shc.ShellCreep(model, shell_law) if _shc.enabled(td)
+           else None)                         # Wave C shell creep (opt-in)
 
     def J(uid: str, t_age: float, tau_age: float) -> float:
         E28, _A, _I3, _I2, fc = mem_props[uid]
@@ -357,6 +362,9 @@ def run_step_staged(engine: OpenSeesEngine, name: str
         from skyframe.engine import convergence as _cvg
         _cvg.adopt_child(engine, name, eng)
         asm = eng._asm
+        if shc is not None and tau is not None:          # Wave C shells
+            shc.record(sub, asm, res, tau, (getattr(
+                pat, "imposed_strains", None) or {}).get(_shc.KEY))
         # creep history (live domain: segment end forces)
         if tau is not None:
             for uid in active["members"]:
@@ -581,6 +589,8 @@ def run_step_staged(engine: OpenSeesEngine, name: str
                 p, E28, fc = shell_law[uid]
                 age = max(tnow - t_cast[("shells", uid)], 1e-6)
                 sc_[("shells", uid)] = _tdm.law_modulus(p, E28, age, fc) / E28
+        if shc is not None:                              # Wave C shells
+            shc.inst_scales(sc_, active, t_cast, tnow)
         return sc_
 
     def creep_step(ta: float, tb: float, label: str) -> None:
@@ -632,6 +642,11 @@ def run_step_staged(engine: OpenSeesEngine, name: str
                 age = max(tm - t_cast[("shells", uid)], 1e-6)
                 scales[("shells", uid)] = _tdm.law_modulus(p, E28, age,
                                                            fc) / E28
+        if shc is not None:                              # Wave C shells
+            shc.creep_scales(scales, active, t_cast, tb, tm)
+            simp = shc.imposed(active, t_cast, ta, tb)
+            if simp:
+                imposed[_shc.KEY] = simp
         # tendon relaxation (element tendons with a relaxation law)
         override, apply_vec = {}, {}
         for uid, stt in stressed.items():

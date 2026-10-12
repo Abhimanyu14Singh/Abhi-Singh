@@ -109,6 +109,8 @@ def normalize_modal_case(d) -> dict:
         out["ritz_starts"] = copy.deepcopy(
             DEFAULT_RITZ_STARTS if starts is None else starts)
         out["max_cycles"] = d.get("max_cycles", 0)
+    from skyframe.core.wavec_dyn import eigen_params   # Wave C (if set)
+    out.update(eigen_params(d))
     return out
 
 
@@ -219,9 +221,9 @@ def _validate_refs(model, mc: dict) -> None:
                                  f"{ref!r}")
     for cname, c in model.th_cases.items():
         ic = getattr(c, "initial_case", "") or ""
-        if ic and ic not in nls:
+        if ic and ic not in nls and ic not in model.staged_cases:  # Wave C
             raise ValueError(f"TH case {cname!r}: initial_case {ic!r} is not "
-                             "a nonlinear static case")
+                             "a nonlinear static or staged case")
     from skyframe.core import thfunc as _thf
     for fname, fn in model.th_functions.items():
         _thf.validate_source(fname, getattr(fn, "source", None))
@@ -303,7 +305,7 @@ def modal_case_dependencies(model, name: str, kind: str) -> List[str]:
     if kind == "response_spectrum":
         ref = getattr(model.rs_cases[name], "modal_case", "") or ""
         return [ref or MODAL_CASE]
-    if kind == "time_history":
+    if kind in ("time_history", "modal_history", "fna"):    # Wave C kinds
         th = model.th_cases[name]
         ref = getattr(th, "modal_case", "") or ""
         out = [ref or MODAL_CASE]

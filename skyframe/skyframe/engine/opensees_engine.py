@@ -1150,6 +1150,10 @@ def _cqc_matrix(omegas: Sequence[float], zeta: float) -> np.ndarray:
     ``rho_ij = 8 z^2 (1+b) b^1.5 / ((1-b^2)^2 + 4 z^2 b (1+b)^2)``;
     ``rho_ii = 1``.
     """
+    from skyframe.core import wavec_dyn as _wcd     # Wave C per-mode zeta
+    pm = _wcd.per_mode_of(zeta, len(omegas))
+    if pm is not None:
+        return _wcd.cqc_rho_var(omegas, pm)
     n = len(omegas)
     rho = np.eye(n)
     for i in range(n):
@@ -2545,6 +2549,11 @@ class OpenSeesEngine:
         """
         model = self.model
         _rz = _mcx.run_modal_hook(self, num_modes)   # Ritz modal case
+        if _rz is not None:
+            return _rz
+        from . import eigen_shift as _esh            # Wave C shift/cutoff
+        _rz = _esh.run_modal_hook(self, num_modes) if getattr(
+            model, "eigen_options", None) else None
         if _rz is not None:
             return _rz
         if getattr(model, "modal_from_case", None):
@@ -6791,7 +6800,7 @@ class OpenSeesEngine:
                 du = case.target_disp / case.steps
             else:
                 du = case.target_drift * Hc / case.steps
-            drive = _pod.drive_node(asm, mon)
+            drive = _pod.drive_node(asm, mon, mdof)   # Wave C: any DOF
             self._setup_pushover_analysis(asm, ctrl=drive, dof=mdof, du=du)
             po_integ = ("DisplacementControl", drive, mdof, du)
         # shared convergence strategy (legacy default: analyze, then one
@@ -6906,7 +6915,7 @@ class OpenSeesEngine:
             name, roof_disp, base_shear, [u / Hc for u in roof_disp],
             hinge_rot, warn_list, hinge_detail,
             control={"node": mon,
-                     "dof": "UX" if mdof == 1 else "UY",
+                     "dof": _pod.DOF_NAMES[mdof - 1],    # Wave C any DOF
                      "mode": case.control_mode,
                      "height": Hc,
                      "start_from": getattr(case, "start_from", None)},
@@ -7448,6 +7457,9 @@ class OpenSeesEngine:
         if name not in model.th_cases:
             raise ValueError(f"Unknown time-history case {name!r}")
         th = model.th_cases[name]
+        from . import wavec_th as _wth          # Wave C case types / start
+        if _wth.typed(th):                      # modal history / FNA case
+            return _wth.run_typed(self, name)
         if _mcx.wants_th(th):                   # named modal case
             return _mcx.run_th(self, name)
         accel, dt = self._resolve_th_record(th)
@@ -7457,7 +7469,7 @@ class OpenSeesEngine:
         # hinges — device element forces are state/velocity dependent.
         devices = (self._device_links_present()
                    or _sprp.any_nonlinear(model))   # B9 named springs
-        use_newton = nonlinear or devices
+        use_newton = nonlinear or devices or _wth.forces_newton(self, name)
 
         modal = self.run_modal()      # INITIAL elastic modes (no hinges)
         if not modal.periods:
@@ -7472,7 +7484,7 @@ class OpenSeesEngine:
 
         _lrl.begin(self, th)          # Rayleigh on links ("none" = legacy)
         try:
-            asm = self._build(hinge_case=th if nonlinear else None)
+            asm = self._build(hinge_case=_wth.hinge_case(self, th, nonlinear))
         finally:
             _lrl.end(self)
         self._seg_span_loads = {}
@@ -7567,6 +7579,11 @@ class OpenSeesEngine:
         # reported series are the increments past this state
         story0 = {s.name: (0.0, 0.0) for s in stories}
         base0 = (0.0, 0.0)
+        _wic = _wth.start(self, asm, th, name)  # Wave C staged/NLS start
+        if _wic is not None:
+            story0 = {s.name: story_uxuy(s) for s in stories}
+            ops.reactions()
+            base0 = base_fxfy()
         if th.gravity:
             ops.timeSeries("Linear", 10)
             ops.pattern("Plain", 10, 10)
@@ -7750,6 +7767,7 @@ class OpenSeesEngine:
             result.extra = dict(result.extra, plot_functions=pfr.results())
         if twcut is not None:                             # C9 tower shears
             twcut.finish(result, svx, svy)
+        _wth.finish(result, _wic, asm)          # Wave C initial state
         self._th_cache[name] = result
         return result
 
@@ -7806,6 +7824,9 @@ class OpenSeesEngine:
         rs = model.rs_cases[name]
         if _mcx.wants_rs(rs):                   # named modal case
             return _mcx.run_rs(self, name)
+        from . import modal_damping as _mdx     # Wave C RS modal damping
+        if _mdx.wants(self, rs):
+            return _mdx.run_rs(self, name)
         spectrum = self._resolve_rs_spectrum(rs)
 
         n_req = rs.num_modes if rs.num_modes > 0 else None

@@ -518,6 +518,9 @@ def test_fna_honest_scope_not_implemented():
     mdl.add_link((0, 0, 0.0), (0, 0, 0.3), link_type="multilinear_takeda",
                  params={"points": [[0.01, 10.0], [0.05, 15.0]]})
     mdl.add_th_case("TK", "X", accel, dt)
+    # Wave C: Takeda links are supported by FNA now (tests/test_wavec_
+    # dynamics.py); a hinged (nonlinear) case is still refused
+    mdl.th_cases["TK"].nonlinear = True
     with pytest.raises(NotImplementedError, match="run_time_history"):
         OpenSeesEngine(mdl).run_fna("TK")
     # (e) unknown case name

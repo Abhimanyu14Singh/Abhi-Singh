@@ -82,6 +82,10 @@ LOAD_PART_DIRECTIONS = (("UX", 1), ("UY", 2), ("UZ", 3))
 # --------------------------------------------------------------------------- #
 def cqc_rho(omegas: Sequence[float], zeta: float) -> np.ndarray:
     """Der Kiureghian CQC correlation matrix (constant damping ``zeta``)."""
+    from skyframe.core import wavec_dyn as _wcd     # Wave C per-mode zeta
+    pm = _wcd.per_mode_of(zeta, len(omegas))
+    if pm is not None:
+        return _wcd.cqc_rho_var(omegas, pm)
     n = len(omegas)
     rho = np.eye(n)
     for i in range(n):
@@ -96,8 +100,15 @@ def cqc_rho(omegas: Sequence[float], zeta: float) -> np.ndarray:
 def dsc_eps(omegas: Sequence[float], zeta: float, td: float) -> np.ndarray:
     """Rosenblueth double-sum correlation matrix (duration ``td`` s)."""
     w = np.asarray(omegas, dtype=float)
-    wd = w * math.sqrt(max(1.0 - zeta * zeta, 0.0))
-    zp = zeta + 2.0 / (td * w)
+    from skyframe.core import wavec_dyn as _wcd     # Wave C per-mode zeta
+    pm = _wcd.per_mode_of(zeta, len(w))
+    if pm is not None:
+        z = np.asarray(pm, dtype=float)
+        wd = w * np.sqrt(np.maximum(1.0 - z * z, 0.0))
+        zp = z + 2.0 / (td * w)
+    else:
+        wd = w * math.sqrt(max(1.0 - zeta * zeta, 0.0))
+        zp = zeta + 2.0 / (td * w)
     n = len(w)
     eps = np.eye(n)
     for i in range(n):

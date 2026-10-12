@@ -121,6 +121,7 @@ import { initPoMethods as poxInitPoMethods } from "./pomethods.js";   // pushove
 import { initW8 as w8InitW8 } from "./w8_init.js";   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_*.js)
 import { mockValidateW8 as w8MockValidate } from "./mock_w8.js";   // W8 ?mock=1 validation
 import { initWaveBLinks as wbInitLinks, wbMockValidateModel as wbMockValidate } from "./wb_links.js";   // wave B: Wen / BRB / bilinear damper / T-C isolator links, freq-dependent links, damping options (js/wb_links.js)
+import { initWaveCDyn as wcInitDyn } from "./wavec_dyn.js";   // Wave C: eigen shift / TH solution type / RS-SS modal damping (js/wavec_dyn.js)
 import { wbMockAugment as wbMockAugmentResults } from "./mock_wbdamp.js";   // wave B ?mock=1 results (composite ζ, freq-dependent-link note)
 
 import { initWaveB as wbInitWaveB } from "./waveb.js";   // Wave B: Irregularity Checks · joint-local reactions (js/waveb.js)
@@ -8637,6 +8638,7 @@ async function boot() {
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)
   try { mxInitModalX(window.__sky); } catch (err) { console.error("modal cases init failed", err); }   // after the dialog standard: Mass Source / Modal lists (js/modalx.js)
   try { wbInitLinks(window.__sky); } catch (err) { console.error("wave B links / damping init failed", err); }   // link types · freq-dependent links · damping options (js/wb_links.js)
+  try { wcInitDyn(window.__sky); } catch (err) { console.error("wave C dynamics init failed", err); }   // Wave C (js/wavec_dyn.js)
 }
 
 boot();

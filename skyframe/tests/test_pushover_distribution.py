@@ -352,7 +352,7 @@ def test_results_json_shape():
     ({"control_story": "Story9"}, "control_story"),
     ({"control_story": "Story1", "control_point": [0, 0, 4]}, "not both"),
     ({"control_point": [0, 0]}, "control_point"),
-    ({"control_dof": "UZ"}, "control_dof"),
+    ({"control_dof": "U9"}, "control_dof"),   # Wave C: UZ..RZ are valid
     ({"target_disp": 0.0}, "target_disp"),
     ({"control_mode": "arc_length"}, "control_mode"),
     ({"target_load": float("nan")}, "target_load"),

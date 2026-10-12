@@ -109,11 +109,13 @@ import math
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 G = 9.81
-METHODS = ("asce41", "atc40", "fema440", "n2")
+LEGACY_METHODS = ("asce41", "atc40", "fema440", "n2")
+METHODS = LEGACY_METHODS + ("fema440_dm",)     # Wave C (core.pushover_coeff)
 METHOD_LABELS = {"asce41": "ASCE 41-17 coefficient method",
                  "atc40": "ATC-40 capacity spectrum",
                  "fema440": "FEMA 440 equivalent linearization",
-                 "n2": "EN 1998-1 Annex B (N2)"}
+                 "n2": "EN 1998-1 Annex B (N2)",
+                 "fema440_dm": "FEMA 440 displacement modification"}
 BEHAVIOR_TYPES = ("A", "B", "C")
 ATC40_PROCEDURES = ("A", "B")
 SPECTRUM_CODES = ("asce7", "ec8")
@@ -132,13 +134,15 @@ EC8_TABLE = {
 }
 #: canonical defaults of PushoverCase.performance (a missing key = this)
 PERF_DEFAULTS = {
-    "methods": list(METHODS),
+    "methods": list(LEGACY_METHODS),
     "spectrum": {"code": "asce7", "SDS": 1.0, "SD1": 0.6},
     "site_class": "D",
     "behavior": "A",
     "atc40_procedure": "A",
 }
-PERF_KEYS = tuple(PERF_DEFAULTS)
+# Wave C optional keys (no defaults emitted): Cm system / Cm / FEMA 440 DM
+PERF_KEYS = tuple(PERF_DEFAULTS) + ("cm_system", "Cm", "near_field",
+                                    "alpha_pdelta")
 _ASCE_KEYS = ("code", "SDS", "SD1", "TL")
 _EC8_KEYS = ("code", "ag", "ground_type", "spectrum_type", "S", "TB", "TC",
              "TD")
@@ -181,6 +185,8 @@ def normalize_options(perf: Optional[dict]) -> dict:
                          "type) must be 'A', 'B' or 'C'")
     if out["atc40_procedure"] not in ATC40_PROCEDURES:
         raise ValueError("performance.atc40_procedure must be 'A' or 'B'")
+    from skyframe.core import pushover_coeff as _pc     # Wave C options
+    _pc.validate_options(out)
     return out
 
 
@@ -776,7 +782,8 @@ def n2(disp: Sequence[float], shear: Sequence[float], *, gamma: float,
 # ASCE 41 coefficient method on any spectrum
 # ======================================================================
 def asce41(disp, shear, *, Ti: float, W: float, spec: Spectrum,
-           site_class: str = "D", num_stories: int = 1) -> dict:
+           site_class: str = "D", num_stories: int = 1,
+           cm_system=None, Cm=None) -> dict:
     """ASCE 41-17 §7.4.3 coefficient method — the exact formulas of
     :func:`skyframe.design.performance.target_displacement` with Sa(Te)
     read from ``spec`` (identical results for an ``asce7`` spectrum
@@ -786,14 +793,17 @@ def asce41(disp, shear, *, Ti: float, W: float, spec: Spectrum,
         return _pf.target_displacement(disp, shear, Ti=Ti, W=W,
                                        SDS=spec.SDS, SD1=spec.SD1,
                                        site_class=site_class,
-                                       num_stories=num_stories)
+                                       num_stories=num_stories,
+                                       system=cm_system, Cm=Cm)
     if Ti <= 0.0 or W <= 0.0:
         raise ValueError("target_displacement: Ti and W must be > 0")
     sc = str(site_class).upper()
     bl = _pf.bilinearize(disp, shear)
     Te = Ti * math.sqrt(bl["Ki"] / bl["Ke"])
     Sa = spec.sa(Te)
-    mu = Sa / (bl["Vy"] / W)
+    from skyframe.core import pushover_coeff as _pc     # Wave C Table 7-4
+    cm = _pc.cm_factor(cm_system, num_stories, Te, Cm)
+    mu = Sa / (bl["Vy"] / W) * cm
     a = _pf._SITE_A[sc]
     if Te >= 1.0:
         C1 = 1.0
@@ -804,7 +814,7 @@ def asce41(disp, shear, *, Ti: float, W: float, spec: Spectrum,
     C0 = _pf.c0_factor(num_stories)
     delta_t = C0 * C1 * C2 * Sa * (Te / (2.0 * math.pi)) ** 2 * G
     out = dict(bl)
-    out.update({"Te": Te, "Ti": Ti, "Sa": Sa, "mu": mu, "Cm": 1.0,
+    out.update({"Te": Te, "Ti": Ti, "Sa": Sa, "mu": mu, "Cm": cm,
                 "C0": C0, "C1": C1, "C2": C2, "W": W, "site_class": sc,
                 "delta_t": delta_t})
     return out
@@ -872,7 +882,9 @@ def evaluate(disp: Sequence[float], shear: Sequence[float], *,
             if key == "asce41":
                 res = asce41(disp, shear, Ti=float(modal["T"]), W=W,
                              spec=spec, site_class=opts["site_class"],
-                             num_stories=num_stories)
+                             num_stories=num_stories,
+                             cm_system=opts.get("cm_system"),
+                             Cm=opts.get("Cm"))
                 methods[key] = res
                 row(key, res["delta_t"] / pf,
                     {"Teff": res["Te"], "beta_eff": None,
@@ -885,6 +897,22 @@ def evaluate(disp: Sequence[float], shear: Sequence[float], *,
                 row(key, None if pp is None else pp["Sd"],
                     {"Teff": res.get("Teff"), "beta_eff": res["beta_eff"],
                      "converged": res["converged"]})
+            elif key == "fema440_dm":            # Wave C (pushover_coeff)
+                from skyframe.core import pushover_coeff as _pc
+                res = _pc.fema440_dm(
+                    disp, shear, Ti=float(modal["T"]), W=W, spec=spec,
+                    site_class=opts["site_class"], num_stories=num_stories,
+                    cm_system=opts.get("cm_system"), Cm=opts.get("Cm"),
+                    near_field=bool(opts.get("near_field", False)),
+                    alpha_pdelta=float(opts.get("alpha_pdelta", 0.0)))
+                methods[key] = res
+                row(key, res["delta_t"] / pf,
+                    {"Teff": res["Te"], "beta_eff": None,
+                     "converged": True})
+                if res["dynamic_instability"]:
+                    warnings.append("FEMA 440 displacement modification: "
+                                    "R > R_max (Eq. 5-4) — dynamic "
+                                    "instability")
             elif key == "fema440":
                 res = fema440(cap, spec)
                 methods[key] = res
