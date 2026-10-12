@@ -81,6 +81,7 @@ import { pfMockValidate as pfMockValidateModel } from "./mock_plotfn.js";
 import { initEditMenu as edInitEditMenu } from "./editmenu.js";
 // Open-structure wind + Create Report / Model Info / analysis run log (aliased imports)
 import { initOpenWind as owInitOpenWind } from "./openwind.js";
+import { initLoadCodes as lcInitLoadCodes } from "./loadcodes.js";   // code spectra · design combos · pattern types · LLR
 import { initReportX as rxInitReportX } from "./reportx.js";
 import { owMockValidate as owMockValidateModel } from "./mock_openwind.js";   // UX pass: palette · toolbar · shortcuts · dialog chrome · start screen
 import { initDbEdit as dbeInitDbEdit } from "./dbedit.js";   // Edit > Interactive Database Editing (model tables)
@@ -8571,6 +8572,8 @@ async function boot() {
   try { buInitBuiltup(window.__sky); } catch (err) { console.error("built-up sections init failed", err); }   // Define › Section Properties › Built-up Section… (js/builtup.js)
   try { xcInitExchange(window.__sky); } catch (err) { console.error("model exchange init failed", err); }   // File › Import ▸ / Export ▸ (js/exchange.js)
   try { shrInitShellRes(window.__sky); } catch (err) { console.error("shell contours init failed", err); }   // A3 shell stresses / forces contours (js/shellres.js)
+
+  try { lcInitLoadCodes(window.__sky); } catch (err) { console.error("load codes init failed", err); }   // code spectra · design combos · LLR (js/loadcodes.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)

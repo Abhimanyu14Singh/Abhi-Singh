@@ -1251,6 +1251,10 @@ _TABLES: List[Tuple[str, str, str, List[dict], Callable[[_Ctx], List[dict]]]] = 
     ("modal_direction_factors", "Modal Direction Factors",
      f"{_G} > Modal Results", DIR_FACTOR_COLS, _t_dir_factors),
 ]
+# live-load reduction tables (skyframe.core.llr_codes)
+from .llr_codes import table_entries as _llr_table_entries  # noqa: E402
+_TABLES.extend(_llr_table_entries())
+QUANTITIES.setdefault("area", "m^2")
 TABLES = {k: (title, group, cols, fn) for k, title, group, cols, fn in _TABLES}
 
 

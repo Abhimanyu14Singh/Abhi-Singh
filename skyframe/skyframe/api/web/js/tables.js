@@ -74,7 +74,9 @@ export function colSpec(col) {
   }
   const map = { force: ["force", 2], moment: ["moment", 2], stiffness: ["stiffness", 1],
     mass: ["mass", 3], angle: ["rotation", 6], time: ["period", 4], frequency: ["frequency", 4],
-    line_force: ["line_force", 3], line_moment: ["line_moment", 3], stress: ["stress", 1] };   // A3: shell forces / stresses
+    line_force: ["line_force", 3], line_moment: ["line_moment", 3], stress: ["stress", 1],   // A3: shell forces / stresses
+
+    area: ["area", 2] };   // area: live-load reduction tributary area (js/loadcodes.js)
   if (map[q]) return { kind: map[q][0], unit: U.label(map[q][0]), dec: map[q][1] };
   const fx = FIXED[q] || ["", 4];
   return { kind: "none", unit: fx[0], dec: fx[1], na: tblRnaKeys.has(col.key) ? tblRnaText : undefined };

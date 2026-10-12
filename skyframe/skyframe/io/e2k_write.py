@@ -52,6 +52,9 @@ MAT_TYPES = {"steel": "Steel", "concrete": "Concrete", "rebar": "Rebar",
 PATTERN_TYPES = {"dead": "Dead", "live": "Live", "quake": "Seismic",
                  "wind": "Wind", "other": "Other", "notional": "Notional",
                  "prestress": "Prestress"}
+from skyframe.core.combos_codes import PATTERN_KIND_LABELS as _PKL  # noqa
+PATTERN_TYPES.update({k: v for k, v in _PKL.items()      # pattern types
+                      if k not in PATTERN_TYPES})
 
 SHELL_MODEL_TYPES = {"shell": "ShellThin", "shell_thin": "ShellThin",
                      "shell_thick": "ShellThick", "membrane": "Membrane",

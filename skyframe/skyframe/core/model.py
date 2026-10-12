@@ -1908,11 +1908,17 @@ class SpectrumFunction:
     name: str
     points: List[List[float]]
     damping: float = 0.05
+    # code-spectrum generator record {code, params} (core.spectra_codes);
+    # None = user points.  Metadata only: the solver reads ``points``.
+    source: Optional[dict] = None
 
     def to_dict(self) -> dict:
-        return {"name": self.name,
-                "points": [[float(t), float(sa)] for t, sa in self.points],
-                "damping": float(self.damping)}
+        d = {"name": self.name,
+             "points": [[float(t), float(sa)] for t, sa in self.points],
+             "damping": float(self.damping)}
+        if self.source is not None:                 # spectra_codes hook
+            d["source"] = self.source
+        return d
 
 
 @dataclass
@@ -2133,6 +2139,10 @@ class BuildingModel:
     # Emitted by to_dict only when non-empty.
     exchange_mappings: Dict[str, dict] = field(default_factory=dict)
     exchange_sessions: Dict[str, dict] = field(default_factory=dict)
+
+    # Live-load reduction settings (skyframe.core.llr_codes; None = not set,
+    # not emitted).  {code, params?, kinds?, apply_to?, pier_areas?}
+    llr_settings: Optional[dict] = None
 
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
@@ -2691,6 +2701,8 @@ class BuildingModel:
         if not (math.isfinite(fn.damping) and 0.0 < fn.damping < 1.0):
             raise ValueError(f"Spectrum function {fn.name}: damping must be "
                              "in (0, 1)")
+        from skyframe.core.spectra_codes import validate_source as _scv
+        _scv(fn)                                    # code-spectrum source
 
     def add_th_function(self, name: str, values: List[float],
                         dt: float) -> TimeHistoryFunction:
@@ -3739,6 +3751,9 @@ class BuildingModel:
             for ds in self.designer_sections.values():
                 validate_designer_section(ds, self.materials)
         self._validate_builtup()            # v1.21 built-up sections
+        if self.llr_settings is not None:   # live-load reduction settings
+            from skyframe.core.llr_codes import normalize_settings
+            normalize_settings(self.llr_settings)
         for ssec in self.shell_sections.values():
             if ssec.material not in self.materials:
                 raise ValueError(f"Shell section {ssec.name}: unknown "
@@ -4142,6 +4157,9 @@ class BuildingModel:
                if self.frame_axis_convention == "etabs" else {}),
             **_builtup_to_dict(self),   # v1.21 built-up sections (if any)
             **_xch.model_to_dict(self),  # Rhino/GH exchange (if used)
+
+            **({"llr_settings": copy.deepcopy(self.llr_settings)}  # LLR
+               if self.llr_settings is not None else {}),
         }
 
     @classmethod
@@ -4404,7 +4422,8 @@ class BuildingModel:
             mdl.spectrum_functions[name] = SpectrumFunction(
                 name=fd.get("name", name),
                 points=[[float(p[0]), float(p[1])] for p in fd["points"]],
-                damping=float(fd.get("damping", 0.05)))
+                damping=float(fd.get("damping", 0.05)),
+                source=fd.get("source"))            # spectra_codes hook
         for name, fd in (d.get("th_functions") or {}).items():
             mdl.th_functions[name] = TimeHistoryFunction(
                 name=fd.get("name", name),
@@ -4584,6 +4603,8 @@ class BuildingModel:
         _frame_axes_from_dict(mdl, d)       # frame local-axis convention
         _builtup_from_dict(mdl, d)          # v1.21 built-up sections
         _xch.model_from_dict(mdl, d)        # Rhino/GH exchange (absent=unset)
+
+        mdl.llr_settings = d.get("llr_settings")    # live-load reduction
         mdl.validate()
         return mdl
 

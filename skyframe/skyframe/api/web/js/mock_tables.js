@@ -15,6 +15,8 @@
 import { mockTowersTable as c9MockTowersTable } from "./mock_towers.js";   // C9 tower column
 import { SR_TABLE_CATALOGUE as srTableCat, srMockTable as srMockTableRows } from "./mock_shellres.js";   // A3 shell forces / stresses tables
 
+import { LC_MOCK_TABLES as mtLcTables } from "./mock_loadcodes.js";   // live-load reduction tables (js/mock_loadcodes.js)
+
 const C = (key, label, quantity) => ({ key, label, quantity });
 const G = 9.80665;
 
@@ -88,6 +90,8 @@ const CAT = [
       ...["UX", "UY", "UZ", "RZ"].map(k => C(k, k, "ratio")), C("dominant", "Dominant", "text")]],
 ];
 CAT.push(...srTableCat);   // A3 hook: Shell Forces / Shell Stresses (js/mock_shellres.js)
+
+CAT.push(...mtLcTables.catalogue);   // live-load reduction tables (js/mock_loadcodes.js)
 const CATALOGUE = CAT.map(([key, title, group, columns]) =>
   ({ key, title, group: "Analysis Results > " + group, columns }));
 const BY_KEY = Object.fromEntries(CATALOGUE.map(t => [t.key, t]));
@@ -271,6 +275,8 @@ const T = {
   },
 };
 for (const k of ["shell_forces", "shell_stresses"]) T[k] = (m, r, f, w) => srMockTableRows(m, r, k, f, w);   // A3 hook
+
+Object.assign(T, mtLcTables.compute);   // live-load reduction tables (js/mock_loadcodes.js)
 
 /** Mock POST /api/tables/<key> {cases?}. Throws on unknown key / bad cases. */
 export function mockTable(model, results, key, body = {}) {

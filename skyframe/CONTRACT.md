@@ -11722,3 +11722,171 @@ identically before and after this change.
   which must include aerodynamic damping.
 * The 7-22 Kzt and gust constants are assumed unchanged from 7-16.
 * There are no TSC, KDS or Mexican wind generators.
+
+## Code spectra, design combinations, pattern types and live-load reduction
+
+Modules: `core/spectra_codes.py`, `core/combos_codes.py`,
+`core/llr_codes.py`, `api/loadcodes_api.py`; UI `js/loadcodes.js`,
+`js/mock_loadcodes.js`, `js/mock_loadcodes_data.js`. Every default is
+unchanged: a model without the new keys serializes and solves
+byte-identically.
+
+**Model data (additive, emitted only when set).**
+* `spectrum_functions[name].source = {"code", "params"}` is the generator
+  of a code spectrum (absent = user points). It is validated on load: an
+  unknown code or bad params raise ValueError. It is metadata only; the
+  solver reads `points`. Editing the points table in the user-function
+  dialog drops it.
+* `llr_settings = {"code": "asce7_16"|"nbcc2020"|"ec1"|"is875"|"user",
+  "params"?: {...}, "kinds"?: [pattern kinds] (default
+  ["reducible_live"]), "apply_to"?: ["columns","piers"],
+  "pier_areas"?: {pier: m^2 per floor}}`. Params: asce7_16 `{KLL: 4}`;
+  nbcc2020 `{occupancy: "general"|"assembly"}`; ec1 `{psi0: 0.7,
+  category: "A".."E", method: "alpha_n"|"alpha_A"|"min", A0: 10}`; user
+  `{basis: "area"|"floors", curve: [[x, R], ...]}`.
+* `patterns[*].kind` may now also be `superdead`, `reducible_live`,
+  `roof_live`, `snow`, `temperature`, `pattern_live`, `construction`,
+  `rain`, `ice`, `move`, `shrinkage`, `creep`, `settlement`,
+  `earth_pressure` or `hyperstatic` (`combos_codes.PATTERN_KINDS`, which is
+  also the DB-edit enum). E2K export writes the ETABS names ("Super Dead",
+  "Reducible Live", …). E2K import is unchanged.
+
+**Code spectra.** `spectra_codes.spectrum(code, params)` returns
+`{code, label, clause, params (all, defaults filled), points: [[T, Sa
+g]], summary}`. The points hold every corner period exactly, plus a
+0.02 / 0.05 / 0.25 s grid up to `T_max`.
+
+| code | formula |
+|---|---|
+| `asce7_16` | §11.4.6 via `codes.spectrum_value`; × Ie/R (defaults 1) |
+| `asce7_22_mprs` | §11.4.5.1: `ordinates` = 22 Sa at the USGS periods (or [T, Sa] pairs); basis `mcer` → ×2/3; linear interpolation; beyond the last period Sa(Te)Te/T (≤ TL), Sa(Te)Te·TL/T², or (Te/T)² when TL < Te; summary SDS (§21.4, 90 % of max 0.2–5 s), SD1 when vs30 is given |
+| `asce7_22_two_period` | §11.4.5.2: SDS(0.4+0.6T/T0), SDS, SD1/T, SD1·TL/T² |
+| `ec8` | Type 1/2, ground A–E (Tables 3.2/3.3); elastic Eq. 3.2–3.5 with η = √(10/(5+ξ)) ≥ 0.55; design Eq. 3.13–3.16 (q, β); ag = γI·agR; NA overrides of S/TB/TC/TD |
+| `is1893_2016` | Fig. 2b: 1+15T, 2.5, (1.00/1.36/1.67)/T, (0.25/0.34/0.42); × Table 3 damping factor; output `ah` = (Z/2)(I/R)(Sa/g) or `sa_g` |
+| `nbcc_2020` | 4.1.8.4(7): max(Sa0.2, Sa0.5) up to 0.2 s, linear between Sa(0.5, 1, 2, 5, 10), S(10) beyond; × Mv·IE/(RdRo) |
+| `nzs1170_5` | C(T) = Ch(T)·Z·R·N (Table 3.1 modal Ch, classes A–E); design Cd = C·Sp/kμ ≥ max((Z/20+0.02)R, 0.03R); ZR ≤ 0.7 |
+| `as1170_4` | kpZ·Ch(T) (Table 6.4, Ae–Ee; kpZ ≥ 0.08); design × Sp/μ |
+| `gb50011` | α(T): 0.45αmax → η2αmax ramp to 0.1 s, plateau to Tg, (Tg/T)^γ η2 αmax to 5Tg, then [η2·0.2^γ − η1(T−5Tg)]αmax; αmax from Table 5.1.4-1, Tg from Table 5.1.4-2 (+0.05 s for rare, intensities 8/9) |
+
+Pinned values:
+* ASCE 7-16 equals the existing helper at every point.
+* EC8 B, ag 0.25: 0.3 / 0.75 / 0.375 at T = 0 / plateau / 1 s. Design
+  with q 3.9: 0.2, 0.19231, and the floor 0.05 at 3 s.
+* IS 1893 zone IV, soil II, R 5: plateau 0.06, 0.03264 at 1 s.
+* NBCC defaults: 0.848, 0.588 at 0.75 s, 0.029 beyond 10 s.
+* NZS class C, Z 0.4: plateau 1.172, 0.47568 at 1 s. Design μ 4:
+  0.20510, floor 0.04.
+* AS Ce: 0.2944, 0.1 at 1 s.
+* GB intensity 8, frequent, site II: 0.072 / 0.16 / 0.062187 at 1 s /
+  0.036787 at 2 s.
+
+**Design combinations.** `combos_codes.code_combinations(model, standard,
+include_rs=True, **params)` returns `[{name, factors: {case: f}, desc}]`.
+`apply_code_combinations(..., replace=True)` adds them as `add` combos.
+It first removes earlier `<prefix>(ULS|SEIS|SLSC|SLSF|SLSQ|SLS)?NN`
+combos that no other combo references.
+
+Cases are grouped by pattern type:
+* G = dead + superdead, L = live + reducible_live, Lr = roof_live,
+  S = snow. Each of these groups is summed.
+* W = wind, E = quake + RS cases, T = temperature. These enter one case
+  at a time. W and static E get ± variants, RS gets + only, and an
+  accompanying T may be absent.
+* A case whose patterns span groups is skipped with a warning. No G case
+  gives `[]` plus a warning. T outside EN 1990 gives a warning.
+
+| standard | templates (prefix) | count, canonical D L ±WX ±WY ±EQX ±EQY |
+|---|---|---|
+| `en1990` | 6.10: γG G; γG G + γQ Q1 + γQ ψ0 Qi; W lead also γG,inf G + γQ W. 6.10ab: 6.10a + ξγG 6.10b. Seismic G + E + ψ2 Qi. SLS char/freq/QP (`EN-ULS`, `EN-SEIS`, `EN-SLSC/F/Q`). Lr never with S/W | 13 ULS + 4 SEIS |
+| `is456` | 1.5(G+IL), 1.2(G+IL±X), 1.5(G±X), 0.9G±1.5X; SLS (`IS456-`) | 25 |
+| `is800` | 1.5G+1.5IL1+1.05ILa, 1.2G+1.2IL1+1.05ILa±0.6X, 1.2G+1.2IL1+0.53ILa±1.2X, 1.5G±1.5X, 0.9G±1.5X (`IS800-`) | 33 |
+| `nbcc2020` | 1.4D; (1.25 or 0.9)D+1.5L+(1.0S or 0.4W); (1.25 or 0.9)D+1.5S+(1.0L or 0.4W); (1.25 or 0.9)D+1.4W+(0.5L or 0.5S); D+E+0.5L+0.25S; `storage` → 1.0L (`NBCC-`) | 21 |
+| `asnzs1170` | 1.35G; 1.2G+1.5Q; 1.2G+Wu+ψcQ; 0.9G+Wu; G+Eu+ψEQ; 1.2G+Su+ψcQ; roof ψ = 0 (`AS-`) | 14 |
+
+Params per standard (`GET /api/codes/combos`):
+* en1990: `prefix, equation, live_category, snow_site, gamma_G_sup,
+  gamma_G_inf, gamma_Q, xi, psi ({L|Lr|S|W|T: [ψ0, ψ1, ψ2]}), seismic,
+  sls`;
+* is456 / is800: `prefix, sls`;
+* nbcc2020: `prefix, storage`;
+* asnzs1170: `prefix, occupancy, psi_c, psi_E, sls`.
+
+**Live-load reduction** (`llr_codes`). R per element comes from the total
+tributary area At (m², all floors supported) and the number of floors n:
+* ASCE 7-16: 0.25 + 4.57/√(KLL At), within [0.5 or 0.4, 1];
+* NBCC: 0.3 + √(9.8/B) (B > 20), or 0.5 + √(20/A) (assembly, A > 80);
+* EC1: αA = 5/7ψ0 + A0/A1 ≤ 1 (≥ 0.6 for C/D), αn = (2+(n−2)ψ0)/n
+  (n > 2);
+* IS 875-2: Table 3 (1.0/0.9/0.8/0.7/0.6/0.5);
+* user: the curve.
+
+Columns use the half-bay tributary rule of `codes.live_load_reduction`.
+Piers use `pier_areas`, or plan area / (columns + piers at the level).
+The reducible cases are the static cases whose patterns are all of
+`kinds`. With no such case and `kinds` not given, the `live` cases are
+used, with a warning.
+
+`apply_to_results(results, model, settings)` returns:
+
+```
+{code, live_cases,
+ factors: {columns: {uid: {At, A1, n, R}}, piers: {label: {story: {...}}}},
+ cases | combos: {name: {member_forces: {uid: [12]}, member_stations: {uid: {...}}}},
+ piers: {name: {label: {story: {P, V, M}}}},
+ live_factor, skipped, warnings}
+```
+
+It applies q + Σ(R−1)·f·q_live to static cases and single-valued additive
+combos; other sources go in `skipped`. Results are never modified.
+
+Results tables (`/api/tables/*`), computed with `model.llr_settings`
+(absent → ASCE 7-16 defaults):
+* `live_load_reduction_factors`: story, element, name, code, at [area],
+  n, rll;
+* `live_reduced_forces`: story, element, name, case, case_type, station,
+  rll, P, V2, V3, T, M2, M3. Columns are reported at both ends; piers give
+  P, V2 = V and M3 = M.
+
+**Endpoints.**
+* `GET /api/codes/spectra` → `{codes: [{code, label, clause, params:
+  [{key, label, type: number|choice|table, default, quantity?, min?, gt?,
+  max?, lt?, nullable?, advanced?, choices?}]}], mprs_periods}`.
+* `POST /api/function/spectrum-code/preview {code, params?}` → spectrum.
+* `POST /api/function/spectrum-code {name, code, params?, damping?}` →
+  model (adds or replaces the function, with `source`).
+* `GET /api/codes/combos` → `{standards, pattern_kinds, kind_labels,
+  kind_groups}`.
+* `POST /api/combos/code/preview {standard, params?, include_rs?,
+  model?}` → `{combos, warnings}`. `model` is a draft; nothing is stored.
+* `POST /api/combos/code {standard, params?, include_rs?, replace?}` →
+  model.
+* `POST /api/live-reduction/factors {settings?, model?}` → factors plus
+  `live_cases`.
+* `POST /api/results/live-reduced {settings?}` → `apply_to_results` of the
+  stored last analysis (it runs one when none matches the model).
+
+All of them return 400 `{error}` on bad input.
+
+**UI.**
+* Define › Functions › RS tab › "Add From Code…" (`#dsRsFnCode`, dialog
+  `dsRsFnCode`): name, code, per-code parameters from the catalogue,
+  Advanced overrides, the MPRS 22-row table with "Fill from SDS / SD1",
+  and a live plot with a summary. Modify/Show on a function with `source`
+  reopens this dialog.
+* Define › Load Combinations › "Add Design Combos by Code…"
+  (`#dcComboCode` → `dcComboCode`): code, parameters, RS-as-E switch and a
+  preview table. Add writes into the draft.
+* Load Pattern Data › Type lists the new types.
+* Tools › Code Checks › Live Load Reduction Factors… (`des-lc-llr`,
+  `dsLlr`).
+* Display › Force Diagrams › Live Load Reduced Forces
+  (`dis-lc-llrforces`) opens Show Tables.
+* Hooks:
+  * `dlgstd_defs.js`: import, PAT_TYPES push, RS action + Modify routing,
+    source drop on point edit;
+  * `dlgstd_cases.js`: import + action;
+  * `app.js`: import + init;
+  * `tables.js`: area quantity;
+  * `mock_tables.js`: the 2 tables.
+* `?mock=1` uses the JS ports in `mock_loadcodes.js`. Spectra and combos
+  give identical numbers; the LLR tributary area is plan area / columns.
