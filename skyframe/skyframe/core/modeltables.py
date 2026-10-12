@@ -2008,6 +2008,8 @@ def _build_catalogue() -> List[Table]:
 
     from .modeltables_ext import extend_catalogue as _w8_extend
     _w8_extend(T)        # W8: DB-edit coverage (core/modeltables_ext.py)
+    from .linkdamp_tables import tables as _wb_ld_tables  # wave B: material
+    T.extend(_wb_ld_tables(G_DEF, G_OBJ))  # damping, freq-dependent links
     return T
 
 

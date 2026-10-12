@@ -227,6 +227,7 @@ export function editModalCase(sky, D, { done } = {}) {
         hint: nls.length ? "Tangent stiffness at the end of a nonlinear static case (P-Delta / yielded state)." : "Define a nonlinear static case to start from its stiffness.",
       }),
     ], { summary: "Advanced — initial stiffness", countFn: () => st.from ? 1 : 0 }),
+    ...((window.__sky && window.__sky.wbDamp) ? window.__sky.wbDamp.modalFields(F, st, D) : []),   // wave B composite damping preview (js/dampopts.js)
   ];
   return dkDialog({
     id: "dcModalCase", title: "Load Case Data — Modal", iconId: "exleaf-modal", size: "md", form: F, body,
@@ -312,7 +313,8 @@ export function editThCase(sky, D, name, { copyOf, done } = {}) {
     el("div", { class: "dk-label", text: "Gravity preload (applied first)" }), gtbl);
   const syncNl = () => nlBox.classList.toggle("dk-disabled", !c.nonlinear);
   const adv = dkAdvanced([
-    F.select(c, "damping_model", [["rayleigh", "Rayleigh (mass + stiffness)"], ["modal", "Modal"]], { label: "Damping model", id: "dcThDampModel", read: () => c.damping_model || "rayleigh" }),
+    F.select(c, "damping_model", [["rayleigh", "Rayleigh (mass + stiffness)"], ["modal", "Modal"], ["composite", "Composite (material)"]], { label: "Damping model", id: "dcThDampModel", read: () => c.damping_model || "rayleigh" }),
+    ...((window.__sky && window.__sky.wbDamp) ? window.__sky.wbDamp.thFields(F, c, D) : []),   // wave B composite ratios + preview (js/dampopts.js)
     F.check(c, "nonlinear", { label: "Nonlinear (lumped plastic hinges)", id: "dcThNl", onChange: syncNl }),
     nlBox,
     dkNote("Integration scheme, damping overrides and multi-component load data: select the case in <b>Define Load Cases</b> › Modify in the Loads editor."),

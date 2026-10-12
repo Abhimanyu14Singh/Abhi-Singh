@@ -1586,8 +1586,9 @@ export class LoadsEditor {
     const sel = document.createElement("select");
     sel.className = "th-damping-model";
     sel.innerHTML = `<option value="rayleigh">Rayleigh</option>
-      <option value="modal">Modal (per-mode ζ)</option>`;
-    sel.value = tc.damping_model === "modal" ? "modal" : "rayleigh";
+      <option value="modal">Modal (per-mode ζ)</option>
+      <option value="composite">Composite (material ζ)</option>`;   // wave B (js/dampopts.js)
+    sel.value = ["modal", "composite"].includes(tc.damping_model) ? tc.damping_model : "rayleigh";
     lbl.append(s, sel);
     wrap.appendChild(lbl);
 
@@ -1638,7 +1639,7 @@ export class LoadsEditor {
     wrap.appendChild(panel);
 
     sel.addEventListener("change", () => {
-      tc.damping_model = sel.value === "modal" ? "modal" : "rayleigh";
+      tc.damping_model = ["modal", "composite"].includes(sel.value) ? sel.value : "rayleigh";   // + wave B composite
       panel.classList.toggle("hidden", tc.damping_model !== "modal");
       this._mutated(false);
     });

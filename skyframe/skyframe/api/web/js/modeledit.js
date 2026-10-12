@@ -149,7 +149,7 @@ export function normalizeModel(m) {
     // v0.13 — optional reference to a library time-history function ("" = inline)
     tc.function = typeof tc.function === "string" ? tc.function : "";
     // v0.24 — damping model ("rayleigh" default) + per-mode ratios
-    tc.damping_model = tc.damping_model === "modal" ? "modal" : "rayleigh";
+    tc.damping_model = ["modal", "composite"].includes(tc.damping_model) ? tc.damping_model : "rayleigh";   // + wave B composite (material) damping
     tc.modal_zeta = Array.isArray(tc.modal_zeta)
       ? tc.modal_zeta.map(Number).filter(z => isFinite(z) && z > 0 && z < 1)
       : null;

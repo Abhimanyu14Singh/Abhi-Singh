@@ -186,6 +186,9 @@ from skyframe.core import springprops as _sprp     # B9/B11 named springs
 from skyframe.engine import hysteresis as _hyst    # B9/B11 builders
 from skyframe.engine import hinge_ties as _hinge_ties  # sprung hinge bases
 from skyframe.engine import link_rayleigh as _lrl  # Rayleigh on links/springs
+from skyframe.core import links_ext as _wb_lkx      # wave B link types
+from skyframe.engine import links_ext as _wb_lkb    # wave B link builders
+from skyframe.engine import composite_damping as _wb_cpd  # composite damping
 
 from skyframe.engine import solver_policy as _slv   # solver per problem size
 from skyframe.core import mesh_cache as _mesh_cache  # cross-run mesh cache
@@ -431,7 +434,8 @@ GAP_YIELD_HUGE = 1.0e12
 # displacement-state devices too — same Newton routing.
 NONLINEAR_STATIC_LINK_TYPES = ("gap", "hook", "isolator",
                                "fp_isolator", "triple_fp", "multilinear",
-                               *_sprp.HYSTERESIS_LINK_TYPES)   # B11
+                               *_sprp.HYSTERESIS_LINK_TYPES,   # B11
+                               *_wb_lkx.STATIC_NONLINEAR)      # wave B
 
 # v0.21 device links: elastic rotational stiffness handed to the bearing
 # elements' -T/-My/-Mz (singleFPBearing) and rotZ/rotX/rotY
@@ -3597,6 +3601,11 @@ class OpenSeesEngine:
                         float(prm.get("minFv", TFP_DEFAULT_MINFV)),
                         float(prm.get("tol", TFP_DEFAULT_TOL)))
                 asm.link_ele[lk.uid] = etag
+                device_nodes.update((ni, nj))
+                continue
+            elif ltype in _wb_lkx.EXT_LINK_TYPES:             # wave B
+                mtag, etag, frn_tag = _wb_lkb.build(
+                    self, asm, lk, ltype, prm, ni, nj, mtag, etag, frn_tag)
                 device_nodes.update((ni, nj))
                 continue
             elif ltype in _sprp.MATERIAL_LINK_TYPES:          # B11
@@ -7393,6 +7402,8 @@ class OpenSeesEngine:
         """
         if name in self._th_cache:
             return self._th_cache[name]
+        if _wb_cpd.wants(self, name):           # composite modal damping
+            return _wb_cpd.run(self, name, "th")
         model = self.model
         if name not in model.th_cases:
             raise ValueError(f"Unknown time-history case {name!r}")
@@ -8011,6 +8022,8 @@ class OpenSeesEngine:
         """
         if name in self._fna_cache:
             return self._fna_cache[name]
+        if _wb_cpd.wants(self, name):           # composite modal damping
+            return _wb_cpd.run(self, name, "fna")
         model = self.model
         if name not in model.th_cases:
             raise ValueError(f"Unknown time-history case {name!r}")

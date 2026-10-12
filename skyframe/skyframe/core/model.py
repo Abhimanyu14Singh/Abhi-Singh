@@ -57,6 +57,11 @@ from skyframe.core import rs_ext as _rsx  # RS ecc / U3 / angle / CQC3
 from skyframe.core import modal_cases as _mcs  # mass sources / modal cases
 from skyframe.core.builtup import (  # v1.21 built-up sections
     model_to_dict as _builtup_to_dict, model_from_dict as _builtup_from_dict)
+# wave B links/damping: Wen / BRB / bilinear damper / T-C isolator types,
+# frequency-dependent link props, material (composite) modal damping
+from skyframe.core import links_ext as _lkx
+from skyframe.core import link_freq as _lfq
+from skyframe.core import composite_damping as _cpd
 
 G_ACCEL = 9.80665  # m/s^2
 _PLANAR_TOL = 1e-6  # m
@@ -1407,7 +1412,8 @@ class ResponseSpectrumCase:
 TH_DIRECTIONS = ("X", "Y")
 
 # v0.24 time-history viscous damping models
-TH_DAMPING_MODELS = ("rayleigh", "modal")
+TH_DAMPING_MODELS = ("rayleigh", "modal",
+                     "composite")   # core.composite_damping (material)
 
 
 @dataclass
@@ -1764,7 +1770,8 @@ RS_DIRECTIONAL_METHODS = ("100_30", "SRSS", "CQC3", "ABS")  # +rs_ext
 #   friction_spring / rubber_isolator_bouc_wen
 LINK_TYPES = ("elastic", "damper", "gap", "hook", "isolator",
               "fp_isolator", "triple_fp", "multilinear",
-              *_sprp.HYSTERESIS_LINK_TYPES)
+              *_sprp.HYSTERESIS_LINK_TYPES,
+              *_lkx.EXT_LINK_TYPES)              # wave B (core.links_ext)
 
 # required / optional param keys per advanced link type
 _LINK_PARAM_KEYS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
@@ -1778,6 +1785,7 @@ _LINK_PARAM_KEYS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
                   ("uy", "kv", "kvt", "minFv", "tol")),
     "multilinear": (("points",), ("kv",)),
     **_sprp.LINK_PARAM_KEYS,                     # B11 hysteresis types
+    **_lkx.LINK_PARAM_KEYS,                      # wave B link types
 }
 
 DAMPER_DEFAULT_ALPHA = 1.0     # velocity exponent (1 = linear dashpot)
@@ -2205,6 +2213,12 @@ class BuildingModel:
     # Emitted by to_dict only when non-empty.
     mass_sources: Dict[str, dict] = field(default_factory=dict)
     modal_cases: Dict[str, dict] = field(default_factory=dict)
+
+    # wave B: frequency-dependent link properties (core.link_freq) and
+    # material damping ratios for composite modal damping
+    # (core.composite_damping); empty = legacy, emitted only when set.
+    link_freq_props: Dict[str, dict] = field(default_factory=dict)
+    material_damping: Dict[str, float] = field(default_factory=dict)
 
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
@@ -2697,7 +2711,8 @@ class BuildingModel:
         # v0.24 damping model
         if th.damping_model not in TH_DAMPING_MODELS:
             raise ValueError(f"TH case {th.name}: damping_model must be "
-                             f"rayleigh|modal, got {th.damping_model!r}")
+                             "rayleigh|modal|composite, got "
+                             f"{th.damping_model!r}")
         if th.modal_zeta is not None:
             for z in th.modal_zeta:
                 if not (isinstance(z, (int, float)) and math.isfinite(z)
@@ -3350,6 +3365,11 @@ class BuildingModel:
                 raise ValueError(f"Link {lk.uid} ({ltype}): param {key!r} "
                                  f"must be a finite number (got {v!r})")
         length = lk.length
+        if ltype in _lkx.EXT_LINK_TYPES:                  # wave B
+            _lkx.validate_link(lk.uid, ltype, prm, length,
+                               abs(lk.pj[0] - lk.pi[0])
+                               + abs(lk.pj[1] - lk.pi[1]))
+            return
         if ltype in _sprp.HYSTERESIS_LINK_TYPES:          # B11
             _sprp.validate_link_params(lk.uid, ltype, prm)
             dx = abs(lk.pj[0] - lk.pi[0]) + abs(lk.pj[1] - lk.pi[1])
@@ -4070,6 +4090,8 @@ class BuildingModel:
         self._validate_open_wind()          # open-structure wind params
         _dmpo.validate_damping_options(self)    # Rayleigh on links
         self._validate_analysis_options()   # solver / convergence options
+        _lfq.validate(self)                 # wave B freq-dependent links
+        _cpd.validate(self)                 # wave B material damping
 
     def _validate_open_wind(self) -> None:
         from skyframe.core.openwind import validate_model as _ow_validate
@@ -4235,6 +4257,9 @@ class BuildingModel:
             **_spd.model_to_dict(self),  # spandrel labels (if any)
 
             **_mcs.model_to_dict(self),  # mass sources / modal cases (if any)
+
+            **_lfq.model_to_dict(self),  # wave B freq-dependent links (if any)
+            **_cpd.model_to_dict(self),  # wave B material damping (if any)
         }
 
     @classmethod
@@ -4688,6 +4713,8 @@ class BuildingModel:
         _spd.model_from_dict(mdl, d)        # spandrel labels / tags
 
         _mcs.model_from_dict(mdl, d)        # mass sources / modal cases
+        _lfq.model_from_dict(mdl, d)        # wave B freq-dependent links
+        _cpd.model_from_dict(mdl, d)        # wave B material damping
         mdl.validate()
         return mdl
 

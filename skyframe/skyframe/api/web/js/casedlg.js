@@ -860,7 +860,7 @@ export function openThOptions(ctx, name) {
     if (isNum(dd.stiffness_coeff)) d.a1 = dd.stiffness_coeff;
     d.basis = dd.stiffness || "";
   }
-  const modalDamping = tc.damping_model === "modal";
+  const modalDamping = tc.damping_model === "modal" || tc.damping_model === "composite";   // + wave B composite (per-mode ζ too)
   const body = el("div", "cd-tho");
   const err = errorLine("thoError");
 

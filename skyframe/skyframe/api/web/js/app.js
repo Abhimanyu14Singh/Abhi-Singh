@@ -115,6 +115,8 @@ import { initModalX as mxInitModalX } from "./modalx.js";   // TH function tools
 
 import { initW8 as w8InitW8 } from "./w8_init.js";   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_*.js)
 import { mockValidateW8 as w8MockValidate } from "./mock_w8.js";   // W8 ?mock=1 validation
+import { initWaveBLinks as wbInitLinks, wbMockValidateModel as wbMockValidate } from "./wb_links.js";   // wave B: Wen / BRB / bilinear damper / T-C isolator links, freq-dependent links, damping options (js/wb_links.js)
+import { wbMockAugment as wbMockAugmentResults } from "./mock_wbdamp.js";   // wave B ?mock=1 results (composite ζ, freq-dependent-link note)
 
 /* ------------------------------------------------ state */
 const store = {
@@ -288,7 +290,7 @@ async function generateModel(params) {
 async function analyze() {
   if (store.mock) {
     await new Promise(r => setTimeout(r, 500));   // let the spinner breathe
-    return mockResults(store.model);
+    return wbMockAugmentResults(store.model, mockResults(store.model));   // + wave B (js/mock_wbdamp.js)
   }
   return api("/api/analyze", null);
 }
@@ -308,7 +310,8 @@ async function postModel(payload) {
       || c9MockValidateTowers(payload)   // C9 towers
       || c9fMockValidate(payload)   // C9 follow-ups: control_tower
       || relMockValidate(payload)   // end releases / partial fixity / joint local axes
-      || w8MockValidate(payload);   // W8 master/similar stories · curves · shell options
+      || w8MockValidate(payload)   // W8 master/similar stories · curves · shell options
+      || wbMockValidate(payload);   // wave B link types · link_freq_props · material_damping
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -4693,7 +4696,9 @@ function renderThTab() {
   const dirX = tc.direction !== "Y";
   const story = store.thStory;
 
-  const damp = tc.damping_model === "modal" && (tc.modal_zeta || []).length
+  const damp = tc.damping_model === "composite" && td.composite_damping   // wave B composite modal damping
+    ? `composite ζ [${td.composite_damping.modes.map(m => fmt(m.zeta, 3)).join(", ")}]`
+    : tc.damping_model === "modal" && (tc.modal_zeta || []).length
     ? `modal ζ [${tc.modal_zeta.map(z => fmt(z, 3)).join(", ")}]`
     : `ζ ${fmt(tc.damping ?? 0.05, 3)}`;
   $("thMeta").textContent =
@@ -8596,6 +8601,7 @@ async function boot() {
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)
   try { mxInitModalX(window.__sky); } catch (err) { console.error("modal cases init failed", err); }   // after the dialog standard: Mass Source / Modal lists (js/modalx.js)
+  try { wbInitLinks(window.__sky); } catch (err) { console.error("wave B links / damping init failed", err); }   // link types · freq-dependent links · damping options (js/wb_links.js)
 }
 
 boot();

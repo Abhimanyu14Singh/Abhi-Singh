@@ -60,7 +60,8 @@ def _link_labels(link, n: int) -> List[str]:
                  if link.stiffness[d] > 0.0]
         if len(names) == n:
             return names
-    elif lt in ("damper", "gap", "hook") and n == 1:
+    elif lt in ("damper", "gap", "hook", "plastic_wen", "brb",
+                "damper_bilinear") and n == 1:   # + wave B axial types
         return ["P"]
     elif n == 3 and zero:
         return ["UX", "UY", "UZ"]        # global shear X, shear Y, axial

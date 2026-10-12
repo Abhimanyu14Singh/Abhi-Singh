@@ -51,6 +51,7 @@ import openseespy.opensees as ops
 
 from skyframe.core.frequency_cases import (FREQ_MAX_POINTS, PSDCase,
                                            SteadyStateCase, interp_function)
+from skyframe.engine import link_freq as _lfd   # wave B freq-dependent links
 
 FREQ_DIRECT_MODE_CAP = 400          # "direct" = all modes; dense eigen cap
 _REFINE_K = (0.1, 0.2, 0.3, 0.45, 0.6, 0.8, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0,
@@ -303,6 +304,8 @@ def _build_basis(eng, case) -> _Basis:
     b.R = R
     b.modal_freqs_hz = [float(o / (2.0 * math.pi)) for o in omegas]
     b.warnings = []
+    b.S, b.node_index = S, idx                  # wave B: engine.link_freq
+    _lfd.attach(eng, b, case)                   # freq-dependent links
     return b
 
 
@@ -322,6 +325,8 @@ def _load_amplitudes(model, case, f: np.ndarray, psd: bool) -> np.ndarray:
 def _response_block(b: _Basis, case, A: np.ndarray, f: np.ndarray,
                     cols: Optional[np.ndarray] = None) -> np.ndarray:
     """Complex response ``Z[k, q]`` for one frequency block."""
+    if getattr(b, "lfd", None) is not None:     # freq-dependent links
+        return _lfd.response_block(b, case, A, f, cols)
     w = 2.0 * math.pi * f
     H = modal_frf(b.omegas, w, case.damping, case.damping_type)
     Phi = b.Phi if cols is None else b.Phi[:, cols]

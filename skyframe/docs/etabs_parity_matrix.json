@@ -927,13 +927,13 @@
   "area": "Properties",
   "feature": "Link: damper - bilinear",
   "etabs": "Damper - Bilinear",
-  "skyframe": "Not available",
-  "status": "missing",
-  "evidence": "core/model.py LINK_TYPES",
-  "gap": "Add bilinear-force viscous damper law",
+  "skyframe": "damper_bilinear link (BilinearOilDamper: cd up to the relief force Fr, then ratio*cd; series spring k); Link Properties dialog with force-velocity preview",
+  "status": "full",
+  "evidence": "core/links_ext.py; engine/links_ext.py; js/linkext.js; tests/test_links_waveb.py; CONTRACT §Link types: Plastic (Wen), BRB, bilinear damper, T/C friction isolator",
+  "gap": "Not in FNA (direct integration only)",
   "value": "low",
   "effort": "S",
-  "phase": "R3"
+  "phase": null
  },
  {
   "area": "Properties",
@@ -987,13 +987,13 @@
   "area": "Properties",
   "feature": "Link: plastic (Wen)",
   "etabs": "Plastic (Wen) - Bouc-Wen yielding element (used for hysteretic dampers, BRBs)",
-  "skyframe": "Not available as a general link (Bouc-Wen only inside the rubber-isolator type; bilinear isolator uses Steel01)",
-  "status": "missing",
-  "evidence": "core/springprops.py (no plastic_wen)",
-  "gap": "Add Plastic (Wen) per-DOF link (OpenSees BoucWen uniaxial)",
+  "skyframe": "plastic_wen link {k, Fy, ratio, exp}: BoucWen uniaxial per DOF (axial for an inclined link, both shears + kv for a vertical / zero-length link); FNA Wen component; Link Properties dialog with loop preview",
+  "status": "full",
+  "evidence": "core/links_ext.py; engine/links_ext.py; engine/fna.py; js/linkext.js; tests/test_links_waveb.py; CONTRACT §Link types: Plastic (Wen), BRB, bilinear damper, T/C friction isolator",
+  "gap": "",
   "value": "med",
   "effort": "S",
-  "phase": "R2"
+  "phase": null
  },
  {
   "area": "Properties",
@@ -1023,37 +1023,37 @@
   "area": "Properties",
   "feature": "Link: T/C friction isolator",
   "etabs": "T/C Friction Isolator (tension/compression different behaviour, uplift)",
-  "skyframe": "Not available",
-  "status": "missing",
-  "evidence": "core/model.py LINK_TYPES",
-  "gap": "Add via flatSliderBearing/uplift-capable FP element",
+  "skyframe": "tc_fp_isolator: singleFPBearing in compression (mu N + N d/R) that lifts off with zero axial and shear force in tension; optional tension hold-down kt after gap_t",
+  "status": "full",
+  "evidence": "core/links_ext.py; engine/links_ext.py; js/linkext.js; tests/test_links_waveb.py; CONTRACT §Link types: Plastic (Wen), BRB, bilinear damper, T/C friction isolator",
+  "gap": "Isotropic friction / radius (no per-direction mu, R); no friction in tension; not in FNA",
   "value": "low",
   "effort": "M",
-  "phase": "R3"
+  "phase": null
  },
  {
   "area": "Properties",
   "feature": "Buckling-restrained brace modelling",
   "etabs": "BRB via Plastic (Wen) link or BRB hinge (ASCE 41 BRB hinge type in recent versions; uncertain exact version)",
-  "skyframe": "Only via user P hinge (kinematic/takeda) or T/C-only frames; no BRB-specific law with tension/compression asymmetry",
-  "status": "missing",
-  "evidence": "core/user_hinges.py HINGE_TYPES (P)",
-  "gap": "Add a BRB link/hinge (Steel4 or SteelBRB uniaxial) with asymmetric hardening",
+  "skyframe": "brb link {k, Fy, d_bm, beta, omega, R0}: Steel4 asymmetric kinematic hardening reaching omega*Fy (tension) and beta*omega*Fy (compression) at d_bm; Link Properties dialog with backbone preview",
+  "status": "full",
+  "evidence": "core/links_ext.py; engine/links_ext.py; js/linkext.js; tests/test_links_waveb.py; CONTRACT §Link types: Plastic (Wen), BRB, bilinear damper, T/C friction isolator",
+  "gap": "Link only (no BRB frame hinge); not in FNA",
   "value": "med",
   "effort": "S",
-  "phase": "R2"
+  "phase": null
  },
  {
   "area": "Properties",
   "feature": "Link frequency-dependent properties",
   "etabs": "Link/Support Properties > Frequency Dependent (for steady-state/PSD)",
-  "skyframe": "Not available",
-  "status": "missing",
-  "evidence": "core/frequency_cases.py",
-  "gap": "Frequency-dependent K/C tables per link for SS/PSD cases",
+  "skyframe": "model.link_freq_props: per-DOF [f, K, C] tables on elastic (UX..RZ) / damper (AXIAL) links, coupled into Steady-State and PSD solves; Define dialog with K(f)/C(f) preview; DB-edit tables",
+  "status": "full",
+  "evidence": "core/link_freq.py; engine/link_freq.py; engine/frequency.py; js/linkfreq.js; tests/test_links_waveb.py; CONTRACT §Frequency-dependent link properties",
+  "gap": "Exact within the retained modal subspace; other link types rejected",
   "value": "low",
   "effort": "M",
-  "phase": "R4"
+  "phase": null
  },
  {
   "area": "Properties",
@@ -1875,13 +1875,13 @@
   "area": "Analysis",
   "feature": "Damping options",
   "etabs": "Constant modal, interpolated by period/frequency, mass/stiffness proportional, material-proportional, link/hinge damping",
-  "skyframe": "Rayleigh (by ratio or periods), per-mode modal damping, Rayleigh on springs/links/hinges (engine)",
-  "status": "partial",
-  "evidence": "core/model.py TH_DAMPING_MODELS, modal_zeta; core/damping_options.py; CONTRACT §Rayleigh damping on springs, links and hinges",
-  "gap": "Material-proportional (composite) damping; UI-missing for model damping_options (link/spring Rayleigh)",
+  "skyframe": "Rayleigh (by ratio or periods), per-mode modal damping, Rayleigh on springs/links/hinges with UI (Analyze > Advanced > Damping Options), material-proportional (composite) modal damping by strain energy per mode (TH damping_model composite, direct integration and FNA)",
+  "status": "full",
+  "evidence": "core/damping_options.py; core/composite_damping.py; engine/composite_damping.py; js/dampopts.js; tests/test_links_waveb.py; CONTRACT §Material-proportional (composite) modal damping",
+  "gap": "Composite ratios not applied to RS / steady-state cases",
   "value": "med",
   "effort": "S",
-  "phase": "R2"
+  "phase": null
  },
  {
   "area": "Analysis",

@@ -52,7 +52,8 @@ import openseespy.opensees as ops
 
 _TMP_PAT = 9097                      # temporary unit pattern / series tag
 _DOFS = {"UX": 1, "UY": 2, "UZ": 3, "RX": 4, "RY": 5, "RZ": 6}
-_AXIAL_LINKS = ("damper", "gap", "hook")
+_AXIAL_LINKS = ("damper", "gap", "hook",
+                "brb", "damper_bilinear")   # + wave B axial link types
 
 
 class _Space:
