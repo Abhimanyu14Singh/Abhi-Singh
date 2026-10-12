@@ -59,7 +59,11 @@ const CAT = [
       C("drift_ratio", "Drift Ratio", "ratio"), C("label_max", "Label (max)", "id")]],
   ["centers_mass_rigidity", "Centers Of Mass And Rigidity", "Structure Output > Other Output Items",
     [ST(), C("diaphragm", "Diaphragm", "text"), C("mass", "Mass", "mass"),
-      C("cm_x", "XCM", "length"), C("cm_y", "YCM", "length"), C("cr_x", "XCR", "length"), C("cr_y", "YCR", "length")]],
+      C("cm_x", "XCM", "length"), C("cm_y", "YCM", "length"),
+      // D3 audit: cumulative centre of mass (ETABS Cumulative X / XCCM / YCCM); tips = header tooltips
+      C("cum_mass", "Cumulative Mass", "mass"), C("ccm_x", "XCCM", "length"), C("ccm_y", "YCCM", "length"),
+      { ...C("cr_x", "XCR", "length"), tip: "Centre of rigidity: a force applied to this story only produces no rotation of it" },
+      { ...C("cr_y", "YCR", "length"), tip: "Centre of rigidity: a force applied to this story only produces no rotation of it" }]],
   ["base_reactions", "Base Reactions", "Structure Output > Base Reactions",
     [...CASE, C("FX", "FX", "force"), C("FY", "FY", "force"), C("FZ", "FZ", "force"),
       C("MX", "MX", "moment"), C("MY", "MY", "moment"), C("MZ", "MZ", "moment"),

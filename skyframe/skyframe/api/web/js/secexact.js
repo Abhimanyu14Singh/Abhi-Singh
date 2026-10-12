@@ -199,6 +199,8 @@ export function seShapeExact(s, typ, { onApply } = {}) {
     });
   }
   refresh();
+  // D3: the readout follows a display-units switch (cached result, no new request)
+  const offU = seU.onUnitsChange(() => { if (!wrap.isConnected) { offU(); return; } refresh(); });
   return { node: wrap, refresh };
 }
 

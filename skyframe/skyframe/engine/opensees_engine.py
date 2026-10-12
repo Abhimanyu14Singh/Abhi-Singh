@@ -203,6 +203,7 @@ from skyframe.engine import convergence as _cvg     # nonlinear fallback ladder
 from skyframe.engine import parallel as _par        # parallel solve families
 
 from skyframe.engine import towers as _tw          # C9 multiple towers
+from skyframe.engine import story_centers as _stc  # D3 story CM (audit)
 from skyframe.engine import towers_ext as _twx     # C9 follow-ups
 from skyframe.engine import releases_eng as _rle   # end releases/joint axes
 from skyframe.engine import frame_dist_loads as _fdl  # Wave C dist. moments
@@ -6182,7 +6183,7 @@ class OpenSeesEngine:
             return {}
         master_xy = {s: (asm.node_coords[t][0], asm.node_coords[t][1])
                      for s, t in asm.masters.items()}
-        cm = self._story_cm()
+        cm = _stc.story_cm(self, asm, self._story_cm())  # D3: analysis mass
         props: Dict[str, Dict[str, float]] = {}
         for s in model.stories:
             if s.name not in master_xy:
@@ -6225,87 +6226,10 @@ class OpenSeesEngine:
         return float(ops.nodeDisp(mtag)[5])
 
     def _story_cm(self) -> Dict[str, Tuple[float, float]]:
-        """Story center of mass: the centroid of the story's gravity load."""
-        model = self.model
-        source = model.effective_mass_source()
-        out: Dict[str, Tuple[float, float]] = {}
-        for s in model.stories:
-            if s.name in model.story_masses:
-                out[s.name] = model.plan_center()   # explicit: no spatial info
-                continue
-            wsum = wx = wy = 0.0
-
-            def add(w: float, x: float, y: float) -> None:
-                nonlocal wsum, wx, wy
-                wsum += w
-                wx += w * x
-                wy += w * y
-
-            def mid(m: FrameMember) -> Tuple[float, float]:
-                return (0.5 * (m.pi[0] + m.pj[0]), 0.5 * (m.pi[1] + m.pj[1]))
-
-            for pname, fac in source.items():
-                pat = model.patterns.get(pname)
-                if pat is None:
-                    continue
-                for udl in pat.member_udls:
-                    m = self._mlookup(udl.member_uid)
-                    if m is not None and m.story == s.name and \
-                            m.kind != "column":
-                        add(fac * udl.w * m.length, *mid(m))
-                for ml in pat.member_loads:
-                    if ml.direction != "gravity":
-                        continue
-                    m = self._mlookup(ml.member_uid)
-                    if m is None or m.story != s.name or m.kind == "column":
-                        continue
-                    if ml.kind == "point":
-                        w = fac * ml.w
-                    elif ml.kind == "udl":
-                        w = fac * ml.w * (ml.b - ml.a) * m.length
-                    else:
-                        w = fac * 0.5 * (ml.w + ml.w2) * (ml.b - ml.a) \
-                            * m.length
-                    add(w * _proj_f(m, ml), *mid(m))  # v1.16 projected
-                for al in pat.area_loads:
-                    region = self._slookup(al.region_uid)
-                    if region is None or \
-                            not model._region_on_story(region, s):
-                        continue
-                    c = region.map_uv(0.5, 0.5)
-                    add(fac * al.q * region.net_area
-                        if _lx.area_load_is_default(al) else
-                        fac * _lx.area_load_weight(region, al), c[0], c[1])
-                for nl in pat.nodal_loads:
-                    if abs(nl.point[2] - s.elevation) < 1e-6:
-                        add(fac * (-nl.fz), nl.point[0], nl.point[1])
-                swf = getattr(pat, "self_weight_factor", 0.0)
-                if swf:
-                    for m in model.members:
-                        if m.story != s.name or m.kind == "column":
-                            continue
-                        sec = model.sections.get(m.section)
-                        mat = (model.materials.get(sec.material)
-                               if sec else None)
-                        if sec is not None and mat is not None:
-                            add(fac * swf * _npx.member_area(model, m, sec)
-                                * mat.unit_weight
-                                * m.length * sec.mod_weight, *mid(m))
-                    for region in model.shells:
-                        if not model._region_on_story(region, s):
-                            continue
-                        ssec = model.shell_sections.get(region.section)
-                        mat = (model.materials.get(ssec.material)
-                               if ssec else None)
-                        if ssec is not None and mat is not None:
-                            c = region.map_uv(0.5, 0.5)
-                            add(fac * swf * ssec.thickness * mat.unit_weight
-                                * region.net_area * ssec.weight, c[0], c[1])
-            if wsum > 1e-12:
-                out[s.name] = (wx / wsum, wy / wsum)
-            else:
-                out[s.name] = model.plan_center()
-        return out
+        """Centroid of the story's derived (gravity-load) mass.  D3 audit:
+        exact load resultants / net-area region centroids, mass options
+        honoured — see :mod:`skyframe.engine.story_centers`."""
+        return _stc.derived_centroids(self)
 
     # ---------------------------------------- v0.9 seismic diagnostics
     @staticmethod
