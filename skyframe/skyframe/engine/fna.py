@@ -76,6 +76,8 @@ def wants(eng, th) -> bool:
     from skyframe.core.model import LinkMember
     for lk in eng.model.links:
         lt = getattr(lk, "link_type", "elastic")
+        if "k_eff" in (getattr(lk, "params", None) or {}):
+            return True                     # wave C effective stiffness
         if lt in _LEGACY:
             continue
         if lt == "damper" and abs(_alpha(LinkMember.coerce_params(
@@ -179,6 +181,11 @@ def _devices(eng, th, model, disp_at):
         if lt == "elastic":
             lin.links.append(copy.deepcopy(lk))
             continue
+        from skyframe.engine import fna_c as _fnc      # wave C devices
+        _wc = _fnc.records(th, lk, lt, prm, disp_at, lin)
+        if _wc is not None:
+            recs.extend(_wc)
+            continue
         pi, pj = tuple(lk.pi), tuple(lk.pj)
         if lt in ("damper", "gap", "hook") or (
                 lt == "plastic_wen" and abs(pi[0] - pj[0])
@@ -273,6 +280,8 @@ def _devices(eng, th, model, disp_at):
             lin.links.append(LinkMember(lk.uid, lo, up,
                                         [k0, k0, kv, 0.0, 0.0, 0.0]))
             recs.append((dev, xy, [k0, k0], (lo, up), "shear", lk.uid))
+    from skyframe.engine import fna_c as _fnc          # wave C k_eff
+    _fnc.apply_eff(model, lin, recs)
     return lin, recs
 
 
