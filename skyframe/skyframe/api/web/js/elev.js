@@ -89,6 +89,7 @@ export class ElevEditor {
   plane() {
     const m = this.opts.getModel();
     const sel = this.opts.getPlane();
+    if (this.wcPlane && m && sel) { const r = this.wcPlane(sel, m); if (r !== undefined) return r; }   // Wave C: general-grid elevations (js/wc_ggrid.js)
     const g = m && m.grid;
     if (!g || !sel) return null;
     const lines = sel.axis === "x" ? g.x_lines : g.y_lines;
@@ -106,15 +107,18 @@ export class ElevEditor {
   world3(s, z) {
     const pl = this.plane();
     if (!pl) return [s, 0, z];
+    if (pl.dir) return [pl.origin[0] + s * pl.dir[0], pl.origin[1] + s * pl.dir[1], z];   // Wave C oblique plane
     return pl.axis === "x" ? [pl.coord, s, z] : [s, pl.coord, z];
   }
   sOf(p) {
     const pl = this.plane();
+    if (pl && pl.dir) return (p[0] - pl.origin[0]) * pl.dir[0] + (p[1] - pl.origin[1]) * pl.dir[1];   // Wave C oblique plane
     return pl && pl.axis === "x" ? p[1] : p[0];
   }
   inPlane(p) {
     const pl = this.plane();
     if (!pl) return false;
+    if (pl.dir) return Math.abs(-(p[0] - pl.origin[0]) * pl.dir[1] + (p[1] - pl.origin[1]) * pl.dir[0]) < 1e-4;   // Wave C oblique plane
     return Math.abs((pl.axis === "x" ? p[0] : p[1]) - pl.coord) < 1e-4;
   }
   /** Story level elevations bottom→top, including the base (0-ish). */
@@ -391,6 +395,7 @@ export class ElevEditor {
   /** Snap (s, z) to grid-tick × story-level nodes plus 0.5 m increments.
       levelOnly forces z onto a story level (beam tool). */
   snap(w, levelOnly = false) {
+    if (this.wcSnapHook) { try { const o = this.wcSnapHook(w, this, levelOnly); if (o) return o; } catch (e) { console.error(e); } }   // Wave C object snaps (js/wc_snap.js)
     const pl = this.plane();
     if (!pl) return { s: w.s, z: w.z, dPx: 0 };
     const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -597,6 +602,7 @@ export class ElevEditor {
     const m = this.opts.getModel();
     const pl = this.plane();
     if (!m || !pl) return;
+    if (this.wcToolHook) { try { if (this.wcToolHook(this.tool, w, this)) { this.renderOverlay(); return; } } catch (e) { console.error(e); } }   // Wave C elevation tools (js/wc_*.js)
     const nearVal = (arr, v) => arr.reduce((b, a) => Math.abs(a - v) < Math.abs(b - v) ? a : b);
 
     switch (this.tool) {
@@ -747,6 +753,7 @@ export class ElevEditor {
     if (this.g2Overlay) { try { this.g2Overlay(g, this); } catch (e) { console.error(e); } }
     // PT hook — dashed magenta tendon polylines (js/tendons.js)
     if (this.ptOverlay) { try { this.ptOverlay(g, this); } catch (e) { console.error(e); } }
+    if (this.wcOverlay) { try { this.wcOverlay(g, this); } catch (e) { console.error(e); } }   // Wave C snaps / tools (js/wc_*.js)
   }
 }
 

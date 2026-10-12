@@ -64,6 +64,7 @@ from skyframe.core import props_ext as _wbp  # Wave B ortho/slab/CF/springs
 
 from skyframe.core import grid_general as _ggrid  # general (line) grids
 from skyframe.core import workspace as _wks  # named views / report sets / aids
+from skyframe.core import units_custom as _ucu  # Wave C per-quantity units
 from skyframe.core.builtup import (  # v1.21 built-up sections
     model_to_dict as _builtup_to_dict, model_from_dict as _builtup_from_dict)
 from skyframe.core import pushover_methods as _po_methods  # ATC-40/FEMA 440/N2
@@ -2371,6 +2372,10 @@ class BuildingModel:
     # to_dict only when non-empty.
     generalized_displacements: Dict[str, dict] = field(default_factory=dict)
 
+    # Wave C: per-quantity display units / decimals (core.units_custom;
+    # display only, emitted as display_units_custom / display_decimals)
+    units_custom: Dict[str, dict] = field(default_factory=dict)
+
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
         self.materials[mat.name] = mat
@@ -4279,6 +4284,8 @@ class BuildingModel:
         self._validate_workspace()          # named views / report sets
         _gdisp.validate(self)               # Wave C generalized displacements
 
+        _ucu.validate(self)                 # Wave C per-quantity units
+
     def _validate_workspace(self) -> None:
         _wks.validate(self)                 # core.workspace
 
@@ -4463,6 +4470,8 @@ class BuildingModel:
             **_wcd.model_to_dict(self),  # Wave C eigen options (if set)
 
             **_gdisp.model_to_dict(self),  # Wave C generalized displacements
+
+            **_ucu.model_to_dict(self),  # Wave C per-quantity units (if any)
         }
 
     @classmethod
@@ -4933,6 +4942,8 @@ class BuildingModel:
         _wcd.model_from_dict(mdl, d)        # Wave C eigen / TH type / damping
 
         _gdisp.model_from_dict(mdl, d)      # Wave C generalized displacements
+
+        _ucu.model_from_dict(mdl, d)        # Wave C per-quantity units
         mdl.validate()
         return mdl
 

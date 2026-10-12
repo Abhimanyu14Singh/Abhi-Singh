@@ -25,6 +25,7 @@ const xmQ = s => '"' + String(s).replace(/"/g, "''") + '"';
 const xmB64 = str => btoa(unescape(encodeURIComponent(str)));
 const xmUnB64 = b64 => decodeURIComponent(escape(atob(b64)));
 
+import { wcE2kGridLines as xmWcGrids, wcE2kReadGrids as xmWcReadGrids } from "./mock_wc.js";   // Wave C: grid systems incl. ETABS GENERAL lines
 const XM_UNITS = { "kN-m": ["KN", "M", 1, 1], "kN-mm": ["KN", "MM", 1, 0.001], "N-mm": ["N", "MM", 0.001, 0.001],
   "kip-ft": ["KIP", "FT", 4.4482216152605, 0.3048], "kip-in": ["KIP", "IN", 4.4482216152605, 0.0254],
   "tonf-m": ["TONF", "M", 9.80665, 1], "kgf-m": ["KGF", "M", 0.00980665, 1] };
@@ -46,7 +47,9 @@ function xmE2k(m, opts) {
   const st = m.stories || [];
   [...st].reverse().forEach(s => out.push(`  STORY ${xmQ(s.name)}  HEIGHT ${L(s.height)}  MASTERSTORY "Yes"`));
   const base = st.length ? st[0].elevation - st[0].height : 0;
-  out.push(`  STORY "Base"  ELEV ${L(base)}`, "", "$ MATERIAL PROPERTIES");
+  out.push(`  STORY "Base"  ELEV ${L(base)}`);
+  if (opts.include.grids !== false) out.push(...xmWcGrids(m, L));   // Wave C grid systems (general lines too)
+  out.push("", "$ MATERIAL PROPERTIES");
   for (const mt of Object.values(m.materials || {})) {
     out.push(`  MATERIAL  ${xmQ(mt.name)}    TYPE "${(mt.material_type || "concrete").replace(/^./, c => c.toUpperCase())}"`);
     out.push(`  MATERIAL  ${xmQ(mt.name)}    SYMTYPE "Isotropic"  E ${S(mt.E)}  U ${xmNum(mt.nu ?? 0.2)}`);
@@ -102,7 +105,7 @@ function xmE2kRead(text) {
   const tok = line => [...line.matchAll(/"([^"]*)"|(\S+)/g)].map(x => x[1] !== undefined ? x[1] : x[2]);
   const kv = (t, i) => { const o = {}; for (; i + 1 < t.length; i += 2) o[t[i].toUpperCase()] = t[i + 1]; return o; };
   let F = 1, Lf = 1;
-  const stories = [], pts = {}, lines = {}, secs = {}, mats = {}, members = [];
+  const stories = [], pts = {}, lines = {}, secs = {}, mats = {}, members = [], gridRecs = [];
   let base = 0;
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
@@ -120,6 +123,7 @@ function xmE2kRead(text) {
     else if (head === "POINT") pts[t[1]] = [+t[2] * Lf, +t[3] * Lf];
     else if (head === "LINE") lines[t[1]] = [t[2].toUpperCase(), t[3], t[4], t[5] !== undefined ? +t[5] : (t[2].toUpperCase() === "COLUMN" ? 1 : 0)];
     else if (head === "LINEASSIGN") members.push([t[1], t[2], kv(t, 3)]);
+    else if (head === "GRIDSYSTEM" || head === "GRID") gridRecs.push(t);   // Wave C (js/mock_wc.js)
     else if (!["PROGRAM", "TITLE2", "END", "LOADPATTERN", "LOADCASE", "COMBO"].includes(head)) warnings.push(`mock: ${head} record ignored`);
   }
   const st = [...stories].reverse();
@@ -136,8 +140,9 @@ function xmE2kRead(text) {
   }
   const xs = [...new Set(Object.values(pts).map(p => p[0]))].sort((a, b) => a - b);
   const ys = [...new Set(Object.values(pts).map(p => p[1]))].sort((a, b) => a - b);
+  const gsys = xmWcReadGrids(gridRecs, Lf);   // Wave C: grid systems (general lines) from the file
   return { warnings, model: { name: "E2K Import", frame_axis_convention: "etabs", materials: mats, sections: secs,
-    shell_sections: {}, stories: sts, members: mem, shells: [], grid: { x_lines: xs, y_lines: ys }, base_fixity: "fixed",
+    shell_sections: {}, stories: sts, members: mem, shells: [], grid: gsys.length ? gsys[0] : { x_lines: xs, y_lines: ys }, ...(gsys.length ? { grid_systems: gsys } : {}), base_fixity: "fixed",
     patterns: {}, cases: {}, combos: {}, rs_cases: {}, th_cases: {} } };
 }
 

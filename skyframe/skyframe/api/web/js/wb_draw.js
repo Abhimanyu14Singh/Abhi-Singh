@@ -299,6 +299,7 @@ export function initWbDraw(sky) {
     return out;
   }
   function pick(v, mx, my) {
+    if (sky.wc && sky.wc.pick3) { const r = sky.wc.pick3(v, mx, my, D3.a); if (r) return r; }   // Wave C object snaps in 3D (js/wc_snap.js)
     const P = v._makeProjector();
     let best = null, bd = 12;
     for (const p of D3.cands || []) {
