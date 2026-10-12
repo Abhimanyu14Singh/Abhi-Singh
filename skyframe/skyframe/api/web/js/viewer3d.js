@@ -235,6 +235,7 @@ export class Viewer3D {
       section: mm.section, story: mm.story,
       rigid_i: mm.rigid_i || 0, rigid_j: mm.rigid_j || 0,   // v0.9 rigid zones
     }));
+    if (this.w8Segs) { try { this.segs = this.w8Segs(this.segs, m); } catch (e) { /* W8 hook: curved frames as chords (js/w8_curved.js) */ } }
     // v0.9: members carrying a rigid end offset (for the rigid-zone glyph)
     this.rigidUids = new Set();
     for (const mm of m.members)

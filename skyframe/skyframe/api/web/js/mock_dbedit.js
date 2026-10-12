@@ -13,6 +13,7 @@
 import { relMockTables as mdbRelTables } from "./mock_releases.js";   // frame releases / joint local axes tables
 
 const clone = o => JSON.parse(JSON.stringify(o));
+import { mdbW8Extend } from "./mock_w8.js";   // W8 DB-edit coverage tables
 const QUANTITIES = {
   none: "", length: "m", dim: "m", area: "m^2", inertia: "m^4", force: "kN", moment: "kN*m",
   line_force: "kN/m", pressure: "kPa", stress: "kPa", modulus: "kPa", unit_weight: "kN/m^3",
@@ -473,7 +474,9 @@ function buildCatalogue() {
   const patCol = () => col("pattern", "Load Pattern", "enum", "none", { enum: names("patterns"), required: true });
   const caseTbl = (key, title, container, cols, newObj) => obj(key, title, G.CASE, [col("name", "Case", "text", "none", { required: true }), ...cols],
     { container, keycol: "name", onRename: CASC.case, deleteRefs: REFS.case, newObj });
-  return [
+  // W8 hook — DB-edit coverage tables / columns (js/mock_w8.js mirrors core/modeltables_ext.py)
+  const W8H = { col, obj, names, optNames, optStories, getv, putv, parseCell, rowValues, same, E, clone, RowErr, mergeOrdered, CASC, REFS, isNum, G };
+  return mdbW8Extend([
     obj("materials", "Material Properties", G.DEF, [
       col("name", "Name", "text", "none", { required: true }),
       col("material_type", "Type", "enum", "none", { enum: withCurrent(MATERIAL_TYPES, "materials", "material_type"), def: "concrete" }),
@@ -654,7 +657,7 @@ function buildCatalogue() {
       cols: [col("mode", "Self Mass Mode", "enum", "none", { enum: ["weight", "element_self_mass"] }),
         ...[["self_mass", "Element Self Mass"], ["patterns", "Additional Mass from Patterns"], ["include_lateral", "Lateral Mass"],
           ["include_vertical", "Vertical Mass"], ["lump_at_stories", "Lump at Stories"]].map(([k, l]) => col(k, l, "bool"))] },
-  ];
+  ], W8H);
 }
 let CAT = null;
 const catalogue = () => (CAT = CAT || [...buildCatalogue(), ...mdbRelTables({ obj, col, G })]);   // + end releases / joint axes (js/mock_releases.js)
@@ -675,7 +678,7 @@ function rowsOf(t, d) {
       for (const [gn, g] of Object.entries(d.groups || {})) for (const k of ["members", "shells", "links"]) for (const u of g[k] || []) out.push({ _id: [gn, k, u], group: gn, type: L[k], object: u });
       return out;
     }
-    default: return [];
+    default: return t.w8rows ? t.w8rows(t, d) : [];   // W8 tables (js/mock_w8.js)
   }
 }
 function applyOne(t, d, rows, errs) {
@@ -729,7 +732,8 @@ function applyOne(t, d, rows, errs) {
       }
       return { rows: rows.length };
     }
-    default: errs.push(E(t.key, null, null, "unsupported table")); return {};
+    default: if (t.w8apply) return t.w8apply(t, d, rows, errs);   // W8 tables (js/mock_w8.js)
+      errs.push(E(t.key, null, null, "unsupported table")); return {};
   }
 }
 

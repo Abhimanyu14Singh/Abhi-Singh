@@ -113,6 +113,9 @@ import { initA8Results as a8InitResults } from "./a8results.js";   // A8: spandr
 
 import { initModalX as mxInitModalX } from "./modalx.js";   // TH function tools · named mass sources · modal cases (js/modalx.js)   // File › Import ▸ / Export ▸ E2K · IFC · DXF · Excel (js/exchange.js)
 
+import { initW8 as w8InitW8 } from "./w8_init.js";   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_*.js)
+import { mockValidateW8 as w8MockValidate } from "./mock_w8.js";   // W8 ?mock=1 validation
+
 /* ------------------------------------------------ state */
 const store = {
   model: null,
@@ -304,7 +307,8 @@ async function postModel(payload) {
       || owMockValidateModel(payload)   // open-structure wind member params
       || c9MockValidateTowers(payload)   // C9 towers
       || c9fMockValidate(payload)   // C9 follow-ups: control_tower
-      || relMockValidate(payload);   // end releases / partial fixity / joint local axes
+      || relMockValidate(payload)   // end releases / partial fixity / joint local axes
+      || w8MockValidate(payload);   // W8 master/similar stories · curves · shell options
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -8586,6 +8590,8 @@ async function boot() {
   try { relInitReleases(window.__sky); } catch (err) { console.error("releases / joint axes init failed", err); }   // Releases / Partial Fixity · Joint Local Axes (js/releases.js)
 
   try { a8InitResults(window.__sky); } catch (err) { console.error("A8 results init failed", err); }   // spandrels · results export · report plus (js/a8results.js)
+
+  try { w8InitW8(window.__sky); } catch (err) { console.error("W8 init failed", err); }   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_init.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)

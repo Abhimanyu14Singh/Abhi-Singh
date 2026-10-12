@@ -22,6 +22,7 @@ import {
   dkDraft, dkCommit,
 } from "./dlgkit.js";
 import { spvFramePanel as daSpvFrame, spvSplit as daSpvSplit } from "./secpreview.js";   // preview of the chosen section (js/secpreview.js)
+import { w8AssignShellFields as daW8ShellFields, w8AssignShellCheck as daW8ShellCheck, shellPut as daW8ShellPut } from "./w8_shell.js";   // W8 shell assign fields
 
 const sel = sky => (sky.store.selection || []);
 const common = (arr, f) => {
@@ -168,6 +169,7 @@ export function openAssignShell(sky) {
         { label: "Behaviour", id: "daShellBeh", mixed: vals.behavior.mixed, write: put("behavior") }),
       F.num(V, "mesh_size", { label: "Maximum mesh size", kind: "length", gt: 0, id: "daShellMesh", mixed: vals.mesh_size.mixed, write: put("mesh_size") }),
     ]),
+    ...daW8ShellFields(F, sh, P, S.model),   // W8 auto mesh n1 × n2 · one-way distribution · load set (js/w8_shell.js)
     dkAdvanced([
       F.num(V, "wind_cp", { label: "Wind pressure coefficient Cp", allowNull: true, nullText: "none", def: null, id: "daShellCp", mixed: vals.wind_cp.mixed, write: put("wind_cp") }),
       dias.length ? F.select(V, "diaphragm", [["", "None"], ...dias.map(d => [d, d])], { label: "Diaphragm", id: "daShellDia", mixed: vals.diaphragm.mixed, write: put("diaphragm") }) : null,
@@ -176,11 +178,13 @@ export function openAssignShell(sky) {
   const apply = () => {
     const keys = Object.keys(P);
     if (!keys.length) return "";
+    const w8m = daW8ShellCheck(sh, P); if (w8m) return w8m;   // W8 mesh / one-way rules
     const D = dkDraft(sky);
     const uids = new Set(refs.map(r => r.uid));
     for (const s of D.shells) {
       if (!uids.has(s.uid)) continue;
       for (const k of keys) {
+        if (daW8ShellPut(s, k, P[k])) continue;   // W8 keys (defaults remove the key)
         if (k === "diaphragm" && !P[k]) delete s.diaphragm;
         else s[k] = P[k];
       }

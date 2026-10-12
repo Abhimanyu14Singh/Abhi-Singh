@@ -2005,6 +2005,9 @@ def _build_catalogue() -> List[Table]:
 
     from .modal_cases_tables import tables as _mct_tables  # named mass
     T.extend(_mct_tables(G_DEF, G_CASE))      # sources + modal cases
+
+    from .modeltables_ext import extend_catalogue as _w8_extend
+    _w8_extend(T)        # W8: DB-edit coverage (core/modeltables_ext.py)
     return T
 
 

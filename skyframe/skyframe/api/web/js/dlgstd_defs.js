@@ -23,6 +23,8 @@ import {
   dkDraft, dkCommit, showNum, unitLabel, uniqueName,
 } from "./dlgkit.js";
 import { spvFramePanel as dsSpvFrame, spvShellPanel as dsSpvShell, spvSplit as dsSpvSplit } from "./secpreview.js";   // live member / property preview (js/secpreview.js)
+import { w8StoryTable as dsW8StoryTable } from "./w8_stories.js";   // W8 master / similar stories
+import { w8ShellSectionFields as dsW8ShellFields } from "./w8_shell.js";   // W8 shell type + one-way distribution
 import { openMatLib as dsOpenMatLib } from "./matlib.js";   // v1.21 material library browser (js/matlib.js)
 
 import { ssShapeEditor as dsSsEditor, ssShapeLabel as dsSsLabel } from "./secshape_ui.js";   // v1.21 Shape selector + parametric forms
@@ -425,6 +427,7 @@ export function editShellSection(sky, D, name, { copyOf, done } = {}) {
   s.name = nm0;
   const draftName = { v: nm0 };
   const F = dkForm();
+  const w8sh = dsW8ShellFields(F, s, D, name);   // W8 shell type / one-way
   const groups = {};
   for (const [k, lbl, isMass, grp] of dsSHELL_MODS) (groups[grp] = groups[grp] || []).push(F.num(s, k, { label: lbl, read: () => eff(s, k), def: 1, id: "dsShMod_" + k, ...(isMass ? { min: 0 } : { gt: 0 }) }));
   const adv = dkAdvanced([
@@ -439,6 +442,7 @@ export function editShellSection(sky, D, name, { copyOf, done } = {}) {
     ]),
     dkGroup("Property Data", [
       F.num(s, "thickness", { label: "Thickness", kind: "dim", gt: 0, id: "dsShT" }),
+      ...w8sh.nodes,   // W8 shell type + one-way load distribution (js/w8_shell.js)
       s.layered ? dkNote(`Layered section: <b>${(s.layered.layers || []).length}</b> layers (total ${dsU.fmt("dim", (s.layered.layers || []).reduce((a, l) => a + (+l.t || 0), 0), 3)} ${dsU.label("dim")}) — edit the layers with <b>Layered Sections…</b>.`) : null,
     ]),
     adv,
@@ -452,6 +456,7 @@ export function editShellSection(sky, D, name, { copyOf, done } = {}) {
       const nn = draftName.v.trim();
       if (name && nn !== name) dsME.renameShellSection(D, name, nn);
       D.shell_sections[nn] = { ...s, name: nn };
+      w8sh.apply(nn);   // W8: one-way distribution onto the membrane slabs using it
       done && done(nn);
     },
   });
@@ -794,6 +799,7 @@ export function openGridStories(sky, { tab = "stories" } = {}) {
     tb.appendChild(el("tr", { class: "is-muted" }, [el("td", { class: "txt", text: "Base" }), el("td"), el("td", { class: "txt", text: dsU.fmt("length", 0, 3) }), el("td"), el("td")]));
     t.appendChild(tb);
     storyBox.appendChild(t);
+    dsW8StoryTable(t, D, () => { F.touched = true; drawStories(); });   // W8 Master Story / Similar To columns (js/w8_stories.js)
   };
   const storyPanel = el("div", {}, [dkGroup("Story Data", [dkNote("Heights are measured from the story below. Changing a height moves every object above it."), storyBox, errS])]);
   /* ---- grid lines of the selected system */

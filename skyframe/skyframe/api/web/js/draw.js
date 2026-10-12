@@ -467,6 +467,8 @@ export class PlanEditor {
     if (this.grpOverlay) { try { this.grpOverlay(this); } catch (e) { console.error(e); } }
     // B10 hook — user hinge dots / hinge states (js/uhdlg.js)
     if (this.uhOverlay) { try { this.uhOverlay(this); } catch (e) { console.error(e); } }
+    // W8 hook — curved frames drawn as arcs (js/w8_curved.js)
+    if (this.w8Static) { try { this.w8Static(this); } catch (e) { console.error(e); } }
   }
 
   /** Links visible on the current story plan (both endpoint z within span). */
@@ -569,6 +571,8 @@ export class PlanEditor {
       Returns {x, y, dPx} (dPx = screen distance to the raw point). */
   snap(w) {
     const m = this.opts.getModel();
+    // W8 hook — object snaps (joints / ends / mid / intersections / perp; js/w8_snap.js)
+    if (this.w8SnapHook) { try { const o = this.w8SnapHook(w, this); if (o) return o; } catch (e) { console.error(e); } }
     if (this.snapEnabled === false) return { x: w.x, y: w.y, dPx: Infinity };
     const r = snapGrids(m, w);
     return { x: r.x, y: r.y, dPx: r.d * this.scale };
@@ -654,6 +658,8 @@ export class PlanEditor {
   }
 
   _boxRefs(b) {
+    // W8 hook — window (L→R) vs crossing (R→L) box selection (js/w8_select.js)
+    if (this.w8BoxHook) { try { const r = this.w8BoxHook(b, this); if (r) return r; } catch (e) { console.error(e); } }
     const m = this.opts.getModel();
     const story = this.opts.getStory();
     const [xa, xb] = [Math.min(b.x0, b.x1), Math.max(b.x0, b.x1)];
@@ -822,6 +828,8 @@ export class PlanEditor {
         if (ref) this.opts.onErase(ref);
         break;
       }
+      default:   // W8 hook — curved beam / intersecting-line tools (js/w8_curved.js, js/w8_select.js)
+        if (this.w8ToolHook) { try { this.w8ToolHook(this.tool, pt, w, this); } catch (e) { console.error(e); } }
     }
     this.renderOverlay();
   }
@@ -916,6 +924,8 @@ export class PlanEditor {
     if (this.g2Overlay) { try { this.g2Overlay(g, this); } catch (e) { console.error(e); } }
     // PT hook — dashed magenta tendon polylines (js/tendons.js)
     if (this.ptOverlay) { try { this.ptOverlay(g, this); } catch (e) { console.error(e); } }
+    // W8 hook — snap-kind marker, curved-beam / intersecting-line rubber bands (js/w8_*.js)
+    if (this.w8Overlay) { try { this.w8Overlay(g, this); } catch (e) { console.error(e); } }
   }
 }
 

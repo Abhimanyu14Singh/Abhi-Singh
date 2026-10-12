@@ -12407,3 +12407,119 @@ in the basis, the rest is the pseudo-force):
   defaults byte-identical; POST /api/model round trip and second echo
   identical; live run reports `modal_cases` and the tab shows RITZ;
   kip-in amplitude 386.0886 in/s² → 9.80665 m/s²; zero console errors).
+
+## Master / similar stories, selection and snapping
+
+W8 (ETABS parity): UI for engine features that had none, master/similar
+stories, selection and snapping tools, and DB-edit coverage. Backend:
+`core/similar_stories.py`, `core/snapgeom.py`, `core/modeltables_ext.py`
+(hooks: three lines in `core/model.py`, one in `core/modeltables.py`).
+Frontend: `js/w8_*.js`, `js/mock_w8.js`, `w8.css`. Analysis results are
+unchanged: every new key is modelling metadata or an existing engine field.
+
+### Story master / similar (`Story.master`, `Story.similar_to`)
+
+```json
+"stories": [{"name": "Story1", "height": 3.2, "elevation": 3.2, "master": true},
+            {"name": "Story2", "height": 3.2, "elevation": 6.4, "similar_to": "Story1"}]
+```
+
+* Both keys are emitted only when set (`master: true`, non-empty
+  `similar_to`), so legacy JSON is byte-identical.
+* Validation (ValueError): `master` must be a bool; `similar_to` must name
+  another existing story that is a master; a master has no `similar_to`.
+* The similar group of a story is its master plus every story similar to
+  that master (bottom → top). An independent story is alone.
+  `similar_stories.similar_group`, `scope_stories(model, story, "one" |
+  "similar" | "all")` and `replicate_members(model, uids, scope)`.
+* UI scope selector (plan "Apply to": This story / Similar / All stories,
+  `store.storyScope`):
+  * drawing is repeated on every story of the scope;
+  * plan clicks and boxes also select the matching objects (same kind and
+    plan geometry, shifted by the story elevation) on those stories, so
+    Assign dialogs and Edit › Copy / Move / Delete act on all of them;
+  * the erase tool erases them too.
+
+### Snapping (plan view)
+
+* Modes:
+  * `joint`: frame / link / wall ends, column points, slab corners;
+  * `mid`: edge mid-points;
+  * `inter`: intersections of two plan segments (both parameters in [0, 1]);
+  * `perp`: foot of the perpendicular from the first click of a two-click
+    tool, inside the segment.
+* Inside the snap radius (default 10 px) the priority is joint < inter <
+  mid < perp, then distance. Otherwise the unchanged grid snap applies.
+* The modes are a per-browser preference (Draw › Snap Options…, status-bar
+  chips), never model data.
+* `core/snapgeom.py` mirrors `js/w8_snapgeom.js` exactly (node-checked to
+  1e-12). The 3-point arc circumcentre equals `curved.arc_geometry`.
+
+### Selection
+
+* Select › Intersecting Line adds every object whose plan trace the line
+  crosses.
+* Select › Window / Crossing Box: when on, left → right selects objects
+  fully inside and right → left anything touched. Off keeps the legacy rule.
+* Select › By Object Type / Label (`*`, `?` wildcards) / Frame or Shell
+  Section / Link type / Spring property / Load pattern (frame, area,
+  thermal loads, load sets, tendon hosts) / Group, with Select or Deselect.
+
+### UI for existing engine fields
+
+* Slab / Wall Property Data:
+  * a `ShellSection.shell_type` selector;
+  * a load-distribution selector, written to the membrane slabs that use
+    the section (`ShellRegion.distribution / one_way_dir`; only eligible
+    convex 4-corner regions).
+* Assign Shell Properties: auto mesh (mesh size | n1 × n2 | max size →
+  `mesh_divisions`), load distribution, uniform load set. Default values
+  remove the keys.
+* Define › Section Properties › Shell Uniform Load Sets… and Assign › Shell
+  Loads › Uniform Load Sets… (`shell_load_sets`, `ShellRegion.load_set`).
+* Draw › Frames › Curved Beam (3-point arc: start, end, point on the arc →
+  `curve.via`) and Assign › Frame › Curved Geometry… (3rd point, plan radius
+  + side, segments, local 2).
+
+### Database-editing coverage (`core/modeltables_ext.py`)
+
+* New tables, all editable; model → rows → apply is byte-identical, also
+  through CSV and zip:
+  * properties: `spring_properties`, `hinge_properties`, `hinge_backbones`
+    (side both | positive | negative), `story_similarity`;
+  * functions: `rs_functions`, `rs_function_points`, `th_functions`,
+    `th_function_values` (derived time column), `frequency_functions`,
+    `frequency_function_points`;
+  * objects: `link_properties` (numeric `params`), `frame_curves`;
+  * loads: `shell_load_sets`, `tendons`;
+  * cases: `nonlinear_static_cases`, `nonlinear_static_loads`,
+    `steady_state_cases`, `steady_state_loads`, `psd_cases`, `psd_loads`.
+* New columns:
+  * `shell_sections.shell_type`;
+  * `frame_objects.curve`, text `via x,y,z | center x,y,z normal nx,ny,nz
+    [segments N|auto] [local2 normal]`;
+  * `shell_objects.mesh_n1 / mesh_n2 / mesh_max / distribution /
+    one_way_dir / load_set`.
+* Cascades:
+  * pattern renames → load sets, NLS / frequency loads, tendons;
+  * story renames → `similar_to`, `control_story`;
+  * frame / shell uid → tendon hosts;
+  * spring / hinge / function renames → their users;
+  * deleting a used definition is refused.
+* `js/mock_w8.js` mirrors every table; its rows equal the backend's.
+
+### Validation
+
+* `tests/test_w8_dbedit_similar.py` (42 tests) and `tests/test_w8_snapgeom.py`
+  (6 tests):
+  * similar groups, and the 5-story Similar draw (5 members, right stories
+    and levels);
+  * table round trips;
+  * one-way set through the table: w = q·8/2 = 20 kN/m, M = wL²/8 =
+    40 kN·m, base FZ = qA;
+  * curve set through the table: R = 3, arc length πR;
+  * load set through the table: FZ = qA;
+  * snap closed forms.
+* Playwright, mock and live 90/90: every dialog opens from its menu, OK
+  with defaults is byte-identical, the POST /api/model double echo is
+  identical, kip-in inputs convert, live runs succeed, zero console errors.

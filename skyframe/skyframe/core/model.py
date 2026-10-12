@@ -46,6 +46,8 @@ from skyframe.core import towers as _towers  # C9 multiple towers
 from skyframe.core import rhino_exchange_fields as _xch  # Rhino/GH exchange
 from skyframe.core import towers_ext as _towers_ext  # C9 follow-ups
 from skyframe.core import spandrels as _spd  # spandrel labels (A8)
+
+from skyframe.core import similar_stories as _simst  # W8 master/similar
 from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
     PDELTA_INCLUDE_IN, PDELTA_METHODS, pdelta_defaults, pdelta_from_dict,
     pdelta_to_dict, validate_pdelta_options)
@@ -607,12 +609,14 @@ class Story:
     height: float           # m (story height below this level's floor? no: height of this story)
     elevation: float = 0.0  # m, computed = top-of-story elevation
     tower: str = ""         # C9 owning tower ("" = default; core.towers)
+    master: bool = False    # W8 ETABS Master Story (core.similar_stories)
+    similar_to: str = ""    # W8 ETABS Similar To: a master story ("" = none)
 
     def to_dict(self) -> dict:
         d = asdict(self)
         if not self.tower:                  # C9: emitted only when tagged
             d.pop("tower")
-        return d
+        return _simst.trim_story_dict(d)    # W8: master/similar_to if set
 
 
 def _insertion_fields_to_dict(m) -> dict:
@@ -3980,6 +3984,7 @@ class BuildingModel:
         _rel_validate(self)                 # end releases / joint axes
         _spd.validate(self)                 # spandrel labels
         _mcs.validate(self)                 # mass sources / modal cases
+        _simst.validate(self)               # W8 master / similar stories
 
     def _validate_exchange(self) -> None:
         """Rhino/GH exchange fields (see core.rhino_exchange_fields)."""
@@ -4670,6 +4675,7 @@ class BuildingModel:
         mdl.analysis_options = _aopt.analysis_options_from_dict(d)
 
         _towers.model_from_dict(mdl, d)     # C9 towers (absent = none)
+        _simst.model_from_dict(mdl, d)      # W8 master / similar stories
         _frame_axes_from_dict(mdl, d)       # frame local-axis convention
         _builtup_from_dict(mdl, d)          # v1.21 built-up sections
         _xch.model_from_dict(mdl, d)        # Rhino/GH exchange (absent=unset)
