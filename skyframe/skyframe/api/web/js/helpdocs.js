@@ -191,7 +191,7 @@ Object.assign(HELP, {
   /* Display */
   "dis-drift": { etabs: "Display › Story Response Plots › Drift (optimizer)", text: "Virtual-work member contributions to the roof drift, to find the members that stiffen the building most." },
   "dis-th": { etabs: "Display › Show Plot Functions (time history)", text: "Time-history traces (displacement, drift, base shear) per TH case and story." },
-  "dis-pushover": { etabs: "Display › Show Static Pushover Curve", text: "Capacity curve, performance point (ATC-40 / FEMA 440) and hinge states for pushover cases." },
+  "dis-pushover": { etabs: "Display › Show Static Pushover Curve", text: "Capacity curve, ASCE 41 target displacement (coefficient method) and hinge states for pushover cases." },
   "dis-freq": { etabs: "Display › Show Plot Functions (frequency domain)", text: "Steady-state and PSD response vs. frequency." },
   "dis-buckling": { etabs: "Display › Show Tables › Buckling Factors", text: "Critical buckling load factors and buckled mode shapes." },
   "dis-takedown": { etabs: "Display › Show Tables › Column Load Takedown", text: "Column axial loads accumulated story by story." },

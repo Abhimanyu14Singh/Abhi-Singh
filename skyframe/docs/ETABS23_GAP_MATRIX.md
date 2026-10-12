@@ -1,3 +1,7 @@
+> **Superseded.** This matrix dates from 2026-07 (pre-v1.13) and is out of date.
+> The current ETABS v22 parity audit (232 features, with code evidence and the
+> R1–R4 roadmap) is in `docs/ETABS_PARITY.md`.
+
 # ETABS v23 → SkyFrame gap matrix
 
 Compiled 2026-07-06 from CSI's feature pages, ETABS v22/v23 release notes
