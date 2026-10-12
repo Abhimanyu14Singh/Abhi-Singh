@@ -539,7 +539,8 @@ def ntc_spectrum(T: float, a0: float, c: float, Ta: float, Tb: float,
 def compute_ntc_cdmx(model, T: float, a0: float, c: float, Ta: float,
                      Tb: float, k: float = 1.0, Q: float = 2.0,
                      R0: float = 2.0, k1: float = 1.0, beta: float = 1.0,
-                     weights=None, direction: str = "X") -> dict:
+                     weights=None, direction: str = "X",
+                     r: float = 2.0, long_period: str = "reduced") -> dict:
     """Mexico City NTC para Diseño por Sismo (2017/2020) static method,
     §7 with the §3 design spectrum.
 
@@ -551,8 +552,22 @@ def compute_ntc_cdmx(model, T: float, a0: float, c: float, Ta: float,
     * Overstrength R (§3.5): ``k1 R0 + 1 - sqrt(T/Ta)`` (T <= Ta), ``k1
       R0`` (T > Ta).
     * ``V = a/(Q' R) W`` and ``F_i = V w_i h_i / sum w h`` (§7.2 static
-      method distribution).  The §7.2.2 two-term (k1 h + k2 h^2) reduced
-      distribution for T > Tb is NOT applied (documented limitation).
+      method distribution) for ``T <= Tb``.
+    * ``T > Tb`` (Wave B, ``long_period="reduced"``, the default): the
+      code's two-term reduced distribution (static method, reduction for
+      the fundamental period; the coefficients are reported as ``kh1`` /
+      ``kh2`` because ``k1`` is the overstrength factor here)::
+
+          F_i = w_i a/(Q' R) (kh1 h_i + kh2 h_i^2)
+          kh1 = [1 - 0.5 r (1 - q)] sum w / sum w h
+          kh2 = 0.75 r (1 - q) sum w / sum w h^2
+          q   = (Tb / T)^r
+
+      so ``V = sum F_i = a/(Q' R) W [1 + 0.25 r (1 - q)]``.  ``r`` is the
+      exponent of the spectrum's descending branch (default 2, the
+      ``(Tb/T)^2`` of the 2017 spectrum; NTC-2004 zones I / II / III use
+      1/2, 2/3, 1).  ``long_period="linear"`` keeps the pre-Wave-B
+      ``w h`` distribution of ``V = a/(Q' R) W``.
     """
     _check_common(model, direction)
     T_used = _pos("T", T)
@@ -576,11 +591,35 @@ def compute_ntc_cdmx(model, T: float, a0: float, c: float, Ta: float,
     Cs = a / (Qp * Rr)
     w = story_weights(model, weights)
     W = sum(w.values())
+    if long_period not in ("reduced", "linear"):
+        raise ValueError("long_period must be 'reduced' or 'linear'")
+    if T_used > Tb and long_period == "reduced":    # Wave B two-term form
+        _pos("r", r)
+        return _ntc_long_period(model, direction, T_used, Tb, r, w, W,
+                                a=a, Qp=Qp, R=Rr, Cs=Cs, p=p)
     V = Cs * W
     shape = {s.name: s.elevation for s in model.stories}
     return _summary("ntc_cdmx", direction, T_used, W, V,
                     _distribute(model, V, w, shape), a=a, Qp=Qp, R=Rr,
                     Cs=Cs, **({"p": p} if p is not None else {}))
+
+
+def _ntc_long_period(model, direction, T, Tb, r, w, W, **extra):
+    """NTC-Sismo reduced static forces for T > Tb (see compute_ntc_cdmx)."""
+    Cs = extra["Cs"]
+    q = (Tb / T) ** r
+    swh = sum(w[s.name] * s.elevation for s in model.stories)
+    swh2 = sum(w[s.name] * s.elevation ** 2 for s in model.stories)
+    kh1 = (1.0 - 0.5 * r * (1.0 - q)) * W / swh if swh > 0.0 else 0.0
+    kh2 = 0.75 * r * (1.0 - q) * W / swh2 if swh2 > 0.0 else 0.0
+    rows = []
+    for s in model.stories:
+        h = s.elevation
+        rows.append({"story": s.name, "h": h, "w": w[s.name],
+                     "F": w[s.name] * Cs * (kh1 * h + kh2 * h * h)})
+    V = sum(x["F"] for x in rows)
+    return _summary("ntc_cdmx", direction, T, W, V, rows, **extra,
+                    q=q, r=r, kh1=kh1, kh2=kh2, long_period="reduced")
 
 
 # ------------------------------------------------------------ registration

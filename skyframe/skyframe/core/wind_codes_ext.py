@@ -32,6 +32,9 @@ Codes (pressures in kPa, lengths m, speeds m/s):
 * ``gb50009_wind`` - GB 50009-2012: ``wk = beta_z mu_s mu_z w0`` (Eq.
   8.1.1-1) with mu_z (Table 8.2.1) and the §8.4.3 along-wind vibration
   factor beta_z.
+* Wave B: ``ts498_wind`` (Turkey TS 498, used with TSC 2018),
+  ``kds41_wind`` (Korea KDS 41 10 15:2019) and ``cfe_wind`` (Mexico CFE
+  MDOC-Viento / CDMX NTC-Viento).
 """
 from __future__ import annotations
 
@@ -851,16 +854,176 @@ def compute_gb50009_wind(model, w0: float, terrain: str = "B",
                          mu_s=mu_s)
 
 
+# ===================================================== Wave B: TS 498
+# TS 498 (1997) Table 4: height above ground (m, upper bound) -> (V m/s,
+# q kN/m^2); used with the Turkish seismic code TSC / TBDY 2018.
+TS498_Q = ((8.0, 28.0, 0.5), (20.0, 36.0, 0.8), (100.0, 42.0, 1.1),
+           (math.inf, 46.0, 1.3))
+
+
+def ts498_q(z: float) -> float:
+    """TS 498 Table 4 velocity pressure q (kN/m^2) at height ``z`` (m):
+    0.5 (0-8 m), 0.8 (8-20 m), 1.1 (20-100 m), 1.3 (> 100 m)."""
+    for zt, _v, q in TS498_Q:
+        if z <= zt:
+            return q
+    return TS498_Q[-1][2]  # pragma: no cover
+
+
+def compute_ts498_wind(model, cp_windward: float = 0.8,
+                       cp_leeward: float = -0.4, q_factor: float = 1.0,
+                       direction: str = "X") -> dict:
+    """Turkey TS 498:1997 wind on a closed building (the wind standard used
+    with TSC / TBDY 2018).
+
+    * ``q(z)`` from Table 4 (step function of the height above ground),
+      times ``q_factor`` (1 = the code table; a site study may scale it).
+    * ``w = c_p q`` (§11.1), closed building: windward ``c_p = +0.8``,
+      leeward ``-0.4`` (Table 5 / Fig. 1) -> ``F = (cp_w + |cp_l|) q(z)
+      A_trib`` (both faces at the story height z).
+    """
+    fac = _facade(model, direction)
+    _pos("q_factor", q_factor)
+    cpw = _num("cp_windward", cp_windward)
+    cpl = _num("cp_leeward", cp_leeward)
+
+    def p_fn(z):
+        q = ts498_q(z) * q_factor
+        return (cpw + abs(cpl)) * q, q
+
+    rows = _rows(model, fac, p_fn)
+    return _wind_summary("ts498_wind", direction, rows, width=fac["B"],
+                         cp_total=cpw + abs(cpl))
+
+
+# ===================================================== Wave B: KDS 41
+# KDS 41 10 15:2019 (= KBC 2016 §0305) surface roughness -> (Zb m, Kzr at
+# z <= Zb, alpha, Zg m): Kzr(z) = Kb (z/Zb)^alpha for Zb < z <= Zg
+KDS_KZR = {"A": (20.0, 0.58, 0.33, 550.0), "B": (15.0, 0.81, 0.22, 450.0),
+           "C": (10.0, 1.00, 0.15, 350.0), "D": (5.0, 1.13, 0.10, 250.0)}
+
+
+def kds_kzr(z: float, roughness: str) -> float:
+    """KDS 41 10 15 wind-speed profile factor ``Kzr`` (``Kb`` below ``Zb``,
+    ``Kb (z/Zb)^alpha`` up to ``Zg``, constant above)."""
+    zb, kb, a, zg = KDS_KZR[roughness]
+    return kb * (min(max(float(z), zb), zg) / zb) ** a
+
+
+def compute_kds41_wind(model, V0: float, roughness: str = "C",
+                       KD: float = 1.0, Kzt: float = 1.0, Iw: float = 1.0,
+                       GD: float = 2.0, cpe_windward: float = 0.8,
+                       cpe_leeward: float = -0.5, rho_air: float = 1.225,
+                       direction: str = "X") -> dict:
+    """Korea KDS 41 10 15:2019 main wind-force resisting system.
+
+    * Design wind speed ``V_z = V0 K_D K_zr K_zt I_w`` (``V0`` the basic
+      10-minute mean speed, m/s; roughness A-D).
+    * Velocity pressure ``q_z = 0.5 rho V_z^2`` (``rho`` = 1.225 kg/m^3).
+    * Wall wind force ``W_D = (q_z G_D C_pe1 - q_H G_D C_pe2) A``: windward
+      at the story height ``z``, leeward at the roof height ``H`` (``G_D``
+      gust factor, default 2.0; ``C_pe`` 0.8 / -0.5).
+    """
+    fac = _facade(model, direction)
+    if roughness not in KDS_KZR:
+        raise ValueError(f"roughness must be one of {tuple(KDS_KZR)}")
+    for lab, v in (("V0", V0), ("KD", KD), ("Kzt", Kzt), ("Iw", Iw),
+                   ("GD", GD), ("rho_air", rho_air)):
+        _pos(lab, v)
+    cpw, cpl = _num("cpe_windward", cpe_windward), _num("cpe_leeward",
+                                                        cpe_leeward)
+
+    def q(z):
+        vz = V0 * KD * kds_kzr(z, roughness) * Kzt * Iw
+        return 0.5 * rho_air * vz ** 2 / 1000.0
+
+    qh = q(fac["h"])
+
+    def p_fn(z):
+        qz = q(z)
+        return GD * (cpw * qz + abs(cpl) * qh), qz
+
+    rows = _rows(model, fac, p_fn)
+    return _wind_summary("kds41_wind", direction, rows, qh=qh,
+                         width=fac["B"], GD=GD)
+
+
+# ============================================ Wave B: Mexico CFE / NTC
+# CFE MDOC Diseño por Viento (2008 / 2020) Table 4.2.3: terrain category
+# -> (alpha, delta m, c); NTC-Viento CDMX uses the same alpha / delta with
+# the rugosity folded into F_TR (form "ntc": c = 1).
+CFE_TERRAIN = {1: (0.099, 245.0, 1.137), 2: (0.128, 315.0, 1.000),
+               3: (0.156, 390.0, 0.881), 4: (0.170, 455.0, 0.815)}
+
+
+def cfe_frz(z: float, category: int, form: str = "cfe") -> float:
+    """Exposure factor ``F_rz = c (10/10)^a`` (z <= 10 m), ``c (z/10)^a``
+    (10 < z < delta), ``c (delta/10)^a`` (z >= delta)."""
+    a, delta, c = CFE_TERRAIN[category]
+    if form == "ntc":
+        c = 1.0
+    zz = min(max(float(z), 10.0), delta)
+    return c * (zz / 10.0) ** a
+
+
+def compute_cfe_wind(model, VR: float, category: int = 2,
+                     form: str = "cfe", FT: float = 1.0, G: float = 1.0,
+                     cpe_windward: float = 0.8,
+                     cpe_leeward: Optional[float] = None,
+                     direction: str = "X") -> dict:
+    """Mexico wind: CFE Manual de Diseño de Obras Civiles, Diseño por
+    Viento (``form="cfe"``) or Mexico City NTC-Viento (``form="ntc"``,
+    ``c = 1`` and ``FT`` = F_TR).
+
+    * ``V_D = F_T F_rz V_R`` (m/s; ``V_R`` regional speed for the return
+      period), ``F_rz`` per :func:`cfe_frz` (terrain category 1-4).
+    * ``q_z = 0.613 G V_D^2`` (Pa; ``G = 0.392 Omega/(273 + tau)``, 1.0 at
+      sea level and 25 degC).
+    * Enclosed building walls: windward ``C_pe = 0.8`` at z, leeward at the
+      roof height from d/b (-0.5 at d/b <= 1, -0.3 at 2, -0.2 at >= 4).
+    """
+    fac = _facade(model, direction)
+    if isinstance(category, bool) or category not in CFE_TERRAIN:
+        raise ValueError("category must be 1, 2, 3 or 4")
+    if form not in ("cfe", "ntc"):
+        raise ValueError("form must be 'cfe' or 'ntc'")
+    for lab, v in (("VR", VR), ("FT", FT), ("G", G)):
+        _pos(lab, v)
+    cpw = _num("cpe_windward", cpe_windward)
+    db = fac["L"] / fac["B"]
+    cpl = (_interp(db, (1.0, 2.0, 4.0), (-0.5, -0.3, -0.2))
+           if cpe_leeward is None else _num("cpe_leeward", cpe_leeward))
+
+    def q(z):
+        vd = FT * cfe_frz(z, category, form) * VR
+        return 0.613 * G * vd ** 2 / 1000.0
+
+    qh = q(fac["h"])
+
+    def p_fn(z):
+        qz = q(z)
+        return cpw * qz + abs(cpl) * qh, qz
+
+    rows = _rows(model, fac, p_fn)
+    return _wind_summary("cfe_wind", direction, rows, qh=qh,
+                         cpe_windward=cpw, cpe_leeward=cpl, width=fac["B"])
+
+
 # ------------------------------------------------------------ registration
 COMPUTE = {"asce7_16_wind": compute_asce7_16_wind,
            "asce7_22_wind": compute_asce7_22_wind_ext,
            "en1991_wind": compute_en1991_wind,
            "is875_wind": compute_is875_wind,
            "as1170_2_wind": compute_as1170_2_wind,
-           "gb50009_wind": compute_gb50009_wind}
+           "gb50009_wind": compute_gb50009_wind,
+           # Wave B
+           "ts498_wind": compute_ts498_wind,
+           "kds41_wind": compute_kds41_wind,
+           "cfe_wind": compute_cfe_wind}
 DEFAULT_NAME = {"asce7_16_wind": "WIND16", "en1991_wind": "WINDEN",
                 "is875_wind": "WINDIS", "as1170_2_wind": "WINDAS",
-                "gb50009_wind": "WINDGB"}
+                "gb50009_wind": "WINDGB", "ts498_wind": "WINDTS",
+                "kds41_wind": "WINDKDS", "cfe_wind": "WINDCFE"}
 WIND_CODES = frozenset(COMPUTE)
 
 

@@ -2364,6 +2364,10 @@ def create_app() -> Flask:
     from skyframe.api.pushover_perf_api import register as _ppf_register
     _ppf_register(app, _state)
 
+    # Wave B: irregularity checks + joint-local reactions (waveb_api)
+    from skyframe.api.waveb_api import register as _wb_register
+    _wb_register(app, _state, _tables_lookup)
+
     return app
 
 

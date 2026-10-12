@@ -119,6 +119,9 @@ import { mockValidateW8 as w8MockValidate } from "./mock_w8.js";   // W8 ?mock=1
 import { initWaveBLinks as wbInitLinks, wbMockValidateModel as wbMockValidate } from "./wb_links.js";   // wave B: Wen / BRB / bilinear damper / T-C isolator links, freq-dependent links, damping options (js/wb_links.js)
 import { wbMockAugment as wbMockAugmentResults } from "./mock_wbdamp.js";   // wave B ?mock=1 results (composite ζ, freq-dependent-link note)
 
+import { initWaveB as wbInitWaveB } from "./waveb.js";   // Wave B: Irregularity Checks · joint-local reactions (js/waveb.js)
+import { wbMockGroupedApplies as wbMockGrouped, wbMockAsce7Grouped as wbMockAsce7 } from "./mock_waveb.js";   // Wave B ?mock=1 grouped ASCE 7 combos
+
 /* ------------------------------------------------ state */
 const store = {
   model: null,
@@ -694,7 +697,7 @@ async function generateAsce7Combos(params) {
       return store.model;
     } catch (e) { console.warn("ASCE7 combos endpoint unavailable, computing locally:", e.message); }
   }
-  const { added } = mockAsce7Combos(store.model, params.standard, params.SDS);
+  const { added } = (wbMockGrouped(store.model) ? wbMockAsce7 : mockAsce7Combos)(store.model, params.standard, params.SDS);   // Wave B: grouped pattern types
   ME.normalizeModel(store.model);
   markDirty();
   toast("ASCE 7 combinations generated",
@@ -8600,6 +8603,8 @@ async function boot() {
 
   try { w8InitW8(window.__sky); } catch (err) { console.error("W8 init failed", err); }   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_init.js)
   try { poxInitPoMethods(window.__sky); } catch (err) { console.error("pushover methods init failed", err); }   // pushover performance methods + ADRS (js/pomethods.js)
+
+  try { wbInitWaveB(window.__sky); } catch (err) { console.error("Wave B init failed", err); }   // Irregularity Checks · joint-local reactions (js/waveb.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)

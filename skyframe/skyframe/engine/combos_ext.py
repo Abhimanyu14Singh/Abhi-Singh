@@ -51,6 +51,10 @@ def _flatten(cr) -> Dict[tuple, np.ndarray]:
     for fld in ("node_disp", "reactions", "member_forces"):
         for k, v in getattr(cr, fld).items():
             out[(fld, k)] = np.asarray(v, dtype=float)
+    # Wave B: shell resultants combine by the same interval rules (RS
+    # members as +/- envelopes); absent on models without shells
+    for k, v in (getattr(cr, "shell_forces", None) or {}).items():
+        out[("shell_forces", k)] = np.asarray(v, dtype=float)
     for k in _BASE_KEYS:
         if k in cr.base:
             out[("base", k)] = np.asarray([cr.base[k]], dtype=float)
@@ -82,6 +86,7 @@ def _unflatten(name: str, flat: Dict[tuple, np.ndarray],
     base: Dict[str, float] = {}
     story: Dict[str, Dict[str, float]] = {}
     stations: Dict[str, Dict[str, List[float]]] = {}
+    shell: Dict = {}
     for key in order:
         v = flat[key]
         tag = key[0]
@@ -91,6 +96,8 @@ def _unflatten(name: str, flat: Dict[tuple, np.ndarray],
             reactions[key[1]] = [float(x) for x in v]
         elif tag == "member_forces":
             member_forces[key[1]] = [float(x) for x in v]
+        elif tag == "shell_forces":                 # Wave B
+            shell[key[1]] = [float(x) for x in v]
         elif tag == "base":
             base[key[1]] = float(v[0])
         elif tag == "story":
@@ -102,7 +109,7 @@ def _unflatten(name: str, flat: Dict[tuple, np.ndarray],
             e[key[2]] = [float(x) for x in v]
     return CaseResults(name=name, node_disp=node_disp, reactions=reactions,
                        base=base, member_forces=member_forces, story=story,
-                       member_stations=stations)
+                       member_stations=stations, shell_forces=shell)
 
 
 # --------------------------------------------------------------------------- #

@@ -6,7 +6,8 @@
 
 import { memberKind, normComboType } from "./combo_refs.js";
 
-const QTY = ["node_disp", "reactions", "base", "member_forces", "story", "member_stations"];
+const QTY = ["node_disp", "reactions", "base", "member_forces", "story", "member_stations",
+  "shell_forces"];   // Wave B hook: shell forces in extended combos (RS members ± envelopes)
 const isLegacy = (m, cb) => {
   const t = normComboType(cb.combo_type);
   return (t === "add" || t === "envelope") &&
@@ -49,6 +50,7 @@ function unflat(map, tpl, keys) {
     }
     o[parts[parts.length - 1]] = val;
   }
+  if (out.shell_forces && !Object.keys(out.shell_forces).length) delete out.shell_forces;   // Wave B: no shells -> absent (backend shape)
   return out;
 }
 

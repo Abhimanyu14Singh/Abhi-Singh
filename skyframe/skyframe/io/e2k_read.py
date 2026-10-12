@@ -24,7 +24,8 @@ import json
 import math
 from typing import Dict, List, Optional, Tuple
 
-from skyframe.io.e2k import _kv, _num, _tokenize
+from skyframe.io import e2k_ext as _e2kx
+from skyframe.io.e2k import _kv, _num, _Tok, _tokenize
 from skyframe.io.exchange_common import G_SI, Units, apply_patches
 
 __all__ = ["read_e2k"]
@@ -635,24 +636,23 @@ def read_e2k(text: str, units=("KN", "M"),
             secs[sec] = FrameSection.rectangular(
                 sec, ensure_mat(next(iter(mats), "CONC")), 0.3,
                 0.6).to_dict()
-        rel = []
-        if "RELEASE" in kv:
-            toks = kv["RELEASE"].text.upper().split()
-            if "M2I" in toks or "M3I" in toks:
-                rel.append("Mi")
-            if "M2J" in toks or "M3J" in toks:
-                rel.append("Mj")
+        # Wave B: per-DOF RELEASE + PARTIALFIXITY (io/e2k_ext.py)
+        rel_tok, end_rel = _e2kx.parse_releases(
+            kv, lambda v, qty: r.u.to_si(float(v), qty)
+            if _num(_Tok(v)) is not None else None)
         md = {"uid": uid,
               "kind": {"COLUMN": "column", "BEAM": "beam"}.get(kind,
                                                                "brace"),
               "section": sec, "pi": a, "pj": b,
               "story": story if story in story_names else "",
-              "releases": ",".join(rel),
+              "releases": rel_tok,
               "angle": _num(kv.get("ANGLE")) or 0.0,
               "rigid_i": r.si(kv.get("LENOFFI"), "length") or 0.0,
               "rigid_j": r.si(kv.get("LENOFFJ"), "length") or 0.0,
               "rigid_factor": (_num(kv.get("RIGIDZONE"))
                                if "RIGIDZONE" in kv else 1.0)}
+        if end_rel:
+            md["end_releases"] = end_rel
         if "CARDINALPT" in kv and _num(kv["CARDINALPT"]) is not None:
             md["cardinal_point"] = int(_num(kv["CARDINALPT"]))
         if "TRANSFORMSTIFFNESSFOROFFSETS" in kv and \
@@ -776,6 +776,7 @@ def read_e2k(text: str, units=("KN", "M"),
 
     # ------------------------------------------------------- point assigns
     supports, springs, jdiaph, nmasses = [], [], [], []
+    jaxes: List[dict] = []
     diaph_types = {t[1].text: ("semi_rigid" if len(t) > 3 and
                                t[3].text.upper().startswith("SEMI")
                                else "rigid")
@@ -797,6 +798,9 @@ def read_e2k(text: str, units=("KN", "M"),
                             "stiffness": psprings[kv["SPRINGPROP"].text]})
         if "DIAPH" in kv:
             jdiaph.append({"point": p, "diaphragm": kv["DIAPH"].text})
+        ang_ = _e2kx.parse_joint_axes(kv)          # Wave B joint axes
+        if ang_ is not None:
+            jaxes.append({"point": p, "angles": ang_})
         mass = {}
         for key, fld, qty in (("MASSUX", "mx", "mass"),
                               ("MASSUY", "my", "mass"),
@@ -812,6 +816,8 @@ def read_e2k(text: str, units=("KN", "M"),
             nmasses.append(nm)
     _base_fixity(d, supports, members, shells, links)
     d["spring_supports"] = springs
+    if jaxes:
+        d["joint_local_axes"] = jaxes
     d["nodal_masses"] = nmasses
     _diaphragms(d, jdiaph, diaph_types, stories, shells, pts)
 
@@ -823,7 +829,7 @@ def read_e2k(text: str, units=("KN", "M"),
         kv = _kv(t, 2)
         typ = kv["TYPE"].text.upper() if "TYPE" in kv else "OTHER"
         pats[t[1].text] = {"name": t[1].text,
-                           "kind": _TYPE_KIND.get(typ, "other"),
+                           "kind": _e2kx.pattern_kind(typ),  # Wave B
                            "member_udls": [], "nodal_loads": [],
                            "story_forces": [], "member_loads": [],
                            "area_loads": [], "thermal_loads": [],
@@ -1045,8 +1051,9 @@ def read_e2k(text: str, units=("KN", "M"),
             c["accel"].append((kv["ACCEL"].text.upper(),
                                kv["FUNC"].text if "FUNC" in kv else "",
                                _num(kv.get("SF")) or 1.0))
+            c.setdefault("ang", []).append(_num(kv.get("ANG")) or 0.0)
         for k, v in kv.items():
-            if k not in ("LOADPAT", "SF", "ACCEL", "FUNC"):
+            if k not in ("LOADPAT", "SF", "ACCEL", "FUNC", "ANG"):
                 c["kv"][k] = v
     cases, rs_cases, th_cases, bk = {}, {}, {}, {}
     g_file = G_SI / r.u.factor("accel")
@@ -1078,9 +1085,10 @@ def read_e2k(text: str, units=("KN", "M"),
                     else "CQC",
                     "damping": _num(kv.get("CONSTDAMP")) if "CONSTDAMP"
                     in kv else 0.05}
-                if len(c["accel"]) > 1:
-                    w.append(f"RS case {name!r}: only the first ACCEL "
-                             "direction is imported")
+                # Wave B: several ACCEL rows -> loads; ANG / ECCRATIO /
+                # DIRCOMBO (io/e2k_ext.py)
+                _e2kx.rs_read(rs_cases[name], c["accel"], c.get("ang", []),
+                              kv, g_file, spec_fn)
         elif "HISTORY" in typ:
             for acc, fn, sf in c["accel"][:1]:
                 f = hist_fn.get(fn)

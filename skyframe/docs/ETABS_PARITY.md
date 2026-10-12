@@ -298,3 +298,20 @@ interfaces:
 ## Closed by A8 (results output)
 
 Display tables (element / wall / nonlinear-step tables), spandrel labels, spandrel forces, export to Excel (.xlsx), export to Microsoft Access (closed with SQLite: .mdb/.accdb needs the proprietary Jet/ACE engine; SQLite opens in Access via ODBC and in every data tool) and report generation (.docx, selectable tables, per-case 3D snapshots). See CONTRACT "Results tables export, spandrels and Word report (A8)".
+
+
+## Closed by Wave B (loose ends)
+
+See CONTRACT "Irregularity checks, grouped ASCE 7 combinations, E2K
+releases / joint axes, joint-local reactions, RS shell forces in combos,
+TS 498 / KDS / CFE wind, NTC long-period distribution".
+
+| Row | Now | What closed it |
+|---|---|---|
+| Irregularity checks | full | Weight (mass), vertical geometric, in-plane discontinuity and weak-story checks per ASCE 7 Table 12.3-2. Plan Types 2–5. EC8 §4.2.3 and IS 1893 Tables 5/6. Results go to the "Irregularity Checks" table and to Display › Story Response › Irregularity Checks…. The EC8 4.2.3.2(6) torsional-radius criterion is reported `n/a`. |
+| Response spectrum shell forces / stresses | full | Extended combos with RS members carry `shell_forces` and `min`. Shell contours work on them. |
+| Joint local axes / skewed restraints | full | Joint Reactions gains F1–M3 in the joint local axes. Display › Force Diagrams › Joint Reactions (Local Axes)…. |
+| Auto wind other codes (GB 50009, TSC, KDS, Mexican) | full | TS 498 (used with TSC 2018), KDS 41 10 15 and CFE / NTC-Viento generators. |
+| Auto seismic other codes | full | NTC-Sismo now applies the two-term reduced distribution for T > Tb. |
+| ETABS .e2k import / export | improved | Pattern types are kept. Per-DOF `RELEASE` and `PARTIALFIXITY` are written and read, and so are joint local axes (`ANGLEA/B/C`). Multi-direction RS (`ACCEL` rows, `ANG`, `ECCRATIO`, `DIRCOMBO`) is written and read. |
+| Auto load combinations (ASCE 7) | full | Super Dead is grouped with Dead, and Reducible Live with Live. Roof Live and Snow are handled as (Lr or S), as `combos_codes` does. Legacy-kind models are byte-identical. |
