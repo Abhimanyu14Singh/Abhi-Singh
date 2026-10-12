@@ -14157,3 +14157,25 @@ blocks (`cases`, `combos`, `rs_cases`, `th_cases`, `section_cuts`, `piers`,
 `member_stations`, ... — `min.<q>` envelope minima included) or a block name.
 Geometry blocks (`nodes`, `members`, `shell_quads`, ...) and status maps are
 not compared.
+
+### UI (Wave C)
+
+Entry `js/wavec_results.js` (app.js: one import + one init line). Menus
+(`sky.menu.add`, every panel stays <= 14 entries):
+
+| command | act | module |
+|---|---|---|
+| Display › Force Diagrams › Pier / Spandrel / Link Diagrams (3D)… | `dis-wc-diag3d` | `js/wc_diagrams.js` — piers (one block per story at the pier centroid, V / M in the wall plane, P along the normal), spandrels (Left → Right along the span), elastic links (`k (u_j − u_i)`, static cases / single-valued combos); any case in `results.piers` / `spandrels` incl. RS, TH and max/min combos (Min dashed). Drawn through a one-line `Viewer3D.wcOverlay` hook. |
+| Display › Export Animation Video… | `dis-wc-video` | `js/wc_video.js` — deformed shape (cyclic), mode shape or TH response (recorded `frames`, else story displacements spread over each story) of the 3D canvas via `canvas.captureStream(fps)` + `MediaRecorder` (WebM, VP9 / VP8), frame rate and duration options; the WebM Duration element is written into the header; saved through the `<a download>` path (browser and pywebview). |
+| Tools › Compare Results… | `tools-wc-compare` | `js/wc_compare.js` — Run A / Run B from the current results, the last 5 runs of the session, or loaded result files (`.json`; "Save Current Results…" writes `{"results": …}`); case / quantity filters, relative tolerance; diff table in display units. |
+| Load Case Data — Time History › Output | — | `js/wc_thout.js` (one body line in `js/dlgstd_cases.js`): shell forces on/off, snapshot steps, every N steps, animation frames; only changed keys are written (OK with defaults is byte-identical). |
+
+`js/mock_wavec.js` gives `?mock=1` TH / max-min cut entries and histories,
+TH shell snapshots / frames, th_output validation and the results diff;
+`js/mock_shellres.js` serves the TH shell sources (three hook lines).
+Playwright: mock 29/29, live 13/13 (dialogs open from their menus; TH
+output edit round-trips through `POST /api/model`; OK with defaults
+byte-identical; pier / spandrel / link diagrams change the canvas (pixel
+diff); TH / mode / deformed videos are non-empty WebM blobs of the requested
+duration (`video.duration` 1.5 s / 2 s); Compare Results flags a deliberately
+changed value; kip-in labels; zero console errors).

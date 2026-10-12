@@ -114,6 +114,8 @@ import { initReleases as relInitReleases } from "./releases.js";   // Assign ›
 import { mockValidateReleases as relMockValidate } from "./mock_releases.js";   // ?mock=1 end releases / joint local axes   // File › Import ▸ / Export ▸ E2K · IFC · DXF · Excel (js/exchange.js)
 
 import { initA8Results as a8InitResults } from "./a8results.js";   // A8: spandrels · results export xlsx/sqlite · report tables/snapshots/.docx
+import { initWaveCResults as wcInitWaveCResults } from "./wavec_results.js";   // Wave C: pier/spandrel/link 3D diagrams · video export · Compare Results · TH output
+import { wcMockValidate as wcMockValidateModel } from "./mock_wavec.js";   // Wave C: th_output (mock)
 
 import { initModalX as mxInitModalX } from "./modalx.js";   // TH function tools · named mass sources · modal cases (js/modalx.js)   // File › Import ▸ / Export ▸ E2K · IFC · DXF · Excel (js/exchange.js)
 import { initPoMethods as poxInitPoMethods } from "./pomethods.js";   // pushover ATC-40 / FEMA 440 / N2 + ADRS (js/pomethods.js)
@@ -332,7 +334,8 @@ async function postModel(payload) {
       || wbMockValidate(payload)   // wave B link types · link_freq_props · material_damping
       || tdMockValidateModel(payload)   // time-dependent materials · step creep · tendon elements (js/mock_timedep.js)
       || wbMockValidateProps(payload)   // Wave B properties (js/mock_wb.js)
-      || wbMockValidateIface(payload);   // Wave B named views · report sets · drawing aids · general grids (js/mock_wbi.js)
+      || wbMockValidateIface(payload)   // Wave B named views · report sets · drawing aids · general grids (js/mock_wbi.js)
+      || wcMockValidateModel(payload);   // Wave C th_output (js/mock_wavec.js)
     if (bad) throw new Error(bad);
     return payload;                                // mock backend accepts locally
   }
@@ -8637,6 +8640,7 @@ async function boot() {
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)
   try { mxInitModalX(window.__sky); } catch (err) { console.error("modal cases init failed", err); }   // after the dialog standard: Mass Source / Modal lists (js/modalx.js)
   try { wbInitLinks(window.__sky); } catch (err) { console.error("wave B links / damping init failed", err); }   // link types · freq-dependent links · damping options (js/wb_links.js)
+  try { wcInitWaveCResults(window.__sky); } catch (err) { console.error("Wave C results init failed", err); }   // Wave C (js/wavec_results.js)
 }
 
 boot();
