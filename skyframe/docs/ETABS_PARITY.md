@@ -293,3 +293,8 @@ interfaces:
   roadmap avoids adding new "engine-only" partial rows.
 - Each phase adds `tests/verification/` cases against closed-form solutions or
   published ETABS/SAP2000 verification problems.
+
+
+## Closed by A8 (results output)
+
+Display tables (element / wall / nonlinear-step tables), spandrel labels, spandrel forces, export to Excel (.xlsx), export to Microsoft Access (closed with SQLite: .mdb/.accdb needs the proprietary Jet/ACE engine; SQLite opens in Access via ODBC and in every data tool) and report generation (.docx, selectable tables, per-case 3D snapshots). See CONTRACT "Results tables export, spandrels and Word report (A8)".

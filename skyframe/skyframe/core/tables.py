@@ -81,7 +81,7 @@ def engine_context(engine) -> dict:
     if mesh is not None:
         trib = {uid: float(sum(t.values()))
                 for uid, t in getattr(mesh, "region_trib", {}).items()}
-    return {
+    ctx = {
         "source": "engine",
         "masters": {s: int(t) for s, t in asm.masters.items()},
         "mass": [[int(t), int(d), float(m)]
@@ -90,6 +90,9 @@ def engine_context(engine) -> dict:
                         for s, tags in asm.story_nodes.items()},
         "region_trib": trib,
     }
+    for hook in _CONTEXT_HOOKS:          # registry: extra context (additive)
+        ctx.update(hook(engine) or {})
+    return ctx
 
 
 def _nodes(results: dict) -> Dict[int, Tuple[float, float, float]]:
@@ -1258,6 +1261,39 @@ QUANTITIES.setdefault("area", "m^2")
 TABLES = {k: (title, group, cols, fn) for k, title, group, cols, fn in _TABLES}
 
 
+# --------------------------------------------------------------------------- #
+# extension registry: other modules add tables / engine context here
+# --------------------------------------------------------------------------- #
+_CONTEXT_HOOKS: List[Callable[[Any], dict]] = []
+REGISTERED: set = set()     # keys added through register_table (may be
+#                             empty for models without the feature)
+
+
+def register_table(key: str, title: str, group: str, cols: List[dict],
+                   fn: Callable[[_Ctx], List[dict]],
+                   after: Optional[str] = None) -> None:
+    """Add (or replace) a results table.  ``fn(ctx) -> rows`` receives the
+    resolved :class:`_Ctx`; ``cols`` are :func:`_col` dicts.  The table is
+    appended to the catalogue (or placed right after ``after``)."""
+    entry = (key, title, group, cols, fn)
+    for i, e in enumerate(_TABLES):
+        if e[0] == key:
+            _TABLES[i] = entry
+            break
+    else:
+        idx = next((i + 1 for i, e in enumerate(_TABLES) if e[0] == after),
+                   len(_TABLES))
+        _TABLES.insert(idx, entry)
+    TABLES[key] = (title, group, cols, fn)
+    REGISTERED.add(key)
+
+
+def register_context(fn: Callable[[Any], dict]) -> None:
+    """``fn(engine) -> dict`` merged into :func:`engine_context`."""
+    if fn not in _CONTEXT_HOOKS:
+        _CONTEXT_HOOKS.append(fn)
+
+
 def list_tables() -> List[dict]:
     """Catalogue: ``[{key, title, group, columns: [{key, label, quantity}]}]``
     in ETABS table-tree order."""
@@ -1287,3 +1323,7 @@ def compute_table(key: str, results: dict, model, context: Optional[dict] = None
 # A3 hook: Shell Forces / Shell Stresses tables (skyframe.core.shell_tables)
 from . import shell_tables as _shell_tables  # noqa: E402
 _shell_tables.register(_TABLES, TABLES, QUANTITIES)
+
+# registered extensions (keep at the end: they import this module)
+from . import tables_results as _tables_results  # noqa: E402  element/wall/NL
+_tables_results.register()

@@ -1997,6 +1997,9 @@ def _build_catalogue() -> List[Table]:
         ]))
     from skyframe.core.releases import tables as _rel_tables
     T.extend(_rel_tables())     # frame releases / joint local axes
+
+    from skyframe.core.spandrels import modeltable as _spd_table
+    T.append(_spd_table())                 # Spandrel Label Assignments (A8)
     return T
 
 

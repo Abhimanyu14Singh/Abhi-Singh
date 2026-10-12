@@ -109,6 +109,8 @@ import { initShellRes as shrInitShellRes } from "./shellres.js";   // A3 Display
 import { initReleases as relInitReleases } from "./releases.js";   // Assign › Frame › Releases / Partial Fixity + Joint › Local Axes (js/releases.js)
 import { mockValidateReleases as relMockValidate } from "./mock_releases.js";   // ?mock=1 end releases / joint local axes   // File › Import ▸ / Export ▸ E2K · IFC · DXF · Excel (js/exchange.js)
 
+import { initA8Results as a8InitResults } from "./a8results.js";   // A8: spandrels · results export xlsx/sqlite · report tables/snapshots/.docx
+
 /* ------------------------------------------------ state */
 const store = {
   model: null,
@@ -8580,6 +8582,8 @@ async function boot() {
   try { lcInitLoadCodes(window.__sky); } catch (err) { console.error("load codes init failed", err); }   // code spectra · design combos · LLR (js/loadcodes.js)
 
   try { relInitReleases(window.__sky); } catch (err) { console.error("releases / joint axes init failed", err); }   // Releases / Partial Fixity · Joint Local Axes (js/releases.js)
+
+  try { a8InitResults(window.__sky); } catch (err) { console.error("A8 results init failed", err); }   // spandrels · results export · report plus (js/a8results.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)

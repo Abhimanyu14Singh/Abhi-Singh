@@ -15,6 +15,7 @@ import { mockTowersAugment as c9MockTowersAugment } from "./mock_towers.js";   /
 import { mockNlsExtendResults as g3MockNlsExtend } from "./mock_nls.js";   // G3 nonlinear static + named diaphragms
 
 import { augmentMockModel, augmentMockResults as augmentTableResults } from "./mock_tables.js";   // tables / frequency / energy mock blocks
+import { mrtMockAugment as a8MrtMockAugment } from "./mock_restables.js";   // A8: spandrel forces + element / wall / NL tables (js/mock_restables.js)
 // G2 polygon shells — mock auto mesh (quads + triangles) for non-quad regions
 import { mockPolyMesh as g2MockPolyMesh, isLegacyQuad as g2IsLegacyQuad } from "./mock_poly.js";
 // Groups — user-defined stage results + section cuts defined by group
@@ -3322,6 +3323,7 @@ export function mockResults(model) {
   npMockAdjustResults(model, r);                  // nonprismatic sections + joint panel zones (js/mock_np.js)
   uhMockAugment(model, r);                        // B10: user hinge histories (js/mock_userhinge.js)
   ptMockAugment(model, r);                        // PT tendons + hyperstatic cases (js/mock_tendons.js)
+  a8MrtMockAugment(model, r);                     // A8: results.spandrels (js/mock_restables.js)
   pfMockExtendResults(model, r);                  // plot functions: th_cases[*].plot_functions (js/mock_plotfn.js)
   c9fMockAugment(model, r);                       // C9 follow-ups: per-tower TH story shear + control_tower (js/mock_towers_fu.js)
   rnaMockRatioNaApply(model, r);                  // n/a (negligible drift) story ratios (js/mock_ratio_na.js)

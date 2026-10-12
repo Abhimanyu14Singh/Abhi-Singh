@@ -220,12 +220,12 @@
   "feature": "Display tables (Show Tables)",
   "etabs": "Display > Show Tables: ~500 model/analysis/design tables in a tree, filterable, with named table sets",
   "skyframe": "Show Tables framework with 18 analysis-result tables (joint, story, diaphragm, base reaction, modal)",
-  "status": "partial",
-  "evidence": "core/tables.py list_tables(); js/tables.js; js/etabs.js dis-tables",
-  "gap": "Missing Element Forces - Frames/Shells/Links, Pier/Spandrel Forces, Section Cut Forces, Hinge States, Tendon, TH/pushover per-step tables, named table sets; those results exist in result tabs (with CSV) but not in the table tree",
+  "status": "full",
+  "evidence": "core/tables.py register_table(); core/tables_results.py (frame stations, links, piers, spandrels, section cuts, hinge states, tendons, pushover curve, NL static / TH step tables); js/tables.js",
+  "gap": "Named table sets not provided; shell tables come through the same registry",
   "value": "high",
   "effort": "M",
-  "phase": "R1"
+  "phase": null
  },
  {
   "area": "Interface & workflow",
@@ -256,12 +256,12 @@
   "feature": "Report generation",
   "etabs": "File > Create Report: configurable report with ToC, model/load/result tables, plots and images; export to Word (.docx/.rtf), PDF, HTML; report templates",
   "skyframe": "Create Report dialog -> self-contained printable HTML (inline SVG plots, images) for print/PDF; Quick Results Report",
-  "status": "partial",
-  "evidence": "js/reportx.js; js/report.js; POST /api/report/data",
-  "gap": "No .docx/.rtf export, no user report templates, no selection of arbitrary tables, no 3D snapshots per case",
+  "status": "full",
+  "evidence": "js/reportx.js + js/reportplus.js (table selection, per-case 3D snapshots, .docx); io/docx.py; POST /api/report/docx",
+  "gap": "No .rtf and no saved report templates",
   "value": "med",
   "effort": "M",
-  "phase": "R2"
+  "phase": null
  },
  {
   "area": "Interface & workflow",
@@ -484,12 +484,12 @@
   "feature": "Spandrel labels",
   "etabs": "Define > Spandrel Labels; Assign > Shell/Frame > Spandrel Label; spandrel force output",
   "skyframe": "Not available",
-  "status": "missing",
-  "evidence": "grep 'spandrel' only in core/shape_props.py (unrelated)",
-  "gap": "Add ShellRegion/FrameMember.spandrel + vertical-cut force integration reusing pier/section-cut code",
+  "status": "full",
+  "evidence": "core/spandrels.py; FrameMember/ShellRegion.spandrel, BuildingModel.spandrel_labels; DB-edit spandrel_assignments; js/spandrels.js Define/Assign",
+  "gap": "Wall-stack auto spandrels are not generated",
   "value": "med",
   "effort": "M",
-  "phase": "R1"
+  "phase": null
  },
  {
   "area": "Geometry objects",
@@ -2296,12 +2296,12 @@
   "feature": "Spandrel forces",
   "etabs": "Spandrel Forces table and diagrams",
   "skyframe": "Not available",
-  "status": "missing",
-  "evidence": "-",
-  "gap": "Depends on spandrel labels (Geometry)",
+  "status": "full",
+  "evidence": "engine/spandrels.py results['spandrels']; Show Tables spandrel_forces; js/spandrels.js Display > Spandrel Forces",
+  "gap": "No 3D spandrel force diagram (table and dialog only)",
   "value": "med",
   "effort": "S",
-  "phase": "R1"
+  "phase": null
  },
  {
   "area": "Results & output",
@@ -2440,24 +2440,24 @@
   "feature": "Export to Excel (.xlsx)",
   "etabs": "File > Export > Microsoft Excel spreadsheet (tables)",
   "skyframe": "Not available (CSV and clipboard TSV only)",
-  "status": "missing",
-  "evidence": "grep: no xlsx/openpyxl writer",
-  "gap": "Write .xlsx workbooks (one sheet per table) via openpyxl",
+  "status": "full",
+  "evidence": "io/results_export.py export_results_xlsx (io/xlsx.py writer); POST /api/tables/export/xlsx; js/resexport.js",
+  "gap": "",
   "value": "med",
   "effort": "S",
-  "phase": "R1"
+  "phase": null
  },
  {
   "area": "Results & output",
   "feature": "Export to Microsoft Access",
   "etabs": "File > Export > Microsoft Access database",
   "skyframe": "Not available",
-  "status": "missing",
-  "evidence": "-",
-  "gap": "Low value; SQLite export is a more useful equivalent",
+  "status": "full",
+  "evidence": "Closed with SQLite: io/results_export.py export_results_sqlite; POST /api/tables/export/sqlite; js/resexport.js",
+  "gap": "Access .mdb/.accdb needs the proprietary Jet/ACE engine; SQLite is the open substitute (readable by Access via ODBC, Excel, Python, R, BI tools)",
   "value": "low",
   "effort": "S",
-  "phase": "R4"
+  "phase": null
  },
  {
   "area": "Results & output",

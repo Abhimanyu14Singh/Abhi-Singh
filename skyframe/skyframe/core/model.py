@@ -45,6 +45,7 @@ from skyframe.core import damping_options as _dmpo
 from skyframe.core import towers as _towers  # C9 multiple towers
 from skyframe.core import rhino_exchange_fields as _xch  # Rhino/GH exchange
 from skyframe.core import towers_ext as _towers_ext  # C9 follow-ups
+from skyframe.core import spandrels as _spd  # spandrel labels (A8)
 from skyframe.core.pdelta_options import (  # noqa: F401  (re-exported)
     PDELTA_INCLUDE_IN, PDELTA_METHODS, pdelta_defaults, pdelta_from_dict,
     pdelta_to_dict, validate_pdelta_options)
@@ -775,6 +776,8 @@ class FrameMember:
     # None = none; the legacy Mi/Mj tokens stay the canonical pin)
     end_releases: Optional[dict] = None
 
+    spandrel: str = ""  # spandrel label ("" = none; core.spandrels)
+
     @property
     def length(self) -> float:
         return math.dist(self.pi, self.pj)
@@ -823,6 +826,8 @@ class FrameMember:
                 **_xch.ref_to_dict(self),          # exchange (when set)
 
                 **_rel_member_to_dict(self),       # end releases (if set)
+
+                **_spd.tag_to_dict(self),          # spandrel (when set)
                 "length": self.length}
 
 
@@ -908,6 +913,8 @@ class ShellRegion:
     tower: str = ""                        # C9 owning tower (core.towers)
     source_ref: Optional[dict] = None      # exchange origin (when set)
 
+    spandrel: str = ""                     # spandrel label (core.spandrels)
+
     @property
     def area(self) -> float:
         return _polygon_area3d([tuple(c) for c in self.corners])
@@ -965,6 +972,8 @@ class ShellRegion:
                 **_sht.region_extra_to_dict(self),
                 **_towers.tag_to_dict(self),       # C9 tower (when set)
                 **_xch.ref_to_dict(self)}          # exchange (when set)
+
+                **_spd.tag_to_dict(self)}          # spandrel (when set)
 
 
 # --------------------------------------------------------------------------- #
@@ -2149,6 +2158,9 @@ class BuildingModel:
     # BuiltupSection, each MIRRORED by a same-named FrameSection (like
     # designer_sections).  Emitted by to_dict only when non-empty.
     builtup_sections: Dict[str, object] = field(default_factory=dict)
+    # Define > Spandrel Labels (skyframe.core.spandrels); emitted only when
+    # non-empty
+    spandrel_labels: List[str] = field(default_factory=list)
 
     # Rhino / Grasshopper exchange (skyframe.core.rhino_exchange_fields): layer
     # mapping profiles {name: {"rules": [...]}} + applied sessions.
@@ -3938,6 +3950,7 @@ class BuildingModel:
         self._validate_exchange()
         from skyframe.core.releases import validate_model as _rel_validate
         _rel_validate(self)                 # end releases / joint axes
+        _spd.validate(self)                 # spandrel labels
 
     def _validate_exchange(self) -> None:
         """Rhino/GH exchange fields (see core.rhino_exchange_fields)."""
@@ -4184,6 +4197,8 @@ class BuildingModel:
                if self.llr_settings is not None else {}),
 
             **_rel_model_to_dict(self),  # joint local axes (if any)
+
+            **_spd.model_to_dict(self),  # spandrel labels (if any)
         }
 
     @classmethod
@@ -4632,6 +4647,8 @@ class BuildingModel:
 
         from skyframe.core.releases import model_from_dict as _rel_from
         _rel_from(mdl, d)                   # end releases / joint axes
+
+        _spd.model_from_dict(mdl, d)        # spandrel labels / tags
         mdl.validate()
         return mdl
 

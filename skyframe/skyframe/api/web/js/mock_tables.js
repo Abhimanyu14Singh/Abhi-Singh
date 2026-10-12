@@ -100,6 +100,17 @@ export const MOCK_COMPUTED = ["joint_displacements", "story_drifts", "story_forc
   "modal_periods", "modal_mass_ratios", "base_reactions", "load_pattern_summary"];
 MOCK_COMPUTED.push("shell_forces", "shell_stresses");   // A3 hook
 
+/** Additive registry for other mock modules (js/mock_restables.js adds the
+    element / wall / nonlinear-step tables): group is relative to
+    "Analysis Results > "; fn(model, results, caseFilter, warnings) → rows. */
+export function registerMockTable(key, title, group, columns, fn) {
+  const t = { key, title, group: "Analysis Results > " + group, columns };
+  const i = CATALOGUE.findIndex(x => x.key === key);
+  if (i >= 0) CATALOGUE[i] = t; else CATALOGUE.push(t);
+  BY_KEY[key] = t;
+  if (fn) T[key] = fn;
+}
+
 export function mockTablesList() {
   return { tables: JSON.parse(JSON.stringify(CATALOGUE)) };
 }

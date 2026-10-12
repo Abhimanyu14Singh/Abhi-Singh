@@ -179,7 +179,9 @@ def test_rows_carry_exactly_the_catalogue_columns():
     for t in tables.list_tables():
         out = tables.compute_table(t["key"], d, mdl, ctx)
         assert out["columns"] == t["columns"]
-        assert out["rows"] or (                       # A3: shell tables
+        # registered extension tables (elements / walls / NL steps / shells)
+        # are empty for models without that feature
+        assert out["rows"] or t["key"] in tables.REGISTERED or (
             t["key"] in ("shell_forces", "shell_stresses")
             and not d.get("shell_quads")), t["key"]
         want = {c["key"] for c in t["columns"]}
