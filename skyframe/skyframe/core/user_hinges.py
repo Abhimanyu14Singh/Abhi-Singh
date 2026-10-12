@@ -46,7 +46,11 @@ import copy
 import math
 from typing import Dict, List, Optional, Tuple
 
-HINGE_TYPES = ("M3", "M2", "P", "V2", "PMM_fiber")
+HINGE_TYPES = ("M3", "M2", "P", "V2", "PMM_fiber",
+               # Wave B: V3 / T lumped hinges, parametric interacting
+               # hinges (core.interaction_hinges) and code-table auto
+               # hinges (design.hinge_tables)
+               "V3", "T", "PMM", "M2M3", "auto")
 HYSTERESIS_TYPES = ("kinematic", "takeda", "pivot", "isotropic", "concrete")
 DROP_OPTIONS = ("drops", "holds")
 # ETABS hinge states, in order
@@ -58,7 +62,9 @@ LEGACY_STATE = {"A-B": "elastic", "B-IO": "IO", "IO-LS": "LS",
                 "LS-CP": "CP", ">CP": "collapse", "C-D": "collapse",
                 "D-E": "collapse", ">E": "collapse"}
 # zeroLength -dir (1-based) of the hinge's active local DOF
-HINGE_DIR = {"P": 1, "V2": 2, "M2": 5, "M3": 6}
+HINGE_DIR = {"P": 1, "V2": 2, "M2": 5, "M3": 6, "V3": 3, "T": 4}
+# hinge types that are NOT a single-DOF lumped backbone spring
+SPECIAL_TYPES = ("PMM_fiber", "PMM", "M2M3", "auto")
 
 # default hinge elastic stiffness k_e = UH_RIGID_FACTOR * k_member
 # (ETABS hinges are rigid-plastic; the finite k_e is the documented
@@ -138,14 +144,33 @@ def normalize_property(name: str, prop) -> dict:
         raise ValueError(f"{nm} must be an object")
     allowed = {"type", "backbone", "scale", "acceptance", "hysteresis",
                "drop_strength", "k_elastic", "hysteresis_params"}
+    typ = prop.get("type")
+    if typ == "auto":                         # Wave B code-table hinge
+        return _normalize_auto_property(nm, prop)
+    if typ in ("PMM", "M2M3"):                # Wave B interacting hinge
+        allowed = allowed | {"surface", "axial"}
     bad = set(prop) - allowed
     if bad:
         raise ValueError(f"{nm}: unknown keys {sorted(bad)}")
-    typ = prop.get("type")
     if typ not in HINGE_TYPES:
         raise ValueError(f"{nm}: type must be one of {HINGE_TYPES}, got "
                          f"{typ!r}")
     out: dict = {"type": typ}
+    if typ in ("PMM", "M2M3"):
+        from skyframe.core import interaction_hinges as _ih
+        if isinstance(prop.get("backbone"), dict):
+            raise ValueError(f"{nm}: an interacting hinge needs a "
+                             "symmetric backbone")
+        if prop.get("hysteresis", "kinematic") != "kinematic":
+            raise ValueError(f"{nm}: interacting hinges use kinematic "
+                             "hysteresis (coupled elliptical plasticity)")
+        if prop.get("drop_strength", "holds") != "holds":
+            raise ValueError(f"{nm}: interacting hinges cannot drop "
+                             'strength (drop_strength must be "holds")')
+        prop = dict(prop, drop_strength="holds")
+        out["surface"] = _ih.normalize_surface(typ, prop.get("surface"),
+                                               nm)
+        out["axial"] = _ih.normalize_axial(typ, prop.get("axial"), nm)
     bbk = prop.get("backbone")
     if typ != "PMM_fiber" or bbk is not None:
         if isinstance(bbk, dict):
@@ -199,6 +224,41 @@ def normalize_property(name: str, prop) -> dict:
         raise ValueError(f"{nm}: drop_strength must be one of "
                          f"{DROP_OPTIONS}, got {ds!r}")
     out["drop_strength"] = ds
+    ke = prop.get("k_elastic")
+    if ke is not None:
+        ke = _num(ke, f"{nm} k_elastic")
+        if ke <= 0.0:
+            raise ValueError(f"{nm}: k_elastic must be > 0")
+    out["k_elastic"] = ke
+    hp = prop.get("hysteresis_params")
+    if hp is not None:
+        keys = set(HYST_DEFAULTS["takeda"])
+        if not isinstance(hp, dict) or set(hp) - keys:
+            raise ValueError(f"{nm}: hysteresis_params keys must be in "
+                             f"{sorted(keys)}")
+        hp = {k: _num(v, f"{nm} hysteresis_params.{k}")
+              for k, v in hp.items()}
+    out["hysteresis_params"] = hp
+    return out
+
+
+def _normalize_auto_property(nm: str, prop: dict) -> dict:
+    """``{"type": "auto", "auto": {...}}`` — a code-table auto hinge
+    (skyframe.design.hinge_tables); sized per member by the engine."""
+    from skyframe.design import hinge_tables as _ht
+    bad = set(prop) - {"type", "auto", "hysteresis", "k_elastic",
+                       "hysteresis_params"}
+    if bad:
+        raise ValueError(f"{nm}: unknown keys {sorted(bad)} (an auto hinge "
+                         "takes auto / hysteresis / k_elastic / "
+                         "hysteresis_params)")
+    out = {"type": "auto",
+           "auto": _ht.normalize_auto(prop.get("auto"), nm)}
+    hy = prop.get("hysteresis", "kinematic")
+    if hy not in HYSTERESIS_TYPES:
+        raise ValueError(f"{nm}: hysteresis must be one of "
+                         f"{HYSTERESIS_TYPES}, got {hy!r}")
+    out["hysteresis"] = hy
     ke = prop.get("k_elastic")
     if ke is not None:
         ke = _num(ke, f"{nm} k_elastic")
@@ -373,13 +433,17 @@ def interior_points(model) -> Dict[str, List[Tuple[float, tuple]]]:
 
 # ---------------------------------------------------------- envelope
 def k_member(typ: str, E: float, A: float, I22: float, I33: float,
-             L: float) -> float:
+             L: float, G: float = 0.0, J: float = 0.0) -> float:
     if typ == "M3":
         return 6.0 * E * I33 / L
     if typ == "M2":
         return 6.0 * E * I22 / L
     if typ == "P":
         return E * A / L
+    if typ == "V3":                          # Wave B: shear along local 3
+        return 12.0 * E * I22 / L ** 3
+    if typ == "T":                           # Wave B: torsion
+        return G * J / L
     return 12.0 * E * I33 / L ** 3          # V2
 
 

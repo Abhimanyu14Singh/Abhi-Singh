@@ -56,6 +56,10 @@ def member_plan(eng) -> Dict[str, List[dict]]:
             if p["type"] == "PMM_fiber":
                 continue
             d = float(h["relative_distance"])
+            if p["type"] == "auto":               # Wave B code-table hinge
+                from skyframe.engine import auto_hinges as _ah
+                lst.extend(_ah.resolve(eng, m, h["property"], p, d))
+                continue
             lst.append({"property": h["property"], "prop": p, "d": d,
                         "t": d * m.length, "placed": False})
         if lst:
@@ -217,12 +221,16 @@ def build_springs(eng, asm, pending: list, plan: Dict[str, List[dict]],
                               "skipped", UserWarning)
     for m, h, orig, dup in pending:
         prop = h["prop"]
+        if prop["type"] in ("PMM", "M2M3"):       # Wave B interacting hinge
+            from skyframe.engine import interaction_hinges as _ihe
+            mtag, etag = _ihe.build(eng, asm, m, h, orig, dup, mtag, etag)
+            continue
         sec = model.sections[m.section]
         mat = model.materials[sec.material]
         A, I22, I33, J = eng._eff_props(sec)
         L = m.length
         E, G = mat.E, mat.G
-        km = _cu.k_member(prop["type"], E, A, I22, I33, L)
+        km = _cu.k_member(prop["type"], E, A, I22, I33, L, G, J)
         env = _cu.build_envelope(prop, km)
         k_tr = _cu.UH_TIE_FACTOR * (E * A / L
                                     + 12.0 * E * max(I22, I33) / L ** 3)
@@ -252,7 +260,9 @@ def build_springs(eng, asm, pending: list, plan: Dict[str, List[dict]],
             "uid": m.uid, "end": end, "relative_distance": d,
             "property": h["property"], "prop": prop, "env": env,
             "ele": etag, "dir": hdir, "material": mat_name,
-            "orig": orig, "dup": dup})
+            "orig": orig, "dup": dup,
+            **({"auto": h["auto"], "acc_neg": h.get("acc_neg")}
+               if "auto" in h else {})})
     return mtag, etag
 
 
@@ -262,13 +272,25 @@ class Recorder:
     deformation / ETABS state / legacy state)."""
 
     def __init__(self, asm):
+        from skyframe.engine import interaction_hinges as _ihe
+        from skyframe.engine import wall_hinges as _whe
         self.asm = asm
-        self.hist = [{"rot": [], "moment": [], "rot_plastic": [],
-                      "hinge_state": [], "state": []}
-                     for _ in getattr(asm, "user_hinges", [])]
+        self.hist = [_ihe.new_hist() if s.get("kind") == "interaction"
+                     else _whe.new_hist() if s.get("kind") == "wall"
+                     else {"rot": [], "moment": [], "rot_plastic": [],
+                           "hinge_state": [], "state": []}
+                     for s in getattr(asm, "user_hinges", [])]
 
     def record(self, peak: Dict[str, float], yielded=None) -> None:
+        from skyframe.engine import interaction_hinges as _ihe
+        from skyframe.engine import wall_hinges as _whe
         for spec, hh in zip(self.asm.user_hinges, self.hist):
+            if spec.get("kind") == "interaction":       # Wave B PMM/M2M3
+                _ihe.record(spec, hh, peak, yielded)
+                continue
+            if spec.get("kind") == "wall":              # Wave B wall hinge
+                _whe.record(spec, hh, peak, yielded)
+                continue
             k = spec["dir"] - 1
             defo = ops.eleResponse(spec["ele"], "deformation")
             # zeroLength 'basicForce' = the material forces in -dir order
@@ -277,7 +299,10 @@ class Recorder:
             d = float(defo[k]) if len(defo) > k else 0.0
             F = float(frc[k]) if len(frc) > k else 0.0
             env = spec["env"]
-            st = _cu.classify(d, F, env, spec["prop"].get("acceptance"))
+            acc = spec["prop"].get("acceptance")
+            if d < 0.0 and spec.get("acc_neg") is not None:
+                acc = spec["acc_neg"]             # Wave B two-sided auto
+            st = _cu.classify(d, F, env, acc)
             hh["rot"].append(d)
             hh["moment"].append(F)
             hh["rot_plastic"].append(max(0.0, abs(d) - abs(F) / env["k_e"]))
@@ -290,8 +315,16 @@ class Recorder:
                 yielded.add(spec["uid"])
 
     def detail(self) -> List[dict]:
+        from skyframe.engine import interaction_hinges as _ihe
+        from skyframe.engine import wall_hinges as _whe
         out: List[dict] = []
         for spec, hh in zip(self.asm.user_hinges, self.hist):
+            if spec.get("kind") == "interaction":       # Wave B PMM/M2M3
+                out.append(_ihe.detail(spec, hh))
+                continue
+            if spec.get("kind") == "wall":              # Wave B wall hinge
+                out.append(_whe.detail(spec, hh))
+                continue
             prop, env = spec["prop"], spec["env"]
             acc = prop.get("acceptance") or {}
             pos = env["positive"]
@@ -320,5 +353,9 @@ class Recorder:
                                           env["negative"]["points"]]},
                 **({"approximation": _cu.ISOTROPIC_NOTE}
                    if prop["hysteresis"] == "isotropic" else {}),
+                **({"kind": "auto", "auto": spec["auto"],
+                    "acceptance_negative": spec.get("acc_neg"),
+                    "preliminary": spec["auto"]["preliminary"]}
+                   if "auto" in spec else {}),
                 **{k: list(v) for k, v in hh.items()}})
         return out

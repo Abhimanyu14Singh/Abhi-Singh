@@ -1303,3 +1303,5 @@ def extend_catalogue(T: List[Table]) -> None:
     """Hook called once by ``modeltables._build_catalogue``."""
     _extend_columns(T)
     _new_tables(T)
+    from .modeltables_hinges import extend as _hinges_extend
+    _hinges_extend(T)                   # Wave B hinge tables / columns

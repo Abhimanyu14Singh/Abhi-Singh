@@ -1993,6 +1993,12 @@ class TimeHistoryFunction:
 # --------------------------------------------------------------------------- #
 # The building
 # --------------------------------------------------------------------------- #
+
+def _wall_hinges_to_dict(model) -> dict:
+    """Wave B wall fiber hinges ({} when unset — legacy byte-identical)."""
+    from skyframe.core import wall_hinges as _wh
+    return _wh.model_to_dict(model)
+
 @dataclass
 class BuildingModel:
     name: str = "Untitled Building"
@@ -2205,6 +2211,10 @@ class BuildingModel:
     # Emitted by to_dict only when non-empty.
     mass_sources: Dict[str, dict] = field(default_factory=dict)
     modal_cases: Dict[str, dict] = field(default_factory=dict)
+
+    # Wave B wall fiber hinges: pier label -> definition
+    # (skyframe.core.wall_hinges); emitted by to_dict only when non-empty.
+    wall_hinges: Dict[str, dict] = field(default_factory=dict)
 
     # ---------------- convenience API ----------------
     def add_material(self, mat: Material) -> Material:
@@ -4067,6 +4077,8 @@ class BuildingModel:
         from skyframe.core.framemesh import validate_model as _fm_validate
         _fm_validate(self)                  # frame auto mesh / stations
         _uh.validate_model(self)            # B10 user hinges
+        from skyframe.core import wall_hinges as _wh
+        _wh.validate_model(self)            # Wave B wall fiber hinges
         self._validate_open_wind()          # open-structure wind params
         _dmpo.validate_damping_options(self)    # Rayleigh on links
         self._validate_analysis_options()   # solver / convergence options
@@ -4216,6 +4228,7 @@ class BuildingModel:
                if self.hyperstatic_cases else {}),
 
             **_uh.model_to_dict(self),      # B10 hinge properties (if any)
+            **_wall_hinges_to_dict(self),   # Wave B wall hinges (if any)
             **_shellopts_model_to_dict(self),   # joint patterns / load sets
             **_dmpo.damping_to_dict(self),  # Rayleigh on links (if set)
 
@@ -4665,6 +4678,8 @@ class BuildingModel:
                                      for e in jpz]
 
         _uh.model_from_dict(mdl, d)         # B10 hinge props / overwrites
+        from skyframe.core import wall_hinges as _wh
+        _wh.model_from_dict(mdl, d)         # Wave B wall fiber hinges
         from skyframe.core.shellopts import model_from_dict as _so_from
         _so_from(mdl, d)                    # curves / mesh opts / load sets
 
