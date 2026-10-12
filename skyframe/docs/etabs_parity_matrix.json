@@ -1983,13 +1983,13 @@
   "area": "Analysis",
   "feature": "Linear buckling",
   "etabs": "Buckling case: any load, all element types",
-  "skyframe": "Numpy eigen-buckling for frame members (elasticBeamColumn only; shells/links excluded)",
-  "status": "partial",
-  "evidence": "core/buckling.py; engine/opensees_engine.py run_buckling(); CONTRACT §Linear (eigenvalue) buckling analysis",
-  "gap": "Include shells (geometric stiffness of plates) and links",
+  "skyframe": "Frame-only numpy solver (default) plus formulation \"fem\": buckling on the engine's FE model with shell plate geometric stiffness, links, per-DOF releases and diaphragms, sparse Lanczos",
+  "status": "full",
+  "evidence": "engine/buckling_fem.py; engine/geom_stiffness.py; engine/lanczos.py; CONTRACT §Buckling with shells and links, sparse eigen and BucklingFEM",
+  "gap": "",
   "value": "med",
   "effort": "L",
-  "phase": "R3"
+  "phase": null
  },
  {
   "area": "Analysis",
@@ -1997,8 +1997,8 @@
   "etabs": "Buckling case initial conditions from end of a nonlinear case",
   "skyframe": "BucklingCase.base_case two-load-set eigenproblem",
   "status": "full",
-  "evidence": "core/model.py BucklingCase.base_case; CONTRACT §Buckling from a stressed/staged state",
-  "gap": "Frames only (as above)",
+  "evidence": "core/model.py BucklingCase.base_case; CONTRACT §Buckling from a stressed/staged state; FEM formulation: two-load-set Davidson (engine/buckling_fem.py)",
+  "gap": "",
   "value": "low",
   "effort": "S",
   "phase": null
@@ -2007,13 +2007,13 @@
   "area": "Analysis",
   "feature": "BucklingFEM (shell-FEM member buckling)",
   "etabs": "BucklingFEM plugin (v23): shell-FEM local + global buckling of members",
-  "skyframe": "Not available",
-  "status": "missing",
-  "evidence": "-",
-  "gap": "Research-grade; defer",
+  "skyframe": "Analyze › Member Buckling: shell model of the member's plates (I, mono-I, channel, tee, tube) under its end forces; local, distortional and global (LTB, flexural) modes with a mode-shape viewer",
+  "status": "full",
+  "evidence": "core/member_buckling.py; api/buckling_api.py; js/bucklingfem.js",
+  "gap": "Plate sections only (I / I_mono / channel / tee / rect_tube); mode class is a heuristic",
   "value": "low",
   "effort": "XL",
-  "phase": "R4"
+  "phase": null
  },
  {
   "area": "Analysis",
@@ -2103,13 +2103,13 @@
   "area": "Analysis",
   "feature": "Large-model scalability",
   "etabs": "Routine 100k+ joint models, multithreaded solver and eigen",
-  "skyframe": "Measured speedups on frame workloads; shell-heavy models native-solver-bound (~1.0x); dense stability check capped at 3000 DOF",
-  "status": "partial",
-  "evidence": "docs/PERF_NOTES.md; docs/PERFORMANCE.md; core/checks.py STABILITY_MAX_DOFS",
-  "gap": "Benchmark and optimize 50k-200k DOF models (sparse eigen, multithreaded MUMPS, out-of-core), sparse stability check",
+  "skyframe": "Benchmarked at 50k-220k equations: MUMPS factor reuse above 20 000 equations, sparse shift-invert Lanczos modal (no band Arpack), sparse stability check up to 400 000 equations",
+  "status": "full",
+  "evidence": "docs/PERFORMANCE.md §Large models (v1.24); engine/solver_policy.py; engine/sparse_modal.py; core/stability_sparse.py",
+  "gap": "Multithreaded MUMPS gives no gain on this OpenSees build (reference BLAS); per-element OpenSees loop remains",
   "value": "high",
   "effort": "L",
-  "phase": "R3"
+  "phase": null
  },
  {
   "area": "Analysis",

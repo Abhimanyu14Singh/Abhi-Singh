@@ -70,6 +70,8 @@ import { mockValidateUserHinges as uhMockValidate } from "./mock_userhinge.js";
 import { initTendons as ptInitTendons } from "./tendons.js";
 // Mesh Sensitivity Study + Accuracy Advisor (js/accuracy.js; aliased import)
 import { initAccuracy as accInitAccuracy } from "./accuracy.js";
+// v1.24 BucklingFEM + buckling case options (js/bucklingfem.js; aliased import)
+import { initBucklingFem as bfemInitBucklingFem } from "./bucklingfem.js";
 import { initUx as uxInitUx } from "./ux.js";   // UX pass: palette · toolbar · shortcuts · dialog chrome · start screen
 import { mockValidateTendons as ptMockValidate } from "./mock_tendons.js";
 // Plot functions / story response plots / 3D force diagrams (Display menu)
@@ -8578,6 +8580,7 @@ async function boot() {
   try { rhxInitRhinoLink(window.__sky); } catch (err) { console.error("rhino link init failed", err); }   // Rhino / GH exchange (js/rhinolink.js)
 
   try { accInitAccuracy(window.__sky); } catch (err) { console.error("accuracy tools init failed", err); }   // Analyze > Mesh Sensitivity Study · Model > Accuracy Advisor (js/accuracy.js)
+  try { bfemInitBucklingFem(window.__sky); } catch (err) { console.error("member buckling init failed", err); }   // Analyze > Member Buckling (js/bucklingfem.js)
   try { faInitFrameAxesUi(window.__sky); } catch (err) { console.error("frame axes init failed", err); }   // frame local axes (js/frameaxes_ui.js)
   try { mlInitMatLib(window.__sky); } catch (err) { console.error("material library init failed", err); }   // v1.21 material library (js/matlib.js)
 

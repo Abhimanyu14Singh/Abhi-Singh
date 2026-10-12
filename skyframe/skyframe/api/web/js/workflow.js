@@ -274,6 +274,7 @@ export function installContextMenu(sky) {
     out.push(...EDIT);
     out.push({ sep: true });
     if (S.results && ref.type === "member") out.push({ label: "Show Member Forces", act: "dis-forces" });
+    if (ref.type === "member" && sky.bucklingFem) out.push({ label: "Analyze › Member Buckling…", fn: () => sky.bucklingFem.open(ref.uid) });   // v1.24 (js/bucklingfem.js)
     out.push({ label: "Object Information…", fn: () => wfOpenObjectInfo(sky, ref), key: "" });
     return out.filter(i => i.sep || i.head || i.fn || (sky.etabs && sky.etabs.hasItem(i.act)));
   }

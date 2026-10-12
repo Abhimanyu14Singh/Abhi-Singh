@@ -48,6 +48,14 @@ import openseespy.opensees as ops
 # estimated equations at/above which "auto" leaves BandGeneral (measured
 # crossover on rigid-diaphragm frame / meshed models: ~250 equations)
 SPARSE_EQ_THRESHOLD = 300
+# v1.24 large models: estimated equations at/above which "auto" uses MUMPS.
+# This OpenSees build's UmfPack refactors on EVERY analyze even under
+# ``Linear -factorOnce`` (0.9 s per solve at 27 000 equations, 6.9 s at
+# 75 000), while MUMPS keeps its LU factors (0.09 s / 0.3 s per solve) —
+# measured in docs/PERFORMANCE.md "Large models"; results agree with
+# UmfPack to <= 3e-13 on the benchmark buildings (<= 1e-9 is pinned).
+# Below the threshold "auto" is unchanged (byte-identical).
+MUMPS_EQ_THRESHOLD = 20000
 
 SOLVERS = ("auto", "band", "umfpack", "mumps", "sparse_general")
 
@@ -55,7 +63,8 @@ _SYSTEM = {"band": "BandGeneral", "umfpack": "UmfPack", "mumps": "Mumps",
            "sparse_general": "SparseGeneral"}
 
 # systems whose solver supports ``algorithm Linear -factorOnce``
-FACTOR_ONCE_SYSTEMS = ("UmfPack",)
+# (v1.24: + Mumps, whose factors really are reused)
+FACTOR_ONCE_SYSTEMS = ("UmfPack", "Mumps")
 
 
 def estimate_equations(asm) -> int:
@@ -83,6 +92,8 @@ def choose(model, asm) -> Tuple[str, str]:
     name = solver_name(model)
     if name == "auto":
         neq = estimate_equations(asm)
+        if neq >= MUMPS_EQ_THRESHOLD and mumps_available():   # v1.24
+            return "Mumps", ""
         return ("BandGeneral" if neq < SPARSE_EQ_THRESHOLD
                 else "UmfPack"), ""
     if name == "band":
@@ -91,6 +102,27 @@ def choose(model, asm) -> Tuple[str, str]:
         if note:
             return "UmfPack", note
     return _SYSTEM[name], ""
+
+
+_MUMPS_OK = {"ok": True}
+
+
+def mumps_available() -> bool:
+    """False once ``system Mumps`` failed in this process (a build without
+    MUMPS): :func:`apply_system` then records it and "auto" keeps UmfPack."""
+    return bool(_MUMPS_OK["ok"])
+
+
+def threads_info() -> dict:
+    """MUMPS threading of this build (docs/PERFORMANCE.md "Large models"):
+    the OpenSees binary links libgomp, but a 75 000-equation factorization
+    measured 7.6 s with OMP_NUM_THREADS=1 and 7.1 s with 4 threads (the
+    bundled reference BLAS is single-threaded), so no multithreaded path
+    is enabled; the run inherits the process' OMP_NUM_THREADS."""
+    import os
+    return {"mumps": mumps_available(),
+            "omp_num_threads": os.environ.get("OMP_NUM_THREADS"),
+            "multithreaded": False}
 
 
 def system_of(asm) -> str:
@@ -108,6 +140,8 @@ def apply_system(asm) -> None:
     try:
         ops.system(system_of(asm))
     except Exception:                                   # pragma: no cover
+        if system_of(asm) == "Mumps":
+            _MUMPS_OK["ok"] = False
         asm.linear_system = "UmfPack"
         ops.system("UmfPack")
 
@@ -123,3 +157,29 @@ def describe(asm) -> Optional[dict]:
         return None
     return {"system": system_of(asm),
             "equations_estimate": estimate_equations(asm)}
+
+
+def analyze_reused(eng, asm) -> int:
+    """``ops.analyze(1)`` on the reused factor-once analysis, with ONE
+    fresh-factorization retry for MUMPS (v1.24).
+
+    Measured on openseespy 3.7.1: after a first factor-once MUMPS solve, a
+    case whose pattern carries ELEMENT loads (beam span loads, shell area
+    loads) fails in MUMPS' substitution (error -3, "wrong JOB state")
+    while nodal-load cases reuse the factors fine.  The failed step left
+    the domain at load factor 1: ``ops.reset()`` reverts it, the analysis
+    is set up again (a fresh factorization of the same stiffness — the
+    result equals a refactored solve) and the step is re-run.  UmfPack /
+    BandGeneral paths are untouched (byte-identical)."""
+    if system_of(asm) != "Mumps":
+        return ops.analyze(1)
+    from skyframe.engine.opensees_engine import _quiet_native_output
+    with _quiet_native_output():            # the expected MUMPS chatter
+        ok = ops.analyze(1)
+    if ok != 0:
+        from skyframe.engine.opensees_engine import _REUSE
+        ops.reset()
+        _REUSE["factored"] = None
+        eng._setup_linear_reused(asm)
+        ok = ops.analyze(1)
+    return ok

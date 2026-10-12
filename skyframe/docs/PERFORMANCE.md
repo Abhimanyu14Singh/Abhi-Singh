@@ -318,3 +318,146 @@ What remains:
   * the option validates and serializes only when it is not the default;
   * the mesher pre-filter gives exactly the brute-force member splits (a diagonal brace through a wall mesh node, closed-form cut point).
 * The existing above-threshold test (`test_fast_path_equals_legacy_path`: default run vs forced `band` + `legacy` eigen to 1e-9) now also covers the parallel path.
+
+## Large models: 50k–220k equations (v1.24)
+
+This pass benchmarks production-size meshed buildings and removes the two
+costs that grow worst with size: the linear solver refactoring on every
+solve, and the band Arpack eigen solver. The contract is CONTRACT.md
+"Buckling with shells and links, sparse eigen and BucklingFEM". The tests
+are in `tests/test_buckling_fem.py`.
+
+### Benchmark models
+
+All four come from the `perf/models.py` factory:
+
+* `quick_building` with 8 × 6 bays of 6 m;
+* every bay has a 0.2 m slab and there is a two-wall 0.3 m core;
+* DEAD, LIVE, EQX, EQY and SDL cases, 4 combos, 12 modes, RSX and RSY.
+
+The "no diaphragm" variants set `rigid_diaphragms = False` and
+`diaphragm = "none"`. Mass then sits on every slab node, so the exact
+massed-DOF condensation (capped at 600 massed DOFs) cannot apply.
+
+| model | mesh | nodes | shells | equations | free massed DOFs |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 20s-8x6-meshed (rigid diaphragms) | 1.5 m | 16 789 | 15 680 | 50 760 | 60 |
+| 40s-8x6-meshed (rigid diaphragms) | 1.5 m | 33 509 | 31 360 | 101 520 | 120 |
+| 10s-8x6-meshed, no diaphragm | 1.5 m | 8 419 | 7 840 | 50 100 | 16 500 |
+| 20s-8x6-meshed, no diaphragm | 1.0 m | 36 893 | 35 280 | 220 920 | 72 520 |
+
+Measurement conditions:
+
+* the same 4-core container as above, `OMP_NUM_THREADS=OPENBLAS_NUM_THREADS=1`;
+* one `OpenSeesEngine(model).run()` plus `to_dict` plus JSON per model;
+* "before" is the base commit (v1.23) and "after" is this change, on the
+  same machine, back to back;
+* scripts in the scratch `perf/` folder: `bench_large.py` (timers on
+  `ops.analyze`, `ops.eigen`, `run_static`, `run_modal`,
+  `run_response_spectrum`) and `cmp_res.py` (`core/results_compare`).
+
+### What the profiles showed (before)
+
+* **UmfPack refactors on every solve.** The engine already ran factor-once
+  (`algorithm Linear -factorOnce`). Even so, this openseespy build's UmfPack
+  repeats the numeric factorization on every `analyze`. Measured with a
+  repeated identical solve:
+  * 27 000 equations: 0.9 s per solve;
+  * 75 000 equations: 6.9 s per solve, against 9.1 s for the first solve.
+
+  MUMPS keeps its LU factors. Its repeat solves cost 0.09 s and 0.3 s on
+  the same models, which is mostly OpenSees' element loop. On the v1.19
+  meshed models the per-solve cost was therefore the factorization, not
+  the element loop as assumed there.
+* **Band Arpack on mass-on-every-node models.** On the 10-story
+  no-diaphragm model `ops.eigen` took 226 s of the 368 s run. That is two
+  calls: the modal case and the RS refresh.
+* **MUMPS threads.** The OpenSees binary links `libgomp`, but a 75 000
+  equation factorization took 7.6 s with `OMP_NUM_THREADS=1` and 7.1 s
+  with 4 threads. The bundled reference BLAS is single-threaded, so no
+  multithreaded path is enabled (`solver_policy.threads_info()`).
+
+### What changed
+
+1. **MUMPS factor reuse above 20 000 equations** (`engine/solver_policy.py`).
+   * `"auto"` picks MUMPS at `MUMPS_EQ_THRESHOLD = 20000` estimated
+     equations and above, and `FACTOR_ONCE_SYSTEMS` includes it.
+   * A factor-once MUMPS solve whose pattern carries element loads fails in
+     MUMPS' substitution (error -3). `analyze_reused` then re-factors once,
+     quietly, and retries. Nodal-load flows reuse the factors: condensation
+     columns, mode shapes, CR, Lanczos.
+   * Below the threshold nothing changes, and the results stay
+     byte-identical.
+2. **Sparse shift-invert Lanczos modal analysis** (`engine/lanczos.py`,
+   `engine/sparse_modal.py`). It runs when the policy picked a sparse
+   system and the model has more than 600 free massed DOFs.
+   * Lanczos in the K inner product with full re-orthogonalisation.
+   * Locking restarts, for equal-period pairs.
+   * Subspace-iteration refinement on fresh solves.
+   * Every step is one MUMPS forward/back solve.
+3. **Sparse stability check** (`core/stability_sparse.py`). Above the
+   dense cap it replaces the "too large" skip. It adds soft grounded
+   springs and runs Lanczos for the near-null modes.
+
+### Before / after (whole run, seconds)
+
+| model | equations | before | after | speedup | worst relative difference |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 20s-8x6-meshed | 50 760 | 68.0 | 50.8 | 1.3x | 4.0e-12 |
+| 40s-8x6-meshed | 101 520 | 256.0 | 127.2 | 2.0x | 8.2e-12 |
+| 10s-8x6-meshed, no diaphragm | 50 100 | 367.6 | 74.7 | 4.9x | 6.9e-12 (1) |
+| 20s-8x6-meshed 1.0 m, no diaphragm | 220 920 | > 1 800 (stopped) | 343.8 | > 5.2x | — |
+
+The 220 920-equation run before this change was stopped at the 30-minute cap, still inside the band Arpack eigen solve.
+
+(1) The only other difference is one deflection-check string, `L/83520217`
+vs `L/83520216`. It is the rounded display of a ~1e-11 m deflection, so the
+ratio is round-off noise.
+
+The worst relative difference comes from `core/results_compare.compare`
+over every numeric result. It is modal sign- and degenerate-subspace
+invariant. The ASCE 7 torsion ratios and flags, the warning text and the
+`model_size` block are ignored (see the v1.18 note above). Every benchmark
+is equal to 1e-9; the requirement is ≤ 1e-9 above the thresholds.
+
+Phase breakdown (s), before → after:
+
+| phase | 20s-8x6 | 40s-8x6 | 10s-8x6 no diaphragm |
+| --- | ---: | ---: | ---: |
+| `ops.analyze` (all solves) | 39.2 → 15.3 | 190.7 → 47.4 | 115.9 → 39.8 |
+| `ops.eigen` | — | — | 226.2 → 0 (Lanczos) |
+| modal (`run_modal`) | 38.6 → 16.3 | 184.8 → 48.5 | 262.4 → 30.9 |
+| RS cases | 6.1 → 4.7 | 9.5 → 10.6 | 81.9 → 26.3 |
+| static cases | 13.7 → 12.5 | 40.0 → 31.1 | 18.9 → 7.8 |
+| peak RSS (MB) | 1 378 → 1 493 | 2 697 → 2 927 | 729 → 819 |
+
+For a 60-story wall-and-floor tower (the R3 exit test), the 220 920-equation
+row is the size to look at: modal with 72 520 massed DOFs, two RS cases and
+five static cases run in under 6 minutes at 2.8 GB.
+
+### New sparse analyses on large models
+
+Both runs are on the 10s-8x6-meshed model with rigid diaphragms: 25 380
+equations, 7 840 shells.
+
+| analysis | before | after |
+| --- | --- | --- |
+| Check Stability (`/api/check/stability`) | skipped: "about 25 380 equations exceed the dense-analysis cap of 3000" | sparse check, stable, 155 s (205 solves) |
+| FEM buckling case (DEAD + SDL, 4 modes, shells included) | not available (frame-only numpy solver) | 25.2 s: 67 solves, λ = 24.2, 27.4, 30.7, 35.1; 670 frame + 7 834 shell geometric stiffness blocks |
+
+### Equivalence evidence
+
+* **Byte-identical below the thresholds.** SHA-256 of the full results
+  JSON and the model JSON, base commit vs this change:
+  * `quick_building()` with a frame buckling case and an RS case;
+  * a 3-story meshed slab and wall model;
+  * the dense stability report of a 2 × 2 × 3 building.
+
+  All are identical (`487a9924bdd0293b`, `85fef422517164e6`,
+  `f29d3528bf8c3177`), and the full test suite passes.
+* **Above the thresholds:** ≤ 8.2e-12 on every benchmark (table above).
+* **Lanczos vs OpenSees eigen:** `test_lanczos_modal_equals_legacy` forces
+  both paths on a quick building with an RS case, and the worst difference
+  is 4e-14.
+* **MUMPS vs UmfPack displacements:** 6e-14 (rigid diaphragms) and 3e-13
+  (no diaphragm) on the 10-story meshed building.

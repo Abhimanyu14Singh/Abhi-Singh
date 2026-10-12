@@ -1,0 +1,10 @@
+/* SkyFrame — BucklingFEM dialog (js/bucklingfem.js) */
+.dk-dlg .bfem-out { margin-top: 8px; }
+.dk-dlg .bfem-tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 6px 0; }
+.dk-dlg .bfem-tbl th, .dk-dlg .bfem-tbl td { padding: 3px 8px; border-bottom: 1px solid var(--border-soft); text-align: left; }
+.dk-dlg .bfem-tbl td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.dk-dlg .bfem-tbl tbody tr { cursor: pointer; }
+.dk-dlg .bfem-tbl tbody tr:hover { background: var(--accent-ghost); }
+.dk-dlg .bfem-view { border: 1px solid var(--border); border-radius: 8px; padding: 6px; margin-top: 6px; background: var(--surface-2); }
+.dk-dlg .bfem-viewbar { display: flex; gap: 12px; align-items: center; font-size: 12.5px; margin-bottom: 4px; flex-wrap: wrap; }
+.dk-dlg .bfem-canvas { width: 100%; height: 300px; display: block; touch-action: none; cursor: grab; }

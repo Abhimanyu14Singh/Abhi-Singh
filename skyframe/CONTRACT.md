@@ -12523,3 +12523,164 @@ unchanged: every new key is modelling metadata or an existing engine field.
 * Playwright, mock and live 90/90: every dialog opens from its menu, OK
   with defaults is byte-identical, the POST /api/model double echo is
   identical, kip-in inputs convert, live runs succeed, zero console errors.
+
+## Buckling with shells and links, sparse eigen and BucklingFEM
+
+v1.24 (Wave B). Modules: `engine/buckling_fem.py`, `engine/geom_stiffness.py`,
+`engine/lanczos.py`, `engine/sparse_solve.py`, `engine/sparse_modal.py`,
+`core/buckling_fem.py`, `core/member_buckling.py`, `core/stability_sparse.py`,
+`api/buckling_api.py`; UI `js/bucklingfem.js`, `js/mock_bucklingfem.js`.
+Tests `tests/test_buckling_fem.py`. Benchmarks: docs/PERFORMANCE.md
+"Large models (v1.24)".
+
+### Buckling case options
+
+```jsonc
+"buckling_cases": {"B": {"name": "B", "gravity": {"DEAD": 1.0}, "num_modes": 6,
+  "base_case": null,
+  "formulation": "fem",        // emitted only when not "frame" (default)
+  "include_shells": false,     // emitted only when false (default true)
+  "include_links": false}}     // emitted only when false (default true)
+```
+
+* `formulation: "frame"` (default) is the v0.10 numpy frame-only solver,
+  unchanged and byte-identical (shells / links skipped and end releases
+  ignored, each with its legacy warning).
+* `formulation: "fem"` solves `K phi = lambda (-Kg) phi` on the engine's
+  own elastic model. `K` contains every element the engine builds: frames
+  with offsets, per-DOF releases and partial fixity, auto-mesh, panel
+  zones; shells; links; springs; rigid and named diaphragms.
+  * The reference state is a linear solve of `gravity` with every engine
+    load type, area loads included.
+  * `Kg` comes from the element responses: frame axial force
+    `N = (-localForce[0] + localForce[6]) / 2`, with native moment releases
+    condensed; truss string stiffness; shell membrane resultants
+    `n11, n22, n12` at the Gauss points (plate geometric stiffness on the
+    three translations). Rigid-zone arms, edge ties and links carry no
+    `Kg`.
+  * The eigenproblem is solved by shift-invert Lanczos with locking and
+    subspace refinement. Every step is one solve on ONE MUMPS
+    factorization.
+  * `base_case` uses the two-load-set form
+    `(K + Kg_base) phi = lambda (-Kg) phi`, solved by a K-preconditioned
+    Davidson iteration.
+  * `include_shells` / `include_links = false` analyse a copy without
+    those objects. Supports and loads left on points no remaining element
+    uses are dropped, with a warning. Modes are reported on the full
+    model's mesh tags.
+* Result additions (formulation "fem" only; the frame result dict is
+  unchanged):
+
+```jsonc
+"buckling": {"B": {"factors": [...], "modes": {"1": {"<tag>": [6]}}, "gravity": {...},
+  "warnings": [...], "base_case": null,
+  "formulation": "fem", "include_shells": true, "include_links": true,
+  "solver": {"system": "Mumps", "equations_estimate": 952, "solves": 49,
+             "converged": true, "max_residual": 7.6e-11},
+  "geometric_stiffness": {"frame_elements": 0, "shell_elements": 144}}}
+```
+
+Validation (`tests/test_buckling_fem.py`):
+
+* Simply supported square plate in uniaxial compression,
+  `Ncr = 4 pi^2 D / b^2`: 12x12 mesh +0.79 % (pinned within 2 %); the
+  second mode is k = 6.25 (4 %).
+* Shell strip column (nu = 0): `pi^2 E b t^3 / 12 L^2`, +0.41 %.
+* Link-braced column (pinned base, top spring k): `P = k L` to 1e-6. A
+  stiff link gives the Euler load (2e-3).
+* Pinned-pinned column through end releases with fixed supports:
+  `pi^2 E I / L^2`, +3.3e-5. The frame formulation still reports its
+  legacy "releases ignored" result.
+* Two-load-set identity `lambda(base = P) = lambda(none) - 1` (1e-7).
+
+### Sparse eigen, MUMPS and the sparse stability check
+
+* `engine/sparse_solve.EngineSolver`: `K^-1 f` on the reused elastic domain
+  with `system Mumps` + `Linear -factorOnce`. MUMPS keeps its LU factors,
+  while this OpenSees build's UmfPack refactors on every `analyze`.
+* Solver policy: `analysis_options.solver = "auto"` uses MUMPS at or above
+  `MUMPS_EQ_THRESHOLD = 20000` estimated equations. Below it, nothing
+  changes (byte-identical). `FACTOR_ONCE_SYSTEMS` now includes Mumps.
+  * A MUMPS factor-once solve of a pattern with ELEMENT loads fails in
+    MUMPS' substitution (error -3). `solver_policy.analyze_reused`
+    re-factors once and retries, quietly.
+  * `threads_info()` reports that the build links libgomp but gains no
+    thread speed-up (single-threaded reference BLAS). No multithreaded
+    path is enabled.
+* `analysis_options.eigen_solver`: `"auto" | "legacy" | "lanczos"`.
+  * `"auto"` runs the sparse Lanczos modal solver only above both
+    thresholds: a sparse system AND more than `MAX_MASSED` (600) free
+    massed DOFs, i.e. where the exact condensation does not apply.
+    Smaller models keep their exact legacy path.
+  * `"lanczos"` forces it.
+  * Shapes are mass-normalised with a deterministic sign, and degenerate
+    clusters are put in canonical form. Pinned equal to the legacy eigen
+    run to 1e-9 (quick building with RS: 4e-14).
+* Stability check `POST /api/check/stability` gains
+  `{method?: "auto" | "dense" | "sparse"}`; `stability_diagnostics(...,
+  method="auto")`.
+  * Models above the dense cap (3000 equations, up to 400 000) get the
+    sparse check instead of the "too large" skip.
+  * The sparse check adds soft grounded springs `1e-10 x k_ref` to every
+    free DOF and runs Lanczos on `K phi = mu S phi`. Mechanisms are modes
+    with `theta = 1/(1+mu) > 1/2`.
+  * The result carries `"method": "sparse"` and `"sparse": {system,
+    solves, converged, spring_ratio, reference_stiffness,
+    ground_springs}`. `lowest_eigenvalues` holds `1e-10 x mu`, and the
+    condition / diagonal-ratio fields stay null.
+  * `"dense"` keeps the legacy skip. The mechanism count and unstable DOFs
+    equal the dense check on the test portals.
+
+### BucklingFEM (member shell buckling)
+
+`POST /api/member_buckling` request:
+
+```jsonc
+{"member": "B1", "model"?: {...}, "case"?: "DEAD",
+ "forces"?: {"P": -100, "M3i": 0, "M3j": 0, "M2i": 0, "M2j": 0, "w2": 0},
+ "boundary"?: "fork" | "fixed", "load_position"?: "shear_center" | "top" | "bottom",
+ "mesh"?: {"n_long": 60, "n_web": 8, "n_flange": 4}, "num_modes"?: 4,
+ "section"?: {"type": "I", "dims": {"d", "bf", "tf", "tw"}}, "length"?: 4.0}
+```
+
+Response:
+
+```jsonc
+{"member", "section": {"name", "type", "dims"}, "material": {"name", "E", "nu"},
+ "length", "boundary", "load_position", "forces",
+ "mesh": {"n_long", "n_web", "n_flange", "nodes", "shells", "equations"},
+ "section_props": {"A", "xc", "yc", "I33", "I22", "J", "Cw"},
+ "factors": [...],
+ "modes": [{"mode", "factor", "class", "group", "global_fraction", "half_waves"}],
+ "nodes": {"<tag>": [x, y3, y2]}, "quads": [[t1, t2, t3, t4]],
+ "shapes": {"1": {"<tag>": [ux, uy, uz]}},
+ "references": {"P_euler_minor", "P_euler_major", "Mcr_ltb"?,
+                "plates": [{"role", "b", "t", "k", "sigma_cr"}]},
+ "solver": {"system", "solves", "converged", "max_residual"}, "warnings": [...]}
+```
+
+`POST /api/member_buckling/forces {member, case, model?}` returns
+`{forces}`: mean N, end M3 / M2, and `w2` from the mid-span deviation of M3.
+
+* Sections: `I`, `I_mono`, `channel`, `tee`, `rect_tube`. Dimensions come
+  from `dims`, the steel-database record (`db_ref` or a library W name), or
+  `section`. Any other section returns a 400.
+* Forces are internal: `sigma = P/A - M3 (y2 - yc)/I33 + M2 (y3 - xc)/I22`,
+  the member_stations convention. Positive M3 compresses +2, and positive
+  M2 puts +3 in tension. The stresses are integrated exactly on the
+  mid-line segments. Shear and span loads are reacted by the end supports.
+* `class`: `local | distortional | lateral-torsional | torsional |
+  flexural-minor | flexural-major`. It is a heuristic built from a rigid
+  section fit per station and the plate-junction motion.
+* Validation:
+  * fork I beam under uniform moment vs `Mcr = (pi/L) sqrt(E Iy G J)
+    sqrt(1 + pi^2 E Cw / (G J L^2))`: +1.9 % (pinned within 5 %);
+  * square tube in compression, walls as SS plates with k = 4: +0.65 %
+    (pinned within 3 %);
+  * I web local buckling between the SS (k = 4) and clamped (k = 6.97)
+    plate values: k = 5.83.
+* UI: Analyze › Member Buckling… (`an-member-buckling`, also in the frame
+  right-click menu) opens a dialog with a mode table, the closed-form
+  references and an animated 3D mode-shape viewer.
+* The Buckling case dialog's Advanced group gains the Formulation, Include
+  shells and Include links fields. Only touched fields are written.
