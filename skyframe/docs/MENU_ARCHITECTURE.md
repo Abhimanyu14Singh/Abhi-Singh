@@ -87,6 +87,9 @@ __sky.menu.stats();   // entries per panel; __sky.menu.disabledReason(act); __sk
 ```
 File
   New Model…                         Alt+N        [file-new]
+  New Model from Template…                        [file-wb-template]  (D4: opens the Template Library —
+                                                                       14 structural systems + 5 slab templates;
+                                                                       footer "Slab Template Form…" = the Wave B form)
   Open…                              Ctrl+O       [file-open]
   —
   Save                               Ctrl+S       [file-save]

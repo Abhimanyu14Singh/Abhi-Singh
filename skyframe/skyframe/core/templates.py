@@ -130,6 +130,9 @@ def catalogue() -> List[dict]:
     """``[{id, label, params: {key: default}}]`` for the UI (JSON-safe)."""
     out = []
     for t in TEMPLATES:
+        if t in _sys.SPECS:                   # D4 structural-system library
+            out.append(_sys.catalogue_entry(t))
+            continue
         p = {k: v[0] for k, v in _COMMON.items()}
         p.update({k: v[0] for k, v in _SPECIFIC[t].items()})
         if t == "staggered_truss":
@@ -144,6 +147,8 @@ def normalize_params(template: str, params: Optional[dict]) -> dict:
     if template not in TEMPLATES:
         raise ValueError(f"unknown template {template!r}; one of "
                          f"{TEMPLATES}")
+    if template in _sys.SPECS:                # D4 structural-system library
+        return _sys.normalize_params(template, params)
     params = dict(params or {})
     spec = dict(_COMMON)
     spec.update(_SPECIFIC[template])
@@ -493,20 +498,31 @@ def setup_loads(mdl: BuildingModel, p: dict, slab_uids: List[str]) -> dict:
     if p["live_mass_factor"]:
         mdl.mass_source["LIVE"] = float(p["live_mass_factor"])
     mdl.num_modes = min(3 * len(mdl.stories), 12)
+    return apply_code_loads(mdl, p)
+
+
+def apply_code_loads(mdl: BuildingModel, p: dict,
+                     dirs: Tuple[str, ...] = ("X", "Y")) -> dict:
+    """Code seismic patterns ``EQ<d>`` + cases, the code spectrum ``RSF``
+    with RS cases ``RS<d>`` and the code's default combinations (for every
+    direction ``d`` in ``dirs``).  Shared by the structural-system library
+    (:mod:`skyframe.core.templates_sys`)."""
+    import warnings
+
     code = p["code"]
     if code == "none":
         return _summary(mdl, code)
     from . import autolateral as al
     from . import spectra_codes as sc
     if code == "asce7":
-        for d in ("X", "Y"):
+        for d in dirs:
             al.generate(mdl, "asce7_22", f"EQ{d}", SDS=p["SDS"],
                         SD1=p["SD1"], R=p["R"], Ie=p["Ie"], direction=d)
         sc.make_spectrum_function(mdl, "RSF", "asce7_22_two_period",
                                   {"SDS": p["SDS"], "SD1": p["SD1"]})
         scale = G * p["Ie"] / p["R"]
     elif code == "ec8":
-        for d in ("X", "Y"):
+        for d in dirs:
             al.generate(mdl, "ec8", f"EQ{d}", ag=p["ag"], q=p["q"],
                         ground_type=p["ground_type"], direction=d)
         sc.make_spectrum_function(mdl, "RSF", "ec8",
@@ -515,14 +531,14 @@ def setup_loads(mdl: BuildingModel, p: dict, slab_uids: List[str]) -> dict:
                                    "q": p["q"]})
         scale = G
     else:  # is1893
-        for d in ("X", "Y"):
+        for d in dirs:
             al.generate(mdl, "is1893", f"EQ{d}", Z=p["Z"], R=p["R"],
                         I=p["Ie"], soil=p["soil"], direction=d)
         sc.make_spectrum_function(mdl, "RSF", "is1893_2016",
                                   {"Z": p["Z"], "soil": p["soil"],
                                    "I": p["Ie"], "R": p["R"]})
         scale = G
-    for d in ("X", "Y"):
+    for d in dirs:
         mdl.add_case(f"EQ{d}", {f"EQ{d}": 1.0})
         mdl.add_rs_case(f"RS{d}", d, function="RSF", scale=scale)
     with warnings.catch_warnings():
@@ -547,6 +563,8 @@ def _summary(mdl, code):
 def build_template(template: str, params: Optional[dict] = None
                    ) -> Tuple[BuildingModel, dict]:
     """``(model, summary)``; the model is validated (``validate()``)."""
+    if template in _sys.SPECS:                # D4 structural-system library
+        return _sys.build_system(template, params)
     p = normalize_params(template, params)
     mdl, slabs = _BUILDERS[template](p)
     summary = setup_loads(mdl, p, slabs)
@@ -555,3 +573,14 @@ def build_template(template: str, params: Optional[dict] = None
                     "stories": len(mdl.stories)})
     mdl.validate()
     return mdl, summary
+
+
+# --------------------------------------------------------------------------- #
+# D4: structural-system template library (ETABS example-style buildings,
+# one per lateral system) lives in core/templates_sys.py; its ids follow the
+# five slab templates above in TEMPLATES / catalogue().
+# --------------------------------------------------------------------------- #
+from . import templates_sys as _sys  # noqa: E402  (needs the helpers above)
+
+TEMPLATES = TEMPLATES + _sys.SYSTEM_IDS
+TEMPLATE_LABELS.update({k: v["label"] for k, v in _sys.SPECS.items()})
