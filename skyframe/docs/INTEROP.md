@@ -262,3 +262,52 @@ guidance instead of a parse error: a file whose first bytes are a DWG
 version signature (`AC1012` … `AC1032`) is refused by
 `skyframe.io.dwg.check_not_dwg` with that message (HTTP 400 from
 `POST /api/exchange/import/dxf`; the same text in `?mock=1`).
+
+## Results databases: SQLite instead of Microsoft Access (decision)
+
+ETABS exports its analysis-results tables to a Microsoft Access database
+(`.mdb` / `.accdb`). SkyFrame writes the same tables to **SQLite** and to a
+**plain CSV folder**, and does not write Access files. This is a deliberate
+decision, not a missing feature.
+
+**Why not `.accdb` / `.mdb`.** Both are undocumented container formats of
+Microsoft's proprietary Jet / ACE database engine. Writing one reliably
+needs that engine (Windows-only, licensed with Office or the Access
+Database Engine redistributable) or a reverse-engineered writer. Neither
+can ship in a cross-platform analysis server: the engine does not run on
+Linux or macOS, and reverse-engineered writers (Jackcess, for example, is
+Java) can produce files that a later Access build rejects.
+
+**Why SQLite is a complete substitute.**
+
+* SQLite is a public-domain, documented, stable file format that Python
+  writes with its standard library (`sqlite3`, no dependency).
+* Microsoft Access opens it. Install the free SQLite ODBC driver, then in
+  Access use External Data › New Data Source › From Other Sources › ODBC
+  Database, pick the `.sqlite` file and either **Link** (live tables) or
+  **Import** (Access copies the tables into an `.accdb` it saves for you).
+  Excel (Data › Get Data › From ODBC), Power BI, Python, R and MATLAB read
+  it the same way or natively.
+* The layout mirrors the ETABS Access export: one table per results table
+  (ETABS table name), field names without spaces (`OutputCase`, `CaseType`,
+  `StepType` ...), plus `Table Index`, `Field Units` and `Program Control`.
+  An Access user gets the table and field names an ETABS export would give.
+
+**Plain CSV folder.** For tools without ODBC, File › Export › Results
+Tables to CSV Folder (.zip)… writes every table as one RFC 4180 CSV file
+(UTF-8, header `Label [unit]`) with `_index.csv`, `_units.csv`, `_meta.csv`
+and a `README.txt` (`skyframe.io.results_csv`). `POST
+/api/tables/export/csv` returns the folder as a ZIP, and
+`export_results_csv_folder(model, results, folder)` writes it to disk from
+Python. Every value equals the SQLite cell (tested), so no table is
+available only in a binary format.
+
+| Export | Menu (File › Export) | HTTP | Python |
+|---|---|---|---|
+| Excel `.xlsx` | Results Tables to Excel (.xlsx)… | `POST /api/tables/export/xlsx` | `io.results_export.export_results_xlsx` |
+| SQLite `.sqlite` (Access via ODBC) | Results Tables to SQLite (.sqlite)… | `POST /api/tables/export/sqlite` | `io.results_export.export_results_sqlite` |
+| CSV folder (`.zip`) | Results Tables to CSV Folder (.zip)… | `POST /api/tables/export/csv` | `io.results_csv.export_results_csv_folder` / `export_results_csv_zip` |
+
+Tests: `tests/test_results_export.py` (xlsx / sqlite contents) and
+`tests/test_wave_c9_export_api.py` (every CSV equals its SQLite table cell
+for cell; deterministic ZIP; unit conversion).

@@ -1060,6 +1060,9 @@ export function lineSpringByKey(model, key) {
   return (model.line_springs || []).find(ls => lineSpringKey(ls) === key) || null;
 }
 
+// Wave C: layer kinds of core/model.SHELL_LAYER_KINDS (core/aniso.py)
+export const LAYER_KINDS_WC9 = ["concrete", "steel", "elastic", "orthotropic", "timber", "user"];
+
 /** Normalize a layered-shell definition: null | {layers:[{t>0, material, kind}]}.
     Anything invalid collapses to null (the section stays elastic-only). */
 export function normalizeLayeredDef(ld, fallbackMaterial = "") {
@@ -1069,7 +1072,8 @@ export function normalizeLayeredDef(ld, fallbackMaterial = "") {
     .map(l => ({
       t: +l.t,
       material: (typeof l.material === "string" && l.material) ? l.material : fallbackMaterial,
-      kind: l.kind === "steel" ? "steel" : "concrete",
+      kind: LAYER_KINDS_WC9.includes(l.kind) ? l.kind : "concrete",   // Wave C: any layer kind
+      ...(isFinite(l.angle) && l.angle !== null && l.angle !== "" ? { angle: +l.angle } : {}),   // Wave C: keep the layer angle
     }));
   return layers.length ? { layers } : null;
 }

@@ -13,6 +13,7 @@
    values, same numbers as core/ortho.py TIMBER_PRESETS). */
 
 import { dkGroup as woGroup, el as woEl, isNum as woIsNum } from "./dlgkit.js";
+import { WC9_SYM_OPTION as woWc9SymOpt, wc9SymWrite as woWc9SymWrite, wc9AnisoGroup as woWc9AnisoGroup, wc9AngleRow as woWc9AngleRow } from "./wc9_aniso.js";   // Wave C anisotropic + material angle
 
 export const TIMBER_PRESETS = {
   C24: { E1: 11.0e6, E2: 0.37e6, nu12: 0.30, G12: 0.69e6, G13: 0.69e6, G23: 0.05e6, unit_weight: 4.20, label: "EN 338 C24 softwood" },
@@ -22,10 +23,11 @@ export const CLT_LAYUPS = {
   "CLT 100 L3s": ["C24", [0.03, 0.04, 0.03]], "CLT 120 L3s": ["C24", [0.04, 0.04, 0.04]],
   "CLT 160 L5s": ["C24", [0.04, 0.02, 0.04, 0.02, 0.04]], "CLT 200 L5s": ["C24", [0.04, 0.04, 0.04, 0.04, 0.04]],
 };
-export const wbOrthoSymOptions = [["orthotropic", "Orthotropic (shells / timber)"]];
+export const wbOrthoSymOptions = [["orthotropic", "Orthotropic (shells / timber)"], woWc9SymOpt];   // + Wave C anisotropic
 
 /** Symmetry write: switching to orthotropic seeds ortho from the isotropic E / ν. */
 export function wbOrthoSymWrite(mat, v) {
+  if (woWc9SymWrite(mat, v)) return;   // Wave C: anisotropic (js/wc9_aniso.js)
   mat.symmetry = v;
   if (v === "orthotropic") {
     if (!mat.ortho) { const G = mat.E / (2 * (1 + (mat.nu ?? 0.2))); mat.ortho = { E2: mat.E, G12: G, G13: G, G23: G }; }
@@ -43,6 +45,7 @@ export function orthoProblem(mat) {
 
 /** "Orthotropic Property Data" group (or null for other symmetries). */
 export function wbOrthoGroup(F, mat, rebuild) {
+  if (mat.symmetry === "anisotropic") return woWc9AnisoGroup(F, mat, rebuild);   // Wave C
   if (mat.symmetry !== "orthotropic") return null;
   if (!mat.ortho) wbOrthoSymWrite(mat, "orthotropic");
   const o = mat.ortho;
@@ -66,8 +69,9 @@ export function wbOrthoGroup(F, mat, rebuild) {
     F.num(o, "G12", { label: "In-plane Shear Modulus, G12", kind: "modulus", gt: 0, id: "wboG12" }),
     F.num(o, "G13", { label: "Transverse Shear, G13", kind: "modulus", gt: 0, id: "wboG13" }),
     F.num(o, "G23", { label: "Transverse Shear, G23 (rolling)", kind: "modulus", gt: 0, id: "wboG23", validate: () => v() }),
+    woWc9AngleRow(F, mat),   // Wave C material angle (js/wc9_aniso.js)
     presets,
-  ], { id: "wboGroup", note: "Axes 1 / 2 = the shell element local axes. Shells use the exact orthotropic plate (A = hQ, D = h³Q/12, S = 5/6·G·h); frames use E1 and G12." });
+  ], { id: "wboGroup", note: "Axes 1 / 2 = the shell element local axes turned by the Material Angle. Shells use the exact orthotropic plate (A = hQ, D = h³Q/12, S = 5/6·G·h); frames use E1 and G12." });
 }
 
 export default { wbOrthoSymOptions, wbOrthoSymWrite, wbOrthoGroup, orthoProblem, TIMBER_PRESETS, CLT_LAYUPS };

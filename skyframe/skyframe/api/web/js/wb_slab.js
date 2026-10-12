@@ -25,6 +25,7 @@
 import wsU from "./units.js";
 import { el as wsEl, esc as wsEsc, isNum as wsIsNum, dkGroup as wsGroup, dkNote as wsNote } from "./dlgkit.js";
 import { CLT_LAYUPS as wsLayups } from "./wb_ortho.js";
+import { wc9ShellAngleRow as wsWc9AngleRow } from "./wc9_aniso.js";   // Wave C material angle
 
 export const SLAB_TYPES = [
   ["", "Slab (plain thickness)"], ["ribbed", "Ribbed (one-way joists)"], ["waffle", "Waffle (two-way joists)"], ["drop", "Drop panel (thickness override)"],
@@ -162,7 +163,7 @@ export function wbShellTypeFields(F, s, D, { onChange } = {}) {
       rows.push(F.table(L, [
         { key: "t", label: "Thickness", type: "num", kind: "dim" },
         { key: "material", label: "Material", type: "select", options: () => Object.keys(mats()).map(n => [n, n]) },
-        { key: "angle", label: "Angle", type: "select", options: [[0, "0° (along 1)"], [90, "90° (along 2)"]] },
+        { key: "angle", label: "Angle (deg)", type: "num" },   // Wave C: any angle (was 0 / 90)
       ], { id: "wbsLayers", newRow: () => ({ t: 0.02, material: (L[0] || {}).material || s.material, angle: 0 }), minRows: 1,
         onChange: () => { for (const l of L) l.angle = +l.angle || 0; sync(); check(); }, validate: () => lamProblem(s, mats()) }));
     } else {
@@ -175,7 +176,11 @@ export function wbShellTypeFields(F, s, D, { onChange } = {}) {
     paintNote();
     check();
   }
-  node.append(typeRow, geomBox, readBox, err);
+  const wc9Ang = wsWc9AngleRow(F, s, D, { onChange: () => onChange && onChange() });   // Wave C material angle
+  const wc9Sync = () => { wc9Ang.style.display = st.type && st.type !== "laminate" ? "none" : ""; };
+  typeRow.addEventListener("change", wc9Sync);
+  wc9Sync();
+  node.append(typeRow, geomBox, readBox, err, wc9Ang);
   rebuild();
   return {
     node,

@@ -2411,6 +2411,10 @@ def create_app() -> Flask:
     from skyframe.api.wavec_api import register as _wc_register
     _wc_register(app, _state)
 
+    # Wave C (C9): designer moment-curvature + shell stiffness preview
+    from skyframe.api.c9_api import register as _c9_register
+    _c9_register(app, _state)
+
     return app
 
 
