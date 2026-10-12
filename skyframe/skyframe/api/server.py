@@ -2397,6 +2397,9 @@ def create_app() -> Flask:
     _plg_register(app, _state)
     from skyframe.api.interop_api import register as _iop_register
     _iop_register(app, _state)
+    # Wave C: Tools > Compare Results... (skyframe.api.results_compare_api)
+    from skyframe.api.results_compare_api import register as _rcmp_register
+    _rcmp_register(app, _state, _tables_lookup)
 
     # v1.24 BucklingFEM member shell buckling (skyframe.api.buckling_api)
     from skyframe.api.buckling_api import register as _bfem_register

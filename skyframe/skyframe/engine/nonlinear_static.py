@@ -417,7 +417,11 @@ def run_case(eng, name: str) -> NonlinearStaticResults:
         for k, v in base.items():
             hist["base"][k].append(float(v))
         rec.record()
+        if cxr is not None:
+            cxr.record(i, lam)                   # Wave C cut forces
 
+    from skyframe.engine import cut_results as _cutx
+    cxr = _cutx.nls_begin(eng, asm, st)
     sample(0, 0.0)
     counter = {"i": 0}
 
@@ -429,6 +433,8 @@ def run_case(eng, name: str) -> NonlinearStaticResults:
                                tolerate_failure=True)
     hist["monitored"] = {"node": mon, "dof": NLS_DOFS[dof - 1],
                          "point": list(asm.node_coords[mon])}
+    if cxr is not None:                          # Wave C per-step cuts
+        hist["cut_forces"] = dict(cxr.results(), step=list(hist["step"]))
 
     node_disp = {t: list(ops.nodeDisp(t)) for t in asm.node_coords}
     reactions = _reactions(eng, asm, node_disp)

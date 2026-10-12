@@ -1101,6 +1101,8 @@ export class Viewer3D {
     if (this.ptOverlay && !overlayActive) { try { this.ptOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
     // Plot-functions hook — 3D force/stress diagrams + reaction arrows (js/plotfn.js)
     if (this.pfOverlay) { try { this.pfOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
+    // Wave C hook — pier / spandrel / link diagrams + video caption (js/wc_diagrams.js)
+    if (this.wcOverlay) { try { this.wcOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
 
     // ---- axis triad
     this._renderTriad(ctx, w, h);

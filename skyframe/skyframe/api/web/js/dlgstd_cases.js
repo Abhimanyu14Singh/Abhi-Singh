@@ -337,6 +337,7 @@ export function editThCase(sky, D, name, { copyOf, done } = {}) {
     ]),
     dkGroup("Other Parameters", [F.num(c, "damping", { label: "Damping Ratio", min: 0, lt: 1, id: "dcThDamp" }),
       ...((window.__sky && window.__sky.modalx) ? window.__sky.modalx.thFields(F, c, D) : [])]),   // modal case + FNA initial conditions (js/modalx.js)
+    ...((window.__sky && window.__sky.wcThOut) ? window.__sky.wcThOut.thFields(F, c) : []),   // Wave C: shell output / animation frames (js/wc_thout.js)
     adv,
   ];
   syncRec();

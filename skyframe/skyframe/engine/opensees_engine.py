@@ -168,6 +168,7 @@ from skyframe.core.mesh import (MeshedModel, Segment, edge_tie_chains,
 from skyframe.core.modifiers import shell_mods_default
 from skyframe.core.polymesh import newell_normal
 from skyframe.engine import spandrels as _spd_eng  # spandrel forces (A8)
+from skyframe.engine import cut_results as _cutx  # Wave C cut forces
 from skyframe.core import framemesh as _fm
 from skyframe.core import nonprismatic as _npx     # nonprismatic sections
 from skyframe.core import panelzones as _pzj      # per-joint panel zones
@@ -1940,6 +1941,7 @@ class OpenSeesEngine:
                 spec["name_x"], spec["name_y"],
                 method=spec.get("method", "100_30"), name=cname)
             combo_status[cname] = "finished"
+        _cutx.harvest_rs(self, rs_cases)    # Wave C: RS cut forces
         th_cases: Dict[str, THResults] = {}
         warning = ""
         th_run = [n for n in model.th_cases if runs(n)]
@@ -2092,6 +2094,9 @@ class OpenSeesEngine:
         # when labels exist -> legacy results unchanged)
         spandrels = (_spd_eng.compute(self, asm, pier_src)
                      if _spd_eng.enabled(model) else {})
+        # Wave C: RS / TH / NL static / staged / max-min combo entries
+        _cutx.extend(self, asm, cases, rs_cases, th_cases, nls_res, staged,
+                     combos, section_cuts, piers, spandrels)
         # v0.16 beam serviceability: relative-to-chord deflection checks per
         # static case + additive combo (pure post-processing of the exact
         # member_deflections stations).
@@ -7602,6 +7607,7 @@ class OpenSeesEngine:
             ops.reactions()
             base0 = base_fxfy()
         twcut = _twx.th_begin(self, asm, th)   # C9: per-tower cut (or None)
+        cxr = _cutx.th_begin(self, asm, th, len(accel))   # Wave C cuts/shells
 
         if mc is None:
             ops.timeSeries("Path", 1, "-dt", float(dt),
@@ -7723,6 +7729,8 @@ class OpenSeesEngine:
                 uh_rec.record(hinge_rot, yielded)
             if pfr is not None:
                 pfr.record(k)
+            if cxr is not None:
+                cxr.record(k)                      # Wave C
 
         def peak(vals: Sequence[float]) -> float:
             return max(abs(v) for v in vals) if len(vals) else 0.0
@@ -7760,6 +7768,8 @@ class OpenSeesEngine:
             result.extra = dict(result.extra, plot_functions=pfr.results())
         if twcut is not None:                             # C9 tower shears
             twcut.finish(result, svx, svy)
+        if cxr is not None:                               # Wave C
+            cxr.finish(result)
         self._th_cache[name] = result
         return result
 
@@ -8414,9 +8424,11 @@ class OpenSeesEngine:
         member_forces, member_stations, _ = self._member_outputs(asm)
         story = self._modal_story(asm, loads, node_disp)
         # RS shell forces: per-mode shell resultants (engine/rs_ext.py)
-        return CaseResults("", node_disp, reactions, base, member_forces,
-                           story, member_stations,
-                           shell_forces=self._shell_outputs(asm))
+        cr = CaseResults("", node_disp, reactions, base, member_forces,
+                         story, member_stations,
+                         shell_forces=self._shell_outputs(asm))
+        _cutx.attach_mode(self, asm, cr)    # Wave C: RS cut/pier/spandrel
+        return cr
 
     def _modal_story(self, asm: _Assembly,
                      loads: Dict[Tuple[int, int], float],

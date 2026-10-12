@@ -15,6 +15,8 @@
    plausible stand-in (|EQX| or |EQY| shell forces × 1.12 × scale), exactly
    the per-element shape the engine uses. All values SI (kN, m, kPa). */
 
+import { wcMockThStates as srWcThStates, wcMockThStepStates as srWcThStep, wcMockThSourceNames as srWcThNames,
+  wcMockThStepKind as srWcStepKind } from "./mock_wavec.js";   // Wave C TH shell sources
 export const SR_BASE = ["F11", "F22", "F12", "M11", "M22", "M12", "V13", "V23"];
 const NB = 8;
 const PAR_COS = 0.9998;
@@ -168,7 +170,7 @@ function states(model, r, name, n, depth = 0) {
     const hi = arrOf(sf, n).map(v => v.map(Math.abs));
     return [[[mapEl(hi, x => -x + 0), hi]], true];
   }
-  if (kind === "time_history") throw new Unavailable(`time-history case '${name}': TH results record no shell forces`);
+  if (kind === "time_history") return srWcThStates(r, name, n, arrOf, Unavailable);   // Wave C (js/mock_wavec.js)
   if (kind === "combo") {
     const cd = (r.combos || {})[name];
     if (cd && cd.shell_forces && !cd.min) { const a = arrOf(cd.shell_forces, n); return [[[a, a]], false]; }
@@ -189,6 +191,8 @@ function states(model, r, name, n, depth = 0) {
     if (ctype === "range") return [[[sum((b, i, k) => Math.min(b[0][i][k], 0)), sum((b, i, k) => Math.max(b[1][i][k], 0))]], true];
     throw new Unavailable(`combo '${name}': unknown type ${ctype}`);
   }
+  const wcStep = srWcThStep(model, r, name, n, arrOf);   // Wave C TH snapshot "<case> @ step k"
+  if (wcStep) return wcStep;
   throw new Unavailable(`'${name}' is not a case with shell results`);
 }
 
@@ -199,8 +203,9 @@ export function srMockSources(model, r) {
   const names = [];
   for (const blk of ["cases", "rs_cases", "combos", "staged"])
     for (const nm of Object.keys(r[blk] || {})) if (!names.includes(nm)) names.push(nm);
+  for (const nm of srWcThNames(r)) if (!names.includes(nm)) names.push(nm);   // Wave C TH shell sources
   for (const nm of names) {
-    try { const [, bd] = states(model, r, nm, n); out.push({ name: nm, kind: memberKind(model, nm, r) || "response_spectrum", bounded: bd }); }
+    try { const [, bd] = states(model, r, nm, n); out.push({ name: nm, kind: memberKind(model, nm, r) || srWcStepKind(model, nm) || "response_spectrum", bounded: bd }); }
     catch (e) { if (!(e instanceof Unavailable) && !(e instanceof TypeError)) throw e; }
   }
   const g = geometry(model, r);
