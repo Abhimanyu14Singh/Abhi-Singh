@@ -1278,3 +1278,8 @@ def compute_table(key: str, results: dict, model, context: Optional[dict] = None
     return {"key": key, "title": title, "group": group,
             "columns": [dict(col) for col in cols], "rows": rows,
             "warnings": list(dict.fromkeys(c.warnings))}
+
+
+# A3 hook: Shell Forces / Shell Stresses tables (skyframe.core.shell_tables)
+from . import shell_tables as _shell_tables  # noqa: E402
+_shell_tables.register(_TABLES, TABLES, QUANTITIES)

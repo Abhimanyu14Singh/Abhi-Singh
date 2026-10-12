@@ -13,6 +13,7 @@
    All values SI (kN, m, t, s); the frontend converts through units.js. */
 
 import { mockTowersTable as c9MockTowersTable } from "./mock_towers.js";   // C9 tower column
+import { SR_TABLE_CATALOGUE as srTableCat, srMockTable as srMockTableRows } from "./mock_shellres.js";   // A3 shell forces / stresses tables
 
 const C = (key, label, quantity) => ({ key, label, quantity });
 const G = 9.80665;
@@ -86,12 +87,14 @@ const CAT = [
     [C("case", "Case", "text"), C("mode", "Mode", "id"), C("period", "Period", "time"),
       ...["UX", "UY", "UZ", "RZ"].map(k => C(k, k, "ratio")), C("dominant", "Dominant", "text")]],
 ];
+CAT.push(...srTableCat);   // A3 hook: Shell Forces / Shell Stresses (js/mock_shellres.js)
 const CATALOGUE = CAT.map(([key, title, group, columns]) =>
   ({ key, title, group: "Analysis Results > " + group, columns }));
 const BY_KEY = Object.fromEntries(CATALOGUE.map(t => [t.key, t]));
 /** Tables the offline mock computes (the rest return no rows + a warning). */
 export const MOCK_COMPUTED = ["joint_displacements", "story_drifts", "story_forces",
   "modal_periods", "modal_mass_ratios", "base_reactions", "load_pattern_summary"];
+MOCK_COMPUTED.push("shell_forces", "shell_stresses");   // A3 hook
 
 export function mockTablesList() {
   return { tables: JSON.parse(JSON.stringify(CATALOGUE)) };
@@ -267,6 +270,7 @@ const T = {
     return rows;
   },
 };
+for (const k of ["shell_forces", "shell_stresses"]) T[k] = (m, r, f, w) => srMockTableRows(m, r, k, f, w);   // A3 hook
 
 /** Mock POST /api/tables/<key> {cases?}. Throws on unknown key / bad cases. */
 export function mockTable(model, results, key, body = {}) {
