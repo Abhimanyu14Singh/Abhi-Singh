@@ -66,3 +66,7 @@ Each entry says where it lives.
 - EC8 stiffness/mass "gradual change" check uses a +-25 % judgement band
   (editable); EC8 4.2.3.2(6) torsional-radius criterion reported n/a.
 - Weak-story strength estimate is nominal (no reinforcement); user overrides.
+- Creep (wave B): step-by-step creep applies to frames; shells get modulus
+  ageing only (no creep/shrinkage strain); members with end releases creep
+  axially only; step method needs user-defined stages. Tendon-element
+  hyperstatic primary uses the force after friction/anchor losses.
