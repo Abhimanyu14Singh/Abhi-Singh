@@ -38,7 +38,27 @@ import math
 from typing import Optional
 
 from .autolateral import _pos
-from .wind_codes_ext import _facade, _interp, _num, _rows, _wind_summary
+from . import wind_codes_ext as _wx  # module ref: wind_codes_ext may be mid-import (cycle via autolateral)
+
+
+def _facade(*a, **k):
+    return _wx._facade(*a, **k)
+
+
+def _interp(*a, **k):
+    return _wx._interp(*a, **k)
+
+
+def _num(*a, **k):
+    return _wx._num(*a, **k)
+
+
+def _rows(*a, **k):
+    return _wx._rows(*a, **k)
+
+
+def _wind_summary(*a, **k):
+    return _wx._wind_summary(*a, **k)
 
 
 # ============================================================ BS 6399-2
