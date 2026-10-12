@@ -111,6 +111,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 
 from .combos_ext import leaf_factors, member_kind
+from . import th_shells as _ths          # Wave C TH shell sources
 
 BASE = ("F11", "F22", "F12", "M11", "M22", "M12", "V13", "V23")
 NB = 8
@@ -356,9 +357,8 @@ def _states(model, results: dict, name: str, n: int, depth: int = 0):
                               "forces in these results")
         r = np.abs(_arr(cd["shell_forces"], n))
         return [(-r + 0.0, r)], True
-    if kind == "time_history":
-        raise Unavailable(f"time-history case {name!r}: TH results record no "
-                          "shell forces")
+    if kind == "time_history":                  # Wave C (core/th_shells)
+        return _ths.th_states(results, name, n, _arr, Unavailable)
     if kind == "combo":
         cd = (results.get("combos") or {}).get(name)
         if cd and "shell_forces" in cd and "min" not in cd:
@@ -393,6 +393,9 @@ def _states(model, results: dict, name: str, n: int, depth: int = 0):
             lo = sum(np.minimum(a, 0.0) for a, _ in boxes)
             return [(lo + 0.0, hi + 0.0)], True
         raise Unavailable(f"combo {name!r}: unknown type {ctype!r}")
+    st = _ths.step_states(model, results, name, n, _arr)   # Wave C TH step
+    if st is not None:
+        return st
     raise Unavailable(f"{name!r} is not a case with shell results")
 
 
@@ -403,7 +406,8 @@ def source_states(model, results: dict, name: str):
     if n == 0:
         raise Unavailable("the results have no meshed shell elements")
     states, bounded = _states(model, results, name, n)
-    kind = member_kind(model, name) or "response_spectrum"
+    kind = (member_kind(model, name) or _ths.pseudo_kind(model, name)
+            or "response_spectrum")
     return states, {"name": name, "kind": kind, "bounded": bool(bounded)}
 
 
@@ -418,6 +422,8 @@ def list_sources(model, results: dict) -> List[dict]:
         for nm in (results.get(blk) or {}):
             if nm not in names:
                 names.append(nm)
+    names += [nm for nm in _ths.source_names(results)   # Wave C TH shells
+              if nm not in names]
     for nm in names:
         try:
             _st, info = source_states(model, results, nm)

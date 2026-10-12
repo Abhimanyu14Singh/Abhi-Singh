@@ -14035,3 +14035,125 @@ unchanged.
   * live analysis succeeds; existing menus still work;
   * every panel has ≤ 14 entries;
   * zero console errors.
+
+## Cut, pier and spandrel forces for every case type, TH shell results and Compare Results (Wave C)
+
+Bulk in `skyframe/engine/cut_results.py` (engine), `skyframe/core/th_output.py`
+(TH output request), `skyframe/core/th_shells.py` (TH shell sources),
+`skyframe/core/cut_tables.py` (Max / Min table rows),
+`skyframe/core/results_diff.py` + `skyframe/api/results_compare_api.py`
+(comparison). Shared files carry one-line hooks only: `_modal_static`
+(per-mode cut vector), `modal_condensed._unit_response` (condensed RS path),
+`run()` (harvest after the RS combos; extend after the spandrels),
+`run_time_history` (recorder begin / record / finish),
+`nonlinear_static.run_case` (per-step recorder), `TimeHistoryCase.th_output`
++ `to_dict` / `validate` / `from_dict` (model.py), three hooks in
+`core/shell_results.py`, one `_CASE_TYPE` entry pair in
+`core/shell_tables.py`, one decorate line in `core/tables.compute_table`, one
+register line in `api/server.py`.
+
+### Cut forces for every case type
+
+The section-cut (`compute_section_cut`), pier (`_pier_cut_forces`) and
+spandrel (`engine/spandrels._cut_resultant`) kernels are linear in the element
+forces; they are now evaluated for:
+
+| case type | how | entry |
+|---|---|---|
+| response spectrum, RS directional combo | per mode on the mode's static solve; the signed per-mode vector rides through the RS machinery as one pseudo member-station entry (uid `__cutx__`), so CQC / SRSS / GMC / DSC / NRC / ABS, rigid response, missing mass, multi-direction SRSS / CQC3 / ABS, eccentricity (`R + abs(R_T)`) and `rs_combos` all apply unchanged; `run()` removes the carrier before the results are built | positive envelope (standard keys) |
+| time history (direct integration, incl. named modal case / initial case) | per step from the step's element forces (only the cut members and shell elements are queried), past the gravity state like every TH series | max / min of the signed history |
+| nonlinear static | per converged step (span-load records scaled by the step's load factor) | final state |
+| staged | accumulated final state | single value |
+| max / min combos (legacy envelope; every extended combo that is not single-valued: envelope / abs / srss / range, add with RS or TH members, nested) | CONTRACT "Load combinations" interval rules on the member vectors (`combos_ext.combine_terms`) | max / min |
+
+Results land in the EXISTING blocks with the existing per-entry shape;
+max / min entries add a `"min"` sub-dict of the same shape:
+
+```jsonc
+"section_cuts": {"THX": {"CUT": {"FX": 12.1, "FY": 0, "FZ": 0, "MX": 0, "MY": 18.2, "MZ": 0,
+                                 "min": {"FX": -11.7, ...}, "n_members": 1, "n_shells": 0, "warnings": []}}},
+"piers":     {"ENV": {"P1": {"Story1": {"P": 5.98, "V": 48.4, "M": 120.4, "min": {"P": -24.4, "V": -11.9, "M": -29.5}}}}},
+"spandrels": {"THX": {"SP1": {"Story1": {"length": 2.0, "n_shells": 1, "n_frames": 0,
+                                         "Left": {...}, "Right": {...}, "min": {"Left": {...}, "Right": {...}}}}}}
+```
+
+Histories:
+
+* `th_cases[name]["cut_forces"] = {"t": [...], "section_cuts": {cut: {FX: [...], ...}},
+  "piers": {label: {story: {P: [...], V: [...], M: [...]}}}, "spandrels": {label: {story:
+  {Left: {P: [...], ...}, Right: {...}}}}}` (one value per entry of `t`);
+* `nonlinear_static[name].nonlinear.history["cut_forces"]` — the same blocks with
+  `"step"` instead of `"t"` (one value per history step, entry 0 = initial state).
+
+Emitted only when the model defines section cuts, pier labels / auto piers or
+spandrel labels. **Legacy byte-identical:** static-case and single-valued
+combo entries are never recomputed (bit-identical); a model without cuts /
+piers / spandrels gives a bit-identical results JSON (verified by JSON hash on
+a 3-story frame with RS + TH + envelope combo and on an unlabeled meshed wall
+with RS + TH; on a labeled wall + cut model every pre-existing key is
+bit-identical). FNA time histories record no cut forces (direct integration
+only, like plot functions).
+
+Validation (`tests/test_wavec_cut_results.py`): RS pier, spandrel and cut
+values of a single-mode model equal `abs(static) x Sa g m / F_static` to 1e-9
+(cut: `abs(FX) = Sa g m`, `abs(MY) = 1.5 Sa g m`); TH pier shears of the two base
+piers sum to `-base_FX(t)` (1e-9 relative) and a frame cut below the only
+mass equals `base_FX(t)`; envelope / add-with-RS / envelope-with-TH combos
+bracket their members exactly; nonlinear static step `i` = `i/n` x final.
+
+### TH shell results (`TimeHistoryCase.th_output`)
+
+```jsonc
+"th_output": {"shells": true, "steps": [50, 120], "every": 0, "frames": 0}
+```
+
+Only non-default keys are kept (canonical form; `None` / absent = legacy).
+`steps`: 1-based snapshot steps (<= 200); `every`: also a snapshot every N
+steps; `frames`: number of evenly spaced deformed-shape animation frames
+(<= 1000). Validation (`ValueError`): unknown key, steps not integers >= 1,
+every < 0, frames outside [0, 1000].
+
+* `shells: true` -> `th_cases[name]["shell_forces"] = {"steps": [...], "t": [...],
+  "at": {"<step>": {"<quad>": [8]}}, "max": {"<quad>": [8]}, "min": {"<quad>": [8]}}` —
+  the static `shell_forces` resultants (past the gravity state) at the snapshot steps
+  and their running max / min over every step.
+* `frames: n` -> `th_cases[name]["frames"] = {"steps": [...], "t": [...],
+  "node_disp": {"<step>": {"<tag>": [ux, uy, uz, rx, ry, rz]}}}`.
+
+Shell contours / tables: a TH case is now a shell source — `"<case>"` is the
+step envelope (bounded: Max / Min, `case_type` `LinDirHist`), `"<case> @ step
+<k>"` the signed snapshot (kind `time_history_step`); both appear in
+`POST /api/shell_results/sources` and work in `POST /api/shell_results/contour`
+and the Shell Forces / Stresses tables; a TH member of a combo enters with its
+envelope box. Validation: the snapshot at a step equals a static solve with the
+step's nodal displacements imposed (1e-7).
+
+### Tables
+
+Pier Forces, Spandrel Forces and Section Cut Forces gain a `step_type` column
+("Step Type", after Case Type) with one `Max` and one `Min` row per max / min
+entry, and name the case kind (`LinRespSpec`, `LinDirHist` / `NonDirHist`,
+`NonStatic`, `NonStaged`); RS pier `P` is reported as the positive envelope.
+Results with neither max / min entries nor these case kinds return the legacy
+table unchanged.
+
+### Results comparison (Compare Results)
+
+`POST /api/results/compare` — diff table of two runs. Body `{a, b, case?, quantity?, rtol?, atol?, max_rows?}`;
+`a` / `b` are results dicts, saved wrappers `{"results": {...}}`, or `"current"`
+(the stored results of the last analysis of the current model). Returns
+`{equal, n_compared, n_flagged, worst_rel, rtol, atol, truncated, rows, cases,
+quantities}`; 400 on a bad body / tolerance or missing current results.
+
+A value pair is flagged when `abs(a - b) > max(atol, rtol * max(abs(a), abs(b), S))`
+(`S` = largest magnitude of the quantity family in run A, as in
+`core/results_compare.py`; modal shapes sign / cluster aligned). Rows
+(largest relative difference first):
+`{path, block, case, quantity, item, a, b, diff, rel, status}` with `status`
+`changed` | `type` | `length` | `only_a` | `only_b` (a subtree present in one run
+only: one row, `a` / `b` = its count of numbers). `case` filters the name-keyed
+blocks (`cases`, `combos`, `rs_cases`, `th_cases`, `section_cuts`, `piers`,
+`spandrels`, ...); `quantity` a case-block quantity (`node_disp`, `base`,
+`member_stations`, ... — `min.<q>` envelope minima included) or a block name.
+Geometry blocks (`nodes`, `members`, `shell_quads`, ...) and status maps are
+not compared.

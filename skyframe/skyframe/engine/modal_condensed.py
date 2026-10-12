@@ -213,10 +213,13 @@ def _unit_response(eng, asm, node_disp, lam: float) -> dict:
     nd = {t: list(v) for t, v in node_disp.items()}
     eng._add_spring_reactions(asm, nd, reactions)
     member_forces, member_stations, _ = eng._member_outputs(asm)
-    return {"lam": lam, "node_disp": nd, "reactions": reactions,
-            "member_forces": member_forces,
-            "member_stations": member_stations,
-            "shell_forces": eng._shell_outputs(asm)}   # RS shell forces
+    out = {"lam": lam, "node_disp": nd, "reactions": reactions,
+           "member_forces": member_forces,
+           "member_stations": member_stations,
+           "shell_forces": eng._shell_outputs(asm)}    # RS shell forces
+    from skyframe.engine import cut_results as _cutx
+    _cutx.attach_unit(eng, asm, out)                   # Wave C RS cuts
+    return out
 
 
 def _flatten(block: dict):

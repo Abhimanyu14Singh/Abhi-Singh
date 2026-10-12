@@ -1530,6 +1530,9 @@ class TimeHistoryCase:
     # both emitted by to_dict only when set
     modal_case: str = ""
     initial_case: str = ""
+    # Wave C TH shell output request (skyframe.core.th_output; None =
+    # legacy, key omitted from to_dict)
+    th_output: Optional[dict] = None
 
     def to_dict(self) -> dict:
         d = {"name": self.name, "direction": self.direction,
@@ -1554,6 +1557,8 @@ class TimeHistoryCase:
         for key in ("modal_case", "initial_case"):        # core.modal_cases
             if getattr(self, key):
                 d[key] = getattr(self, key)
+        if self.th_output is not None:                    # Wave C th_output
+            d["th_output"] = dict(self.th_output)
         return d
 
 
@@ -4085,6 +4090,8 @@ class BuildingModel:
         _rel_validate(self)                 # end releases / joint axes
         _spd.validate(self)                 # spandrel labels
         _mcs.validate(self)                 # mass sources / modal cases
+        from skyframe.core import th_output as _tho
+        _tho.validate(self)                 # Wave C TH shell output
         _simst.validate(self)               # W8 master / similar stories
         _wbp.validate_model(self)           # Wave B ortho/slab/CF/springs
 
@@ -4810,6 +4817,8 @@ class BuildingModel:
         _spd.model_from_dict(mdl, d)        # spandrel labels / tags
 
         _mcs.model_from_dict(mdl, d)        # mass sources / modal cases
+        from skyframe.core import th_output as _tho
+        _tho.model_from_dict(mdl, d)        # Wave C TH shell output
         _lfq.model_from_dict(mdl, d)        # wave B freq-dependent links
         _cpd.model_from_dict(mdl, d)        # wave B material damping
 

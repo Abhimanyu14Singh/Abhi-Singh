@@ -30,7 +30,9 @@ NEW_QUANTITIES = {
 
 _CASE_TYPE = {"static": "LinStatic", "response_spectrum": "LinRespSpec",
               "rs_directional": "LinRespSpec", "combo": "Combination",
-              "staged": "NonStaged"}
+              "staged": "NonStaged",
+              "time_history": "LinDirHist",           # Wave C TH shells
+              "time_history_step": "LinDirHist"}
 
 
 def _c(key: str, label: str, q: str) -> dict:

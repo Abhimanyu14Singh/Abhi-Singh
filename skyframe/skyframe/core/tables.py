@@ -1319,6 +1319,8 @@ def compute_table(key: str, results: dict, model, context: Optional[dict] = None
     # model has joint local axes; core/joint_local_results.py)
     from .joint_local_results import decorate as _jl_decorate
     cols, rows = _jl_decorate(key, model, cols, rows)
+    from .cut_tables import decorate as _cx_decorate   # Wave C max/min
+    cols, rows = _cx_decorate(key, results, model, cols, rows)
     return {"key": key, "title": title, "group": group,
             "columns": [dict(col) for col in cols], "rows": rows,
             "warnings": list(dict.fromkeys(c.warnings))}
