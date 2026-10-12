@@ -25,6 +25,7 @@ import ssU from "./units.js";
 import { el as ssEl, esc as ssEsc, dkGroup as ssGroup } from "./dlgkit.js";
 import { rectSectionProps as ssRect } from "./modeledit.js";
 import { SS_TYPES, SS_PARAM, SS_LABEL, ssTypeInfo, ssValidate, ssProps, ssApply, SHEAR_AREA_FORMULAS } from "./secshapes.js";
+import { seShapeExact as ssExactRow } from "./secexact.js";   // v1.22 "Exact J / Cw" option (js/secexact.js)
 
 let cssDone = false;
 function ensureCss() {
@@ -211,12 +212,13 @@ export function ssShapeEditor(F, s, { model: D, onChange } = {}) {
     } else {
       const info = ssTypeInfo(key), typ = info.alias || info.key;
       if (!s.dims || s.shape !== typ) ssApply(s, typ, { ...info.def });
+      let exact = null;                     // v1.22: exact J / Cw (js/secexact.js)
       const fields = info.dims.map(([k, lbl, opt]) => {
         const row = F.num(s.dims, k, {
           label: lbl, kind: "dim", id: "ssDim_" + k, ...(opt ? { min: 0, def: 0 } : { gt: 0 }), read: () => (s.dims || {})[k],
           validate: v => { const r = ssValidate(typ, { ...nums(s.dims), [k]: v }); return r.error || ""; },
           write: v => { s.dims[k] = v == null ? 0 : v; ssApply(s, typ, s.dims); },
-          onChange: () => { live = null; F.refresh(); paint(); kick(); },
+          onChange: () => { live = null; F.refresh(); paint(); kick(); if (exact) exact.refresh(); },
         });
         const inp = row.querySelector("input");
         inp.dataset.ssDim = k;
@@ -226,6 +228,12 @@ export function ssShapeEditor(F, s, { model: D, onChange } = {}) {
       node.appendChild(ssGroup("Dimensions", fields, { note: typ === "angle" ? "Leg d along local 2 (vertical), leg b along local 3; heel at the bottom-left." :
         typ === "channel" ? "Web on the left, flanges toward +3." : typ === "L_concrete" ? "Web flush with the left edge of the flange (spandrel / edge beam)." : null }));
       node.appendChild(propsGroup(typ, false));
+      exact = ssExactRow(s, typ, { onApply: (method, user) => {
+        if (method === "closed") ssApply(s, typ, s.dims);          // back to the closed forms
+        if (user) { F.touched = true; F.onTouch && F.onTouch(); }
+        paint(); kick();
+      } });
+      node.appendChild(exact.node);
       const pg = principalGroup();
       if (pg) node.appendChild(pg);
       const err = ssEl("p", { class: "dk-err", role: "alert", id: "ssLiveErr" });

@@ -345,9 +345,9 @@ def test_cross_check_with_sectionproperties():
                                                 tw=0.02, s=0.48),
                              material="S")
     jb = B.section_properties(box, _mats())["J"]
-    box.torsion = "fem"
+    box.torsion = "fem"               # v1.22: legacy alias of "exact"
     pf = B.section_properties(box, _mats())
-    assert pf["J_method"] == "fem"
+    assert pf["J_method"] == "exact"
     assert pf["J"] == pytest.approx(jb, rel=0.03)
     pg = B.template_section("plate_girder", {}, material="S")
     jo = B.section_properties(pg, _mats())["J"]
@@ -360,13 +360,30 @@ def test_cross_check_with_sectionproperties():
                              _mats())["shear_centre"]["y"], rel=0.01)
 
 
-def test_fem_mode_falls_back_without_package(monkeypatch):
-    monkeypatch.setattr(B, "fem_available", lambda: False)
+def test_fem_mode_needs_no_optional_package(monkeypatch):
+    """v1.22: torsion "fem" runs the in-house solver (numpy only) - it no
+    longer depends on sectionproperties; an unmeshable outline falls back
+    to 'auto' with a warning."""
+    import builtins
+    real_import = builtins.__import__
+
+    def no_sp(name, *a, **k):
+        if name.startswith("sectionproperties") or name == "shapely":
+            raise ImportError(name)
+        return real_import(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", no_sp)
     bs = B.template_section("plate_girder", {}, material="S")
     bs.torsion = "fem"
     p = B.section_properties(bs, _mats())
+    assert p["J_method"] == "exact" and p["Cw"] > 0
+    assert B.fem_available() is True
+    monkeypatch.setattr(builtins, "__import__", real_import)
+    from skyframe.core import section_fem
+    monkeypatch.setattr(section_fem, "solve", lambda *a, **k: (_ for _ in (
+        )).throw(section_fem.MeshError("boom")))
+    p = B.section_properties(bs, _mats())
     assert p["J_method"] == "open"
-    assert any("sectionproperties" in w for w in p["warnings"])
+    assert any("could not be analysed" in w for w in p["warnings"])
 
 
 # --------------------------------------------------------------------------- #

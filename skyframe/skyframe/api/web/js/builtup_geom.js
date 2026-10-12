@@ -108,7 +108,7 @@ export function buValidate(sec, materials) {
   if (!materials[sec.material]) return `${tag0}: unknown material ${sec.material}`;
   if (!(+materials[sec.material].E > 0)) return `${tag0}: material ${sec.material} needs E > 0`;
   if (!["geometric", "principal"].includes(sec.axes || "geometric")) return `${tag0}: axes must be geometric or principal`;
-  if (!["auto", "open", "fem"].includes(sec.torsion || "auto")) return `${tag0}: torsion must be auto, open or fem`;
+  if (!["auto", "open", "fem", "exact"].includes(sec.torsion || "auto")) return `${tag0}: torsion must be auto, open, exact or fem`;
   if (!(sec.components || []).length) return `${tag0}: needs at least one component`;
   for (const [i, c] of sec.components.entries()) {
     const tag = `${tag0}, component ${i + 1}`;
@@ -457,7 +457,8 @@ function shearCentre(geoms, ns, cx, cy) {
 }
 
 /** Exact composite properties — same keys/values as builtup.section_properties
-    (torsion "fem" is backend-only: here it reports the "auto" value with a warning). */
+    (torsion "exact" / "fem" is backend-only — skyframe.core.section_fem: here
+    it reports the closed-form "auto" value, J_method "approx", with a note). */
 export function buSectionProperties(sec, materials) {
   const err = buValidate(sec, materials);
   if (err) throw new Error(err);
@@ -497,13 +498,16 @@ export function buSectionProperties(sec, materials) {
       Jmethod = "closed_cell"; c.Am = Wm * Hm; c.J = Jc;
     } else {
       Jmethod = "approx";
-      warnings.push("Several or non-rectangular closed cells: J is the conservative sum of the component J values (use torsion 'fem' for the exact value).");
+      warnings.push("Several or non-rectangular closed cells: J is the conservative sum of the component J values (use torsion 'exact' for the exact value).");
     }
   }
   if (overlapArea(rects.map(r => r.slice(0, 4))) > 1e-9 * A) warnings.push("Some components overlap: overlapping area is counted twice.");
   const Asv = sum((g, n) => n * g.As_v), Ash = sum((g, n) => n * g.As_h);
   const sc = shearCentre(geoms, ns, cx, cy);
-  if (torsion === "fem") warnings.push("torsion 'fem' is computed by the backend (sectionproperties); showing the 'auto' value.");
+  if (torsion === "fem" || torsion === "exact") {   // v1.22: exact = backend finite elements (skyframe.core.section_fem)
+    Jmethod = "approx";
+    warnings.push("Exact torsion is computed by the backend (finite elements); showing the closed-form value until it arrives.");
+  }
   let As2 = Asv, As3 = Ash;
   if (axes === "principal") { const c2 = Math.cos(thAx) ** 2, s2 = Math.sin(thAx) ** 2; As2 = Asv * c2 + Ash * s2; As3 = Asv * s2 + Ash * c2; }
 

@@ -30,6 +30,7 @@ import { rectSectionProps as spvRectProps } from "./modeledit.js";
 import { buPreviewPolys as spvBuPolys } from "./builtup_geom.js";   // v1.21 built-up section outlines (js/builtup.js)
 
 import { ssPreview as spvSsPreview } from "./secshapes.js";   // v1.21 parametric / database shapes (shape + dims)
+import { seJMethod as spvJMethod } from "./secexact.js";   // v1.22 J method (exact / closed form / approx) of the readout
 
 const NS = "http://www.w3.org/2000/svg";
 const isNum = v => typeof v === "number" && isFinite(v);
@@ -579,6 +580,8 @@ function propsTable(model, sec, geom, extra = []) {
     const p = P[k];
     row(lab[k][0], (p.src === "outline" ? "≈ " : "") + sciU(lab[k][1], p.v), { "data-prop": k, "data-si": p.v == null ? "" : String(p.v), "data-src": p.src });
   }
+  const jm = spvJMethod(sec, model || {}, (sec && sec.name) || "");   // v1.22
+  if (jm) row("J method", jm.label, { "data-prop": "J_method", "data-method": jm.method });
   const mat = sec && sec.material;
   const md = mat && ((model || {}).materials || {})[mat];
   row("Material", mat ? `${mat}${md && md.material_type ? " · " + md.material_type : ""}${md && isNum(md.E) ? " · E " + spvU.fmt("modulus", md.E, 0) + " " + spvU.label("modulus") : ""}` : "—", { "data-prop": "material" });

@@ -10966,3 +10966,199 @@ sections_from=None, unit_scale=1, layer_map=None)` → `(model, warnings)`.
   * legacy File › Import… and Define › Material Library still open;
   * a bad file shows an inline error;
   * zero console errors.
+
+## Exact section solver (v1.22)
+
+`skyframe/core/section_fem.py` is an in-house finite-element solver for
+cross-section properties. It needs **numpy only**; the runtime
+dependencies stay openseespy, numpy and flask. It replaces the optional
+`sectionproperties` path. Built-up sections, Section Designer sections
+and parametric shapes use it for the exact torsion constant J, the
+warping constant Cw, the shear centre and the shear areas.
+
+**Input.** `solve(regions, nu=0.0, target=600, max_area=None,
+use_cache=True)`, where:
+
+* `regions` is a list of `{"outer": [[x, y], ...], "holes": [[[x, y],
+  ...], ...], "n": float}`;
+* a point's weight is the sum of `n` over the regions that contain it.
+  `n` is the modular ratio `E_i / E_ref`. Overlapping regions add up,
+  like the closed-form shoelace sums;
+* loops may touch, share edges or overlap. The planar arrangement splits
+  every edge at every crossing and T-junction, so the mesh conforms;
+* `circle_loop(cx, cy, r, n=96)` is a polygon with the circle's exact
+  area;
+* `shape_regions(type, dims, n=1, fillets=True)` gives the outline of a
+  parametric or database shape in its bounding-box-centred frame. It
+  includes the rolled root fillets `dims.r` (I, channel, tee, angle) and
+  the rounded tube corners `r_out`.
+
+**Mesh.** A constrained Delaunay triangulation in pure Python:
+1. incremental Lawson-flip insertion inside a bounding box;
+2. constraint segments recovered by midpoint insertion;
+3. faces classified by flood fill between constrained edges;
+4. Ruppert refinement: encroached subsegments are split, and the
+   circumcentre is inserted when a triangle's area is over
+   `A_total / target` or its minimum angle is under about 25°.
+
+Every triangle becomes a straight-sided 6-node Tri6.
+
+**Solve.** Pilkey's formulation, the same as sectionproperties, with
+6-point degree-4 Gauss quadrature, modulus-weighted:
+* warping function ω: `J = Ixx + Iyy − ω·f`;
+* shear functions Ψ and Φ, with Poisson's ratio `nu`;
+* shear areas `As = Δs² / κ`;
+* shear centre by the elasticity method (`xs`, `ys`) and by Trefftz
+  (`xs_trefftz`, `ys_trefftz`);
+* `Cw` about the Trefftz shear centre.
+
+One node per connected part is pinned, since all right-hand sides are
+self-equilibrated. The system is reordered by RCM and factorised once
+with a block-banded Cholesky (`numpy.linalg.cholesky` on
+bandwidth-sized blocks). Three right-hand sides reuse that factor.
+
+A section made of several disconnected parts gets J as the sum of the
+parts. Its `Cw`, `xs`/`ys` and `Asx`/`Asy` are `null`, and a warning is
+added.
+
+**Output** (input frame; moments about the weighted centroid;
+transformed to `n = 1`):
+
+```
+{method: "exact", A, A_geometric, cx, cy, Ixx (=∫y²), Iyy (=∫x²), Ixy,
+ I_major, I_minor, theta (rad, major axis from +x), J, Cw|null,
+ xs|null, ys|null, xs_trefftz|null, ys_trefftz|null,
+ x0|null, y0|null (shear centre − centroid),
+ Asx|null, Asy|null (shear along x / y),
+ Sx_top, Sx_bot, Sy_left, Sy_right, Zx, Zy, Z_major, Z_minor,
+ nu, parts, mesh: {elements, nodes, dofs}, time_ms, hash, cached,
+ warnings: [str]}
+```
+
+* `MeshError` is a ValueError and is raised for unusable geometry.
+* Results are cached (LRU, 256 entries) by the SHA-1 of the rounded
+  geometry and options. Callers get copies.
+* `cache_info()` returns `{size, hits, misses}`; `cache_clear()` empties
+  the cache.
+* The default `nu = 0` is sectionproperties' geometric analysis and gives
+  a rectangle's 5/6. With ν > 0, Pilkey's coefficient of wide sections
+  drops: a square gives 0.8282 at ν = 0.3.
+
+**Typical cost.** Rectangle about 0.1 s (2k DOFs); W14X90 with fillets
+about 0.45 s (4.9k DOFs); round tube about 0.1 s.
+
+**Validation** (`tests/test_section_fem.py`):
+
+| Check | Target | Result |
+|---|---|---|
+| Rectangle J/(b t³), b/t = 1, 2, 10 | 0.1406, 0.2287, 0.3123 (Saint-Venant series), ±0.5 % | within 3e-5 |
+| Circle πr⁴/2 | ±0.5 % | 1e-7 |
+| Tube π(R⁴ − Ri⁴)/2 | ±0.5 % | 3e-6 |
+| Thin I and channel J vs Σbt³/3 | ±1 % | within 0.4 % |
+| Channel shear centre e = 3b²tf/(6b·tf + h·tw) | ±1 % | within 0.06 % |
+| I-section Cw = Iy·h²/4 | ±0.5 % to ±1 % | within 0.03 % |
+| Rectangle As = 5/6·A (ν = 0) | ±0.5 % | within 0.002 % |
+| W14X90 (database dims with r = kdes − tf) vs AISC | J 4.06 in⁴, Cw 16000 in⁶, stated tolerance ±2 % | J 4.068 in⁴, Cw 15830 in⁶ (−1.1 %) |
+| W14X90 + two 400×20 cover plates | — | exact J / open-sum J = 3.55 |
+| sectionproperties 3.10, when installed (angle, channel, W + cover, composite at ν = 0.2) | J, As, Cw, shear centre ±1 % | worst 0.13 % |
+
+**Built-up sections.**
+* `torsion` accepts `"auto" | "open" | "fem" | "exact"`. `"fem"` is the
+  legacy alias of `"exact"`. Both run `exact_regions(bs, ns)`: the union
+  outline, database fillets included, weighted by the modular ratios.
+* `section_properties` then reports `J_method: "exact"`, the exact J
+  (mirrored into the FrameSection), the shear areas and the shear centre
+  (`method: "exact"`). An exact symmetric coordinate is kept.
+* It adds `Cw` and `exact: {method, mesh, time_ms, cached, nu, parts,
+  hash, Cw}`. Both appear only in exact mode, so auto output is
+  unchanged.
+* An unmeshable outline falls back to "auto" with a warning.
+* `fem_available()` is always true.
+* NEW sections default to exact: `POST /api/sections/builtup/template`
+  takes `torsion` (default `"exact"`), and the editor opens new sections
+  with "exact". `BuiltupSection.from_dict` still defaults to `"auto"`,
+  and a saved section keeps its stored method.
+
+**Section Designer.** `DesignerSection.torsion` is `"approx"` (default,
+absent from `to_dict`) or `"exact"`.
+* Exact mode makes every solid polygon a region with `n = E_poly /
+  E_base`. Hole polygons are cut from every solid; rebar is ignored.
+* `section_properties` always returns `J_method` (`"approx"` or
+  `"exact"`). Exact mode adds `Cw`, `x0`/`y0` (shear centre minus gross
+  centroid, y/z), `As2`/`As3`, `exact` and `warnings`. The FrameSection J
+  is the exact J.
+* `exact_regions(ds, materials)` and `exact_properties(ds, materials)`
+  are public.
+
+**Parametric shapes.**
+* `shape_properties(type, dims, torsion="closed" | "exact")` always
+  returns `J_method` (`"closed_form"` or `"exact"`).
+* Exact mode replaces J, Cw, x0/y0 and As2/As3 with the finite-element
+  values (fillets `r` included) and adds `exact`. A, I, S and Z stay the
+  closed forms.
+* `section_kwargs(type, dims, torsion)` passes the method through.
+* A FrameSection opts in with `dims.torsion = "exact"`, a string in
+  `dims`. `section_ext.validate` accepts `None | "closed" | "exact"`.
+  `section_from_dims` and `fill_from_dims` honour it.
+* On load, `section_ext.exact_from_dims` sets J, As2 and As3 of such a
+  section to the exact values (cached), so the stored method always
+  matches the stored numbers.
+* Database imports (`steel_db.section_from_db`) keep their tabulated
+  values.
+* `POST /api/steel_db/shape_props` accepts `torsion` (or
+  `dims.torsion`); `props.J_method` is added.
+
+**HTTP.** These calls never mutate the server model:
+
+* `POST /api/sections/exact` takes one of:
+  * `{kind: "shape", type, dims}`;
+  * `{kind: "builtup", section, materials? | model?}`;
+  * `{kind: "designer", section, materials? | model?}`;
+  * `{kind: "regions", regions, nu?, target?}`.
+
+  It returns `{kind, method, props}`, where `props` is the
+  shape / builtup / designer property dict computed in exact mode, or
+  the raw `solve` dict. It answers 400 with `{error}` for bad input.
+* `GET /api/sections/exact/info` returns `{solver: "section_fem",
+  element: "Tri6", default_target, cache}`.
+
+**UI.**
+* `js/secexact.js`: `seExact` (POST, or the mock), `seJMethod`,
+  `seDesignerBlock`, `seDesignerNew`, `seShapeExact`. Requests are
+  debounced (300 ms) and keyed by geometry.
+* `js/mock_secexact.js` (`?mock=1`) answers with the CLOSED-FORM values
+  marked `method`/`J_method = "approx"`.
+* Built-up editor:
+  * `#buTorsion` has Exact / Auto / Open / FEM (legacy), and new sections
+    open as Exact;
+  * `#buPJ[data-method]` and `#buPJm` show the method, and `#buPCw`
+    appears in exact mode;
+  * the client computation reports exact as `"approx"` until the
+    backend answer arrives.
+* Section Designer:
+  * `#dsTorsion` (Exact / Approx), with new sections set to Exact;
+  * `#dsJ` with `#dsJMethod[data-method]` shows the method;
+  * `#dsJx` shows Cw / As2 / As3.
+* Parametric shapes: the `#ssExactCb` checkbox and the `#ssExactOut`
+  readout (`data-method` is closed-form, exact or approx).
+* secpreview adds a "J method" row (`data-prop="J_method"`).
+* Hook lines:
+  * `secdesigner.js`: import, `newSection`, `save` (the payload now
+    carries the base `material`), `_renderProps`;
+  * `secshape_ui.js`: import plus the parametric branch;
+  * `secpreview.js`: import plus the J-method row;
+  * `modeledit.js`: `normalizeDesignerSections` keeps `material`, `base`
+    and `torsion`. Before this change it dropped `material`, so a live
+    designer upsert failed with 400 and fell back to the mock;
+  * `builtup.js` and `builtup_geom.js`: the torsion options.
+
+**Playwright.** Mock 20/20 and live 25/25:
+* new built-up, designer and parametric sections use exact, and the
+  method is shown;
+* saved frame J equals the backend exact J;
+* reopening and pressing OK, and Frame Properties OK with defaults, are
+  byte-identical;
+* the POST /api/model second echo is identical;
+* an analysis runs;
+* kip-in readouts are in in⁴;
+* zero console errors.

@@ -597,6 +597,7 @@ export function normalizeDesignerSections(m) {
         })),
     };
     if (!sec.polygons.length) continue;
+    for (const k of ["material", "base", "torsion"]) if (typeof ds[k] === "string" && ds[k]) sec[k] = ds[k];   // v1.22: keep the backend fields (js/secexact.js)
     out[sec.name] = sec;
     if (!m.sections[sec.name]) {
       const pr = designerProps(sec);

@@ -79,6 +79,16 @@ Formulas
       local 3 to the MAJOR principal axis, positive toward +2, in the
       standard placement.
 
+EXACT option (v1.22): ``shape_properties(typ, dims, torsion="exact")``
+    replaces J, Cw, the shear centre (x0, y0) and the shear areas
+    As2 / As3 by the in-house finite-element warping solution
+    (:mod:`skyframe.core.section_fem`, numpy only) of the outline - WITH
+    the rolled-shape root fillets ``r`` of I / channel / tee / angle and
+    the rounded corners of rect tubes.  A, I, S, Z stay the closed forms
+    above.  ``J_method`` is ``"closed_form"`` (the default; database
+    imports keep their tabulated values) or ``"exact"``.  A parametric
+    FrameSection opts in with ``dims["torsion"] = "exact"``.
+
 Pure Python, no third-party dependency (``sectionproperties`` is used only
 by the tests as an independent cross-check).
 """
@@ -111,6 +121,9 @@ DIM_KEYS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "tee_concrete": (("bf", "hf", "bw", "h"), ()),
     "L_concrete": (("bf", "hf", "bw", "h"), ()),
 }
+
+#: torsion / shear methods of :func:`shape_properties`
+TORSION_METHODS = ("closed", "exact")
 
 #: human-readable shear-area rules (documented in CONTRACT / SECTION_SOURCES)
 SHEAR_AREA_FORMULAS = {
@@ -344,13 +357,60 @@ def _rects(typ: str, g: Dict[str, float]) -> List[Rect]:
     raise ValueError(typ)
 
 
-def shape_properties(typ: str, dims: dict) -> dict:
+def shape_properties(typ: str, dims: dict, torsion: str = "closed") -> dict:
     """Section properties (SI) of a parametric shape; see module docstring.
 
     Returns ``{A, I33, I22, I23, J, Cw, S33, S22, Z33, Z22, As2, As3, r33,
-    r22, x0, y0, cx, cy, b, h}`` plus ``I_major, I_minor, alpha`` for the
-    unsymmetric types.  ``b`` / ``h`` are the outline width / depth used
-    for drawing (FrameSection.b / h)."""
+    r22, x0, y0, cx, cy, b, h, J_method}`` plus ``I_major, I_minor,
+    alpha`` for the unsymmetric types.  ``b`` / ``h`` are the outline
+    width / depth used for drawing (FrameSection.b / h).  ``torsion =
+    "exact"`` swaps in the finite-element J / Cw / shear centre / shear
+    areas (and adds ``exact`` = the solver summary)."""
+    if torsion not in TORSION_METHODS:
+        raise ValueError(f"torsion must be one of {TORSION_METHODS}, got "
+                         f"{torsion!r}")
+    out = _closed_properties(typ, dims)
+    out["J_method"] = "closed_form"
+    if torsion == "exact":
+        _apply_exact(out, typ, validate_dims(typ, dims))
+    return out
+
+
+def exact_regions(typ: str, g: Dict[str, float]) -> List[dict]:
+    """:mod:`skyframe.core.section_fem` regions of a validated shape."""
+    from skyframe.core import section_fem
+    if typ in ("I", "I_mono", "channel", "tee", "angle", "rect_tube",
+               "round_tube", "round_solid"):
+        return section_fem.shape_regions(typ, g)
+    return [{"outer": section_fem.rect_loop(*r)} for r in _rects(typ, g)]
+
+
+def exact_properties(typ: str, dims: dict) -> dict:
+    """Raw :func:`skyframe.core.section_fem.solve` result of a shape."""
+    from skyframe.core import section_fem
+    return section_fem.solve(exact_regions(typ, validate_dims(typ, dims)))
+
+
+def _apply_exact(out: dict, typ: str, g: Dict[str, float]) -> None:
+    from skyframe.core import section_fem
+    ex = section_fem.solve(exact_regions(typ, g))
+    tiny = 1e-7 * max(out["b"], out["h"])
+    out["J"] = ex["J"]
+    if ex["Cw"] is not None:
+        out["Cw"] = ex["Cw"]
+    if ex["x0"] is not None:
+        out["x0"] = 0.0 if abs(ex["x0"]) < tiny else ex["x0"]
+        out["y0"] = 0.0 if abs(ex["y0"]) < tiny else ex["y0"]
+    if ex["Asx"] is not None and ex["Asy"] is not None:
+        out["As2"], out["As3"] = ex["Asy"], ex["Asx"]
+    out["J_method"] = "exact"
+    out["exact"] = {"method": "exact", "mesh": ex["mesh"],
+                    "time_ms": ex["time_ms"], "cached": ex["cached"],
+                    "nu": ex["nu"], "parts": ex["parts"], "hash": ex["hash"],
+                    "warnings": ex["warnings"]}
+
+
+def _closed_properties(typ: str, dims: dict) -> dict:
     g = validate_dims(typ, dims)
     if typ == "round_tube":
         D, t = g["D"], g["t"]
@@ -495,10 +555,10 @@ def _finish(typ, g, A, I33, I22, I23, J, Cw, S33, S22, Z33, Z22, x0, y0,
     return out
 
 
-def section_kwargs(typ: str, dims: dict) -> dict:
+def section_kwargs(typ: str, dims: dict, torsion: str = "closed") -> dict:
     """FrameSection keyword values (A, I33, I22, J, b, h, As2, As3) for a
-    parametric shape."""
-    p = shape_properties(typ, dims)
+    parametric shape (``torsion`` as in :func:`shape_properties`)."""
+    p = shape_properties(typ, dims, torsion)
     return {k: p[k] for k in ("A", "I33", "I22", "J", "b", "h", "As2",
                               "As3")}
 

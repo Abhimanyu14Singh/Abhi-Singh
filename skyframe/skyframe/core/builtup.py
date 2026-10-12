@@ -74,10 +74,16 @@ TORSION J (``torsion: "auto"``):
   APPROXIMATION ``J = sum n_i J_i`` (conservative; flagged
   ``J_method = "approx"`` with a warning).
 
-``torsion: "open"`` forces the sum; ``torsion: "fem"`` uses the optional
-``sectionproperties`` package (FEM warping analysis of the union outline:
-exact J, shear centre and shear areas) when it is installed and falls back
-to "auto" with a warning otherwise (it is NEVER a hard dependency).
+``torsion: "open"`` forces the sum; ``torsion: "exact"`` (v1.22; ``"fem"``
+is its legacy alias) runs the in-house numpy finite-element warping
+analysis (:mod:`skyframe.core.section_fem`) of the union outline of all
+components (rolled-shape root fillets ``dims.r`` included, each region
+weighted by its modular ratio): exact J, warping constant Cw, shear centre
+and shear areas (``J_method = "exact"``, extra keys ``Cw`` and ``exact``
+= the solver summary).  It falls back to "auto" with a warning only if
+the outline cannot be meshed.  NEW sections default to "exact" (the API
+template endpoint and the editor); a saved section keeps its stored
+method, so existing models reproduce byte-identically.
 
 Shear areas (approximate, documented): a rectangular wall of aspect >= 2
 contributes ``A sin^2 phi`` to As2 (vertical shear) and ``A cos^2 phi`` to
@@ -91,8 +97,9 @@ axis-aligned plates symmetric about the vertical axis; otherwise ``None``
 (use ``torsion: "fem"``).
 
 Stacked plates (e.g. a cover plate welded to a flange) are summed as
-SEPARATE open walls, which underestimates J (conservative); ``"fem"``
-treats the union outline exactly.
+SEPARATE open walls, which underestimates J (conservative: a W14X90 with
+two 400 x 20 cover plates is ~3.5x too low); ``"exact"`` treats the union
+outline exactly.
 
 The mirrored analysis :class:`FrameSection` (``shape = "builtup"``) gets A,
 I33, I22, J (transformed) and the bounding box ``b`` (width) / ``h``
@@ -112,7 +119,7 @@ __all__ = [
     "BuiltupSection", "SHAPE_TYPES", "COMPONENT_KINDS", "TEMPLATES",
     "validate_builtup_section", "resolve_components", "component_geometry",
     "section_properties", "make_frame_section", "template_section",
-    "template_list", "fem_available",
+    "template_list", "fem_available", "exact_regions",
 ]
 
 COMPONENT_KINDS = ("plate", "db", "param")
@@ -120,7 +127,8 @@ SHAPE_TYPES = ("I", "I_mono", "channel", "angle", "double_angle", "tee",
                "rect_tube", "round_tube", "rect_solid", "round_solid",
                "plate")
 AXES = ("geometric", "principal")
-TORSION = ("auto", "open", "fem")
+TORSION = ("auto", "open", "fem", "exact")
+EXACT_TORSION = ("fem", "exact")      # both run skyframe.core.section_fem
 
 # required dims per type (aliases accepted on input, see _dims)
 _REQ = {
@@ -920,52 +928,73 @@ def _shear_centre(geoms, ns, cx, cy):
 
 
 # --------------------------------------------------------------------------- #
-# optional FEM (sectionproperties)
+# exact torsion / shear (in-house FEM, skyframe.core.section_fem)
 # --------------------------------------------------------------------------- #
 def fem_available() -> bool:
-    try:
-        import sectionproperties  # noqa: F401
-        import shapely  # noqa: F401
-        return True
-    except Exception:
-        return False
+    """The exact solver is built in (numpy only): always True (kept for
+    API compatibility - it used to report the optional sectionproperties
+    package)."""
+    return True
 
 
-def _fem(geoms, mesh_frac: float = 0.002) -> dict:
-    """J, shear centre and shear areas of the UNION outline (single
-    material) by the sectionproperties FEM warping analysis."""
-    from shapely import Polygon, Point, union_all
-    from sectionproperties.analysis.section import Section
-    from sectionproperties.pre.geometry import Geometry
-    pos, neg = [], []
-    for g in geoms:
-        for p in g["pieces"]:
-            shp = (Point(*p["c"]).buffer(p["r"], quad_segs=32)
-                   if p["t"] == "circle" else Polygon(p["pts"]))
-            (pos if p["sign"] > 0 else neg).append(shp)
-    # snap to a 1e-9 m grid so touching (welded) parts fuse into one outline
-    poly = union_all(pos, grid_size=1e-9)
-    if neg:
-        poly = poly.difference(union_all(neg, grid_size=1e-9),
-                               grid_size=1e-9)
-    parts = [poly] if poly.geom_type == "Polygon" else list(poly.geoms)
-    out = {"J": 0.0, "As_h": 0.0, "As_v": 0.0, "A": 0.0, "sc": None,
-           "parts": len(parts)}
-    for part in parts:
-        geom = Geometry(part)
-        geom.create_mesh(mesh_sizes=[mesh_frac * poly.area])
-        sec = Section(geom)
-        sec.calculate_geometric_properties()
-        sec.calculate_warping_properties()
-        asx, asy = sec.get_as()
-        out["J"] += float(sec.get_j())      # disconnected parts: J adds up
-        out["As_h"] += float(asx)
-        out["As_v"] += float(asy)
-        out["A"] += float(sec.get_area())
-        if len(parts) == 1:
-            x_s, y_s = sec.get_sc()
-            out["sc"] = (float(x_s), float(y_s))
-    return out
+_FILLET_TYPES = ("I", "channel", "tee", "angle")
+
+
+def exact_regions(bs: BuiltupSection, ns: List[float]) -> List[dict]:
+    """section_fem regions of the section (section frame, weights ``ns``).
+
+    Each component's local outline (database shapes WITH their root
+    fillets ``dims.r``) is mirrored / rotated / placed exactly like
+    :func:`component_geometry`; negative pieces (tube bores) become holes
+    of the component's solid pieces.
+    """
+    from skyframe.core import section_fem as sf
+    regs: List[dict] = []
+    for c, n in zip(bs.components, ns):
+        if c["kind"] == "plate":
+            typ, dims = "plate", {"b": c["b"], "t": c["t"]}
+            rot, mirror = c["angle"], False
+        else:
+            typ, dims = c["type"], c["dims"]
+            rot, mirror = c["rotation"], bool(c["mirror"])
+        th = math.radians(rot)
+        cs, sn = math.cos(th), math.sin(th)
+        cs = 0.0 if abs(cs) < 1e-15 else cs
+        sn = 0.0 if abs(sn) < 1e-15 else sn
+        X, Y = float(c["x"]), float(c["y"])
+
+        def xf(loop):
+            return [list(_xf_point(p, mirror, cs, sn, X, Y)) for p in loop]
+        if typ in _FILLET_TYPES and float(dims.get("r", 0.0) or 0.0) > 0:
+            for r in sf.shape_regions(typ, dims, n=n):
+                regs.append({"outer": xf(r["outer"]),
+                             "holes": [xf(h) for h in r["holes"]], "n": n})
+            continue
+        loc, _tc = _local_pieces(typ, dims)
+        holes = []
+        for p in loc:
+            if p["sign"] < 0:
+                holes.append(xf(sf.circle_loop(p["c"][0], p["c"][1], p["r"])
+                                if p["t"] == "circle" else p["pts"]))
+        for p in loc:
+            if p["sign"] > 0:
+                outer = sf.circle_loop(p["c"][0], p["c"][1], p["r"]) \
+                    if p["t"] == "circle" else p["pts"]
+                regs.append({"outer": xf(outer), "holes": holes, "n": n})
+    return regs
+
+
+def _fem(bs: BuiltupSection, ns: List[float]) -> dict:
+    """Exact J / Cw / shear centre / shear areas of the union outline."""
+    from skyframe.core import section_fem as sf
+    r = sf.solve(exact_regions(bs, ns))
+    return {"J": r["J"], "Cw": r["Cw"], "As_h": r["Asx"], "As_v": r["Asy"],
+            "sc": (None if r["xs"] is None else (r["xs"], r["ys"])),
+            "parts": r["parts"], "warnings": r["warnings"],
+            "summary": {"method": "exact", "mesh": r["mesh"],
+                        "time_ms": r["time_ms"], "cached": r["cached"],
+                        "nu": r["nu"], "parts": r["parts"],
+                        "hash": r["hash"]}}
 
 
 # --------------------------------------------------------------------------- #
@@ -1050,28 +1079,30 @@ def section_properties(bs: BuiltupSection,
     As_h = sum(n * g["As_h"] for g, n in zip(geoms, ns))
     sc = _shear_centre(geoms, ns, cx, cy)
 
-    if bs.torsion == "fem":
-        if not fem_available():
-            warnings.append("torsion 'fem' needs the optional "
-                            "'sectionproperties' package (pip install "
-                            "sectionproperties); used 'auto' instead.")
-        elif len(set(ns)) > 1:
-            warnings.append("torsion 'fem' supports one material only; "
-                            "used 'auto' instead.")
+    exact = None
+    if bs.torsion in EXACT_TORSION:
+        try:
+            f = _fem(bs, ns)
+        except (ValueError, ArithmeticError) as exc:
+            warnings.append(f"exact torsion: the outline could not be "
+                            f"analysed ({exc}); used 'auto' instead.")
         else:
-            try:
-                f = _fem(geoms)
-                J, J_method = f["J"], "fem"
+            J, J_method, exact = f["J"], "exact", f["summary"]
+            exact["Cw"] = f["Cw"]
+            if f["As_v"] is not None and f["As_h"] is not None:
                 As_v, As_h = f["As_v"], f["As_h"]
-                if f["sc"] is not None:
-                    sc = {"x": f["sc"][0], "y": f["sc"][1], "method": "fem"}
-                else:
-                    warnings.append(f"fem: {f['parts']} disconnected parts "
-                                    "(J and shear areas summed; the parts "
-                                    "act together only through lacing/"
-                                    "battens not modelled here).")
-            except Exception as exc:          # pragma: no cover - mesh errs
-                warnings.append(f"fem analysis failed ({exc}); used 'auto'.")
+            if f["sc"] is not None:
+                # symmetry is exact: keep the symmetric coordinate(s)
+                mth = (sc or {}).get("method")
+                if mth != "symmetry":
+                    sc = {"x": cx if mth == "monosymmetric" else f["sc"][0],
+                          "y": f["sc"][1], "method": "exact"}
+            if f["parts"] > 1:
+                warnings.append("exact: the components form "
+                                f"{f['parts']} disconnected parts (lacing/"
+                                "battens are not modelled): J is the sum of "
+                                "the parts; the shear areas are the "
+                                "thin-walled estimates.")
 
     if bs.axes == "principal":
         cs2, sn2 = math.cos(th_axes) ** 2, math.sin(th_axes) ** 2
@@ -1129,6 +1160,7 @@ def section_properties(bs: BuiltupSection,
         "cells": [{k: (sorted(v) if isinstance(v, set) else v)
                    for k, v in c.items()} for c in cells],
         "warnings": warnings,
+        **({"Cw": exact["Cw"], "exact": exact} if exact else {}),
     }
 
 
@@ -1239,8 +1271,12 @@ def _channel_pair(p, arrangement):
 
 
 def template_section(tid: str, params: Optional[dict] = None,
-                     name: str = "BU1", material: str = "") -> BuiltupSection:
-    """Build a template section (components in SI; see TEMPLATES)."""
+                     name: str = "BU1", material: str = "",
+                     torsion: str = "auto") -> BuiltupSection:
+    """Build a template section (components in SI; see TEMPLATES).
+
+    ``torsion`` is the section's torsion method (the HTTP template
+    endpoint passes "exact", the v1.22 default for NEW sections)."""
     if tid not in TEMPLATES:
         raise ValueError(f"unknown built-up template {tid!r}; choose from "
                          f"{sorted(TEMPLATES)}")
@@ -1333,7 +1369,8 @@ def template_section(tid: str, params: Optional[dict] = None,
                               label="Stiffener")]
     bs = BuiltupSection(name=name, material=material,
                         components=[_comp_from_dict(c) for c in comps],
-                        template={"id": tid, "params": p}, notes=notes)
+                        template={"id": tid, "params": p}, notes=notes,
+                        torsion=str(torsion))
     return resolve_components(bs)
 
 

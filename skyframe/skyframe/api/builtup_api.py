@@ -11,7 +11,9 @@ registered by ``create_app`` with one line (CONTRACT "Built-up sections").
 * ``GET  /api/sections/builtup/templates`` -> ``{templates: [{id, label,
   params}], fem: bool, db_source: "steel_db"|"stub"}``.
 * ``POST /api/sections/builtup/template`` ``{id, params?, name?,
-  material?}`` -> ``{section, properties|null}``.
+  material?, torsion?="exact"}`` -> ``{section, properties|null}`` (v1.22:
+  a NEW template section uses the exact torsion solver unless
+  ``torsion`` says otherwise).
 * ``GET  /api/sections/builtup/db/standards`` | ``.../db/families?standard=``
   | ``.../db/shapes?standard=&family=&q=&limit=`` — the shape picker
   (``steel_db`` when installed, else the local stub).
@@ -95,7 +97,9 @@ def register(app, state: Dict[str, Any]) -> None:
             bs = _bu.template_section(str(body.get("id")), params,
                                       name=str(body.get("name") or "BU1"),
                                       material=str(body.get("material")
-                                                   or ""))
+                                                   or ""),
+                                      torsion=str(body.get("torsion")
+                                                  or "exact"))
             props = (_bu.section_properties(bs, model.materials)
                      if bs.material in model.materials else None)
         except _ERRS as exc:

@@ -2331,6 +2331,10 @@ def create_app() -> Flask:
     from skyframe.api.exchange_api import register as _xch_register
     _xch_register(app, _state)
 
+    # v1.22 exact section solver (skyframe.api.section_fem_api)
+    from skyframe.api.section_fem_api import register as _sfem_register
+    _sfem_register(app, _state)
+
     return app
 
 

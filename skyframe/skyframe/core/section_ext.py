@@ -54,7 +54,7 @@ def fill_from_dims(name: str, sd: dict) -> dict:
     if typ not in SHAPE_TYPES:
         return sd
     nums = {k: v for k, v in sd["dims"].items() if not isinstance(v, str)}
-    kw = section_kwargs(typ, nums)
+    kw = section_kwargs(typ, nums, _torsion(sd["dims"]))
     kw.pop("As2"), kw.pop("As3")
     return {**kw, **sd}
 
@@ -74,6 +74,34 @@ def load(sec, sd: dict) -> None:
         sec.principal = {k: float(pr[k]) for k in ("I_major", "I_minor",
                                                    "alpha") if k in pr}
     sec.use_principal = bool(sd.get("use_principal", False))
+    exact_from_dims(sec)                    # v1.22 (no-op unless opted in)
+
+
+def exact_from_dims(sec) -> None:
+    """v1.22: a parametric section with ``dims["torsion"] == "exact"``
+    carries the finite-element J / As2 / As3 (skyframe.core.section_fem,
+    cached by geometry hash) whatever values the file holds, so the stored
+    method always matches the stored numbers.  No-op otherwise (every
+    other section loads byte-identically)."""
+    dims = getattr(sec, "dims", None)
+    if _torsion(dims) != "exact":
+        return
+    from skyframe.core.shape_props import SHAPE_TYPES, section_kwargs
+    if getattr(sec, "shape", None) not in SHAPE_TYPES:
+        return
+    try:
+        kw = section_kwargs(sec.shape, {k: v for k, v in dims.items()
+                                        if not isinstance(v, str)}, "exact")
+    except (ValueError, KeyError, ArithmeticError):
+        return                              # validate() reports bad dims
+    sec.J, sec.As2, sec.As3 = kw["J"], kw["As2"], kw["As3"]
+
+
+def _torsion(dims) -> str:
+    """v1.22: ``dims["torsion"] == "exact"`` opts a parametric section in
+    to the finite-element J / Cw (skyframe.core.section_fem)."""
+    return "exact" if isinstance(dims, dict) \
+        and dims.get("torsion") == "exact" else "closed"
 
 
 def _finite(v) -> bool:
@@ -95,6 +123,9 @@ def validate(sec) -> None:
                 raise ValueError(f"Section {nm}: dims.{k} must be a finite "
                                  f"number >= 0 (got {v!r})")
         from skyframe.core.shape_props import SHAPE_TYPES, validate_dims
+        if dims.get("torsion") not in (None, "closed", "exact"):
+            raise ValueError(f"Section {nm}: dims.torsion must be 'closed' "
+                             f"or 'exact' (got {dims.get('torsion')!r})")
         if getattr(sec, "shape", None) in SHAPE_TYPES:
             try:
                 validate_dims(sec.shape, {k: v for k, v in dims.items()
@@ -186,7 +217,7 @@ def section_from_dims(name: str, material: str, typ: str, dims: dict,
     from skyframe.core.model import FrameSection
     from skyframe.core.shape_props import principal_of, section_kwargs
     nums = {k: v for k, v in dims.items() if not isinstance(v, str)}
-    p = section_kwargs(typ, nums)
+    p = section_kwargs(typ, nums, _torsion(dims))
     As2, As3 = p.pop("As2"), p.pop("As3")
     sec = FrameSection(name=name, material=material, **p, **kw)
     sec.As2, sec.As3 = As2, As3
