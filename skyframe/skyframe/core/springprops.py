@@ -455,7 +455,8 @@ def any_nonlinear(model) -> bool:
         if name is not None and name in props \
                 and props[name].get("kind") != "linear":
             return True
-    return False
+    from skyframe.core.spring_dist import any_nonlinear as _wb_nl
+    return _wb_nl(model)        # Wave B named line / area springs
 
 
 # ============================================================ link params

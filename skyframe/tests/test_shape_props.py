@@ -205,7 +205,11 @@ def test_every_type_has_formula_and_validates():
             "round_tube": dict(D=.3, t=.01), "rect_solid": dict(d=.6, b=.3),
             "plate": dict(d=.02, b=.3), "round_solid": dict(D=.5),
             "tee_concrete": dict(bf=1.2, hf=.15, bw=.3, h=.6),
-            "L_concrete": dict(bf=.8, hf=.15, bw=.3, h=.6)}
+            "L_concrete": dict(bf=.8, hf=.15, bw=.3, h=.6),
+            # Wave B cold-formed shapes (core/coldformed.py)
+            "C_lipped": dict(d=.2, b=.07, dl=.02, t=.002, r=.003),
+            "Z_lipped": dict(d=.2, b=.07, dl=.02, t=.002, r=.003),
+            "hat": dict(d=.1, b=.08, bf=.03, t=.002, r=.003)}
     assert set(good) == set(SHAPE_TYPES) == set(SHEAR_AREA_FORMULAS)
     for typ, dims in good.items():
         p = shape_properties(typ, dims)

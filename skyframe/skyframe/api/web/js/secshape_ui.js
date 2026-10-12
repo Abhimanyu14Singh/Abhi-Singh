@@ -26,6 +26,7 @@ import { el as ssEl, esc as ssEsc, dkGroup as ssGroup } from "./dlgkit.js";
 import { rectSectionProps as ssRect } from "./modeledit.js";
 import { SS_TYPES, SS_PARAM, SS_LABEL, ssTypeInfo, ssValidate, ssProps, ssApply, SHEAR_AREA_FORMULAS } from "./secshapes.js";
 import { seShapeExact as ssExactRow } from "./secexact.js";   // v1.22 "Exact J / Cw" option (js/secexact.js)
+import { ccIs as ssWbCcIs, CC_LABEL as ssWbCcLabel } from "./wb_composite.js";   // Wave B composite columns (read-only here)
 
 let cssDone = false;
 function ensureCss() {
@@ -43,12 +44,14 @@ const nums = o => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => t
 export function ssShapeKey(s, D) {
   if (!s) return "general";
   if (s.shape === "W" || s.shape === "designer") return s.shape;
+  if (ssWbCcIs(s)) return "composite";   // Wave B (edited in js/wb_composite.js)
   if (SS_PARAM.includes(s.shape) && s.dims) return s.shape === "round_solid" && isConc(D, s) ? "round_solid_c" : s.shape;
   return s.b > 0 && s.h > 0 ? "rect" : "general";
 }
 
 /** List-column label for the new shapes (null → the caller's own rule). */
 export function ssShapeLabel(s) {
+  if (ssWbCcIs(s)) return ssWbCcLabel[s.shape];   // Wave B composite
   if (!s || !SS_PARAM.includes(s.shape) || !s.dims) return null;
   const base = SS_LABEL[s.shape] || s.shape;
   return s.db_ref ? `${base} · ${String(s.db_ref.standard || "").toUpperCase()}` : base;
@@ -64,6 +67,7 @@ export function ssShapeEditor(F, s, { model: D, onChange } = {}) {
     const o = SS_TYPES.filter(t => !t.hidden || t.key === st.key).map(t => [t.key, `${t.group} — ${t.label}`]);
     if (st.key === "W") o.unshift(["W", "Steel — W-shape (library, read-only)"]);
     if (st.key === "designer") o.unshift(["designer", "Section Designer (read-only)"]);
+    if (st.key === "composite") o.unshift(["composite", "Composite column (edit with Composite Column Sections…)"]);   // Wave B
     return o;
   };
   const select = F.select(st, "key", options, {
@@ -81,7 +85,7 @@ export function ssShapeEditor(F, s, { model: D, onChange } = {}) {
   }
   function switchShape(v) {
     live = null;
-    if (v === "W" || v === "designer" || v === st.key) { st.key = v; return; }
+    if (v === "W" || v === "designer" || v === "composite" || v === st.key) { st.key = v; return; }
     if (v === "rect") {
       clearParam();
       if (!(s.b > 0 && s.h > 0)) { s.b = 0.3; s.h = 0.6; }
@@ -186,11 +190,11 @@ export function ssShapeEditor(F, s, { model: D, onChange } = {}) {
       node.appendChild(ssGroup("Section Properties", [["A", "Cross-section Area", "area"], ["I33", "Moment of Inertia about 3 axis", "inertia"],
         ["I22", "Moment of Inertia about 2 axis", "inertia"], ["J", "Torsional Constant", "inertia"]].map(([k, lbl, kind]) =>
         F.num(s, k, { label: lbl, kind, gt: 0, id: "dsSec" + k, onChange: () => kick() })), { note: "General section: enter the analysis properties directly." }));
-    } else if (key === "W" || key === "designer") {
+    } else if (key === "W" || key === "designer" || key === "composite") {   // + Wave B composite (read-only)
       node.appendChild(ssGroup("Section Properties", [
         outRow("Cross-section Area", "area", sec => sec.A), outRow("Moment of Inertia about 3 axis", "inertia", sec => sec.I33),
         outRow("Moment of Inertia about 2 axis", "inertia", sec => sec.I22), outRow("Torsional Constant", "inertia", sec => sec.J),
-      ], { note: key === "W" ? "From the steel shape library (read-only)." : "From the Section Designer polygon (read-only)." }));
+      ], { note: key === "W" ? "From the steel shape library (read-only)." : key === "composite" ? "Composite column: transformed EI_eff (read-only here — Modify/Show opens the composite dialog)." : "From the Section Designer polygon (read-only)." }));
     } else if (s.db_ref) {
       const info = ssTypeInfo(key), typ = info.alias || info.key;
       const edit = ssEl("button", { type: "button", class: "btn btn-small", id: "ssDbEdit", title: "Detach from the database: recompute every property from the dimensions" }, ["Edit as Parametric"]);

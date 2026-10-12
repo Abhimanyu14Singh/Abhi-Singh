@@ -36,8 +36,11 @@ def _typed_view(ssec):
 
 
 def build_section(stag: int, ssec, mat, scale: float,
-                  nd_tag: int) -> Tuple[int, str]:
+                  nd_tag: int, materials=None) -> Tuple[int, str]:
     """Linear shell section honouring ``shell_type`` (see module doc)."""
+    from skyframe.engine import slab_sections as _wbs   # Wave B ortho/slab
+    if _wbs.is_special(ssec, mat):
+        return _wbs.build(stag, ssec, mat, scale, nd_tag, materials)
     return elastic_shell_section(stag, _typed_view(ssec), mat, scale, nd_tag)
 
 

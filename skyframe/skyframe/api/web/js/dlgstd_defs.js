@@ -29,6 +29,9 @@ import { openMatLib as dsOpenMatLib } from "./matlib.js";   // v1.21 material li
 
 import { ssShapeEditor as dsSsEditor, ssShapeLabel as dsSsLabel } from "./secshape_ui.js";   // v1.21 Shape selector + parametric forms
 import { openSteelDb as dsOpenSteelDb } from "./steeldb.js";   // v1.21 Import from Database…
+import { editCompositeSection as dsWbEditComposite, ccIs as dsWbCcIs } from "./wb_composite.js";   // Wave B composite columns
+import { wbOrthoSymOptions as dsWbSymOpts, wbOrthoSymWrite as dsWbSymWrite, wbOrthoGroup as dsWbOrthoGroup } from "./wb_ortho.js";   // Wave B orthotropic materials
+import { wbShellTypeFields as dsWbShellType } from "./wb_slab.js";   // Wave B slab property types / CLT
 import { LC_PAT_TYPES as dsLcPatTypes, lcOpenSpectrumFromCode as dsLcSpecFromCode, lcHasSource as dsLcHasSource } from "./loadcodes.js";   // code spectra + pattern types (js/loadcodes.js)
 
 const G = 9.80665;
@@ -152,7 +155,7 @@ export function editMaterial(sky, D, name, { copyOf, type = "concrete", done } =
         ? F.readout("Mass per Unit Volume", () => isNum(mat.unit_weight) ? mat.unit_weight / G : null, { kind: "mass_density", hint: "auto = weight / g" })
         : F.num(mat, "mass_density", { label: "Mass per Unit Volume", kind: "mass_density", gt: 0, id: "dsMatMass" }),
     ]));
-    body.appendChild(dkGroup((uniax ? "Uniaxial" : "Isotropic") + " Property Data", [
+    body.appendChild(dsWbOrthoGroup(F, mat, build) || dkGroup((uniax ? "Uniaxial" : "Isotropic") + " Property Data", [   // Wave B: orthotropic group (js/wb_ortho.js)
       F.num(mat, "E", { label: "Modulus of Elasticity, E", kind: "modulus", gt: 0, id: "dsMatE", onChange: () => F.refresh() }),
       uniax ? null : F.num(mat, "nu", { label: "Poisson's Ratio, ν", min: 0, lt: 0.5, id: "dsMatNu", onChange: () => F.refresh() }),
       uniax ? null : F.readout("Shear Modulus, G", gTxt, { kind: "modulus", hint: "E / 2(1 + ν)" }),
@@ -172,7 +175,7 @@ export function editMaterial(sky, D, name, { copyOf, type = "concrete", done } =
       ["symmetry", "isotropic"], ["alpha", null], ["damping", 0], ["lightweight", false], ["lam", 1],
     ];
     const adv = dkAdvanced([
-      F.select(mat, "symmetry", [["isotropic", "Isotropic"], ["uniaxial", "Uniaxial (rebar / tendon)"]], { label: "Directional Symmetry", id: "dsMatSym", onChange: () => build() }),
+      F.select(mat, "symmetry", [["isotropic", "Isotropic"], ["uniaxial", "Uniaxial (rebar / tendon)"], ...dsWbSymOpts], { label: "Directional Symmetry", id: "dsMatSym", write: v => dsWbSymWrite(mat, v), onChange: () => build() }),   // + Wave B orthotropic
       F.num(mat, "alpha", { label: "Thermal Expansion, α", kind: "thermal_coeff", gt: 0, allowNull: true, def: null,
         nullText: `from model (${dsU.toDisplay("thermal_coeff", D.thermal_alpha ?? 1.2e-5).toExponential(2)})`, id: "dsMatAlpha" }),
       F.num(mat, "damping", { label: "Modal Damping Ratio", min: 0, lt: 1, def: 0, read: () => mat.damping ?? 0, id: "dsMatDamp",
@@ -236,6 +239,7 @@ export function openFrameSections(sky, { select } = {}) {
       { label: "Add Built-up Section…", id: "dsSecBuiltup", fn: () => thenLegacy(dlg, sky, D, () => sky.openBuiltup && sky.openBuiltup()) },   // v1.21 (js/builtup.js)
 
       { label: "Import from Database…", id: "dsSecDb", fn: () => dsOpenSteelDb(sky, D, { done: nm => { list.select(nm); sync(); } }) },   // v1.21 (js/steeldb.js)
+      { label: "Add Composite Column…", id: "dsSecComposite", fn: () => dsWbEditComposite(sky, D, null, { done: nm => { list.select(nm); sync(); } }) },   // Wave B (js/wb_composite.js)
       { sep: "Selected" },
       { label: "Modify/Show Section…", id: "dsSecModify", needsSel: true, fn: k => modify(k) },
       { label: "Delete Section", id: "dsSecDelete", needsSel: true, fn: k => del(k) },
@@ -246,6 +250,7 @@ export function openFrameSections(sky, { select } = {}) {
     if (!k) return;
     if (D.sections[k] && D.sections[k].kind === "nonprismatic") { thenLegacy(dlg, sky, D, () => sky.openNonprismatic && sky.openNonprismatic(k)); return; }
     if (D.builtup_sections && D.builtup_sections[k] && sky.openBuiltup) { thenLegacy(dlg, sky, D, () => sky.openBuiltup(k)); return; }   // v1.21 re-edit built-up
+    if (dsWbCcIs(D.sections[k])) { dsWbEditComposite(sky, D, k, { done: nm => { list.select(nm); sync(); } }); return; }   // Wave B composite
     edit(k);
   };
   const del = k => {
@@ -433,6 +438,7 @@ export function editShellSection(sky, D, name, { copyOf, done } = {}) {
   const draftName = { v: nm0 };
   const F = dkForm();
   const w8sh = dsW8ShellFields(F, s, D, name);   // W8 shell type / one-way
+  const wbsl = dsWbShellType(F, s, D, { thicknessId: "dsShT", onChange: () => pv && pv.update() });   // Wave B slab property type / CLT (js/wb_slab.js)
   const groups = {};
   for (const [k, lbl, isMass, grp] of dsSHELL_MODS) (groups[grp] = groups[grp] || []).push(F.num(s, k, { label: lbl, read: () => eff(s, k), def: 1, id: "dsShMod_" + k, ...(isMass ? { min: 0 } : { gt: 0 }) }));
   const adv = dkAdvanced([
@@ -446,7 +452,8 @@ export function editShellSection(sky, D, name, { copyOf, done } = {}) {
       F.select(s, "material", () => Object.keys(D.materials || {}).map(n => [n, n]), { label: "Material", id: "dsShMat" }),
     ]),
     dkGroup("Property Data", [
-      F.num(s, "thickness", { label: "Thickness", kind: "dim", gt: 0, id: "dsShT" }),
+      wbsl.thickness(F.num(s, "thickness", { label: "Thickness", kind: "dim", gt: 0, id: "dsShT" })),
+      wbsl.node,   // Wave B: property type + geometry
       ...w8sh.nodes,   // W8 shell type + one-way load distribution (js/w8_shell.js)
       s.layered ? dkNote(`Layered section: <b>${(s.layered.layers || []).length}</b> layers (total ${dsU.fmt("dim", (s.layered.layers || []).reduce((a, l) => a + (+l.t || 0), 0), 3)} ${dsU.label("dim")}) — edit the layers with <b>Layered Sections…</b>.`) : null,
     ]),
