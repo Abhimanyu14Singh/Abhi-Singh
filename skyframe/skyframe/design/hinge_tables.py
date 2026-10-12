@@ -177,7 +177,8 @@ PARAM_DEFAULTS = {
     "Lv_ratio": 0.5,          # EC8-3 shear span / L
 }
 BRACE_SHAPES = ("auto", "W", "2L_in", "2L_out", "HSS", "pipe", "angle")
-AUTO_KEYS = ("code", "component", "dof", "params", "gravity", "P")
+AUTO_KEYS = ("code", "component", "dof", "params", "gravity", "P",
+             "axial_update")        # wave C: P-M capacity tracks P
 
 
 def _num(v, what: str) -> float:
@@ -243,8 +244,17 @@ def normalize_auto(d, what: str = "auto hinge") -> dict:
     P = d.get("P")
     if P is not None:
         P = _num(P, f"{what} P")
-    return {"code": code, "component": comp, "dof": dof, "params": out_p,
-            "gravity": grav, "P": P}
+    out = {"code": code, "component": comp, "dof": dof, "params": out_p,
+           "gravity": grav, "P": P}
+    au = d.get("axial_update", False)            # wave C (kept when True)
+    if not isinstance(au, bool):
+        raise ValueError(f"{what}: axial_update must be true/false")
+    if au:
+        if dof != "PMM":
+            raise ValueError(f"{what}: axial_update applies to a PMM "
+                             "auto hinge")
+        out["axial_update"] = True
+    return out
 
 
 def needs_axial(auto: dict) -> bool:
@@ -552,6 +562,8 @@ def _rc_ctx(model, m, auto, axis):
 
 
 def rc_beam(model, m, auto, axis, P_G=0.0):
+    if auto["code"] in _htc.CODES:                     # wave C TBI
+        return _htc.dispatch(model, m, auto, axis, P_G, "rc_beam")
     ctx = _rc_ctx(model, m, auto, axis)
     if ctx is None:
         return None, "section has no rectangular drawing dims b/h"
@@ -615,6 +627,8 @@ def _eff_stiffness_factor(n: float) -> float:
 
 
 def rc_column(model, m, auto, axis, P_G=0.0):
+    if auto["code"] in _htc.CODES:                     # wave C Caltrans/TBI
+        return _htc.dispatch(model, m, auto, axis, P_G, "rc_column")
     ctx = _rc_ctx(model, m, auto, axis)
     if ctx is None:
         return None, "section has no rectangular drawing dims b/h"
@@ -732,7 +746,11 @@ def _ec8(model, m, auto, axis, P_G, comp):
 
 GENERATORS = {"steel_beam": steel_beam, "steel_column": steel_column,
               "steel_brace": steel_brace, "rc_beam": rc_beam,
-              "rc_column": rc_column, "rc_column_shear": rc_column_shear}
+              "rc_column": rc_column, "rc_column_shear": rc_column_shear,
+              # wave C (design.hinge_tables_c): TBI coupling beam
+              "rc_coupling_beam": lambda model, m, auto, axis, P_G=0.0:
+              _htc.dispatch(model, m, auto, axis, P_G,
+                            "rc_coupling_beam")}
 
 
 def generate(model, m, auto: dict, P_G: float = 0.0
@@ -798,3 +816,8 @@ def catalog() -> dict:
                       for c in CODES},
             "params": dict(PARAM_DEFAULTS),
             "brace_shapes": list(BRACE_SHAPES)}
+
+
+# wave C: Caltrans SDC / TBI tables (design.hinge_tables_c)
+from skyframe.design import hinge_tables_c as _htc  # noqa: E402
+_htc.register(__import__(__name__, fromlist=["CODES"]))

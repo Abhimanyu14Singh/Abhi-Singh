@@ -26,7 +26,12 @@ distinct P (sorted ascending on save); an M2M3 curve lists exactly one
 point ``[0, M]``.  The surface must define the 0 (or 180) and 90 (or 270)
 degree curves.
 
-Engine idealization (documented exactly): the axial force is held at the
+Wave C (CONTRACT "Wave C hinges"): ``axial.source = "analysis"`` starts
+from the gravity P and UPDATES the capacity every committed step from the
+hinge's own axial force (``engine.pmm_update``); ``drop_strength =
+"drops"`` follows the backbone past C (C -> D drop, D -> E, residual).
+
+Legacy engine idealization (documented exactly): the axial force is held at the
 gravity value P (or ``axial.value``) — the ETABS "P from case/combo"
 option — and the M2-M3 yield contour at that P is fitted by the ELLIPSE
 through the 0/180 and 90/270 curve moments (``M2y``, ``M3y`` = the mean of
@@ -44,7 +49,8 @@ import math
 from typing import Dict, List, Optional
 
 INTERACTION_TYPES = ("PMM", "M2M3")
-AXIAL_SOURCES = ("gravity", "value")
+AXIAL_SOURCES = ("gravity", "value",
+                 "analysis")             # wave C: P updated every step
 
 
 def _num(v, what: str) -> float:
@@ -212,3 +218,29 @@ def classify(dp: float, mk: List[float], acc: Optional[dict],
     if dp <= mE + tol:
         return "D-E"
     return ">E"
+
+
+# ------------------------------------------------------------- wave C
+def capacity_ratio(prop: dict, dp: float) -> float:
+    """Backbone force ratio (force / F_B) at the normalised plastic
+    deformation ``dp`` (backbone units, B at 0).  ``drops``: the backbone
+    itself (C -> D drop, D -> E, then a residual 1e-3 past E — a vertical
+    drop is taken at once); ``holds``: the B -> C line continued (the
+    legacy linear kinematic hardening)."""
+    bb = prop["backbone"]
+    b0, fB = bb[1][0], bb[1][1]
+    pts = [(d - b0, f / fB) for d, f in bb[1:]]
+    if len(pts) == 1:
+        return 1.0
+    if prop.get("drop_strength", "holds") != "drops":
+        (d0, r0), (d1, r1) = pts[0], pts[1]
+        return r0 + (r1 - r0) * dp / (d1 - d0) if d1 > d0 else r1
+    for (d0, r0), (d1, r1) in zip(pts, pts[1:]):
+        if dp < d1 or (dp == d1 and d1 > d0):
+            if d1 <= d0:
+                continue
+            return r0 + (r1 - r0) * (dp - d0) / (d1 - d0)
+    return RESIDUAL_RATIO if len(pts) > 2 else pts[-1][1]
+
+
+RESIDUAL_RATIO = 1.0e-3
