@@ -659,9 +659,13 @@ def generate(model: BuildingModel, code: str, name: Optional[str] = None,
     """Compute and store the pattern (kind "wind" for the wind generator,
     else "quake"); returns the pattern."""
     summary = compute(model, code, **params)
-    kind = "wind" if code == "asce7_22_wind" else "quake"
-    return write_pattern(model, name or _DEFAULT_NAME[code], kind, summary,
-                         ecc)
+    kind = "wind" if code in WIND_CODES else "quake"     # v1.19 hook
+    ecc, ecc_y = _wx.case_torsion(summary, ecc)          # v1.19 ASCE cases
+    pat = write_pattern(model, name or _DEFAULT_NAME[code], kind, summary,
+                        ecc)
+    if ecc_y is not None:
+        pat.ecc_y = float(ecc_y)
+    return pat
 
 
 def asce7_22_elf(model, SDS, SD1, R, name="ELF22", ecc=0.0, **kw):
@@ -710,3 +714,17 @@ def params_from_body(body: dict):
     if bad:
         raise ValueError(f"unknown parameter(s) for {code}: {bad}")
     return code, (name.strip() if name else None), ecc, params
+
+
+# ---------------------------------------------------------------- v1.19
+# International seismic / wind generators and the ASCE 7 wind load cases
+# (CONTRACT "Auto lateral loads: international seismic and wind codes,
+# ASCE 7 wind load cases"): bulk code in seismic_codes_ext / wind_codes_ext.
+from . import seismic_codes_ext as _sx, wind_codes_ext as _wx  # noqa: E402
+
+_COMPUTE.update(_sx.COMPUTE)
+_COMPUTE.update(_wx.COMPUTE)
+_DEFAULT_NAME.update(_sx.DEFAULT_NAME)
+_DEFAULT_NAME.update(_wx.DEFAULT_NAME)
+CODES = CODES + tuple(c for c in _COMPUTE if c not in CODES)
+WIND_CODES = _wx.WIND_CODES

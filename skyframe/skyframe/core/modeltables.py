@@ -1791,6 +1791,8 @@ def _build_catalogue() -> List[Table]:
             Col("self_weight_factor", "Self Wt Mult", num, default=0.0),
             Col("accidental_torsion", "Acc. Torsion", "bool", default=False),
             Col("ecc", "Ecc. Ratio", num, default=0.05),
+            # v1.19 ASCE 7 wind case 4: fy-torque eccentricity (blank = ecc)
+            Col("ecc_y", "Ecc. Ratio (Fy)", num, optional=True),
         ], container="patterns", keycol="name",
         on_rename=_cascade_pattern, delete_refs=_pattern_refs,
         new_obj=lambda d: {"kind": "other", "member_udls": [],

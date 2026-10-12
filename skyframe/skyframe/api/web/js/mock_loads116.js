@@ -11,6 +11,10 @@
    or an explicit `weights` {story: kN} override. Everything stays SI. */
 
 const G = 9.80665;
+// v1.19 international codes + ASCE 7 wind cases (js/mock_autolat_ext.js)
+import { alxMockCompute, ALX_MOCK_PARAMS as alxMockParams, ALX_MOCK_ASCE22_KEYS as alxMockAsce22Keys,
+  ALX_MOCK_DEFAULT_NAME as alxMockDefaultName, ALX_MOCK_WIND as alxMockWind,
+  alxMockCaseTorsion } from "./mock_autolat_ext.js";
 
 export const AL_CODES = ["asce7_22", "ec8", "is1893", "user_coefficient", "user_loads", "asce7_22_wind"];
 const DEFAULT_NAME = { asce7_22: "ELF22", ec8: "EC8", is1893: "IS1893",
@@ -281,6 +285,12 @@ function asce7_22Wind(model, { V, exposure = "C", Kzt = 1, Kd = 0.85, ze = 0, cp
 
 const COMPUTE = { asce7_22, ec8, is1893, user_coefficient: userCoefficient, user_loads: userLoads,
   asce7_22_wind: asce7_22Wind };
+// v1.19 hook: register the international codes / extended ASCE 7-22 wind
+Object.assign(COMPUTE, alxMockCompute(asce7_22Wind));
+Object.assign(PARAMS, alxMockParams);
+PARAMS.asce7_22_wind = [...PARAMS.asce7_22_wind, ...alxMockAsce22Keys];
+Object.assign(DEFAULT_NAME, alxMockDefaultName);
+AL_CODES.push(...Object.keys(alxMockParams));
 
 /** params_from_body mirror → {code, name, ecc, params}; throws the server's message. */
 export function mockAlParams(body) {
@@ -309,13 +319,15 @@ export function mockAutoLateralGenerate(model, body) {
   const { code, name, ecc, params } = mockAlParams(body);
   const sm = COMPUTE[code](model, params);
   const nm = name || DEFAULT_NAME[code];
+  const [eccU, eccY] = alxMockCaseTorsion(sm, ecc);       // v1.19 ASCE cases
   if (!isNum(ecc) || Math.abs(ecc) > 0.5) throw new Error("ecc must be a finite value with |ecc| <= 0.5");
   const story_forces = sm.stories.map(r => ({ story: r.story,
     fx: r.fx ?? (sm.direction === "X" ? r.F : 0), fy: r.fy ?? (sm.direction === "Y" ? r.F : 0) }));
-  const pat = { name: nm, kind: code === "asce7_22_wind" ? "wind" : "quake",
+  const pat = { name: nm, kind: alxMockWind.has(code) ? "wind" : "quake",   // v1.19 hook
     member_loads: [], area_loads: [], story_forces, thermal_loads: [], self_weight_factor: 0,
     accidental_torsion: false, ecc: 0.05 };
-  if (ecc) { pat.accidental_torsion = true; pat.ecc = +ecc; }
+  if (eccU) { pat.accidental_torsion = true; pat.ecc = +eccU; }
+  if (eccY != null) pat.ecc_y = +eccY;                       // v1.19
   model.patterns = model.patterns || {};
   model.patterns[nm] = pat;
   return { model, summary: sm, pattern: pat };

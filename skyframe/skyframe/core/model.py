@@ -1199,6 +1199,9 @@ class LoadPattern:
     # (core.thermal_ext.ShellThermalLoad / JointTemperature)
     shell_thermal_loads: list = field(default_factory=list)
     joint_temperatures: list = field(default_factory=list)
+    # v1.19 ASCE 7 wind case 4 (core.wind_codes_ext): eccentricity ratio for
+    # the fy story torque; None (default, omitted from to_dict) = ecc.
+    ecc_y: Optional[float] = None
 
     def all_member_loads(self) -> List[MemberLoad]:
         """member_loads plus legacy member_udls expressed as MemberLoads."""
@@ -1224,6 +1227,7 @@ class LoadPattern:
                                          self.ground_displacements]}
                if self.ground_displacements else {}),
             **_thx.pattern_ext_to_dict(self),
+            **({"ecc_y": self.ecc_y} if self.ecc_y is not None else {}),
         }
 
 
@@ -3814,6 +3818,8 @@ class BuildingModel:
                 raise ValueError(f"Pattern {pat.name}: ecc must be a finite "
                                  f"value (got {pat.ecc!r})")
             _thx.validate_pattern_ext(self, pat)
+            from .wind_codes_ext import validate_pattern_ecc_y  # v1.19
+            validate_pattern_ecc_y(pat)
         for case in self.cases.values():
             for p in case.patterns:
                 if p not in self.patterns:
@@ -4336,6 +4342,8 @@ class BuildingModel:
             # v0.8 accidental torsion + thermal loads (absent = defaults)
             pat.accidental_torsion = bool(pd.get("accidental_torsion", False))
             pat.ecc = float(pd.get("ecc", 0.05))
+            if pd.get("ecc_y") is not None:          # v1.19 wind case 4
+                pat.ecc_y = float(pd["ecc_y"])
             for t in pd.get("thermal_loads") or []:
                 pat.thermal_loads.append(ThermalLoad(
                     t["member_uid"], float(t.get("dT", 0.0)),
