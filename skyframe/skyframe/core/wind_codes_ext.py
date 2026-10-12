@@ -862,3 +862,8 @@ DEFAULT_NAME = {"asce7_16_wind": "WIND16", "en1991_wind": "WINDEN",
                 "is875_wind": "WINDIS", "as1170_2_wind": "WINDAS",
                 "gb50009_wind": "WINDGB"}
 WIND_CODES = frozenset(COMPUTE)
+
+
+# register with autolateral (no-op when autolateral already did it)
+from . import autolateral as _al_reg  # noqa: E402
+_al_reg._register_ext(__import__("sys").modules[__name__])

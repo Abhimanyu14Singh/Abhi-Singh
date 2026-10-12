@@ -720,11 +720,24 @@ def params_from_body(body: dict):
 # International seismic / wind generators and the ASCE 7 wind load cases
 # (CONTRACT "Auto lateral loads: international seismic and wind codes,
 # ASCE 7 wind load cases"): bulk code in seismic_codes_ext / wind_codes_ext.
+WIND_CODES: frozenset = frozenset()
+
+
+def _register_ext(mod) -> None:
+    """Register an extension module's generators (idempotent).  Called
+    here AND at the end of each extension module, so the registration is
+    complete whichever module is imported first (no import cycle)."""
+    global CODES, WIND_CODES
+    if not hasattr(mod, "COMPUTE"):
+        return                      # partially initialised: it registers itself
+    _COMPUTE.update(mod.COMPUTE)
+    _DEFAULT_NAME.update(mod.DEFAULT_NAME)
+    CODES = CODES + tuple(c for c in _COMPUTE if c not in CODES)
+    if hasattr(mod, "WIND_CODES"):
+        WIND_CODES = frozenset(WIND_CODES | mod.WIND_CODES)
+
+
 from . import seismic_codes_ext as _sx, wind_codes_ext as _wx  # noqa: E402
 
-_COMPUTE.update(_sx.COMPUTE)
-_COMPUTE.update(_wx.COMPUTE)
-_DEFAULT_NAME.update(_sx.DEFAULT_NAME)
-_DEFAULT_NAME.update(_wx.DEFAULT_NAME)
-CODES = CODES + tuple(c for c in _COMPUTE if c not in CODES)
-WIND_CODES = _wx.WIND_CODES
+_register_ext(_sx)
+_register_ext(_wx)

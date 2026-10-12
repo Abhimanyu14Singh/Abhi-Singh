@@ -971,8 +971,7 @@ class ShellRegion:
                 **_shellopts_shell_to_dict(self),  # mesh opts / load set
                 **_sht.region_extra_to_dict(self),
                 **_towers.tag_to_dict(self),       # C9 tower (when set)
-                **_xch.ref_to_dict(self)}          # exchange (when set)
-
+                **_xch.ref_to_dict(self),          # exchange (when set)
                 **_spd.tag_to_dict(self)}          # spandrel (when set)
 
 

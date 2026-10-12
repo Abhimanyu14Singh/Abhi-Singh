@@ -592,3 +592,8 @@ DEFAULT_NAME = {"nzs1170_5": "NZS1170", "as1170_4": "AS1170",
                 "gb50011": "GB50011", "tsc2018": "TSC2018",
                 "kds41": "KDS41", "nscp2015": "NSCP2015",
                 "ntc_cdmx": "NTCSISMO"}
+
+
+# register with autolateral (no-op when autolateral already did it)
+from . import autolateral as _al_reg  # noqa: E402
+_al_reg._register_ext(__import__("sys").modules[__name__])
