@@ -1,130 +1,51 @@
-# SkyFrame vs ETABS v22: parity matrix re-audit (2026-10-12)
+# SkyFrame vs ETABS v22: parity status (v1.25.0, 2026-10-12)
 
-Source: `skyframe/docs/etabs_parity_matrix.json` (232 rows). Output: `matrix.json` next to this file (242 rows: 232 re-verified plus 10 new). The rule is strict: a row is full only when the engine and the UI both exist, and the gap is empty. A row that covers only part of the ETABS feature is partial. `pending: true` marks the three buckling/scalability rows that another branch is still landing; they are unchanged. `flag` marks values entered from memory or not verified (see docs/REVIEW_FLAGS.md).
+Source: `skyframe/docs/etabs_parity_matrix.json`. A row is full only when the engine and the UI both exist and the gap is empty. Rows with a `flag` hold values entered from memory or not checked against a third-party program (see docs/REVIEW_FLAGS.md).
 
 ## Counts by status
 
-| Status | Before (JSON) | After |
+| Status | Re-audit (v1.24, start of Wave C) | Now (v1.25) |
 |---|---|---|
-| full | 163 | 152 |
-| partial | 34 | 64 |
-| missing | 18 | 5 |
-| beyond | 7 | 11 |
+| full | 152 | 203 |
+| partial | 64 | 18 |
+| missing | 5 | 0 |
+| beyond | 11 | 11 |
 | out_of_scope | 10 | 10 |
-| total | 232 | 242 |
+| total | 242 | 242 |
 
-docs/ETABS_PARITY.md still shows the original 2026-10-11 audit (124 / 49 / 42 / 7 / 10). The JSON had already been partly updated by later merges.
+## What closed since the re-audit
 
-Status changes on the original 232 rows: 34 rows went up to full (23 from partial, 11 from missing), 5 went from missing to partial, and 1 (Rhino/Grasshopper) went from missing to beyond. 45 rows went down from full to partial. Of those, 40 were rated full but still listed a gap, and 5 were rated full with no gap. Checking the code for these rows found real limits: section-cut, pier and spandrel forces are computed only for static cases and additive combos; time-history cases have no shell forces or stresses; floor_mesh exists only in the engine; and there are no distributed frame moments and no local-1 or local-3 distributed loads.
+- **Buckling and scale (B6):** linear buckling with shells, links and releases; buckling from a stressed state; BucklingFEM member buckling; MUMPS above 20k equations and Lanczos modal for large models.
+- **Interface (C1):** general grids in E2K / as primary / in 3D; Model Explorer context menus; shell edits with openings; elevation and 3D object snaps, extension and parallel snaps; per-quantity units; auto-save with versions; model lock after a run.
+- **Tables (C2):** joint velocities and accelerations, assembled masses, mass summaries, material takeoff, story max/avg displacements, modal load participation, generalized displacements, nonlinear link rows; 32 new database-edit tables.
+- **Geometry and loads (C3):** frame pier labels; floor auto-mesh dialog with 'as drawn'; per-area edge constraints; distributed moments and local-1/3 loads; beam live-load reduction; static eccentricity overrides; ASCE 7 Fpx.
+- **Codes and libraries (C4):** EC8 national-annex presets; NBCC Mv/J; IBC/UBC/NTC seismic; BS 6399, API 4F, NTC wind; TSC/KDS/NSCP/NTC spectra; spectrum from file; USGS lookup; GB/CSA/JIS/KS/GOST materials; Canadian/Japanese/Korean/Russian steel.
+- **Links and hinges (C5):** coupled 6x6 links, per-DOF multilinear elastic, Degrading/Concrete/Isotropic/BRB hysteresis, HDR isolator, velocity-dependent friction, friction in tension, effective stiffness and damping, P-varying PMM hinges, strength drop past C, Caltrans and TBI tables.
+- **Analysis (C6):** eigen shift/cutoff/tolerance, modal TH and FNA as case types, NL TH from a staged/nonlinear state, more FNA link laws, per-mode damping options for RS/SS, any-DOF pushover control, ASCE 41 Cm/TL, FEMA 440 displacement modification, shell creep and shrinkage.
+- **Results (C7):** section-cut, pier and spandrel forces for RS, TH, nonlinear, staged and envelopes; TH shell forces; 3D pier/spandrel/link diagrams; video export; Compare Results.
+- **E2K and interop (C8):** native E2K records for nonlinear static, hinges, links, staged, frequency and thermal data; DWG guidance; Tekla/Revit coverage via SDNF, CIS/2 and IFC.
+- **Properties (C9):** anisotropic materials and material angle; Section Designer moment-curvature; any-material layered shells; CSV table export.
+- **Owner requests (D1-D4):** ETABS-style Draw Walls / Quick Draw Walls; tabbed Display Options per window; unit-aware section editors; centre-of-mass fix (CR verified); Template Library with 14 structural-system templates.
 
-Rows with a flag: 46.
+## Remaining partial rows (exact gaps)
 
-## Remaining partial and missing rows (exact gaps)
+- **[partial] Geometry objects / Pier labels**: Frame pier labels done (Wave C3); pier forces still in-plane P, V, M only (no V3, T, M2)
+- **[partial] Properties / Steel section database**: Canadian, Japanese, Korean and Russian tables added (Wave C4); no Chinese GB/T 11263 tables
+- **[partial] Properties / Link: T/C friction isolator**: Friction in tension added; per-direction mu/R works in FNA only (OpenSees has no orthotropic friction bearing)
+- **[partial] Properties / User-defined hinge properties**: Axial update and post-C strength drop done (Wave C5); M2-M3 yield contour is still an ellipse
+- **[partial] Loads / Auto seismic other codes (TSC 2018, KDS 2022, Mexican, Philippine NSCP, IBC legacy, UBC)**: IBC 2006/09/12, UBC 97, Italian NTC 2018 added (Wave C4); Colombia, Peru, Chile, Indonesia, Saudi and ASCE 7-10 standalone not added
+- **[partial] Loads / Auto wind other codes (GB 50009, TSC, KDS, Mexican, etc.)**: BS 6399-2, API 4F, Italian NTC wind added (Wave C4); GB 50009 beta_z still uses a linear mode shape
+- **[partial] Analysis / Fast Nonlinear Analysis (FNA)**: Takeda/Pivot/BRB/coupled/T-C and other links run in FNA (Waves C5/C6); frame-hinge cases still refused; HDR and isotropic links need direct integration
+- **[partial] Analysis / Staged construction with creep/shrinkage**: Shell creep/shrinkage added (Wave C6, opt-in); members with end releases creep axially only; step method needs user stages
+- **[partial] Results & output / Frame force diagrams**: 3D pier/spandrel/link diagrams added (Wave C7); link diagrams only for elastic links on static cases and single-valued combos
+- **[partial] Results & output / Shell stresses (S11, S22, S12, top/bottom, von Mises)**: Stresses still derived from resultants; no TH shell stresses
+- **[partial] Results & output / Pier forces**: All case types and 3D diagrams done (Wave C7); in-plane P, V, M only
+- **[partial] Interoperability / ETABS .e2k import**: Nonlinear static, hinges, links, staged, frequency and thermal records now native (Wave C8); code auto-lateral records and nonlinear point-spring properties still not read
+- **[partial] Interoperability / ETABS .e2k export**: Nonlinear/staged/thermal now native records (Wave C8); hyperstatic cases, section cuts, panel zones, wall hinges, pushover performance and RS/TH options still $SF-only
+- **[partial] Interoperability / DXF/DWG import**: DWG detected with conversion guidance (Wave C8); no converter on the build platform
+- **[partial] Interoperability / Revit link**: IFC both ways documented (Wave C8); native add-in needs Windows-only Revit API
+- **[partial] Interoperability / Steel interop (Tekla, CIS/2, SDNF, IDEA StatiCa)**: SDNF both ways, CIS/2 in, IFC both ways (Wave C8); native Tekla link needs Windows-only API
+- **[partial] Analysis / Link effective (linear) stiffness and damping**: k_eff / c_eff used in modal, RS and linear cases (Wave C5); effective damping not converted to modal damping for RS / FNA
+- **[partial] Analysis / Generalized displacements**: Definitions, dialog, DB tables and results table done (Wave C2); no plot-function traces or pushover monitoring
 
-- **[partial] Interface & workflow / General (arbitrary line) grids**: General grids are not written to E2K and cannot be the primary grid system; editing/dimension tools for them are plan-view only
-- **[partial] Interface & workflow / Model explorer tree**: No right-click context menu in the Model Explorer tree (ETABS edits definitions and objects from the tree's context menu)
-- **[partial] Interface & workflow / Edit shells: divide, merge, chop, expand/shrink, reshape**: Divide / merge / chop / expand-shrink refuse shells that contain openings; the vertex reshaper works in plan view only
-- **[partial] Interface & workflow / Snap options**: Object snaps work in the plan view only (elevation and 3D drawing use grid snap); no extension or parallel snaps
-- **[partial] Interface & workflow / Display tables (Show Tables)**: Far fewer tables than ETABS. Missing: Joint Velocities / Accelerations, Assembled Joint Masses, Mass Summary by Story, Material List / takeoff, Story Max/Avg Displacements, a Modal Load Participation table in the catalogue, nonlinear-link rows in Element Forces - Links (device links are only warned)
-- **[partial] Interface & workflow / Interactive database editing**: No tables for section cuts, temperature loads (frame/shell/joint), ground displacements, P-Delta / active-DOF / analysis / damping options, hyperstatic cases, towers, panel zones, nonprismatic / built-up / Section Designer sections, joint patterns, frame hinge assignments, floor_mesh options; staged-construction table holds only name + pattern (user stages not editable)
-- **[partial] Interface & workflow / Units**: No per-quantity custom units or decimal-places control (presets only)
-- **[partial] Interface & workflow / Save / open / recent / file format**: No auto-save / backup versions
-- **[partial] Geometry objects / Pier labels**: Pier labels on frames (column-as-pier) not supported; pier forces cover in-plane P, V, M only
-- **[partial] Geometry objects / Floor auto-mesh**: floor_mesh options (cookie-cut, mesh at beams/walls/grids) are engine/JSON-only: no dialog and no DB-table column; no 'no auto mesh (as drawn)' option
-- **[partial] Geometry objects / Auto edge constraints**: Model-wide switch only; no per-shell Assign > Shell > Auto Edge Constraints
-- **[partial] Properties / Orthotropic / anisotropic materials**: No anisotropic (normal-shear coupled) materials; no material angle (material axes fixed to the shell element local axes); frames use only E1 / G12
-- **[partial] Properties / Material libraries**: No Chinese (GB), Canadian (CSA), Japanese, Korean, Russian or other regional sets
-- **[partial] Properties / Steel section database**: No Chinese, Japanese, Korean, Canadian (CISC) or Russian section tables
-- **[partial] Properties / Section Designer**: No moment-curvature analysis / plot output
-- **[partial] Properties / Layered / nonlinear shells**: Only concrete and steel layer kinds; layer stresses in linear runs are an approximation from a homogeneous section
-- **[partial] Properties / Link: linear**: No coupled 6x6 stiffness matrix
-- **[partial] Properties / Link: multilinear elastic**: Per-DOF definition limited to the shear pair + vertical kv (no independent U1..R3 curves)
-- **[partial] Properties / Link: multilinear plastic (kinematic, Takeda, Pivot)**: No Degrading, Isotropic, Concrete or BRB-hardening hysteresis options on the multilinear plastic link
-- **[partial] Properties / Link: rubber isolator**: No high-damping rubber (HDR) isolator model
-- **[partial] Properties / Link: friction isolator (single/double/triple pendulum)**: Velocity-dependent (slow/fast) friction not exposed
-- **[partial] Properties / Link: T/C friction isolator**: Isotropic friction and radius (no per-direction mu, R); no friction in tension
-- **[partial] Properties / Auto hinges ASCE 41-17 (frames)**: Column P-M2-M3 hinges hold P at the gravity value (no axial variation during the push); ASCE 41-23 tables reuse the 41-17 numbers
-- **[partial] Properties / Auto hinges other codes (FEMA 356, Caltrans, EC8-3, TBI)**: Caltrans and TBI hinge tables not implemented
-- **[partial] Properties / User-defined hinge properties**: Parametric PMM hinges hold P at its gravity value; M2-M3 yield contour is an ellipse through the 0/90 degree curves; no strength drop past C for interacting hinges
-- **[partial] Loads / Auto seismic Eurocode 8**: No national-annex parameter sets (user enters NA values)
-- **[partial] Loads / Auto seismic NBCC**: Edition-specific Mv / J tables simplified
-- **[partial] Loads / Auto seismic other codes (TSC 2018, KDS 2022, Mexican, Philippine NSCP, IBC legacy, UBC)**: No legacy IBC / UBC / ASCE 7-10 generators and none for other ETABS-listed codes (e.g. Italian NTC, Colombian NSR-10, Peruvian E.030, Chilean NCh433, SNI, SBC)
-- **[partial] Loads / Accidental eccentricity (static)**: Per-diaphragm / per-story eccentricity overrides exist for RS cases only, not for static seismic load patterns
-- **[partial] Loads / Auto wind other codes (GB 50009, TSC, KDS, Mexican, etc.)**: No BS 6399, API 4F, Italian NTC or other remaining ETABS wind codes; GB 50009 beta_z uses a linear mode shape
-- **[partial] Loads / Frame loads (distributed, point, moment; local/global/projected)**: No distributed (uniform / trapezoidal) moment loads; distributed forces only in gravity, local 2 and global X/Y/Z (no local 1 or local 3 direction)
-- **[partial] Loads / Live load reduction**: Beams are not reduced; pier tributary area is plan area / vertical elements unless given
-- **[partial] Loads / Response spectrum functions: ASCE 7**: USGS ordinates are typed by the user (no site-coordinate lookup)
-- **[partial] Loads / Response spectrum functions: other codes (IS 1893, NBCC, NZS 1170.5, AS 1170.4, GB 50011, etc.)**: Only IS 1893, NBCC 2020, NZS 1170.5, AS 1170.4 and GB 50011 beyond ASCE/EC8: no TSC 2018, KDS, NSCP, Mexican, Italian NTC or older-edition spectra, although several of these exist as auto-seismic generators
-- **[partial] Loads / Response spectrum functions: user / from file**: No 'from file' import for RS functions (points typed or pasted); no frequency-vs-value input
-- **[partial] Analysis / Modal analysis (eigen)**: No user frequency shift / cutoff or convergence-tolerance controls on the eigen case
-- **[partial] Analysis / Linear time history - modal superposition**: Not a distinct load case type: run on demand from the TH results tab (FNA with no device nonlinearity), not part of Run All and not referenceable in combinations
-- **[partial] Analysis / Nonlinear direct-integration time history**: Initial conditions only from the case's own gravity stage or a load-control nonlinear static chain without hinges; cannot continue from staged construction or a hinged nonlinear static case
-- **[partial] Analysis / Fast Nonlinear Analysis (FNA)**: Takeda / Pivot multilinear links, BRB, bilinear damper and T/C friction isolator links are not supported in FNA; hinged cases raise; FNA is run on demand from the TH results tab rather than as its own load case type
-- **[partial] Analysis / Damping options**: Composite (material-proportional) ratios not applied to RS or steady-state cases
-- **[partial] Analysis / Pushover control (displacement / load), multiple states**: Control DOF limited to UX/UY at a joint/story (no other DOFs, no generalized displacement)
-- **[partial] Analysis / Pushover target displacement: ASCE 41 coefficient method**: Cm fixed at 1.0; TL long-period branch omitted
-- **[partial] Analysis / Pushover: capacity spectrum (ATC-40 / FEMA 440 EL)**: FEMA 440 displacement modification (improved coefficient method) not offered as a separate method
-- **[partial] Analysis / Staged construction with creep/shrinkage**: Shells get modulus ageing only (no creep / shrinkage strain); members with end releases creep axially only; step method needs user-defined stages (no per-story auto sequence)
-- **[partial] Analysis / Linear buckling** (pending): Include shells (geometric stiffness of plates) and links
-- **[partial] Analysis / Buckling from a stressed / staged state**: Frames only (shells and links excluded), as for linear buckling
-- **[missing] Analysis / BucklingFEM (shell-FEM member buckling)** (pending): Research-grade; defer
-- **[partial] Analysis / Set load cases to run / run control**: No model lock / unlock after analysis
-- **[partial] Analysis / Large-model scalability** (pending): Benchmark and optimize 50k-200k DOF models (sparse eigen, multithreaded MUMPS, out-of-core), sparse stability check
-- **[partial] Results & output / Deformed shape and animation**: No video / animation export (ETABS Create Video)
-- **[partial] Results & output / Frame force diagrams**: Link force diagrams not drawn in 3D; no pier / spandrel force diagrams on the model
-- **[partial] Results & output / Shell force contours**: Time-history cases record no shell forces, so no TH shell contours / envelopes; corner values average element centroids (no Gauss-point extrapolation)
-- **[partial] Results & output / Shell stresses (S11, S22, S12, top/bottom, von Mises)**: No stresses for time-history cases; stresses derived from resultants (+-6M/t^2), layer stresses in linear runs are an approximation; ribbed/deck stresses use the weight-equivalent thickness
-- **[partial] Results & output / Section cut forces**: Computed for static cases and additive combos only: no RS, TH, nonlinear, envelope or staged section-cut forces
-- **[partial] Results & output / Pier forces**: Static cases and additive combos only (no RS / TH / nonlinear / envelope pier forces); in-plane P, V, M only (no V3, T, M2); no pier force diagrams
-- **[partial] Results & output / Spandrel forces**: Static cases and additive combos only (no RS / TH / envelope); no 3D spandrel force diagram
-- **[partial] Results & output / Export to Microsoft Access**: No native Access .mdb/.accdb file (needs the proprietary Jet/ACE engine)
-- **[partial] Interoperability / ETABS .e2k import**: Code auto-lateral records (only 'User Loads' story forces) and nonlinear point-spring properties are not read natively; ETABS hinge tables other than ASCE 41-17/23, FEMA 356, EC8-3 (e.g. ASCE 41-13) map to the nearest supported table with a warning; unknown records become warnings
-- **[partial] Interoperability / ETABS .e2k export**: Hyperstatic cases, section cuts, panel zones, wall fiber hinges, pushover performance options and staged time-dependent options still travel only as $SF comments; RS mode counts / GMC / DSC options and TH damping/DI options are not written as ETABS records
-- **[partial] Interoperability / DXF/DWG import**: No DWG (binary) import: no DWG->DXF converter is available on the build platform (LibreDWG/libredwg-tools is not packaged for Ubuntu 24.04 and no pip package converts DWG without a proprietary runtime), so DWG must be saved as DXF from the CAD program (documented; DWG files get that message)
-- **[partial] Interoperability / Revit link**: A native Revit add-in (CSiXRevit equivalent) needs the Revit API on Windows and cannot be built or tested here; the IFC4 (Revit-friendly) export/import route covers the exchange (docs/INTEROP.md 'Tekla and Revit coverage')
-- **[partial] Interoperability / Steel interop (Tekla, CIS/2, SDNF, IDEA StatiCa)**: No native Tekla link (Tekla Open API is Windows-only and cannot be built or tested here); Tekla Structures exchange goes through SDNF (both ways), CIS/2 (Tekla -> SkyFrame) and IFC4 (both ways); SDNF / CIS/2 / IDEA IOM are documented subsets
-- **[missing] Analysis / Link effective (linear) stiffness and damping**: Add k_eff / c_eff per DOF to link properties and use them in modal, RS and linear cases
-- **[missing] Analysis / Generalized displacements**: Add generalized displacement definitions, results, plot-function traces and pushover monitoring
-- **[partial] Analysis / Response spectrum modal damping options**: No interpolated, proportional or per-mode override damping for RS cases
-- **[missing] Loads / Diaphragm design forces (ASCE 7 §12.10 Fpx)**: Add an Fpx diaphragm load-pattern generator (12.10.1 and the 12.10.3 alternative)
-- **[partial] Results & output / Joint velocity / acceleration output tables**: No Joint Velocities / Joint Accelerations tables in Show Tables / export
-- **[partial] Results & output / Mass output tables (Mass Summary by Story, Assembled Joint Masses)**: No Mass Summary by Story or Assembled Joint Masses table
-- **[missing] Results & output / Material list / quantity takeoff**: Add Material List tables (by story, section, object type)
-
-## Beyond ETABS
-
-- **Command search palette and keyboard-first workflow**: Ctrl+K command palette over every menu act, F1 shortcut overlay, quick-access toolbar  
-  ETABS: No command palette (ribbon/menus, limited shortcuts).
-- **Guided model workflow checklist**: Help > Model Workflow: next-step checklist  
-  ETABS: None.
-- **Accuracy advisor and mesh sensitivity study**: Accuracy Advisor (modelling-choice warnings) and Mesh Sensitivity Study with refinement + Richardson extrapolation  
-  ETABS: None (user judgement).
-- **Automatic model repair**: Analyze > Fix Model: merge, split at crossings, clean duplicates with preview  
-  ETABS: Only Merge Joints / Check Model warnings.
-- **Load takedown / gravity reaction summary**: Gravity takedown per support grouped by grid with balance check, bubble plan  
-  ETABS: No dedicated takedown (reactions + tributary tables only).
-- **Model results comparison tooling**: Tolerance comparator for result JSON (used in equivalence tests; not user-facing)  
-  ETABS: None built in. Caveat: Python / test utility only: no endpoint or UI ('compare runs')
-- **Rhino / Grasshopper interoperability**: Rhino .3dm import (rhino3dm), live-linked .3dm file with change detection / auto apply, and a Grasshopper plugin over the skyframe.exchange/1 schema: layer mapping rules, UserText roles, arcs/NURBS to curved frames, merge/replace sessions, model repair, results (displacements, forces, reactions, periods, drifts) back to Grasshopper  
-  ETABS: No first-party Rhino/Grasshopper link (third-party tools via OAPI).
-- **Open model file format**: Model is plain JSON (.skyframe) with documented schema (CONTRACT)  
-  ETABS: Binary .EDB (text .e2k export available).
-- **ETABS-OAPI-compatible Python facade plus versioned REST / OpenAPI**: skyframe.oapi runs ETABS-style SapModel scripts (File, PropMaterial, PropFrame, PropArea, PointObj, FrameObj, AreaObj, Story, LoadPatterns, LoadCases, RespCombo, Analyze, Results with CSI return codes and comtypes-style byref lists) on any OS without ETABS; every endpoint also served under /api/v1 with a generated OpenAPI 3 document  
-  ETABS: CSI OAPI is a Windows COM/.NET interface (Python via comtypes) to a running ETABS; no REST service or machine-readable API schema.
-- **Exact numpy section solver (J, Cw, shear centre, shear areas)**: In-house constrained-Delaunay Tri6 warping solver (numpy only) giving exact J, Cw, shear centre and shear areas for parametric, database, built-up and Section Designer outlines, with fillets and multi-material modular ratios; live readout in the section editors  
-  ETABS: ETABS reports section properties from its own internal routines; no user-visible solver or mesh-convergence control for arbitrary built-up / parametric shapes.
-- **Cross-platform and headless operation**: Flask server + browser SPA on Windows, macOS and Linux; native webview desktop launcher, --server-only headless mode for CI / remote use; pure-Python client  
-  ETABS: Windows-only desktop application.
-
-## New rows added
-
-- [missing] Analysis / Link effective (linear) stiffness and damping
-- [missing] Analysis / Generalized displacements
-- [partial] Analysis / Response spectrum modal damping options
-- [missing] Loads / Diaphragm design forces (ASCE 7 §12.10 Fpx)
-- [partial] Results & output / Joint velocity / acceleration output tables
-- [partial] Results & output / Mass output tables (Mass Summary by Story, Assembled Joint Masses)
-- [missing] Results & output / Material list / quantity takeoff
-- [beyond] Interoperability / ETABS-OAPI-compatible Python facade plus versioned REST / OpenAPI
-- [beyond] Properties / Exact numpy section solver (J, Cw, shear centre, shear areas)
-- [beyond] Interface & workflow / Cross-platform and headless operation
+Four of these need software that cannot be built or run here: native Revit and Tekla add-ins (Windows-only APIs), DWG conversion (no LibreDWG on the build platform), and ETABS itself to confirm E2K spellings.
