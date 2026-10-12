@@ -12673,3 +12673,167 @@ past the last converged step. A method that fails reports
   * the endpoint.
 * The JS mock reproduces the Python rows exactly (max relative difference
   0) on three option sets.
+
+## Link types: Plastic (Wen), BRB, bilinear damper, T/C friction isolator
+
+Four more `LinkMember.link_type` values (`core/links_ext.py`, OpenSees
+builders `engine/links_ext.py`). Every param is a float; optional keys are
+written only when set. Units kN, m, s.
+
+| `link_type` | required | optional (default) | element |
+|---|---|---|---|
+| `plastic_wen` | `k`, `Fy` | `ratio` 0, `exp` 2, `kv` 1e7 | `BoucWen` per DOF |
+| `brb` | `k`, `Fy`, `d_bm` | `beta` 1.1, `omega` 1.3, `R0` 20 | `Steel4 -asym -kin` |
+| `damper_bilinear` | `cd`, `Fr` | `ratio` 0, `k` 1e6 | `BilinearOilDamper` |
+| `tc_fp_isolator` | `R`, `mu` | `k_init` 1e5, `kv` 1e7, `kt` 0, `gap_t` 0 | `singleFPBearing` (+ hold-down) |
+
+* **Plastic (Wen)** (ETABS *Plastic (Wen)*):
+  `F = ratio·k·d + (1 − ratio)·Fy·z`, `dz/dd = (k/Fy)(1 − |z|^exp)` while
+  `ḋ·z > 0`, else `k/Fy`. Uncoupled per DOF. Layout = the FNA driver's
+  (`engine/fna.py`, names `k Fy ratio exp`): a link with a horizontal
+  component acts axially (U1, `twoNodeLink` dir 1); a vertical or zero-length
+  link carries the law on both shear directions with elastic vertical `kv`
+  (`kv` is rejected on an axial link). `BoucWen(alpha = ratio, ko = k,
+  n = exp, gamma = beta = 0.5/uy^exp, A = 1, no degradation)`, `uy = Fy/k`.
+  The material integrates z implicitly per analysis step, so the law is
+  path-dependent: use a multi-step nonlinear static case (a one-step linear
+  static case lands ~2 % off the monotonic curve). FNA: Wen pseudo-force
+  (2-row coupled for the shear layout — identical for one-directional input).
+* **BRB**: elastic `k` to `Fy` (`dy = Fy/k`), then asymmetric kinematic
+  hardening `b_t = (ω − 1)Fy / (k(d_bm − dy))`, `b_c = (βω − 1)Fy /
+  (k(d_bm − dy))`: the force is `ω·Fy` at `+d_bm` and `−β·ω·Fy` at `−d_bm`
+  (AISC 341 adjustment factors). Axial, length > 0. Rules: `d_bm > Fy/k`,
+  `ω ≥ 1`, `β·ω ≥ 1`, `R0 > 0` (Menegotto–Pinto transition; `cR1 = 0.925`,
+  `cR2 = 0.15`).
+* **Bilinear damper** (ETABS *Damper - Bilinear*): Maxwell dashpot with series
+  spring `k`; `F = cd·v` for `|v| ≤ Fr/cd`, then `sign(v)(Fr + ratio·cd·(|v| −
+  Fr/cd))`. Axial, length > 0, `0 ≤ ratio ≤ 1`. Like the viscous damper it
+  carries no static force and no eigen stiffness (verified).
+* **T/C friction isolator**: compression = single friction pendulum (slip
+  `μN`, restoring `N/R`, stick `k_init`, axial `kv`); in tension the bearing
+  lifts off with **zero axial and shear force** (verified). Optional tension
+  hold-down `kt` (ElasticPPGap, engages after `gap_t`; a parallel axial
+  element at the same nodes; `gap_t` needs `kt > 0`). Vertical or zero length
+  (node i = lower node; zero length: `pi` is the ground side).
+* Routing: `plastic_wen`, `brb` and `tc_fp_isolator` make static cases
+  nonlinear (Newton), as the other device links do. Damping options
+  (`damping_options`): Wen and BRB are `hysteretic_link`, the hold-down
+  `hook_link`, the damper and the bearing are never damped. FNA supports
+  `plastic_wen`; `brb`, `damper_bilinear` and `tc_fp_isolator` raise
+  `NotImplementedError` ("use direct integration").
+* Plot-function labels: the axial types report `P`.
+
+## Frequency-dependent link properties
+
+`BuildingModel.link_freq_props` (`core/link_freq.py`; solver
+`engine/link_freq.py`, two hook lines in `engine/frequency.py`):
+
+```json
+{"FD1": {"dofs": {"UX": [[0.0, 2.0e4, 0.0], [5.0, 4.0e4, 50.0]]}, "links": ["EL1"]}}
+```
+
+* DOF keys `UX UY UZ RX RY RZ`: global relative deformation `u_j − u_i` of an
+  **elastic** link. `AXIAL`: elongation along `pi → pj` of a **damper** link
+  (AXIAL only). Other link types are rejected. A link has at most one
+  property.
+* Rows `[f_hz, K, C]`: TOTAL stiffness and viscous coefficient at `f`. They
+  replace the link's elastic value on that DOF (`stiffness[d]`; a damper has
+  none) in Steady-State and PSD cases only. Interpolation is linear in f,
+  with end values held. Rules: f ≥ 0 strictly increasing, K finite, C ≥ 0.
+* Method, per frequency: `(diag(1/H_i(w)) + Bᵀ D(w) B) q = P a`, where
+  `D_r = (K_r(f) − K0_r) + i w C_r(f)` and `B` holds the modal deformation
+  rows. Then `Z = q Φ` plus the unchanged static residual (method `direct`),
+  plus the extra link force `dF = D B q` added to the reactions of grounded
+  link ends and to the base totals. This is exact in the retained modal
+  subspace. The result `warnings` gets
+  `"frequency-dependent link properties applied: FD1:EL1:UX"`.
+* Empty dict: nothing is emitted by `to_dict`, and frequency results are
+  byte-identical. `from_dict` prunes link uids deleted since the save.
+
+## Material-proportional (composite) modal damping
+
+* `BuildingModel.material_damping = {material: ζ}` (`core/composite_damping.py`),
+  ζ in [0, 1), emitted only when non-empty; `from_dict` prunes unknown
+  materials.
+* `TimeHistoryCase.damping_model` gains `"composite"`. Per mode:
+  `ζ_i = Σ_g ζ_g E_g,i / Σ_g E_g,i`, where `E_g,i = ½ φ_iᵀ K_g φ_i` is summed
+  over the frame / shell elements of each material (from one static solve
+  under `w_i² M φ_i`, on a fresh engine). Links, springs, hinges and
+  materials without a ratio take the case's `damping`. The case then runs
+  exactly as `"modal"` with `modal_zeta` = these ratios, in direct integration
+  (`modalDamping`) and in FNA. The engine swaps the case on a shallow model
+  copy and never mutates the user's model. `THResults.extra["composite_damping"]`
+  (and therefore `th_cases[name].composite_damping`) is:
+  `{default, material_damping, modes: [{period, zeta, fractions: {group: share}, energy_check}]}`,
+  where `energy_check = Σ E / (w²/2)` (1 to round-off).
+* The ratios are computed on the modes of the full elastic model; FNA applies
+  them by mode index to its linearised basis. Not applied to RS or
+  steady-state cases.
+* `POST /api/damping/composite` `{model?, case?, damping?, num_modes?,
+  material_damping?}` returns the same dict (`api/linkdamp_api.py`); a bad
+  material gives 400.
+
+### DB-edit tables (`core/linkdamp_tables.py`, one hook line in `modeltables`)
+
+* `material_damping`: (material, zeta);
+* `link_freq_props`: names;
+* `link_freq_points`: (property, DOF, f, K, C), SI;
+* `link_freq_links`: (property, link).
+* `links.link_type` lists the new types, and "Link Properties - Parameters"
+  edits their params. `th_cases.damping_model` lists `composite`.
+
+### UI
+
+* `js/linkext.js` registers the 4 types in `LINK_TYPES` (glyph letters W R V
+  U) and in the Assign › Link › Link Properties dialog (`js/linkhyst.js`
+  `LH_EXT` hooks). Previews: Wen loop; BRB backbone with the ±d_bm marks;
+  damper force–velocity; T/C axial law. Inline validation mirrors the backend.
+* Define › Section Properties › **Frequency-Dependent Link Properties…**
+  (`js/linkfreq.js`): a list, then a data dialog with per-DOF [f, K, C]
+  tables (frequency / stiffness / damping units), link checkboxes and a
+  K(f) / C(f) preview.
+* Analyze › Advanced › **Damping Options…** (`js/dampopts.js`): Rayleigh on
+  springs / links / hinges (`damping_options`), material ratios table, and
+  a per-mode ζ preview.
+* TH case dialogs (standard, Loads panel, DI options) offer **Composite
+  (material)**. The standard dialog shows the ratios in use plus Preview. The
+  modal case dialog has a Composite Modal Damping Preview. The TH results
+  meta line shows `composite ζ [...]`.
+* Mock: `js/mock_wbdamp.js` (validation, composite preview from element
+  volume shares, results, DB-edit tables).
+
+### Validation
+
+`tests/test_links_waveb.py` (47 tests):
+
+* **Wen**: `max |F − F_exact| = 0.43 % Fy` (exact = RK4 of the Wen ODE).
+  `F(0.05) = 119.990` against `ratio·k·d + (1−ratio)Fy = 120`. Loop area
+  14.819 against 14.833. With exp = 25 the area is 15.195 against the bilinear
+  `4(1−ratio)Fy(D−dy) = 15.2`. A 40-step NLS brace lands on the Wen curve
+  within 0.2 %. FNA against DI on 4 Wen bearings: ≤ 2 % peak.
+* **BRB** (k = 1e5, Fy = 500, d_bm = 0.05, β = 1.15, ω = 1.4): F(±0.025) =
+  588.889 / −635.556, F(±0.05) = 700.000 / −805.000. These equal the hand
+  backbone to 1e-6.
+* **Bilinear damper** (cd = 200, Fr = 50, ratio = 0.1): terminal velocities
+  under P = 10 / 40 / 55 / 65 kN are 0.0500 / 0.2000 / 0.5000 / 1.0000 m/s
+  (hand P/cd, then v_r + (P − Fr)/(ratio·cd)), within 1e-5. No static force.
+* **T/C isolator**: axial −kv·d in compression. Exactly 0 axial and shear
+  force in uplift, including while displaced after sliding (μN + Nd/R within
+  2 % before lift-off). Hold-down `kt(d − gap_t)`.
+* **Frequency-dependent link**, SDOF: `u = F / (K(f) − w²m + iwC(f) +
+  2iζw0wm)` with a relative error ≤ 1e-9 (measured 7e-16), and base
+  `|K + iwC||u|`. A constant table equal to the elastic K reproduces the plain
+  link. A damper AXIAL C works. PSD runs.
+* **Composite**: stacked cantilever, A (E = 30 GPa, ζ = 0.05) under B
+  (E = 3 GPa, ζ = 0.02). Energy shares are 0.5939 / 0.4061 (hand
+  `(H³ − L2³)/E1 : L2³/E2`), ζ = 0.037817 (hand to 1e-9), energy_check = 1.
+  A composite TH equals a modal TH with the hand ζ (DI and FNA, 1e-9), and the
+  model is not mutated.
+* **Legacy**: hashes of model / run / TH / FNA / SS / PSD JSON for a 3-story
+  building, an isolated block with a damper, and the SDOF frequency model are
+  identical before and after.
+* **Playwright** (port 8712): mock 40/40 and live 48/48. Menus open the
+  dialogs. OK with defaults is byte-identical. Edits round-trip through
+  POST /api/model (double echo identical). kip-in converts (50 kip →
+  222.411 kN; K in kip/in). A live run gives TH `composite_damping` and the
+  SS warning. Zero console errors.

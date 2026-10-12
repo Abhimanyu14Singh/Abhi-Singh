@@ -12,7 +12,7 @@
 import { autoMeshPoints as mbPoints, stationXs as mbStationXs,
   valueAt as mbValueAt, memberLength as mbLen } from "./framemesh_geom.js";
 import { validateSpringProp as mbValidateSpring } from "./springdlg.js";
-import { validateHyst as mbValidateHyst, isolatorLayoutOk as mbLayoutOk, HYST_TYPES as MB_HYST } from "./linkhyst.js";
+import { validateHyst as mbValidateHyst, isolatorLayoutOk as mbLayoutOk, HYST_TYPES as MB_HYST, LH_EXT as MB_LH_EXT } from "./linkhyst.js";
 
 const isNum = v => typeof v === "number" && isFinite(v);
 const AM_KEYS = ["at_intermediate_joints", "at_intersections", "max_length", "min_segments"];
@@ -58,7 +58,7 @@ export function mockValidateB9(model) {
     if (!MB_HYST[l.link_type]) continue;
     const e = mbValidateHyst(l.uid, l.link_type, l.params || {});
     if (e) return e;
-    if (!mbLayoutOk(l)) return `Link ${l.uid} (${l.link_type}): the link axis must be vertical or zero length (isolator layout)`;
+    if (!(MB_LH_EXT.layout[l.link_type] || mbLayoutOk)(l)) return `Link ${l.uid} (${l.link_type}): ${MB_LH_EXT.layoutMsg[l.link_type] || "the link axis must be vertical or zero length (isolator layout)"}`;   // wave B layout rules (js/linkext.js)
   }
   return null;
 }

@@ -14,6 +14,7 @@ import { relMockTables as mdbRelTables } from "./mock_releases.js";   // frame r
 
 const clone = o => JSON.parse(JSON.stringify(o));
 import { mdbW8Extend } from "./mock_w8.js";   // W8 DB-edit coverage tables
+import { wbMockTables as mdbWbTables } from "./mock_wbdamp.js";   // wave B: material damping / freq-dependent link tables
 const QUANTITIES = {
   none: "", length: "m", dim: "m", area: "m^2", inertia: "m^4", force: "kN", moment: "kN*m",
   line_force: "kN/m", pressure: "kPa", stress: "kPa", modulus: "kPa", unit_weight: "kN/m^3",
@@ -458,7 +459,8 @@ const G = { DEF: "Model Definition > Properties", OBJ: "Model Definition > Objec
   LOAD: "Model Definition > Loads", CASE: "Model Definition > Load Cases & Combinations" };
 const MATERIAL_TYPES = ["steel", "concrete", "rebar", "tendon", "masonry", "aluminum", "coldformed", "other"];
 const LINK_TYPES = ["elastic", "damper", "gap", "hook", "isolator", "fp_isolator", "triple_fp", "multilinear",
-  "multilinear_takeda", "multilinear_pivot", "multilinear_kinematic", "friction_spring", "rubber_isolator_bouc_wen"];
+  "multilinear_takeda", "multilinear_pivot", "multilinear_kinematic", "friction_spring", "rubber_isolator_bouc_wen",
+  "plastic_wen", "brb", "damper_bilinear", "tc_fp_isolator"];   // + wave B link types (js/linkext.js)
 const ML_DIRS = ["gravity", "local_y", "global_x", "global_y", "global_z"];
 const AREA_DIRS = ["gravity", "global_x", "global_y", "global_z", "local_1", "local_2", "local_3"];
 const GEOM = ["linear", "pdelta", "corotational"];
@@ -633,7 +635,7 @@ function buildCatalogue() {
     caseTbl("th_cases", "Load Cases - Time History", "th_cases", [col("direction", "Direction", "enum", "none", { enum: ["X", "Y"], required: true }),
       col("function", "Function", "enum", "none", { enum: optNames("th_functions"), def: "" }), col("dt", "Time Step", n, "period", { def: 0 }),
       col("damping", "Damping", n, "none", { def: 0.05 }), col("scale", "Scale Factor", n, "none", { def: 1 }),
-      col("nonlinear", "Nonlinear", "bool", "none", { def: false }), col("damping_model", "Damping Model", "enum", "none", { enum: ["rayleigh", "modal"], def: "rayleigh" })],
+      col("nonlinear", "Nonlinear", "bool", "none", { def: false }), col("damping_model", "Damping Model", "enum", "none", { enum: ["rayleigh", "modal", "composite"], def: "rayleigh" })],
     () => ({ accel: [], dt: 0, damping: 0.05, scale: 1, function: "" })),
     caseTbl("pushover_cases", "Load Cases - Pushover", "pushover_cases", [col("direction", "Direction", "enum", "none", { enum: ["X", "Y"], required: true }),
       col("target_drift", "Target Drift", n, "none", { def: 0.02 }), col("steps", "Steps", "int", "none", { def: 100 }),
@@ -660,7 +662,8 @@ function buildCatalogue() {
   ], W8H);
 }
 let CAT = null;
-const catalogue = () => (CAT = CAT || [...buildCatalogue(), ...mdbRelTables({ obj, col, G })]);   // + end releases / joint axes (js/mock_releases.js)
+const catalogue = () => (CAT = CAT || [...buildCatalogue(), ...mdbRelTables({ obj, col, G }),
+  ...mdbWbTables({ col, obj, names, G, E, parseCell, clone })]);   // + wave B tables (js/mock_wbdamp.js)   // + end releases / joint axes (js/mock_releases.js)
 const table = key => catalogue().find(t => t.key === key);
 
 function rowsOf(t, d) {

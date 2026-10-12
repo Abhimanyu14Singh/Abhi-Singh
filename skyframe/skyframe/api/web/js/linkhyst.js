@@ -68,6 +68,10 @@ export const HYST_TYPES = {
   },
 };
 
+/** Wave-B hook (js/linkext.js): extra link types register their preview /
+    validation / layout rule here (type → fn); absent = the rules below. */
+export const LH_EXT = { preview: {}, validate: {}, layout: {}, layoutMsg: {} };
+
 /** Keys kept when switching a link to a hysteresis type (same meaning across types). */
 const CARRY = ["points", "points_neg", "kv", "k_init"];
 const cleanPts = a => (Array.isArray(a) ? a : []).filter(p => Array.isArray(p) && p.length === 2 && p.every(isNum)).map(p => [+p[0], +p[1]]);
@@ -192,6 +196,7 @@ function boucWen(p, amps) {
 }
 /** {series, marks, xKind, yKind, note} for a type + params. */
 export function hysteresisPreview(type, p) {
+  if (LH_EXT.preview[type]) { try { return LH_EXT.preview[type](p); } catch (e) { return null; } }   // wave B (js/linkext.js)
   try {
     const def = HYST_TYPES[type];
     if (type === "friction_spring") {
@@ -231,6 +236,7 @@ export const isolatorLayoutOk = l => {
 
 /** Client checks mirroring springprops.validate_link_params → message | null. */
 export function validateHyst(uid, type, p) {
+  if (LH_EXT.validate[type]) return LH_EXT.validate[type](uid, p);   // wave B (js/linkext.js)
   const def = HYST_TYPES[type];
   if (!def) return null;
   const w = `Link ${uid} (${type})`;
@@ -419,14 +425,14 @@ export function initLinkHyst(sky) {
     function preview() {
       const pv = hysteresisPreview(type, params);
       if (pv) {
-        prevBox.innerHTML = lhCurveSvg(pv.series, { xKind: "disp", yKind: "force", marks: pv.marks, title: LH_LINK_TYPES[type].label, w: 340, hgt: 230 });
+        prevBox.innerHTML = lhCurveSvg(pv.series, { xKind: pv.xKind || "disp", yKind: "force", marks: pv.marks, title: LH_LINK_TYPES[type].label, w: 340, hgt: 230 });
         prevNote.textContent = pv.note || "";
       } else {
         prevBox.innerHTML = `<p class="muted b9-small">${type === "elastic" ? "Linear spring — same stiffness in every analysis." : "No backbone preview for this type."}</p>`;
         prevNote.textContent = "";
       }
-      const bad = HYST_TYPES[type] ? links.filter(l => !isolatorLayoutOk(l)) : [];
-      layout.textContent = bad.length ? `${bad.map(l => l.uid).join(", ")}: hysteresis types need a vertical or zero-length link axis (isolator layout).` : "";
+      const bad = HYST_TYPES[type] ? links.filter(l => !(LH_EXT.layout[type] || isolatorLayoutOk)(l)) : [];   // wave B layout rules (js/linkext.js)
+      layout.textContent = bad.length ? `${bad.map(l => l.uid).join(", ")}: ${LH_EXT.layoutMsg[type] || "hysteresis types need a vertical or zero-length link axis (isolator layout)."}` : "";
       layout.classList.toggle("hidden", !bad.length);
       lhShowError(err, validateHyst(l0.uid, type, params) || "");
     }
@@ -463,9 +469,9 @@ export function initLinkHyst(sky) {
     if (links.length === 1) {
       const l = links[0], t = lhLinkTypeOf(l);
       const pv = hysteresisPreview(t, l.params || {});
-      if (pv) wrap.appendChild(lhH("div", { class: "b9-props-prev", id: "lhPropsPreview", html: lhCurveSvg(pv.series, { xKind: "disp", yKind: "force", marks: pv.marks, w: 260, hgt: 170 }) }));
-      if (HYST_TYPES[t] && !isolatorLayoutOk(l))
-        wrap.appendChild(lhH("p", { class: "field-error b9-small", text: "Hysteresis types need a vertical or zero-length link axis." }));
+      if (pv) wrap.appendChild(lhH("div", { class: "b9-props-prev", id: "lhPropsPreview", html: lhCurveSvg(pv.series, { xKind: pv.xKind || "disp", yKind: "force", marks: pv.marks, w: 260, hgt: 170 }) }));
+      if (HYST_TYPES[t] && !(LH_EXT.layout[t] || isolatorLayoutOk)(l))   // wave B layout rules (js/linkext.js)
+        wrap.appendChild(lhH("p", { class: "field-error b9-small", text: LH_EXT.layoutMsg[t] || "Hysteresis types need a vertical or zero-length link axis." }));
     }
     wrap.appendChild(lhH("div", { class: "b9-props-btns" }, [lhBtn("Link Properties…", "btn-small", () => openLinkProps(), "All parameters + hysteresis preview")]));
     const n = box.querySelector(".link-note") || box.querySelector("#mlAdd") || box.querySelector(".link-params") || box.querySelector("#propLinkType");

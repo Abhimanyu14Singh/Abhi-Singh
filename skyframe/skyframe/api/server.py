@@ -2356,6 +2356,9 @@ def create_app() -> Flask:
     # Ritz (skyframe.api.modalx_api)
     from skyframe.api.modalx_api import register as _mxa_register
     _mxa_register(app, _state)
+    # wave B: composite (material) modal damping preview (linkdamp_api)
+    from skyframe.api.linkdamp_api import register as _wbld_register
+    _wbld_register(app, _state)
 
     # Pushover ATC-40 / FEMA 440 EL / EN 1998 N2 + ADRS (pushover_perf_api)
     from skyframe.api.pushover_perf_api import register as _ppf_register
