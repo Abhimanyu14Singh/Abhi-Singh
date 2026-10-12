@@ -23,7 +23,17 @@ from skyframe.io.ifc import (
     parse_step,
 )
 
+# Model exchange (CONTRACT "Model exchange: E2K / IFC / DXF / Excel")
+from skyframe.io.dxf_layers import export_dxf, import_dxf_layers
+from skyframe.io.e2k_read import read_e2k
+from skyframe.io.e2k_write import export_e2k
+from skyframe.io.ifc_read import read_ifc
+from skyframe.io.ifc_write import export_ifc
+from skyframe.io.xlsx import export_xlsx, import_xlsx
+
 __all__ = [
+    "export_e2k", "read_e2k", "export_ifc", "read_ifc", "export_dxf",
+    "import_dxf_layers", "export_xlsx", "import_xlsx",
     "DxfDrawing", "DxfEntity", "parse_dxf", "import_dxf",
     "import_e2k",
     "import_ifc", "parse_step", "StepInstance", "StepRef", "StepEnum",

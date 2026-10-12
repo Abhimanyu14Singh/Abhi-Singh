@@ -2327,6 +2327,9 @@ def create_app() -> Flask:
     # Steel section databases + parametric shapes (skyframe.api.steel_db_api)
     from skyframe.api.steel_db_api import register as _sdb_register
     _sdb_register(app, _state)
+    # Model exchange E2K / IFC / DXF / Excel (skyframe.api.exchange_api)
+    from skyframe.api.exchange_api import register as _xch_register
+    _xch_register(app, _state)
 
     return app
 

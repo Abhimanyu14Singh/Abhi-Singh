@@ -101,6 +101,7 @@ import { initSecPreview as spvInitSecPreview } from "./secpreview.js";   // live
 import { initMatLib as mlInitMatLib } from "./matlib.js";   // v1.21 Define › Material Library… (js/matlib.js)
 
 import { initBuiltup as buInitBuiltup } from "./builtup.js";   // v1.21 Built-up Section editor (js/builtup.js)
+import { initExchange as xcInitExchange } from "./exchange.js";   // File › Import ▸ / Export ▸ E2K · IFC · DXF · Excel (js/exchange.js)
 
 /* ------------------------------------------------ state */
 const store = {
@@ -8565,6 +8566,7 @@ async function boot() {
   try { mlInitMatLib(window.__sky); } catch (err) { console.error("material library init failed", err); }   // v1.21 material library (js/matlib.js)
 
   try { buInitBuiltup(window.__sky); } catch (err) { console.error("built-up sections init failed", err); }   // Define › Section Properties › Built-up Section… (js/builtup.js)
+  try { xcInitExchange(window.__sky); } catch (err) { console.error("model exchange init failed", err); }   // File › Import ▸ / Export ▸ (js/exchange.js)
   try { uxInitUx(window.__sky); } catch (err) { console.error("UX init failed", err); }   // UX pass (js/ux.js) — keep LAST: reads the finished menus
   try { dsInitDlgStd(window.__sky); } catch (err) { console.error("standard dialogs init failed", err); }   // dialog standard + workflow (js/dlgstd.js) — after the UX pass
   try { spvInitSecPreview(window.__sky); } catch (err) { console.error("section preview init failed", err); }   // member / property preview (js/secpreview.js)

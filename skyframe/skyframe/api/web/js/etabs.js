@@ -134,6 +134,8 @@ export function initEtabs(sky) {
       { label: "Save As…", act: "file-saveas", key: "Ctrl+Shift+S", fn: () => sky.openSaveAs() },
       SEP,
       { label: "Import…", act: "file-import", hint: "ETABS .e2k · DXF · IFC", fn: () => sky.openImportDialog() },
+      { label: "Import", sub: [] },   // model exchange: E2K / IFC / DXF / Excel (filled by js/exchange.js)
+      { label: "Export", sub: [] },   // model exchange: E2K / IFC / DXF / Excel (filled by js/exchange.js)
       { label: "Template Gallery…", act: "file-gallery", hint: "preset buildings", fn: () => sky.openGallery() },
       SEP,
       { label: "Create Report…", act: "file-rx-create", hint: "print · PDF · HTML", fn: () => sky.openCreateReport && sky.openCreateReport() },   // js/reportx.js
