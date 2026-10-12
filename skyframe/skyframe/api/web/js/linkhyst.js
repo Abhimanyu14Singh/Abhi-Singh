@@ -70,7 +70,8 @@ export const HYST_TYPES = {
 
 /** Wave-B hook (js/linkext.js): extra link types register their preview /
     validation / layout rule here (type → fn); absent = the rules below. */
-export const LH_EXT = { preview: {}, validate: {}, layout: {}, layoutMsg: {} };
+export const LH_EXT = { preview: {}, validate: {}, layout: {}, layoutMsg: {},
+  editor: {}, extra: [], extraValidate: [] };   // wave C (js/linkext_c.js): custom editors, extra groups, extra checks
 
 /** Keys kept when switching a link to a hysteresis type (same meaning across types). */
 const CARRY = ["points", "points_neg", "kv", "k_init"];
@@ -236,6 +237,7 @@ export const isolatorLayoutOk = l => {
 
 /** Client checks mirroring springprops.validate_link_params → message | null. */
 export function validateHyst(uid, type, p) {
+  for (const f of LH_EXT.extraValidate) { const m = f(uid, type, p); if (m) return m; }   // wave C (js/linkext_c.js)
   if (LH_EXT.validate[type]) return LH_EXT.validate[type](uid, p);   // wave B (js/linkext.js)
   const def = HYST_TYPES[type];
   if (!def) return null;
@@ -419,6 +421,8 @@ export function initLinkHyst(sky) {
           if (params.points_neg) left.appendChild(pointsTable("points_neg", kd, kf));
         }
       }
+      if (LH_EXT.editor[type]) left.appendChild(LH_EXT.editor[type](params, () => { touched = true; preview(); }));   // wave C (js/linkext_c.js)
+      for (const f of LH_EXT.extra) { const g = f(type, params, () => { touched = true; preview(); }); if (g) left.appendChild(g); }   // wave C
       note.textContent = def.note || "";
       preview();
     }

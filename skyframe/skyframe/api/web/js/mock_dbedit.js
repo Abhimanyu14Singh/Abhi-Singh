@@ -462,7 +462,9 @@ const G = { DEF: "Model Definition > Properties", OBJ: "Model Definition > Objec
 const MATERIAL_TYPES = ["steel", "concrete", "rebar", "tendon", "masonry", "aluminum", "coldformed", "other"];
 const LINK_TYPES = ["elastic", "damper", "gap", "hook", "isolator", "fp_isolator", "triple_fp", "multilinear",
   "multilinear_takeda", "multilinear_pivot", "multilinear_kinematic", "friction_spring", "rubber_isolator_bouc_wen",
-  "plastic_wen", "brb", "damper_bilinear", "tc_fp_isolator"];   // + wave B link types (js/linkext.js)
+  "plastic_wen", "brb", "damper_bilinear", "tc_fp_isolator",   // + wave B link types (js/linkext.js)
+  "linear_coupled", "multilinear_elastic", "multilinear_degrading", "multilinear_isotropic",
+  "multilinear_concrete", "multilinear_brb", "hdr_isolator"];   // + wave C (js/linkext_c.js)
 const ML_DIRS = ["gravity", "local_y", "global_x", "global_y", "global_z"];
 const AREA_DIRS = ["gravity", "global_x", "global_y", "global_z", "local_1", "local_2", "local_3"];
 const GEOM = ["linear", "pdelta", "corotational"];
