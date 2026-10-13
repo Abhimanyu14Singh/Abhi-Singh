@@ -335,6 +335,7 @@ from skyframe.core import tables as _tables
 from skyframe.core import runlog as _rl      # model info / run log / report
 from skyframe.core import frame_axes as _fa  # frame local-axis convention
 from skyframe.core import plugins as _plg    # plugin framework hooks (core/plugins.py)
+from skyframe.api import model_history_api as _mhist   # Tools > Model History (hooks + routes)
 
 try:
     from skyframe.engine.opensees_engine import OpenSeesEngine
@@ -541,6 +542,7 @@ def create_app() -> Flask:
         path = _model_path(name)
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(_state["model"].to_dict(), fh)
+        _mhist.on_save(_state, name)   # Model History: auto checkpoint (model_history_api)
         return jsonify(_model_entry(name, path))
 
     @app.post("/api/models/<name>/open")
@@ -557,6 +559,7 @@ def create_app() -> Flask:
         except (ValueError, KeyError, TypeError) as exc:
             return jsonify({"error": f"Saved model is invalid: {exc}"}), 400
         _state["model"] = model
+        _mhist.on_open(_state, name)   # Model History: history key (model_history_api)
         return jsonify(model.to_dict())
 
     @app.delete("/api/models/<name>")
@@ -1078,6 +1081,7 @@ def create_app() -> Flask:
     def analyze():
         if not _OPENSEES_OK:
             return jsonify({"error": "OpenSeesPy is not available"}), 400
+        _mhist.before_analysis(_state)   # Model History: auto checkpoint (model_history_api)
         _rl_t0 = time.perf_counter()                # run log (audit trail)
         _rl_started = _rl.utc_now()
         try:
@@ -2422,6 +2426,12 @@ def create_app() -> Flask:
     # Wave C: units catalogue · primary grid · auto-save (wc_iface_api)
     from skyframe.api.wc_iface_api import register as _wci_register
     _wci_register(app, _state)
+
+    # Beyond ETABS: Tools > Model History (checkpoints + visual diff) and
+    # Tools > Explain Result (load-path explainer)
+    _mhist.register(app, _state)
+    from skyframe.api.load_path_api import register as _lpx_register
+    _lpx_register(app, _state, _tables_lookup, _model_sig)
 
     return app
 

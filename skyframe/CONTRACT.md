@@ -15768,3 +15768,89 @@ The `engine/parallel.py` fork-parallel solve families keep running while PARDISO
 ### Frozen build
 
 `SkyFrameCLI --selftest-pardiso` prints a JSON report. It exits 0 when MKL loads and a 3-story frame solves equal to OpenSees within 1e-9. The PyInstaller spec collects `pypardiso` and the MKL / OpenMP / TBB runtime libraries into the bundle root.
+
+## Model history and visual diff
+
+Beyond ETABS (Tools › Model History…). Modules: `skyframe/core/model_diff.py` (structural diff + restore), `skyframe/core/model_history.py` (checkpoint store), `skyframe/api/model_history_api.py` (routes + server hooks). The model JSON is unchanged: history lives outside the model file, so legacy models stay byte-identical.
+
+### Storage
+
+* Folder `<root>/<key>/`: `index.json` + one `<id>.json.gz` per checkpoint (gzip, `mtime=0`) holding the model as `json.dumps(model, separators=(",", ":"))`; the bytes are kept exactly, so restoring a whole checkpoint is byte-identical.
+* `root` = `SKYFRAME_HISTORY_DIR`, else `<models dir>/.history` (`SKYFRAME_MODELS_DIR`, else `~/.skyframe/models`, the desktop app data folder).
+* `key` = the saved model's file name (set by `POST /api/models/<name>` and `…/open`, or `POST /api/history/key`), else the model name; sanitised to `[A-Za-z0-9 _.-]`, ≤ 80 chars.
+* Checkpoint record: `{id (12 hex), name, note, kind: "manual"|"auto", reason, created (epoch s), hash (sha256 of sort_keys compact JSON), bytes (gz), raw_bytes, pinned, model_name, counts: {stories, frames, shells, links, patterns, cases, combos}}`.
+* Automatic checkpoints (`kind: "auto"`): `reason` `"save"` (server hook on `POST /api/models/<name>`), `"before analysis"` (server hook on `POST /api/analyze`, before the run), `"before <edit label>"` (SPA, before bulk edits: ≥ 10 objects added / removed, or Replicate / Move / Extrude / Merge / Divide / Join / Align / Delete / Erase of ≥ 2 objects, database edit, model repair) and `"before restore"`. An auto checkpoint equal (hash) to the newest checkpoint is not written (`skipped: true`). `SKYFRAME_HISTORY_AUTO=off` disables the server hooks. The hooks only read the model and never raise: analysis results are unchanged.
+* Limits (`settings`, per history): `max_checkpoints` 100 (2…10000), `max_auto` 30 (0…10000), `max_bytes` 256 MiB (64 KiB…64 GiB). Pruning after each write: the oldest unpinned auto checkpoints beyond `max_auto`; then, while over `max_checkpoints` or `max_bytes`, the oldest unpinned auto, then the oldest unpinned manual checkpoint. Pinned checkpoints are never pruned.
+
+### HTTP API
+
+| Method | Path | Body / response |
+|---|---|---|
+| GET | `/api/history[?key=]` | `{key, dir, settings, checkpoints: [newest first], total_bytes}` |
+| POST | `/api/history/key` | `{key}` → `{key}` (SPA sync of the file name) |
+| POST | `/api/history/checkpoint` | `{key?, name?, note?, kind? = "manual", reason?, model? (default: server model), dedupe?}` → `{checkpoint, pruned: [ids], skipped}` |
+| GET | `/api/history/checkpoint/<id>[?key=]` | `{checkpoint, model}`; 404 unknown |
+| PATCH | `/api/history/checkpoint/<id>` | `{key?, name?, note?, pinned?}` → `{checkpoint}` |
+| DELETE | `/api/history/checkpoint/<id>[?key=]` | `{ok}`; 404 unknown |
+| POST | `/api/history/compare` | `{key?, a, b = "current", types?, max_items = 5000, tol = 1e-12}`; `a`/`b` = checkpoint id, `"current"` (server model) or a model dict → diff (below) |
+| POST | `/api/history/restore` | `{key?, from (id or model), into = "current" (or a model dict), items?: [{type, key}], apply = false}` → `{model, report: {restored, skipped: [{type, key, reason}]}, hash}`. Without `items` the whole checkpoint (bytes as stored). The result is validated with `BuildingModel.from_dict` (400 "the restored model is not valid: … (restore the objects it depends on too …)"). `apply: true` also makes it the server's working model. |
+| POST | `/api/history/settings` | `{key?, max_checkpoints?, max_auto?, max_bytes?}` → `{settings, pruned}`; 400 out of range |
+
+### Diff (`model_diff.diff(a, b, types=None, tol=1e-12, max_items=None)`)
+
+```jsonc
+{"summary": {"<type>": {"added": 0, "removed": 0, "changed": 0, "unchanged": 0}},
+ "items": [{"type": "frames", "key": "B12", "label": "B12",
+            "status": "added" | "removed" | "changed",
+            "match": "key" | "geometry" | "content",
+            "fields": [{"path": "section", "a": "W14", "b": "W16"}],   // changed only; present_a/present_b false for a missing key
+            "ref": {"kind": "member", "uid": "B12"},                    // SPA selection / highlight
+            "geom": {"pi": [x,y,z], "pj": [x,y,z]} | {"corners": [...]} | {"point": [...]},  // removed: A's geometry, else B's
+            "geom_a": {...}?, "key_a": "...", "key_b": "..."}],         // moved / paired objects
+ "n_items": 0, "truncated": false, "equal": true, "types": [...], "elapsed_ms": 0.0}
+```
+
+Types and identity: `joints` (derived from frame / link ends, shell corners, supports, springs, nodal masses; key = coordinates rounded to 1e-6 m, `"%.12g"` joined by commas; fields = nodal mass), `frames` / `shells` / `links` (uid; unmatched objects then paired by geometry, orientation-free), `supports` (`restraint@x,y,z`, `spring@x,y,z`, `line@p1|p2`), `sections` (frame sections by name; `shell_sections/…`, `designer_sections/…`, `builtup_sections/…`, `np_sections/…`), `materials` (name; renames paired by identical content), `loads` (pattern definition `PAT` + one object per pattern, load list and target `PAT|<list>|frame:<uid>` / `shell:<uid>` / `joint:<x,y,z>` / `story:<name>`), `cases` (`<kind>/<name>` over every `*_cases` block; kind `static` for `cases`), `combos` (`combos` + `rs_combos/…`), `stories` (name; renames paired by elevation), `grids` (grid systems by name), `options` (every other top-level key; dict-of-dict blocks such as groups or functions per entry). Ignored: `story_masses`, the legacy `grid` copy, member `length`, `_mock_params`. Numbers compare with `|a-b| ≤ tol·max(1,|a|,|b|)`.
+
+`apply_restore(cur, ref, items=None)` reverts the selected items of `diff(ref, cur)` in `cur` (added → removed, removed → re-inserted after its predecessor in `ref`, changed → `ref`'s version); `items=None` restores everything and reproduces `ref`. Joints are derived: a joint item restores its nodal mass only (added / removed joints are reported in `skipped`).
+
+Performance (measured, 4-core container): 50-story `rc_dual_core` template (4,400 frames, 1,400 shells, 2.4 MB JSON) diff in ≈ 0.3 s (`tests/test_model_history.py::test_large_model_diff_under_one_second`, limit 1 s); docs/PERFORMANCE.md.
+
+### UI
+
+Tools › Model History… (`tools-mh-history`, dlgkit `mhDlg`): checkpoint list (name / reason, kind, time, frame / shell counts, note) with Save Checkpoint…, Rename / Note…, Pin / Unpin, Compare with Current, Restore Checkpoint…, Delete; Compare A → B (checkpoint or current model) with per-type chips (click to hide a type) and a change table with checkboxes; Show / Hide in Views (added green `#3fbf6a`, removed dashed red `#e05555`, changed amber `#e0a020`, in 3D, plan and elevation through the chained `viewer.extraOverlay` / `editor.grpOverlay` hooks, legend `#mhLegend`); Restore Selected from A and Restore Checkpoint are each ONE undo step (`dkCommit`), preceded by an auto checkpoint. `window.__sky.mhistory = {open, checkpoint, beforeBulk, list, compare, restore, key, clearHighlight, highlight}`. `?mock=1`: localStorage store (≤ 20 checkpoints, 4 MB) and a JavaScript port of the diff (`js/mock_mhistory.js`).
+
+## Load-path explainer
+
+Beyond ETABS (Tools › Explain Result…). Module `skyframe/core/load_path.py`; route `skyframe/api/load_path_api.py`.
+
+`POST /api/explain` `{target, case, expand = true, results?}` → explanation; uses the stored results of the last `/api/analyze` of the current model (409 "no current results …" otherwise) unless `results` is given; 400 on a bad target / unknown case. Never mutates the model or the stored results; re-solves are cached per model signature (6 entries).
+
+Target: `{"kind": "reaction", "joint": "<support tag>", "component": FX|FY|FZ|MX|MY|MZ}`, `{"kind": "joint_disp", "joint", "component": UX..RZ}`, `{"kind": "member_force", "member": uid, "station": 0..1 | "i" | "j", "component": P|V2|V3|T|M2|M3}` (nearest of the member's output stations; internal-force convention of `member_stations`), `{"kind": "story", "story", "component": ux|uy|drift_x|drift_y|shear_x|shear_y}`, `{"kind": "base", "component": FX..MZ}`, `{"kind": "pier", "pier", "story", "component": P|V|M}`.
+
+Response:
+
+```jsonc
+{"target": {..., "label": "Reaction FZ at joint 1", "unit": "force", "x"?: 3.0},
+ "case": "ULS", "supported": true, "case_kind": "static" | "combo" | "response_spectrum" | "time_history" | ...,
+ "method": "superposition" | "combo-add" | "combo-envelope" | "combo-abs" | "combo-srss" | "combo-range" | "modal" | "governing-step" | "nonlinear" | "none",
+ "value": 45.5, "value_min"?: ..., "computed_total": 45.5,
+ "check": {"stored", "sum", "rel_err", "ok"},           // sum of contributions vs stored result
+ "rows": [{"kind": "pattern" | "case" | "mode" | "step", "name", "factor", "unit_value", "contribution",
+           "share", "abs_share", "rank", "source"?: "stored:<case>" | "re-solved",
+           "children"?: [pattern rows], "governs_max"?, "governs_min"?, "governs"?, "lo"?, "hi"?,
+           "contribution_min"?, "srss_share"?, "period"?, "gamma"?, "sa"?, "modal_value"?, "time"?, "step"?,
+           "link": {"type": "pattern" | "case" | "mode" | "step", ...}}],
+ "notes": [...], "message"?: "...", "cross_terms"?: R² − Σrᵢ², "sum_squares"?, "combination"?, "governing_step"?, "governing_time"?, "max"?, "min"?,
+ "elapsed_ms": 1.2}
+```
+
+Rules:
+
+* **Linear static case** — rows per pattern: `contribution = scale × response(pattern)`. A pattern's response comes from a stored LINEAR single-pattern case `{pattern: s}` (÷ s), else it is re-solved on a copy of the model (`OpenSeesEngine.run_static` of a temporary one-pattern case on the reused elastic domain; pier forces through `_compute_piers`). The sum equals the stored case value to round-off (checked, `check.ok` at 1e-6).
+* **Never re-solved** (`supported: false`, `method: "nonlinear"`, explanatory `message`): static cases with `effective_geometric != "linear"`, models with tension / compression-only members, gap / hook / isolator (nonlinear static) links, compression-only line / area springs or nonlinear spring properties. Pushover, staged, nonlinear static, buckling, modal and RS-directional combos get a message without a breakdown.
+* **Combination** — the interval rules of "Load combinations: RS/TH/nested members": nested Linear-Add combos are flattened into leaves (factors multiply); each leaf gives `[lo, hi]` (static `f·x`; RS `±|f|·R`; TH `[min, max]` of the recorded series; max/min combo `f·max`, `f·min`); `add` → max `Σhi`, min `Σlo`; `envelope` → governing leaf for max and min (`governs_max` / `governs_min`, note "Max governed by …"); `abs` `Σ max(|hi|,|lo|)`; `srss` with `srss_share`; `range` `Σmax(hi,0)` / `Σmin(lo,0)`. `expand` adds per-pattern children to static leaves of additive combos (factor = combo factor × case scale).
+* **Response spectrum** (single-direction X / Y cases without named modal case, modal-damping overrides or eccentricity / angle / multi-direction): per mode the signed modal value `rᵢ` from the engine's own modal static solve (`f = Γᵢ Saᵢ g M φᵢ`); `contribution cᵢ = rᵢ Σⱼ ρᵢⱼ rⱼ` (Σ cᵢ = R²; ρ = I for SRSS, Der Kiureghian CQC otherwise), `share = cᵢ / R²`, `srss_share = rᵢ² / Σ r²`, `cross_terms = R² − Σ rᵢ²`; ABS: `cᵢ = |rᵢ|`. GMC / NRC10 / DSC cases show shares with the CQC correlation and the stored total (`check.ok: null`). Pier targets: message (the modal cut vectors are not kept per mode).
+* **Time history** — the recorded signed series (base FX / FY, story ux / uy, story drift from the ux / uy series): the ten largest |values| ranked; `governing_step` (1-based) and `governing_time`; other quantities: message with the recorded peak.
+
+UI: Tools › Explain Result… (`tools-lp-explain`, needs results; dlgkit `exDlg`): result type, component, object (support joint / node tag / frame + station / story / pier + story; a selected frame pre-fills), case or combination, "break combination cases down to load patterns"; Explain → header (value, station x, ✓ sum check), diverging bar chart (positive `#3d7fc8`, negative `#d0661e`, values labelled, top 12) and ranked table (pattern children indented). Row click deep-links: case / pattern → its deformed shape in the 3D view (target frame highlighted), mode → mode shape, step → Time History results. `window.__sky.explain = {open(target?, case?), explain(target, case), targetFromSelection(), deepLink}` — `open(target, case)` runs immediately (for result probes / the member detail window). `?mock=1`: `js/mock_explain.js` (same shape; mock RS per-mode values from the mass participation).

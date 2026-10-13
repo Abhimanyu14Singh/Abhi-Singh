@@ -253,6 +253,8 @@ Tools
                   Composite Beam [des-composite] — Shear Wall (Pier) [des-wall] · Slab · Punching Shear [des-punching] ·
                   Slab · Two-Way [des-slab]
   Section Optimization                            [des-optimize]
+  Model History…                                  [tools-mh-history]  (beyond ETABS: checkpoints · visual diff · restore, js/mhistory.js)
+  Explain Result…          (needs results)        [tools-lp-explain]  (beyond ETABS: load-path explainer, js/explain.js)
   (More ▸ — only when a module adds an unknown command)
 
 Help

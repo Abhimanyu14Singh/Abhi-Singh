@@ -305,3 +305,9 @@ before it is relied on. Each one can be overridden by an explicit parameter.
   - With PARDISO active, the fork-parallel families of `engine/parallel.py` still run. Forked workers call MKL after the parent factorized, which was tested on Linux: exact, and 1.6x faster than serial on 10s-5x5-meshed. `KMP_BLOCKTIME=0` and one-thread substitutions keep the workers from oversubscribing.
   - The E1 Windows (spawn) worker pool must consult `solver_policy.pardiso_active(asm)`. A spawned worker has no factor.
 - **Projection**: the docs/PERFORMANCE.md numbers for the Core Ultra 9 285K are a labelled projection from 1/2/4-thread scaling measured in a 4-core container, not measurements.
+
+## Model history and load-path explainer (beyond ETABS)
+- Model History stores checkpoints in `<models dir>/.history/<file name>/` (gzip). On Windows that is `%USERPROFILE%\.skyframe\models\.history` unless `SKYFRAME_MODELS_DIR` / `SKYFRAME_HISTORY_DIR` move it; a checkpoint of an unsaved model is keyed by the model name. Check the folder location and the 256 MB default limit suit the desktop install.
+- Joints have no identity of their own in the model, so the diff identifies them by coordinates (1e-6 m); a moved joint reads as one removed + one added joint, and restoring a joint restores only its nodal mass.
+- Explain Result: the response-spectrum breakdown covers single-direction X / Y cases; cases with a named modal case, per-mode damping overrides or eccentricity / angle / multi-direction loading, and pier targets of RS cases, get a message instead (the engine does not keep per-mode data for those paths). GMC / NRC10 / DSC cases show shares with the CQC correlation. The ?mock=1 RS breakdown is synthetic (from the mass participation) - only the live build is exact.
+- Explain Result for time histories uses the recorded series (story ux / uy, base FX / FY, story drift derived from them); other quantities show the recorded peak only.
