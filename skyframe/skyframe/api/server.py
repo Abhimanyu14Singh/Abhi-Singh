@@ -2423,6 +2423,10 @@ def create_app() -> Flask:
     from skyframe.api.wc_iface_api import register as _wci_register
     _wci_register(app, _state)
 
+    # Wave F: model-level Assign on a selection with a story scope (assign_api)
+    from skyframe.api.assign_api import register as _fasn_register
+    _fasn_register(app, _state)
+
     return app
 
 

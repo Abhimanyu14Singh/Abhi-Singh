@@ -481,6 +481,7 @@ export function selectionJoints(model, selection) {
       const s = (model.shells || []).find(x => x.uid === ref.uid);
       if (s) for (const c of s.corners || []) uniqPush(pts, c);
     }
+    else if (ref.type === "joint") uniqPush(pts, String(ref.uid).split(",").map(Number));   // Wave F: selected joints (key = x,y,z)
   }
   return pts;
 }

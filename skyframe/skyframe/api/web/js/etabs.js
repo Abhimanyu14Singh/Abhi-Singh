@@ -282,6 +282,7 @@ export function initEtabs(sky) {
       { label: "By Story…", act: "sel-story", fn: () => sky.selectx && sky.selectx.openByStory() },
       { label: "By Plane…", act: "sel-plane", hint: "XY · XZ · YZ", fn: () => sky.selectx && sky.selectx.openByPlane() },
       { label: "By Group…", act: "sel-group", fn: () => sky.openSelectByGroup && sky.openSelectByGroup() },
+      { label: "Select Using", sub: [] },   // Wave F: Intersecting Line · Window / Crossing · Selection Filter · 3D drag mode (js/w8_select.js, js/f_init.js)
     ]},
     { name: "Assign", accel: "a", items: [
       { label: "Joint", sub: [
@@ -302,7 +303,7 @@ export function initEtabs(sky) {
           { label: "Rigid End Offsets", act: "asn-foff", hint: "in the Properties panel", fn: () => assignHint("rigid end offsets") },
         ]},
         { label: "Tension / Compression Limits", act: "asn-faxial", fn: () => assignHint("axial limit") },
-        { label: "Panel Zone", act: "asn-fpz", fn: () => assignHint("panel zones") },
+        { label: "Panel Zone…", act: "asn-fpz", fn: () => assignHint("panel zones") },
         { label: "Additional Mass…", act: "asn-fmass", fn: () => sky.openFrameAddMass && sky.openFrameAddMass() },
         SEP,
         { label: "Hinges", sub: [
@@ -316,7 +317,7 @@ export function initEtabs(sky) {
       { label: "Shell", aliases: ["Area"], sub: [
         { label: "Slab / Wall Section", act: "asn-ssec", fn: () => assignHint("shell section") },
         { label: "Layered Section", act: "asn-slayer", fn: () => assignHint("layered shell") },
-        { label: "Area Springs", act: "asn-sspring", fn: () => assignHint("area spring") },
+        { label: "Area Springs…", act: "asn-sspring", fn: () => assignHint("area spring") },
         { label: "Wind Pressure Coefficients", act: "asn-scp", fn: () => assignHint("wind Cp") },
         SEP,
         { label: "Diaphragm…", act: "asn-sdiaph", fn: () => sky.openAssignShellDiaphragm && sky.openAssignShellDiaphragm() },
@@ -337,13 +338,13 @@ export function initEtabs(sky) {
         { label: "Temperature…", act: "asn-l116-ftemp", hint: "ΔT · gradients", fn: () => sky.openFrameTemperature && sky.openFrameTemperature() },
         { label: "Open Structure Wind Parameters…", act: "asn-ow-params", hint: "Cf · width · shielding", fn: () => sky.openOpenWindParams && sky.openOpenWindParams() },   // js/openwind.js
         SEP,
-        { label: "Member Loads (Properties Panel)", act: "asn-fload", fn: () => assignHint("member loads") },
+        { label: "Member Loads…", act: "asn-fload", fn: () => assignHint("member loads") },
       ]},
       { label: "Shell Loads", aliases: ["Area Loads"], sub: [
         { label: "Uniform…", act: "asn-suniform", hint: "direction · joint pattern", fn: () => sky.openShellUniform && sky.openShellUniform() },
         { label: "Temperature…", act: "asn-l116-stemp", hint: "ΔT · gradient", fn: () => sky.openShellTemperature && sky.openShellTemperature() },
         SEP,
-        { label: "Area Loads (Properties Panel)", act: "asn-aload", fn: () => assignHint("area loads") },
+        { label: "Area Loads…", act: "asn-aload", fn: () => assignHint("area loads") },
       ]},
       SEP,   // Groups — assign the current selection to a group (js/groups.js)
       { label: "Assign Objects to Group…", act: "asn-group", hint: "current selection", fn: () => sky.openAssignGroup && sky.openAssignGroup() },

@@ -52,6 +52,7 @@ export function initEditMenu(sky) {
       if (r.type === "member") out.members.push(r.uid);
       else if (r.type === "shell") out.shells.push(r.uid);
       else if (r.type === "link") out.links.push(r.uid);
+      else if (r.type === "joint") out.points.push(String(r.uid).split(",").map(Number));   // Wave F: selected joints
       else if (r.type === "spring") {
         const sp = (m.spring_supports || []).find(s => emSpringKey(s.point) === r.uid);
         if (sp) out.points.push(sp.point.map(Number));
@@ -85,7 +86,7 @@ export function initEditMenu(sky) {
   document.addEventListener("keyup", () => setTimeout(trackSel, 0));
   function setSelection(refs) {
     trackSel();
-    if (S.mode !== "model") sky.setMode("model");
+    if (S.mode !== "model" && !(sky.f && sky.f.selectInPlace)) sky.setMode("model");   // Wave F: the 3D view shows the selection — stay there
     sky.handleSelect(refs, false);
     trackSel();
     const ex = sky.etabs;

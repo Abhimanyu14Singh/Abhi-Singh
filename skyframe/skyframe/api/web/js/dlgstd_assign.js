@@ -212,7 +212,7 @@ export function openAssignSupports(sky) {
   const m = S.model;
   const all = daSelectionJoints(m, sel(sky));
   const zMin = all.length ? Math.min(...all.map(p => p[2])) : 0;
-  const st = { scope: "base", preset: "fixed" };
+  const st = { scope: sel(sky).some(r => r.type === "joint") ? "all" : "base", preset: "fixed" };   // Wave F: picked joints → every selected joint
   const r = [1, 1, 1, 1, 1, 1];
   const F = dkForm();
   const P = {};

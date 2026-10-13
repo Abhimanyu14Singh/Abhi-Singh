@@ -257,8 +257,8 @@ export function initW8Select(sky) {
   const setBox = on => { boxMode = !!on; try { localStorage.setItem(BOX_KEY, boxMode ? "1" : "0"); } catch { /* ignore */ } };
   if (sky.menu) {
     sky.menu.add("Select", { sep: true });
-    sky.menu.add("Select", { label: "Intersecting Line", act: "sel-w8-line", fn: startLine });
-    sky.menu.add("Select", { label: "Window / Crossing Box", act: "sel-w8-box", check: () => boxMode, hint: "drag → window · ← crossing", fn: () => setBox(!boxMode) });
+    sky.menu.add("Select/Select Using", { label: "Intersecting Line", act: "sel-w8-line", fn: startLine });   // Wave F: in "Select Using ▸" (any view: js/f_init.js)
+    sky.menu.add("Select/Select Using", { label: "Window / Crossing Box", act: "sel-w8-box", check: () => boxMode, hint: "drag → window · ← crossing", fn: () => setBox(!boxMode) });
     sky.menu.add("Select", { label: "By Object Type…", act: "sel-w8-type", fn: () => openByAttribute("type") });
     sky.menu.add("Select", { label: "By Label…", act: "sel-w8-label", fn: () => openByAttribute("label") });
     sky.menu.add("Select", { label: "By Link / Spring Property…", act: "sel-w8-linkprop", fn: () => openByAttribute("link_type") });

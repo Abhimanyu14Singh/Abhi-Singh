@@ -1,0 +1,61 @@
+/* SkyFrame Wave F — selection in every view (js/f_*.js). Theme tokens for the
+   shared selection highlight, read by the 3D overlay and the plan / elevation
+   joint markers. */
+:root {
+  --f-sel: #35b5e5;
+  --f-sel-tint: rgba(53, 181, 229, 0.22);
+  --f-hover: #ffffff;
+  --f-linespring: #2fbf74;
+  --f-line: #f5be3c;
+  --f-box-window: rgba(53, 181, 229, 0.10);
+  --f-box-crossing: rgba(52, 195, 132, 0.10);
+  --f-box-crossing-edge: #34c384;
+}
+:root[data-theme="light"] {
+  --f-sel: #0b7fc0;
+  --f-sel-tint: rgba(11, 127, 192, 0.18);
+  --f-hover: #0d1117;
+  --f-linespring: #1c8f55;
+  --f-line: #b77f00;
+  --f-box-window: rgba(11, 127, 192, 0.10);
+  --f-box-crossing: rgba(28, 143, 85, 0.10);
+  --f-box-crossing-edge: #1c8f55;
+}
+
+/* window (→, solid) / crossing (←, dashed green) box in the 3D views */
+.f-boxsel {
+  position: absolute; pointer-events: none; z-index: 3;
+  border: 1px solid var(--f-sel); background: var(--f-box-window);
+}
+.f-boxsel.is-crossing { border-style: dashed; border-color: var(--f-box-crossing-edge); background: var(--f-box-crossing); }
+canvas.f-select-mode, canvas.f-line-mode { cursor: crosshair; }
+
+.f-drag-toggle { margin-left: 8px; }
+.f-drag-toggle .seg-btn { padding: 2px 9px; font-size: 11.5px; }
+
+/* Properties panel: docked beside / floating over the 3D view */
+.f-props-bar { display: flex; align-items: center; gap: 4px; margin-bottom: 10px; }
+.f-props-bar .panel-title { flex: 1; margin: 0; }
+.f-props-bar .icon-btn[hidden] { display: none; }
+.props-panel.f-dock3d { box-sizing: border-box; width: 288px; flex: none; border-left: 1px solid var(--border); }
+#pane-view3d .viewer-row > .viewer-wrap { min-width: 0; }
+.props-panel.f-float {
+  position: absolute; right: 12px; top: 12px; z-index: 6; width: 288px; box-sizing: border-box;
+  max-height: calc(100% - 24px); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+}
+.props-panel.f-float .f-props-bar { cursor: move; }
+.f-props-btns { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.f-props-coord { font-size: 12px; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+.f-props-coord span { margin-right: 8px; }
+.f-props-coord i { font-style: normal; color: var(--text-3); margin-right: 2px; }
+.f-props-row { font-size: 12px; margin-bottom: 6px; }
+.f-jdofs { flex-wrap: wrap; gap: 10px; }
+
+/* story scope in the Assign dialogs */
+.f-scope { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; margin-right: 12px; color: var(--text-2); }
+.f-scope .f-scope-n { font-size: 11px; }
+
+@media (max-width: 720px) {
+  .props-panel.f-float { left: 8px !important; right: 8px; width: auto; }
+}

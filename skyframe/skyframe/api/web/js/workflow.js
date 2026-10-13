@@ -263,6 +263,7 @@ export function installContextMenu(sky) {
   const TYPE_LABEL = { member: "Frame", shell: "Shell", link: "Link", spring: "Point spring", linespring: "Line spring" };
 
   function itemsFor(ref) {
+    if (sky.f && sky.f.ctxItems) { try { const fi = sky.f.ctxItems(ref); if (fi) return fi; } catch (e) { console.error(e); } }   // Wave F: menus by object type (js/f_ctxmenu.js)
     const out = [];
     if (!ref) return EMPTY.filter(i => i.sep || !i.act || i.act === "help-workflow" || (sky.etabs && sky.etabs.hasItem(i.act)));
     const sel = S.selection || [];
@@ -334,6 +335,7 @@ export function installContextMenu(sky) {
     if (sky.elevEditor && sky.elevEditor.svg) bind(sky.elevEditor.svg, planHit(sky.elevEditor));
     const v = sky.viewer;
     if (v && v.canvas) bind(v.canvas, e => {
+      if (sky.f && sky.f.ctxPick) return sky.f.ctxPick(v, e);   // Wave F: every object type (js/f_pick.js)
       const rect = v.canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left, my = e.clientY - rect.top;
       let best = null, bestD = 8;
