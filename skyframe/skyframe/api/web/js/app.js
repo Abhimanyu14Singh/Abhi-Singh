@@ -131,6 +131,7 @@ import { initWaveC as wcInitWaveC } from "./wavec.js";   // Wave C: piers · flo
 import { wcMockValidate as wc3MockValidateModel } from "./mock_wavec3.js";   // Wave C mock checks   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_*.js)
 
 import { initWallDraw as wdInitWallDraw } from "./walldraw.js";   // D1 Draw Walls / Quick Draw Walls in plan (js/walldraw.js)   // W8 snaps · selection · similar stories · curved beams · shell options (js/w8_*.js)
+import { initF as fInitF } from "./f_init.js";   // Wave F: one pick service, ETABS selection grammar, Properties panel + assign in every view
 import { mockValidateW8 as w8MockValidate } from "./mock_w8.js";   // W8 ?mock=1 validation
 import { initWaveBLinks as wbInitLinks, wbMockValidateModel as wbMockValidate } from "./wb_links.js";   // wave B: Wen / BRB / bilinear damper / T-C isolator links, freq-dependent links, damping options (js/wb_links.js)
 import { initWaveCDyn as wcInitDyn } from "./wavec_dyn.js";   // Wave C: eigen shift / TH solution type / RS-SS modal damping (js/wavec_dyn.js)
@@ -1666,6 +1667,7 @@ function renderProps() {
   const total = members.length + shells.length + links.length + springs.length +
     lineSprings.length;
   if (!total) {
+    if (window.__sky && window.__sky.fPropsEmpty && window.__sky.fPropsEmpty(box)) return;   // Wave F: joint / tendon selection (js/f_props.js)
     box.innerHTML = `<div class="props-empty">
       <p>Nothing selected.</p>
       <p class="muted">Use the Select tool (V): click an element or drag a box, then edit sections, releases and loads here.</p>
@@ -2024,6 +2026,7 @@ function renderProps() {
   if (window.__sky && window.__sky.npDecorateProps) window.__sky.npDecorateProps(box, { members });   // nonprismatic variation (js/npsect.js)
   if (window.__sky && window.__sky.uhDecorateProps) window.__sky.uhDecorateProps(box, { members });   // B10: user-defined hinges
   if (window.__sky && window.__sky.ptDecorateProps) window.__sky.ptDecorateProps(box, { members, shells });   // PT tendons hosted by the selection
+  if (window.__sky && window.__sky.fDecorateProps) window.__sky.fDecorateProps(box);   // Wave F: joints / tendons in a mixed selection (js/f_props.js)
 
   const on = (id, ev, fn) => { const n = $(id); if (n) n.addEventListener(ev, fn); };
 
@@ -8704,6 +8707,8 @@ async function boot() {
   try { wcInitLinkExtC(window.__sky); } catch (err) { console.error("wave C links init failed", err); }   // js/linkext_c.js
 
   try { bxInitBeyondTools(window.__sky); } catch (err) { console.error("beyond tools init failed", err); }   // Tools › Model History · Explain Result (js/beyond_init.js)
+
+  try { fInitF(window.__sky); } catch (err) { console.error("Wave F init failed", err); }   // Wave F: select / assign in every view (js/f_init.js) — after the menus and dialogs
 }
 
 boot();

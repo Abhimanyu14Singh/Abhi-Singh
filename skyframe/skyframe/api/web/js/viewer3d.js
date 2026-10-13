@@ -98,6 +98,7 @@ const v3 = {
 import { openingPolygon3 as g2OpeningPolygon3 } from "./polygeom.js";
 // E3 — GPU (WebGL2 / three.js) renderer switch: View > Renderer (js/gpu/gpuhook.js; heavy code lazy-loaded)
 import { gpuOnCreate as g3OnCreate } from "./gpu/gpuhook.js";
+import { fOnCreate as fvOnCreate } from "./f_hook.js";   // Wave F: pick / select / context menu in every 3D view (js/f_select3d.js)
 
 export class Viewer3D {
   constructor(canvas, opts = {}) {
@@ -134,6 +135,7 @@ export class Viewer3D {
     this._resize();
     this._loop();
     try { g3OnCreate(this); } catch (e) { /* E3 hook: GPU renderer attaches itself when selected (js/gpu/gpuhook.js) */ }
+    try { fvOnCreate(this); } catch (e) { /* Wave F hook: selection grammar + pick service attach (js/f_select3d.js) */ }
   }
 
   /* ------------------------------------------------ public API */
@@ -1136,6 +1138,9 @@ export class Viewer3D {
     if (this.pfOverlay) { try { this.pfOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
     // Wave C hook — pier / spandrel / link diagrams + video caption (js/wc_diagrams.js)
     if (this.wcOverlay) { try { this.wcOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
+
+    // Wave F hook — shared selection highlight, hover pre-highlight, line springs, pick rubber band (js/f_select3d.js)
+    if (this.fSelOverlay) { try { this.fSelOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
 
     // ---- axis triad
     this._renderTriad(ctx, w, h);

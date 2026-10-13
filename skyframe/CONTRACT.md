@@ -15880,3 +15880,93 @@ New advice code `AUTO_LATERAL_MULTI_TOWER` (warning): the model has two or more 
 ### Live-load reduction never touches analysis output
 
 `llr_settings` has no effect on any solved result (cases, combos, reactions); reduced forces exist only as the separate copies of `llr_codes.apply_to_results` and the two LLR tables (Welcome to ETABS v23 p. 4-6). Pinned by `tests/test_benchmarks.py::test_raw_analysis_output_never_live_load_reduced`.
+
+## Wave F — select and assign in every view
+
+Analysis-only interface feature: **no model field is added**, so every model
+(and every result) stays byte-identical. Modules: `js/f_pickgeom.js` (pure math,
+mirrored by `skyframe/core/pickgeom.py`), `js/f_pick.js`, `js/gpu/f_gpupick.js`,
+`js/f_select3d.js`, `js/f_select2d.js`, `js/f_props.js`, `js/f_assign.js`,
+`js/f_ctxmenu.js`, `js/f_init.js`, `fsel.css`; `skyframe/core/assign_scope.py`,
+`skyframe/api/assign_api.py`.
+
+### Selection references (`store.selection`)
+
+`[{type, uid}]` with `type` one of `member` · `shell` · `link` · `spring`
+(uid = `modeledit.springKey(point)`) · `linespring` (`springKey(p1)|springKey(p2)`)
+· **`joint`** · **`tendon`** (uid = the tendon uid). A joint uid is its
+coordinates rounded to 1e-6 and printed as JavaScript numbers, `"x,y,z"`
+(`jointKey`: `[0, 0, 9.600000000000001]` → `"0,0,9.6"`, `1e-6` → `"0.000001"`),
+the key the Edit utilities use. Joint assignments resolve it to the model joint
+within 1e-6 (`assigndlg.selectionJoints`, the Edit selection `points`).
+
+### Picking (every view)
+
+* 3D (main view and View › Windows panes, Classic and GPU): joints are
+  screen-space dots (6 px); frames, links, line springs and tendons are
+  segments (7–8 px); point springs are 9-px dots; shells are polygons (the
+  cursor is inside the projected polygon; depth = ray ∩ polygon, openings
+  excluded). The winner is a point spring, then the nearest joint, then the
+  nearest line object (ties → nearer depth), then the nearest shell
+  (`resolvePick`). Ctrl+click where line objects / shells overlap opens a list
+  to choose from. Classic: the projected scene is bucketed in a 48-px screen
+  grid. GPU: two RGBA8 id targets hold frames `1…N` (the E3 buffer) plus joints
+  `1<<20`, links `3<<20`, point springs `4<<20`, line springs `5<<20`, tendons
+  `6<<20` (index + 1 in the low 20 bits); shells `2<<20` have their own target.
+  A (2·thr+1)² window is read back and the same exact rule picks the winner.
+* Plan / elevation keep their SVG hit tests and add the joints of the story /
+  plane (in plan a column square at the joint wins; repeated clicks cycle).
+* Visibility: hidden objects are never picked (Set Display Options object
+  toggles, story range, groups, cut plane, Show Selection Only). A joint is
+  pickable when an object that uses it is visible. The Selection Filter (per
+  browser, `localStorage["sky.f.selfilter"]` = `{joint, column, beam, brace,
+  wall, slab, link, spring, linespring, tendon: bool}`) applies to clicks, boxes
+  and lines in every view, not to Select by property / group / story.
+
+### Mouse grammar
+
+Click selects (replaces). Clicking a selected object deselects it. Shift /
+Ctrl + click adds (or removes). Clicking empty space clears; Esc clears or ends
+a tool. Ctrl+drag (or a plain drag with the 3D toolbar *Select* toggle /
+Select › Select Using › 3D Drag Selects) draws a box: left → right is a WINDOW
+(`rectHit*(…, false)`: entirely inside), right → left a CROSSING (`true`:
+touching). Otherwise a plain drag orbits (in Select mode Alt-drag / middle-drag
+orbit), right-drag pans. Intersecting Line (Select › Select Using) works in
+plan (W8 tool), elevation ((s, z) line) and 3D (screen line): the frames,
+links, shells and springs it crosses are added (joints are not). Elevation
+boxes honour Window / Crossing Box. Hover pre-highlights and labels the object.
+
+### Story scope of the Assign dialogs
+
+Every Assign dialog opened with a selection shows *Apply to: This Story /
+Similar Stories / All Stories* (shared with the plan scope, `sky.w8stories`).
+When the dialog writes the model and the scope is not This Story, the change
+made on each selected object is copied onto its counterpart on every other
+story of the scope, in the same undo step. The change covers the object's
+fields (except geometry, uid and story), the point-keyed `supports`,
+`spring_supports` and `nodal_masses` at its joints, the pattern load entries
+that reference it (`member_uid`, `region_uid`, `link_uid`, `point`: added and
+removed entries) and its group membership. Counterparts (`correspondingRefs`)
+have the same kind and plan position, with z shifted by the difference of the
+story TOP elevations; the joints of the selected objects are included.
+
+### `POST /api/assign`
+
+`{selection: {members?, shells?, links?, points?}, assign: {<one kind>},
+scope? = "one" | "similar" | "all", model?, dry_run?}` → `{model, summary}`;
+400 `{error}` on bad input. Kinds: `frame_section` (an existing name),
+`frame_releases` (`"Mi"`, `"Mj"` tokens), `shell_section` (an existing name),
+`restraints` (6 × 0/1 on `points`; all zeros removes the support; when the
+model had no explicit supports, the automatic base supports are first written
+out with the `base_fixity` restraints), `link_property` (`{link_type?,
+params?, stiffness?}`). `summary` = `{assign, scope, written: {members,
+shells, links, points}, selected, counterparts, stories}`. The working model
+is replaced unless `dry_run`.
+
+### Hooks
+
+`sky.f.onShowResults(obj)` (context menu *Show results…*, Properties panel)
+calls `sky.results.openDetail(obj)` when present, else the Analyze-mode Member
+panel / reactions / shell contours. `sky.f.ctxItems(ref)` and
+`sky.f.ctxPick(viewer, event)` are used by `js/workflow.js`; `sky.f.pick`
+offers `pickAt / pickList / hitsAt / pickBox / pickLine / setFilter`.

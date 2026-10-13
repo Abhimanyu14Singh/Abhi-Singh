@@ -947,3 +947,44 @@ mode (the run discards the per-mode results), so the first call costs about
 as much as the RS part of the analysis; later targets of the same case reuse
 the cached modes (6-entry cache per model signature). Sum checks: relative
 error ≤ 5e-15 in all three cases.
+
+## Wave F pick service (select in every view)
+
+One pick service serves every 3D view and object type (`js/f_pick.js`;
+GPU id buffer `js/gpu/f_gpupick.js`). Nothing in the analysis changes.
+
+### Measured here
+
+Conditions: this container (4 shared cores, **no GPU**), Chromium headless,
+SwiftShader for WebGL, 3D canvas about 970 × 830 CSS px. Model:
+`templates_sys.build_system("rc_dual_core", {"stories": 50})`, 4 400 frames and
+1 400 shells, so 7 636 pickable items once joints, links and springs are counted.
+`performance.now()` resolves 0.1 ms in headless Chromium.
+
+| step | Classic (CPU screen index) | GPU (id buffer, SwiftShader) |
+| --- | ---: | ---: |
+| first pick after a camera change (projection + 48-px grid index; Classic also builds the scene once) | 440 ms | 19 ms (scene already built) |
+| click / hover pick, median of 400 random points | < 0.1 ms | < 0.1 ms |
+| click / hover pick, 95th percentile | 0.4 ms | 0.3 ms |
+| window box over the whole view (7 636 objects) | 92 ms | 11 ms |
+| crossing box over the middle third (2 994 objects) | 102 ms | 21 ms |
+
+The box timings use the same CPU code in both columns. The Classic numbers are
+the first box after loading, before the JIT warmed up, so the GPU column is the
+fairer steady-state figure for both.
+
+Hover picks are throttled to one per animation frame. The projection and index
+are rebuilt only when the camera, model, display options or filter change, not
+on every mouse move.
+
+**Agreement.** On a 135-point grid, Classic and GPU return the same object for
+at least 97 % of the points (asserted by `tests/e2e/fselect.e2e.mjs`; the run
+measured here had all points identical). Shells have their own id target, so a
+translucent slab never hides the frame behind it in either renderer.
+
+### Projected for the Core Ultra 9 285K / RTX 5090 (not measured)
+
+The pick cost is CPU-side array work, roughly 2× faster on the 285K's P-cores
+than on these shared cores. The id-buffer pass is a single draw of the scene
+already on the GPU (well under 1 ms on an RTX 5090) plus a ≤ 17 × 17 pixel
+read-back.

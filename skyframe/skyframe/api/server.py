@@ -2433,6 +2433,10 @@ def create_app() -> Flask:
     from skyframe.api.load_path_api import register as _lpx_register
     _lpx_register(app, _state, _tables_lookup, _model_sig)
 
+    # Wave F: model-level Assign on a selection with a story scope (assign_api)
+    from skyframe.api.assign_api import register as _fasn_register
+    _fasn_register(app, _state)
+
     return app
 
 
