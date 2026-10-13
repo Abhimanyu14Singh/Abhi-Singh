@@ -190,7 +190,10 @@ def fork_map(fn: Callable, items: Sequence, n_lanes: int) -> Dict[int, object]:
     n = len(items)
     if n == 0:
         return {}
-    if n_lanes <= 1 or n == 1:
+    if n_lanes <= 1 or n == 1 or not fork_supported():
+        # no fork (Windows, macOS): serial in the parent.  Callers that can
+        # use the spawn pool route there first; this is the safe floor for
+        # every other path (e.g. PARDISO-owned families, RS prefetch).
         return {k: fn(items[k]) for k in range(n)}
     lanes_of = plan(n, n_lanes)
     workers = []                                  # (pid, read fd, items)

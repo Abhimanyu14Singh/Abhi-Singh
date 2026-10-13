@@ -64,12 +64,37 @@ def run(lanes: int = 2) -> dict:
         spawned = _sha(m)
     finally:
         _par.SPAWN_EQ_THRESHOLD = saved
+    # PARDISO + parallel lanes (the Windows desktop default on big models):
+    # must run without os.fork and agree with serial to 1e-9 (v1.26.0 bug)
+    pardiso = None
+    try:
+        from skyframe.engine import pardiso_solver as _pds
+        if _pds.available():
+            from skyframe.core import results_compare as _rc
+            from skyframe.engine.opensees_engine import OpenSeesEngine
+            _par.SPAWN_EQ_THRESHOLD = 0
+            try:
+                mp = _model()
+                mp.analysis_options = {"parallel": lanes,
+                                       "parallel_start": "spawn",
+                                       "solver": "pardiso"}
+                dp = OpenSeesEngine(mp).run().to_dict()
+                ms = _model()
+                ms.analysis_options = {"parallel": "off"}
+                ds = OpenSeesEngine(ms).run().to_dict()
+                _eq, _mm, worst = _rc.compare(ds, dp, rtol=1e-9)
+                pardiso = {"ok": worst <= 1e-9, "worst_rel": worst}
+            finally:
+                _par.SPAWN_EQ_THRESHOLD = saved
+    except Exception as exc:                            # noqa: BLE001
+        pardiso = {"ok": False, "error": repr(exc)}
     items = _sp.stats["worker_items"] - before["worker_items"]
     bad = _sp.stats["probe_mismatch"] - before["probe_mismatch"]
     fb = _sp.stats["fallback_items"] - before["fallback_items"]
     _sp.shutdown()
-    ok = items > 0 and bad == 0 and fb == 0 and serial == spawned
-    return {"ok": ok, "worker_items": items, "probe_mismatch": bad,
+    ok = (items > 0 and bad == 0 and fb == 0 and serial == spawned
+          and (pardiso is None or pardiso["ok"]))
+    return {"ok": ok, "pardiso_parallel": pardiso, "worker_items": items, "probe_mismatch": bad,
             "fallback_items": fb, "identical": serial == spawned,
             "sha256": serial[:16], "seconds": round(time.perf_counter()
                                                     - t0, 2)}
