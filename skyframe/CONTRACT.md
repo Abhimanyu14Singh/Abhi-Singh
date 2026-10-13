@@ -15605,3 +15605,72 @@ Tests: `tests/test_spawn_pool.py`. Numbers: `docs/PERFORMANCE.md`
   the two results JSON are identical, else 1. No server, no window.
   CI (`build-installers.yml`) runs it in the frozen CLI binary on every OS
   and in the windowed `SkyFrame.exe` on Windows.
+
+## GPU 3D renderer (E3)
+
+This is a view-only feature. Nothing is written to the model, the results or any API payload. Saves round-trip byte-identically, and the backend is unchanged.
+
+**Selection.**
+- View › Renderer ▸ has three items: *GPU (WebGL2)* (`view-renderer-gpu`), *Classic (Canvas 2D)* (`view-renderer-classic`, the default) and *Graphics Adapter* (`view-renderer-info`).
+- The choice is stored per browser in `localStorage["skyframe.renderer3d.v1"] = "gpu" | "classic"`. Access is guarded: any other value, or a storage error, means Classic.
+- `?renderer=gpu|classic` in the URL overrides the stored choice for one page load.
+- Without WebGL2 the viewer stays Classic, and a toast says why. Nothing is written to the console.
+- API: `__sky.gpu3d = {mode(), set(mode, persist = true) → Promise<mode>, active(), probe() → {webgl2, renderer, vendor, integrated, software, discrete}, ready(), stats(), benchmark(frames, dyaw)}`.
+- One-time hint: when `WEBGL_debug_renderer_info` names an integrated or software adapter, a toast explains how to force the discrete GPU on Windows. It is shown once per adapter string, which is stored in `localStorage["skyframe.gpuhint.v1"]`.
+
+**Modules.**
+- `js/gpu/gpuhook.js` is a small module, imported by `js/viewer3d.js`.
+- `js/gpu/renderer.js` and `js/gpu/glprims.js` are loaded only in GPU mode, on first use.
+- three.js r170 is vendored at `vendor/three/0.170.0/three.module.min.js` (MIT licence, SHA-256 `08fd7545…c39e7`). There is no CDN, so it works offline in the desktop app.
+
+**Viewer3D public API (unchanged).** The GPU backend attaches to an existing `Viewer3D`: the main view and every View › Windows pane. It keeps:
+- the methods `setModel / setResults / setOverlay / setContours / setLabels / setHighlight / setMemberColors / setQuadTint / fit / autoScale / destroy`;
+- the camera fields `yaw, pitch, dist, target, fov, vyaw, vpitch, radius`;
+- the members `_basis`, `_makeProjector`, `_projSeg`, `_deformedPolyline`, `_caseData`, `_contourData`, `_bbox`, `segs`, `shellPolys`, `linkSegs`, `overlay`, `highlight`, `model`, `results`, `canvas` and `ctx`;
+- every hook.
+
+The viewer's own 2D canvas now sits above the WebGL canvas as the overlay layer. Every hook still runs. This is the inventory of the hooks other modules use:
+
+| hook / member used by other modules | modules | GPU mode |
+|---|---|---|
+| `vxFrame`, `vxDeformed`, `vxMemberVisible`, `dpAnnot` | viewext.js, dispopts.js | Filters, clipping, colour-by and shell alpha are read from `vxFrame`. Extruded geometry comes from `__sky.vx.geo()`. `VX.post` annotations are drawn on the overlay, with labels decluttered. |
+| `extraOverlay`, `g2Overlay`, `grpOverlay`, `npOverlay`, `uhOverlay`, `ptOverlay`, `pfOverlay`, `wcOverlay` | checkmodel, insertdlg, groups, npsect, uhdlg/uhresults, tendons, plotfn, wc_diagrams/wc_shells/wc_snap/wc_video | Unchanged: they run in the overlay pass with the same `P`. |
+| `shellResExt` | shellres.js (A3 contours) | Its cells are captured in world space and drawn on the GPU. |
+| `grpCaseData` | stagedata.js, wc_video.js | Used through `_caseData()`. |
+| `w8Segs` | w8_curved.js | Used through `segs`. |
+| `__sky.relDrawViewer` | releases.js | Runs in the overlay pass and receives only the members that have releases. |
+| `_segsScreen` | workflow.js, viewer badges | A lazy getter: segments are projected when it is read. |
+| `_dirty = true` | 14 modules | A setter that schedules one frame (render on demand). |
+| `_resize()` | app.js, etabs.js, ux_chrome.js, ux_qat.js | Also resizes the WebGL canvas. |
+| `onMemberClick`, `_makeProjector`, `canvas` events | app.js, wb_draw.js (3D draw tool), wc_snap.js, wb_views.js | Unchanged. Picks come from the ID buffer. |
+
+**New viewer members (both renderers).**
+- `_pickAt(mx, my, thr)` returns a seg or null. It uses the Classic rule: the first visible centerline, in painter order, that is strictly nearest and within `thr` px.
+- `_pickBox(x0, y0, x1, y1, crossing)` returns segs in model order. Window mode needs both projected ends inside the box. Crossing mode needs any part inside (Liang–Barsky test).
+- `onBoxSelect(segs, add)`: the default calls `__sky.handleSelect` with `{type: "member", uid}` refs. It is ignored while the 3D draw tool is active.
+- The gesture is **Ctrl+drag**: left→right is a window selection, right→left a crossing selection, and Shift adds to the selection.
+- `js/viewer3d.js` now exports `boxHitSeg(rect, ax, ay, bx, by, crossing)` and `V3_STYLE`.
+
+**Rendering rules (parity with Classic).** The GPU renderer reproduces Classic exactly on these points:
+- the camera: vertical fov, basis, and near-plane clip at 0.05 for lines;
+- the palette (`V3_STYLE.COLORS`);
+- the depth fade of frame lines: 1 − 0.5·t between dist ∓ radius;
+- ghost alpha 0.16 under overlays;
+- line widths of 2.6 px for hover, 2.6 px for highlight and 2.3 px for member colours;
+- the quantised head-light Lambert shading of the extruded view: 16 shades, 0.40 + 0.72·q/15;
+- the contour colormap `divergingColor` with 8-bit rounding, the same per-quad values and symmetric limits, and an unchanged legend;
+- the deformed factor: `autoScale·scaleMult` for static cases, `autoScale·sin(2πt/1.8)` for modes and buckling;
+- Hermite member curves with 8 sub-segments;
+- extruded deformed prisms at 5 stations, keeping the undeformed section orientation (the same approximation Classic makes).
+
+Extruded instances use exactly the VX ring centres (axis + cardinal point + interpolated joint offsets) and `polygeom.memberAxes`, including `frame_axis_convention`. Nonprismatic members use the VX rings.
+
+Known and accepted differences from Classic:
+- occlusion comes from the depth buffer, not painter order (lines and fills on the same plane can tie);
+- MSAA anti-aliasing instead of Canvas anti-aliasing;
+- the inner walls of pipes and tubes are drawn;
+- labels are decluttered: overlapping and off-screen labels are skipped.
+
+**Desktop.** On Windows, `skyframe.desktop.webview2_gpu_env(env, platform)` appends `--ignore-gpu-blocklist --enable-gpu-rasterization --force_high_performance_gpu` to `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`. A value the user has already set is kept. `SKYFRAME_NO_GPU_FLAGS=1` turns this off.
+
+**Tests.** `tests/test_gpu_renderer.py`.

@@ -34,6 +34,38 @@ from .api.server import create_app
 WINDOW_TITLE = "SkyFrame 1.17 — Building Analysis Studio"
 
 
+# E3 — GPU 3D renderer: make sure Edge WebView2 (Windows) runs with hardware
+# acceleration and prefers the high-performance (discrete) GPU. WebView2 reads
+# extra Chromium switches from this environment variable when the browser
+# process starts; an explicit user value is kept and only missing switches are
+# appended. The Windows graphics setting (Settings › System › Display ›
+# Graphics › SkyFrame.exe / msedgewebview2.exe › High performance) stays the
+# authoritative way to pin the RTX GPU — see docs/PERFORMANCE.md "GPU 3D
+# renderer". SKYFRAME_NO_GPU_FLAGS=1 disables this.
+WEBVIEW2_ARGS_ENV = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
+WEBVIEW2_GPU_SWITCHES = ("--ignore-gpu-blocklist", "--enable-gpu-rasterization",
+                         "--force_high_performance_gpu")
+
+
+def webview2_gpu_env(env: dict | None = None,
+                     platform: str | None = None) -> dict:
+    """Environment updates that keep WebGL2 hardware-accelerated in WebView2.
+
+    Returns ``{}`` off Windows, when ``SKYFRAME_NO_GPU_FLAGS`` is set, or when
+    every switch is already present; never removes a user-supplied switch and
+    never adds ``--disable-gpu`` style flags."""
+    env = os.environ if env is None else env
+    platform = sys.platform if platform is None else platform
+    if not platform.startswith("win") or env.get("SKYFRAME_NO_GPU_FLAGS"):
+        return {}
+    cur = env.get(WEBVIEW2_ARGS_ENV, "").strip()
+    have = set(cur.split())
+    add = [sw for sw in WEBVIEW2_GPU_SWITCHES if sw not in have]
+    if not add:
+        return {}
+    return {WEBVIEW2_ARGS_ENV: " ".join(([cur] if cur else []) + add)}
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
@@ -120,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     # (clr / Python.Runtime.dll) fails to initialize under PyInstaller — fall
     # back to opening the app in the default browser instead of crashing.
     try:
+        os.environ.update(webview2_gpu_env())   # E3: WebGL2 on the GPU (Windows)
         import webview  # deferred: GUI libs not needed for headless modes
         webview.create_window(WINDOW_TITLE, url, width=1440, height=900,
                               min_size=(1100, 700))

@@ -181,6 +181,7 @@ export function initEtabs(sky) {
       { label: "Reset Display Options", act: "vx-reset", fn: () => sky.vx && sky.vx.reset() },
       { label: "Named Views", sub: [] },   // Wave B: save / show named views (js/wb_views.js)
       { label: "Windows", aliases: ["View Windows"], sub: [] },   // Wave B: 1–4 synchronised panes (js/wb_views.js)
+      { label: "Renderer", aliases: ["3D Renderer"], sub: [] },   // E3: GPU (WebGL2) / Classic 3D renderer (js/gpu/gpuhook.js)
       SEP,
       { label: "Model Explorer", act: "view-explorer", check: () => !document.querySelector(".workspace.explorer-collapsed"), fn: () => exHead && exHead.querySelector(".ex-collapse").click() },
       { label: "Quick-Access Toolbar", act: "help-toolbar", key: "Alt+Q", check: () => !!(sky.ux && sky.ux.toolbar && sky.ux.toolbar.isVisible()), fn: () => sky.ux && sky.ux.toolbar && sky.ux.toolbar.toggle() },

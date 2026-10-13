@@ -1599,6 +1599,7 @@ export function initViewExt(sky) {
     openDisplayOptions, close: () => vxCloseDialog("vxDisplayModal"),
     toggleExtrude, toggleSelOnly, toggleCut, benchmark,
     stats: () => ({ ...lastStats }), lastError: () => lastError,
+    geo: () => (viewer.model && !isDef ? getGeo() : null),   // E3 hook: the GPU renderer extrudes from this cache (js/gpu/renderer.js)
     isExtrude: () => opts.extrude, isSelOnly: () => opts.selOnly, isCut: () => opts.cut.on,
     // frame axes: the extruded vertices of a member (ring-major [x,y,z] …), for tests
     meshOf: uid => { const mm = getGeo().memberMeshes.find(x => x.uid === uid); return mm && mm.parts.length ? mm.parts.map(p => ({ n: p.full.n, K: p.full.K, V: Array.from(p.full.V) })) : null; },
