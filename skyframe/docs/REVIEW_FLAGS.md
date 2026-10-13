@@ -286,7 +286,7 @@ before it is relied on. Each one can be overridden by an explicit parameter.
 - **Licences of the optional "fast" extra**:
   - `pypardiso` (haasad/PyPardisoProject) is BSD-3-Clause.
   - It pulls the pip wheels `mkl`, `intel-openmp`, `tbb`, `tcmlib`, `umf`, `intel-cmplr-lib-ur` and `onemkl-license`. They are licensed under the **Intel Simplified Software License** (ISSL, the `mkl` wheel metadata, version 2026.1.0 here), which permits redistribution of the binaries in our installer with the licence text.
-  - **Action before a release**: ship the ISSL text (from the `onemkl-license` wheel) inside the Windows / Linux bundle, next to the third-party notices.
+  - Done (packaging/skyframe.spec): the installer bundles the ISSL text and the other wheel licences under `licenses/<package>/`, together with the OpenSeesPy licence. Check they are present in the first frozen build.
   - `scipy` (BSD-3-Clause) becomes a declared dependency of the extra.
 - **Exactness rests on OpenSees itself**:
   - K and M are OpenSees' own element matrices, read in a scratch domain with the `GimmeMCK` integrator and a `FullGeneral` `printA`.

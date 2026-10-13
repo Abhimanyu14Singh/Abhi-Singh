@@ -66,8 +66,28 @@ try:
                     if _os.path.basename(_f) not in _seen:
                         _seen.add(_os.path.basename(_f))
                         binaries.append((_f, "."))
+    # Intel Simplified Software License text must ship with the MKL runtime
+    # (redistribution condition) -> licenses/<dist>/LICENSE.txt in the bundle.
+    for _sp in _site.getsitepackages():
+        for _lic in _glob.glob(_os.path.join(_sp, "*.dist-info", "LICENSE*")):
+            _dist = _os.path.basename(_os.path.dirname(_lic)).split("-")[0].lower()
+            if _dist in ("mkl", "onemkl_license", "intel_openmp", "tbb",
+                         "pypardiso"):
+                datas.append((_lic, _os.path.join("licenses", _dist)))
 except Exception:
     pass  # built without the "fast" extra: the app runs on OpenSees only
+
+# OpenSeesPy licence (free for research/education/internal use; commercial
+# redistribution needs a licence - docs/REVIEW_FLAGS.md) ships with the bundle.
+try:
+    import glob as _glob2
+    import os as _os2
+    import site as _site2
+    for _sp in _site2.getsitepackages():
+        for _lic in _glob2.glob(_os2.path.join(_sp, "openseespy*", "LICENSE*")):
+            datas.append((_lic, _os2.path.join("licenses", _os2.path.basename(_os2.path.dirname(_lic)))))
+except Exception:
+    pass
 
 a = Analysis(
     ["launch.py"],
