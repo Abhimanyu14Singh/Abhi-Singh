@@ -213,6 +213,10 @@ const TEXT = {
   FRAME_POINT_LOAD_NO_AUTOMESH: ["warning", "Frame with span point loads attached to shells without auto mesh",
     "The member is connected to the shell only at its end joints; a concentrated span load reaches the shell only through them.",
     "Assign > Frame > Auto Mesh: enable 'at intermediate joints' / 'at intersections' and a maximum segment length."],
+  // benchmark pack: Welcome to ETABS v23 p. 3-11 (auto loads vs multiple towers)
+  AUTO_LATERAL_MULTI_TOWER: ["warning", "Auto seismic / wind loads on a multi-tower model",
+    "Code-generated lateral loads come from story weights / facade widths per story; with more than one tower the towers share levels, so base shear, distribution, widths and eccentricity are not each tower's own (ETABS: auto loads should not be used with more than one tower).",
+    "Apply user-defined story forces per tower or a response-spectrum case, or analyse each tower as its own model."],
 };
 const CODES = Object.keys(TEXT);
 const fill = (s, th) => s.replace(/\{(\w+)\}/g, (_, k) => String(th[k]));
@@ -339,6 +343,11 @@ export function mockAccuracyAdvice(model, thresholds) {
     const ends = [m.pi, m.pj].filter(p => shellPts.has(key(p))).length;
     if (ends) add("FRAME_POINT_LOAD_NO_AUTOMESH", m.uid, "member", { load_positions: [...new Set(loaded[m.uid])].sort(), shell_joints_at_ends: ends, analysis_segments: 1 });
   }
+  // auto seismic / wind story-force patterns on a multi-tower model
+  if ((model.towers || []).length >= 2)
+    for (const [name, p] of Object.entries(model.patterns || {}))
+      if (["quake", "seismic", "wind"].includes(p.kind) && (p.story_forces || []).length)
+        add("AUTO_LATERAL_MULTI_TOWER", name, "pattern", { kind: p.kind, story_forces: p.story_forces.length });
   const advice = [];
   for (const code of CODES) {
     const it = items[code];

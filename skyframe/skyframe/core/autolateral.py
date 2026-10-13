@@ -748,3 +748,8 @@ from . import seismic_codes_wavec as _sxc, wind_codes_wavec as _wxc  # noqa: E40
 
 _register_ext(_sxc)
 _register_ext(_wxc)
+
+# Benchmark-pack hook: ASCE 7-02 ELF + UBC 1997 wind (codes_legacy_ext)
+from . import codes_legacy_ext as _lgx  # noqa: E402
+
+_register_ext(_lgx)

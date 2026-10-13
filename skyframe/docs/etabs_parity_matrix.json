@@ -307,7 +307,7 @@
     "etabs": "None (user judgement)",
     "skyframe": "Accuracy Advisor (modelling-choice warnings) and Mesh Sensitivity Study with refinement + Richardson extrapolation",
     "status": "beyond",
-    "evidence": "core/accuracy_advisor.py, core/mesh_study.py; api/accuracy_api.py; js/accuracy.js",
+    "evidence": "core/accuracy_advisor.py, core/mesh_study.py; api/accuracy_api.py; js/accuracy.js; AUTO_LATERAL_MULTI_TOWER (Welcome to ETABS v23 p. 3-11: no auto seismic / wind loads on multi-tower models)",
     "gap": "",
     "value": "med",
     "effort": "S",
@@ -1294,8 +1294,8 @@
     "etabs": "Auto Lateral Load list includes many national codes (exact list varies by version; v23.2 added KDS)",
     "skyframe": "TSC 2018 (TBDY), KDS 41 17 00:2019, NSCP 2015 and NTC-Sismo CDMX 2017 (two-term long-period distribution) generators",
     "status": "partial",
-    "evidence": "core/seismic_codes_ext.py tsc2018/kds41/nscp2015/ntc_cdmx; js/autolat_ext.js, js/waveb_alx.js",
-    "gap": "IBC 2006/09/12, UBC 97, Italian NTC 2018 added (Wave C4); Colombia, Peru, Chile, Indonesia, Saudi and ASCE 7-10 standalone not added",
+    "evidence": "core/seismic_codes_ext.py tsc2018/kds41/nscp2015/ntc_cdmx; js/autolat_ext.js, js/waveb_alx.js; benchmark pack: core/codes_legacy_ext.py asce7_02 (ASCE 7-02 §9.5.5 ELF) + ubc97_wind (UBC 97 Method 1), tests/test_benchmarks.py, CSI Example 3",
+    "gap": "IBC 2006/09/12, UBC 97, Italian NTC 2018 added (Wave C4); ASCE 7-02 ELF and UBC 97 wind added (benchmark pack, API only, not yet in the Auto Lateral dialog list); Colombia, Peru, Chile, Indonesia, Saudi and ASCE 7-10 standalone not added",
     "value": "low",
     "effort": "M",
     "phase": "R3",
@@ -3066,5 +3066,17 @@
     "effort": "M",
     "phase": null,
     "audit": "results-presentation audit 2026-10-13"
+  },
+  {
+    "area": "Analysis",
+    "feature": "Software verification examples (re-runnable benchmark pack)",
+    "etabs": "CSI 'Software Verification Examples for ETABS' (Rev. 29): 15 analysis examples compared with theory / other programs, rated exact / acceptable; shipped as PDFs + .EDB files",
+    "skyframe": "python -m skyframe.benchmarks: the CSI analysis examples re-modelled from the published data (Ex 1, 4, 6, 8, 15 complete; Ex 2, 3, 5, 7 partial; Ex 9-14 listed as blocked with the missing inputs) plus closed-form gap cases (P-Delta, buckling, plate, patch tests, CM/CR, Fpx); CSI acceptance rating against the independent reference and against ETABS; scorecard JSON + HTML leadership report; runs in the test suite",
+    "status": "full",
+    "evidence": "skyframe/benchmarks/*; tests/test_benchmarks.py; CONTRACT §Benchmark pack: CSI ETABS verification examples",
+    "gap": "RS / TH values of Ex 2, 5, 7 and all of Ex 9-14 need the ETABS install files (.EDB models, El Centro / Loma Prieta records)",
+    "value": "high",
+    "effort": "M",
+    "phase": "R3"
   }
 ]

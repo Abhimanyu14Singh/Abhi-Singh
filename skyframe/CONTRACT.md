@@ -15854,3 +15854,29 @@ Rules:
 * **Time history** — the recorded signed series (base FX / FY, story ux / uy, story drift from the ux / uy series): the ten largest |values| ranked; `governing_step` (1-based) and `governing_time`; other quantities: message with the recorded peak.
 
 UI: Tools › Explain Result… (`tools-lp-explain`, needs results; dlgkit `exDlg`): result type, component, object (support joint / node tag / frame + station / story / pier + story; a selected frame pre-fills), case or combination, "break combination cases down to load patterns"; Explain → header (value, station x, ✓ sum check), diverging bar chart (positive `#3d7fc8`, negative `#d0661e`, values labelled, top 12) and ranked table (pattern children indented). Row click deep-links: case / pattern → its deformed shape in the 3D view (target frame highlighted), mode → mode shape, step → Time History results. `window.__sky.explain = {open(target?, case?), explain(target, case), targetFromSelection(), deepLink}` — `open(target, case)` runs immediately (for result probes / the member detail window). `?mock=1`: `js/mock_explain.js` (same shape; mock RS per-mode values from the mass participation).
+
+## Benchmark pack: CSI ETABS verification examples
+
+`python -m skyframe.benchmarks [--case ID ...] [--report OUT_DIR]` runs the benchmark pack (package `skyframe/benchmarks/`) and, with `--report`, writes `scorecard.json` and `benchmark_report.html` (self-contained, light/dark, printable). Exit status 1 when any value is unacceptable or a case errors.
+
+* One module per case BUILDS a `BuildingModel` from the inputs printed in CSI's *Software Verification Examples for ETABS* (Rev. 29) and runs the real engine; no CSI file is read or shipped. Every input not printed in the PDF is marked `[assumed]`, every value read from a figure or hand-derived `[derived]`, in the module docstring.
+* Cases: Tier 1 `EX01` (20 values), `EX04` (12), `EX06` (3 + 3 supplementary rows of the references' joint-mass model), `EX08` (5), `EX15` (30; 20 wall models vs CSI's SAP2000 refined-mesh column); Tier 2 `EX02` (modes), `EX03` (UBC97 / ASCE 7-02 seismic, UBC97 wind story shears), `EX05` (periods), `EX07` (static + 7 periods); blocked `EX09`..`EX14` (status `blocked`, list of missing inputs); gap cases `GAP-PDELTA`, `GAP-BUCKLING`, `GAP-PLATE`, `GAP-PATCH`, `GAP-DIAPHRAGM`, `GAP-FPX`.
+* Row: `{quantity, location, units, independent, independent_src, etabs, skyframe, cls, pct_ind, pct_etabs, rating, group, note}`. Published values are kept as the printed strings. `pct = 100 (value / ref - 1)`. Rating (CSI): `exact` when |value - ref| <= half a unit of the reference's last printed digit; `acceptable` when |pct| <= 5 (`cls` "global": displacements, story shears, reactions, periods, eigenvalues, mode shapes) or <= 10 (`cls` "internal": member / station forces); else `unacceptable`; no reference -> `n/a`. Closed-form gap references are written to 6 significant digits.
+* `scorecard.json`: `{generated, skyframe_version, platform, reference_document, acceptance, totals: {values, exact, acceptable, unacceptable, n/a, cases_run, cases_blocked, cases_error}, cases: [{id, title, tier, source, tests, status, inputs, assumptions, differences, blocked, rows, svg, mesh, seconds, error, counts}]}`.
+* CM joints (Ex 5, Ex 8): a massless in-plane stub member gives the centre-of-mass point an FE node; the Transformation handler maps its mass onto the diaphragm master exactly.
+* `tests/test_benchmarks.py` asserts every Tier-1, Tier-2 and gap value is exact or acceptable against the independent reference.
+
+### ASCE 7-02 ELF and UBC 1997 wind generators
+
+`skyframe/core/codes_legacy_ext.py`, registered with `autolateral._register_ext` (codes `asce7_02`, `ubc97_wind`; default pattern names `ELF02`, `WINDUBC`; SI units).
+
+* `asce7_02(Ss, S1, R, I=1, site="D", Fa?, Fv?, structure="concrete_mrf", Ct?, x=0.75, T?, weights?, direction)`: Fa / Fv Tables 9.4.1.2.4a/b (linear), SDS = 2/3 Fa Ss, SD1 = 2/3 Fv S1; Ta = Ct hn^x (Table 9.5.5.3.2 values or a user SI Ct, x); a given T is capped at Cu Ta (Table 9.5.5.3.1, linear between rows); Cs = SDS/(R/I) <= SD1/(T R/I), >= 0.044 SDS I, and >= 0.5 S1/(R/I) for S1 >= 0.6; F_x = V w_x h_x^k / sum w h^k. Summary keys add `k, Ta, Cu, Fa, Fv, SDS, SD1, Cs, Cs_max, Cs_min`.
+* `ubc97_wind(V [m/s], exposure="B", Iw=1, cq_windward=0.8, cq_leeward=0.5, width?, direction)`: qs = 0.00256 V^2 psf (= 0.61334 V^2 Pa); Ce from Table 16-G (heights in ft, linear, the 0-15 ft value below 15 ft); story force = (Ce(z_level) Cq_w + Ce(h) Cq_l) qs Iw x tributary half-story heights x `width` (default: plan width perpendicular to the wind). Pattern kind "wind". Summary keys add `qs, p_leeward, width, exposure` and per-story `qz, trib`. Not listed in the Auto Lateral dialog yet (API: `POST /api/pattern/auto-lateral` with `code`).
+
+### Accuracy Advisor: auto lateral loads on multi-tower models
+
+New advice code `AUTO_LATERAL_MULTI_TOWER` (warning): the model has two or more `towers` and a seismic / wind pattern (kind `quake`, `seismic` or `wind`) with story forces. Objects = the pattern names (`refs` type `pattern`). Source: Welcome to ETABS v23 p. 3-11. Mirrored in the mock.
+
+### Live-load reduction never touches analysis output
+
+`llr_settings` has no effect on any solved result (cases, combos, reactions); reduced forces exist only as the separate copies of `llr_codes.apply_to_results` and the two LLR tables (Welcome to ETABS v23 p. 4-6). Pinned by `tests/test_benchmarks.py::test_raw_analysis_output_never_live_load_reduced`.
