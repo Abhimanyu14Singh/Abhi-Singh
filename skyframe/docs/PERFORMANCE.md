@@ -461,3 +461,169 @@ equations, 7 840 shells.
   is 4e-14.
 * **MUMPS vs UmfPack displacements:** 6e-14 (rigid diaphragms) and 3e-13
   (no diaphragm) on the 10-story meshed building.
+
+## GPU 3D renderer (E3)
+
+View › Renderer ▸ **GPU (WebGL2)** is a three.js r170 backend for the 3D view. three.js is vendored under `api/web/vendor/three/0.170.0/`, so the renderer works offline. **Classic (Canvas 2D)** stays the default; the reasons are in "Status" below.
+
+The contract is in CONTRACT.md "GPU 3D renderer (E3)". The tests are in `tests/test_gpu_renderer.py`. The Playwright scripts that produced every number below are in `tools/gpu_e3/`:
+
+* `parity.mjs` — screenshot diff plus pick and box equality;
+* `bench.mjs` — frame times;
+* `scale.mjs` — the 282 k-member scale test;
+* `gpusmoke.mjs` — GPU-mode smoke checks.
+
+Each script expects a server on `$PORT` and model / result JSON files next to it.
+
+### What changed
+
+The Classic view is a Canvas-2D wireframe. Every frame it:
+
+* projects every vertex in JavaScript;
+* painter-sorts every item;
+* issues one path draw per item.
+
+On the 50-story dual-system tower that is 4 400 frames and 1 400 shells. The owner measured 52 ms per frame for lines and 76 ms for the extruded view.
+
+The GPU backend works differently:
+
+* **Geometry is uploaded once.** It is rebuilt only when the model, the display options or the selection-only set change.
+  * All frame centerlines are one instanced draw: screen-space wide lines with per-instance colour, width and pick id.
+  * Shells are one triangle buffer per behaviour group. Openings are triangulated.
+  * Extruded members use one instanced draw per section profile. The profile is extruded once, and each instance gets the axis, local-2 and local-3 columns plus an origin. These are taken from the VX geometry cache: `polygeom.memberAxes` (incl. `frame_axis_convention`), the cardinal point and the interpolated joint offsets. Nonprismatic members use the exact VX rings.
+* **Camera changes cost almost nothing.** Orbit, pan and zoom only change the camera and uniforms. A depth buffer replaces the painter's sort.
+* **Frames are rendered on demand.** `viewer._dirty = true` schedules one frame. Inertia and mode or buckling animation keep frames going only while they run. An idle view renders nothing.
+* **Context settings.** The WebGL context uses `powerPreference: "high-performance"`, MSAA and `devicePixelRatio`.
+* **Contours.** The scalar is a vertex attribute and the colormap runs in the fragment shader. Switching the component or the case uploads one `Float32Array`. A3 contour cells are captured once in world space.
+* **Deformed shapes and mode animation run in the vertex shader** as displacement attribute × scale uniform.
+  * Hermite member curves are sampled into 8 sub-segments at f = 1, the same as Classic.
+  * Extruded deformed members are 5-station instanced prisms.
+  * Animating a mode changes one uniform per frame.
+* **Picking.**
+  * Click and hover use an ID buffer: the frame centerlines rendered off screen once per frame, with a (2·thr+1)² pixel window read back. The Classic distance rule, applied in Classic painter order, picks among those candidates.
+  * Ctrl+drag window and crossing selection uses a world-space uniform grid index. This gesture is new in both renderers.
+* **Labels.** The VX object labels are decluttered: off-screen labels and labels that overlap an already placed one are skipped, using a 6 px occupancy grid.
+* **Everything else is the Classic code**, run on the transparent 2D canvas above the WebGL canvas: links, supports, badges, releases, every module overlay hook (force diagrams, wc diagrams, tendons, hinges, …) and the triad. Grid labels go on a 2D under-layer, so solids hide them as before. Badge passes that need screen segments (rigid zones, ΔT, T/C-only, releases) project only their own members.
+* **Fallback.** Without WebGL2, or when the context is lost, the view stays on or returns to Classic, with a toast and no console output.
+* **Desktop app.** On Windows, the desktop shell (`skyframe/desktop.py`) appends `--ignore-gpu-blocklist --enable-gpu-rasterization --force_high_performance_gpu` to `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`. A value already set by the user is kept, and `SKYFRAME_NO_GPU_FLAGS=1` opts out.
+
+### Forcing the RTX GPU on Windows
+
+Edge WebView2 normally uses the GPU that Windows assigns to the executable. On a laptop or a desktop with an iGPU, that can be the integrated adapter. If it is, a one-time toast names the adapter; View › Renderer › Graphics Adapter shows it at any time.
+
+To pin the discrete GPU:
+
+1. Open Windows **Settings › System › Display › Graphics**.
+2. Click **Add desktop app** and add **SkyFrame.exe**.
+3. Also add **msedgewebview2.exe**, which draws the page. It is in `C:\Program Files (x86)\Microsoft\EdgeWebView\Application\<version>\`.
+4. For each one, choose **Options › High performance** (the RTX 5090).
+5. Restart SkyFrame.
+
+Hardware acceleration in WebView2 is on by default; the switches above only stop a GPU blocklist from turning it off.
+
+### Measured here
+
+**Conditions:**
+
+* this container: 4 shared cores, **no GPU**;
+* Chromium headless with **SwiftShader**, a CPU software rasterizer (`--use-angle=swiftshader`);
+* 3D canvas 1360 × 829 CSS px, DPR 1, MSAA on;
+* tower = `templates_sys.build_system("rc_dual_core", {"stories": 50})`, which has 4 400 frames and 1 400 shells;
+* results computed offline with the engine (2 020 FE shell quads) and injected into the page.
+
+Times are per frame while orbiting (0.02 rad steps). Classic is `_render()` plus a 1-pixel `getImageData`. GPU is the whole frame (WebGL draw + 2D overlay) plus a 1-pixel `readPixels`, so the CPU waits for the software rasterizer.
+
+| scenario | Classic median | GPU main-thread CPU | GPU frame incl. SwiftShader raster | GPU draw calls | GPU triangles |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| lines | 70 ms | 2.4 ms | 537 ms | 9 | 39 484 |
+| extruded | 102 ms | 2.3 ms | 758 ms | 9 | 111 384 |
+| contours M11 | 69 ms | 1.9 ms | 384 ms | 6 | 41 024 |
+| contours + extruded | 82 ms | 3.3 ms | 856 ms | 9 | 111 424 |
+| deformed (DEAD) | 185 ms | 1.5 ms | 1 367 ms | 7 | 110 624 |
+| mode 1 animation | 196 ms | 1.1 ms | 1 245 ms | 7 | 110 624 |
+| mode 1 animation, extruded | 146 ms | 1.5 ms | 848 ms | 8 | 198 624 |
+
+The GPU triangle counts include the fat-line quads: two triangles per centerline segment.
+
+**Reading the table:**
+
+* **The main thread is freed.** The GPU column "main-thread CPU" is the JavaScript + WebGL command time per frame. It is 1–3 ms against 70–200 ms for Classic, and it does not depend on the GPU.
+* **The SwiftShader column is the CPU emulating a GPU**, which is pessimistic by orders of magnitude. The frame is dominated by fill rate: about 50 stacked translucent floor plates, 4× MSAA, rasterized on 4 shared cores.
+* **Draw calls and triangles transfer to a real GPU.** These include the fat-line quads.
+
+**Projected for the owner's RTX 5090 (not measured here).**
+
+| item | estimate |
+| --- | --- |
+| geometry per frame | 40 k–200 k triangles in under 10 draw calls; fractions of a millisecond of vertex work on a GPU that does billions of triangles per second |
+| overdraw | the 50 stacked translucent plates on 1360 × 829 × 4 samples are about 2.3·10⁸ blended samples, well under 1 ms at the card's fill rate |
+| CPU per frame | the 1–3 ms main-thread cost measured here, lower on the Core Ultra 9 285K |
+
+So 60 fps (under 16 ms) holds with a large margin for the tower in lines, extruded, contour and animated-mode views.
+
+**Scale (several hundred thousand elements).** The tower was replicated 8 × 8 in plan and set directly on the viewer: 281 600 frames and 89 600 shells.
+
+| item | Classic | GPU |
+| --- | --- | --- |
+| frame time | 151 s for one frame | — |
+| one-off geometry build + upload | — | 0.77 s |
+| main-thread CPU per orbit frame | — | 16 ms, mostly module overlay hooks that walk every member (e.g. `npOverlay`); the GPU pass itself is a few ms |
+| draw calls / triangles | — | 8 calls · 1.46 M triangles |
+| SwiftShader raster | — | 20 s per frame (projected: a few ms on an RTX 5090) |
+| click pick | — | 1.5 ms (the ID-buffer pass itself is 8.6 s in SwiftShader; it runs once per changed frame) |
+| Ctrl+drag box selecting 51 563 members | — | 0.32 s; the grid index cut the candidates to 64 886 of 281 600 |
+
+**Parity with Classic.** Each scenario was screenshotted in both renderers at the same camera, with the same `vx` options and overlays. A pixel counts as different when a channel differs by more than 48/255. The first number is % of the view; "of drawn" is % of the pixels either renderer drew on.
+
+Model: 5-story rc_dual_core (440 frames, 140 shells; results injected).
+
+| scenario | % view | of drawn | notes |
+| --- | ---: | ---: | --- |
+| lines | 0.02 | 0.1 % | |
+| colour by section | 0.33 | 1.6 % | |
+| extruded | 0.88 | 3.9 % | |
+| extruded, colour by section, 50 % shell transparency | 3.90 | 17.4 % | translucent slabs over solids: depth order instead of painter order |
+| cut plane X | 0.03 | 0.2 % | |
+| extruded + cut plane Z | 0.44 | 2.8 % | |
+| highlight | 0.24 | 1.1 % | |
+| joints + local axes | 1.91 | 9.0 % | joints / axes are on top in both; line AA differs |
+| object labels | 4.64 | 21.7 % | by design: decluttered |
+| deformed | 1.10 | 9.1 % | thin cyan lines, AA only |
+| deformed extruded | 0.28 | 1.5 % | |
+| mode 1 | 1.06 | 8.5 % | |
+| mode 2 extruded | 0.65 | 3.3 % | |
+| contours M11 | 0.17 | 0.8 % | |
+| contours N22 + extruded | 1.89 | 8.4 % | |
+
+**Picking:**
+
+* 1 647 click samples: 1 500 random points plus points near every third member midpoint, with an 8 px threshold.
+* GPU and Classic returned the **same member (or none) for 1 647 / 1 647** samples, including 445 hits.
+* 6 window / crossing boxes, from 1 to 440 members: **6 / 6 identical**.
+
+**Other checks:**
+
+* menu verification (`verify8620.mjs`, adapted to the test port): 41/41 mock and 41/41 live. View has 14 entries, within the limit.
+* GPU-mode smoke (mock + live): menu switching, persistence, deformed and mode layers, no frames when idle, frames while animating, extruded prisms, Ctrl+drag selection, no-WebGL fallback, zero console errors: 18/18.
+* full pytest suite green.
+
+### Status
+
+The six phases are implemented and pass the checks above:
+
+1. frames, shells, supports, camera and render on demand;
+2. extruded view, display options and colour-by;
+3. picking, selection, snaps and 3D draw;
+4. deformed shapes and mode animation;
+5. contours;
+6. diagrams, piers, links, loads, labels and the cut plane — through the overlay pass.
+
+**Classic stays the default** because some items are not yet proven on the owner's hardware or are not pixel-identical:
+
+* GPU frame times on a real RTX GPU have not been measured.
+* Labels are decluttered.
+* Links, supports and module diagrams are drawn on top of the scene, not depth-sorted with it. This is the same as Classic for diagrams, and different for links.
+* Pipe and tube inner walls are drawn.
+* Lines and fills on the same plane can tie in the depth buffer.
+
+Switching the default is a one-line change in `js/gpu/gpuhook.js` (`g3Read`).

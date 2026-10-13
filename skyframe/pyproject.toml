@@ -26,5 +26,5 @@ skyframe = "skyframe.desktop:main"
 include = ["skyframe*"]
 
 [tool.setuptools.package-data]
-"skyframe.api" = ["web/*", "web/js/*"]
+"skyframe.api" = ["web/*", "web/js/*", "web/js/gpu/*", "web/vendor/*/*/*"]   # E3: GPU renderer + vendored three.js (offline)
 "skyframe" = ["data/*/*.json"]

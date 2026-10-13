@@ -81,6 +81,9 @@ const GRID3D_LABEL_TINTS = [
   "rgba(53, 181, 229, 0.7)",
 ];
 
+// E3 — the GPU renderer draws with the very same palette (js/gpu/renderer.js)
+export const V3_STYLE = { COLORS, GRID3D_TINTS };
+
 const v3 = {
   sub: (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]],
   add: (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]],
@@ -93,6 +96,8 @@ const v3 = {
 
 // G2 — polygon openings on N-corner regions (CONTRACT "Polygon shells and auto mesh")
 import { openingPolygon3 as g2OpeningPolygon3 } from "./polygeom.js";
+// E3 — GPU (WebGL2 / three.js) renderer switch: View > Renderer (js/gpu/gpuhook.js; heavy code lazy-loaded)
+import { gpuOnCreate as g3OnCreate } from "./gpu/gpuhook.js";
 
 export class Viewer3D {
   constructor(canvas, opts = {}) {
@@ -128,6 +133,7 @@ export class Viewer3D {
     this._ro.observe(canvas.parentElement || canvas);
     this._resize();
     this._loop();
+    try { g3OnCreate(this); } catch (e) { /* E3 hook: GPU renderer attaches itself when selected (js/gpu/gpuhook.js) */ }
   }
 
   /* ------------------------------------------------ public API */
@@ -433,8 +439,18 @@ export class Viewer3D {
 
     c.addEventListener("contextmenu", e => e.preventDefault());
 
+    let box = null;   // E3 — Ctrl+drag: window (→) / crossing (←) selection of members
     c.addEventListener("pointerdown", e => {
       c.setPointerCapture(e.pointerId);
+      if (e.button === 0 && (e.ctrlKey || e.metaKey) && this.onBoxSelect) {
+        const rect = c.getBoundingClientRect();
+        box = { x0: e.clientX - rect.left, y0: e.clientY - rect.top, el: document.createElement("div") };
+        box.el.className = "v3-boxsel";
+        box.el.style.cssText = "position:absolute;pointer-events:none;border:1px solid #35b5e5;background:rgba(53,181,229,0.08);z-index:3;left:0;top:0;width:0;height:0";
+        (c.parentElement || document.body).appendChild(box.el);
+        this._setHover(null);
+        return;
+      }
       drag = {
         x: e.clientX, y: e.clientY,
         pan: e.button === 2 || e.shiftKey,
@@ -446,6 +462,13 @@ export class Viewer3D {
     });
 
     c.addEventListener("pointermove", e => {
+      if (box) {
+        const rect = c.getBoundingClientRect();
+        const x = e.clientX - rect.left, y = e.clientY - rect.top;
+        Object.assign(box.el.style, { left: Math.min(x, box.x0) + "px", top: Math.min(y, box.y0) + "px",
+          width: Math.abs(x - box.x0) + "px", height: Math.abs(y - box.y0) + "px", borderStyle: x < box.x0 ? "dashed" : "solid" });
+        return;
+      }
       if (drag) {
         const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
         drag.x = e.clientX; drag.y = e.clientY;
@@ -464,6 +487,17 @@ export class Viewer3D {
     });
 
     const endDrag = e => {
+      if (box) {
+        const b = box;
+        box = null;
+        b.el.remove();
+        if (!e || e.type !== "pointerup") return;
+        const rect = c.getBoundingClientRect();
+        const x = e.clientX - rect.left, y = e.clientY - rect.top;
+        if (Math.abs(x - b.x0) + Math.abs(y - b.y0) < 4) return;
+        try { this.onBoxSelect(this._pickBox(b.x0, b.y0, x, y, x < b.x0), !!e.shiftKey); } catch (err) { /* never break the view */ }
+        return;
+      }
       if (!drag) return;
       const wasClick = drag.button === 0 && drag.moved < 5;
       drag = null;
@@ -473,13 +507,7 @@ export class Viewer3D {
       // plain left-click (no drag) → member pick
       if (wasClick && this.onMemberClick && e && e.type === "pointerup") {
         const rect = c.getBoundingClientRect();
-        const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-        let best = null, bestD = 8;
-        for (const s of this._segsScreen) {
-          const d = distToSeg(mx, my, s.x1, s.y1, s.x2, s.y2);
-          if (d < bestD) { bestD = d; best = s.seg; }
-        }
-        this.onMemberClick(best);
+        this.onMemberClick(this._pickAt(e.clientX - rect.left, e.clientY - rect.top, 8));
       }
     };
     c.addEventListener("pointerup", endDrag);
@@ -581,6 +609,9 @@ export class Viewer3D {
     if (!this.model) return;
 
     const P = this._makeProjector();
+    // E3 hook — GPU renderer active: WebGL draws grid / slabs / shells / frames / cut planes /
+    // contours / deformed shapes (js/gpu/renderer.js); this pass is the 2D overlay only
+    const G = !!(this.gpu && this.gpu.on);
     // VX hook — display options + extruded view (js/viewext.js); null = legacy drawing
     let VX = null;
     if (this.vxFrame) { try { VX = this.vxFrame(P, this); } catch (e) { VX = null; } }
@@ -594,7 +625,7 @@ export class Viewer3D {
     // ---- ground grid (v0.14: multiple systems, batched by per-system colour)
     ctx.lineWidth = 1;
     let curColor = null;
-    for (const gl of (VX && !VX.grid ? [] : this.gridLines)) {   // VX: grid toggle
+    for (const gl of (G || (VX && !VX.grid) ? [] : this.gridLines)) {   // VX: grid toggle · E3: GPU
       const color = gl.color || COLORS.grid;
       if (color !== curColor) {
         if (curColor !== null) ctx.stroke();
@@ -606,7 +637,7 @@ export class Viewer3D {
     if (curColor !== null) ctx.stroke();
     ctx.font = "600 11px -apple-system, 'Segoe UI', sans-serif";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    for (const gl of (VX && (!VX.grid || VX.bubbles === false) ? [] : this.gridLabels)) {   // VX: grid toggle · D2 grid bubbles
+    for (const gl of (G || (VX && (!VX.grid || VX.bubbles === false)) ? [] : this.gridLabels)) {   // VX: grid toggle · D2 grid bubbles · E3: GPU underlay
       const pc = P.toCam(gl.p);
       if (pc[2] > P.near) {
         const s = P.proj(pc);
@@ -619,7 +650,7 @@ export class Viewer3D {
     const overlayActive = this.overlay.deformed || this.overlay.modal || this.overlay.buckling;
     const contour = overlayActive ? null : this._contourData();   // v0.4
     const items = [];
-    for (const poly of (VX && VX.hideHulls ? [] : this.slabs)) {   // VX: slab toggle / filters
+    for (const poly of (G || (VX && VX.hideHulls) ? [] : this.slabs)) {   // VX: slab toggle / filters · E3: GPU
       if (contour) continue;               // declutter under contour fields
       const pts = [];
       let zsum = 0, ok = true;
@@ -630,7 +661,7 @@ export class Viewer3D {
       }
       if (ok) items.push({ type: "slab", pts, z: zsum / poly.length });
     }
-    for (const sh0 of (this.shellPolys || [])) {
+    for (const sh0 of (G ? [] : (this.shellPolys || []))) {   // E3: GPU
       const sh = VX ? VX.shell(sh0) : sh0;   // VX: hidden / clipped / extruded (null)
       if (!sh) continue;
       if (contour && sh.behavior === "shell") continue;   // contour quads replace the fill
@@ -664,7 +695,7 @@ export class Viewer3D {
       items.push({ type: "link", s, z: (s.a.z + s.b.z) / 2, lk });
     }
     // v0.13: section-cut planes — translucent amber quads, depth-sorted
-    for (const cut of (this.sectionCutPolys || [])) {
+    for (const cut of (G ? [] : (this.sectionCutPolys || []))) {   // E3: GPU
       const pts = [];
       let zsum = 0, ok = true;
       for (const p of cut.corners) {
@@ -676,7 +707,7 @@ export class Viewer3D {
       items.push({ type: "cut", pts, z: zsum / cut.corners.length, cut });
     }
     // v0.4 — shell-force contour quads (colored by component value)
-    if (contour && contour.ext) { try { contour.ext.items(items, P, this._nodeXYZ, this.results); } catch (e) { /* never break the render */ } }   // A3 hook
+    if (G) { /* E3: contours on the GPU */ } else if (contour && contour.ext) { try { contour.ext.items(items, P, this._nodeXYZ, this.results); } catch (e) { /* never break the render */ } }   // A3 hook
     else if (contour && this.results && this._nodeXYZ) {
       this.results.shell_quads.forEach((q, i) => {
         const pts = [];
@@ -695,9 +726,9 @@ export class Viewer3D {
         });
       });
     }
-    this._segsScreen = [];
+    if (!G) this._segsScreen = [];   // E3: GPU mode projects lazily (getter) only when asked
     this._linkBadges = [];   // v0.15 — link device-type letters, drawn on top
-    for (const seg of this.segs) {
+    for (const seg of (G ? [] : this.segs)) {
       const vs = VX ? VX.seg(seg) : seg;   // VX: hidden (null) / clipped {p1, p2}
       if (!vs) continue;
       const s = this._projSeg(P, vs.p1, vs.p2);
@@ -706,7 +737,7 @@ export class Viewer3D {
       items.push({ type: "seg", s, z, seg, vx: !!(VX && VX.extrudeFrames) });
     }
     // VX hook — extruded frame / shell solids join the same painter's sort (js/viewext.js)
-    if (VX && VX.items) { try { VX.items(items, P, { overlayActive, contour }); } catch (e) { /* never break the render */ } }
+    if (!G && VX && VX.items) { try { VX.items(items, P, { overlayActive, contour }); } catch (e) { /* never break the render */ } }
     items.sort((a, b) => b.z - a.z);
 
     for (const it of items) {
@@ -810,7 +841,7 @@ export class Viewer3D {
     // ---- v0.25: per-quad tint (cracked slab quads) — translucent overlay
     // painted after the depth-sorted scene so coplanar shell fills never
     // hide it; skipped under deformed/modal/buckling overlays.
-    if (!overlayActive && this.quadTint && this.results &&
+    if (!G && !overlayActive && this.quadTint && this.results &&
         this.results.shell_quads && this.results.shell_quads.length && this._nodeXYZ) {
       const DEFAULT_TINT = "rgba(224, 120, 60, 0.45)";
       this.results.shell_quads.forEach((q, i) => {
@@ -838,7 +869,7 @@ export class Viewer3D {
     }
 
     // ---- FE shell mesh lines (subtle, once analyzed)
-    if (!overlayActive && !contour && this.results && this.results.shell_quads &&
+    if (!G && !overlayActive && !contour && this.results && this.results.shell_quads &&
         this.results.shell_quads.length && this._nodeXYZ) {
       ctx.strokeStyle = COLORS.meshLine;
       ctx.lineWidth = 0.8;
@@ -885,12 +916,14 @@ export class Viewer3D {
       ctx.globalAlpha = 1;
     }
 
+    // E3: GPU mode projects only the members these badge passes care about (rigid / ΔT / T-C / releases)
+    const SS = G ? this.gpu.segsScreenSubset() : this._segsScreen;
     // ---- v0.9 rigid end zones: thicker pale-blue stubs at member ends
     if (this.rigidUids && this.rigidUids.size && !overlayActive) {
       ctx.strokeStyle = COLORS.rigid;
       ctx.lineWidth = 4.5;
       ctx.lineCap = "butt";
-      for (const s of this._segsScreen) {
+      for (const s of SS) {
         if (!this.rigidUids.has(s.seg.uid)) continue;
         const p1 = s.seg.p1, p2 = s.seg.p2;
         const L = Math.hypot(p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]) || 1;
@@ -1002,7 +1035,7 @@ export class Viewer3D {
       ctx.font = "700 9px -apple-system, 'Segoe UI', sans-serif";
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
       const drawn = new Set();
-      for (const s of this._segsScreen) {
+      for (const s of SS) {
         if (!this.thermalUids.has(s.seg.uid) || drawn.has(s.seg.uid)) continue;
         drawn.add(s.seg.uid);
         const mx = (s.x1 + s.x2) / 2, my = (s.y1 + s.y2) / 2;
@@ -1038,7 +1071,7 @@ export class Viewer3D {
       ctx.font = "700 8.5px -apple-system, 'Segoe UI', sans-serif";
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
       const drawn = new Set();
-      for (const s of this._segsScreen) {
+      for (const s of SS) {
         const label = this.axialLimitUids.get(s.seg.uid);
         if (!label || drawn.has(s.seg.uid)) continue;
         drawn.add(s.seg.uid);
@@ -1057,7 +1090,7 @@ export class Viewer3D {
     }
 
     // end-release / partial-fixity rings near frame ends (js/releases.js)
-    if (window.__sky && window.__sky.relDrawViewer) { try { window.__sky.relDrawViewer(ctx, this._segsScreen, this.model, overlayActive); } catch (e) { /* never break the render */ } }
+    if (window.__sky && window.__sky.relDrawViewer) { try { window.__sky.relDrawViewer(ctx, SS, this.model, overlayActive); } catch (e) { /* never break the render */ } }
 
     // ---- v0.13 section-cut plane name labels (at each plane centroid)
     if (this.sectionCutPolys && this.sectionCutPolys.length) {
@@ -1082,10 +1115,10 @@ export class Viewer3D {
     }
 
     // VX hook — joints / local axes / labels / section names / loads / cut outline (js/viewext.js)
-    if (VX && VX.post) { try { VX.post(ctx, P); } catch (e) { /* never break the render */ } }
+    if (VX && VX.post) { try { if (G) this.gpu.withLabels(ctx, () => VX.post(ctx, P)); else VX.post(ctx, P); } catch (e) { /* never break the render */ } }
 
     // ---- overlays
-    if (overlayActive && this.results) this._renderOverlay(P);
+    if (overlayActive && this.results && !G) this._renderOverlay(P);   // E3: GPU draws deformed / mode shapes
 
     // ---- extra overlay hook: fn(ctx, P, viewer) (Check Model / stability markers)
     if (this.extraOverlay) { try { this.extraOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
@@ -1311,12 +1344,31 @@ export class Viewer3D {
   _hitTest(e) {
     const rect = this.canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-    let best = null, bestD = 7;  // px threshold
+    this._setHover(this._pickAt(mx, my, 7), mx, my);   // 7 px threshold
+  }
+
+  /** Nearest visible member centerline within thr px of (mx, my) → seg | null.
+      (E3: the GPU renderer overrides this with an ID-buffer pick.) */
+  _pickAt(mx, my, thr) {
+    let best = null, bestD = thr;
     for (const s of this._segsScreen) {
       const d = distToSeg(mx, my, s.x1, s.y1, s.x2, s.y2);
       if (d < bestD) { bestD = d; best = s.seg; }
     }
-    this._setHover(best, mx, my);
+    return best;
+  }
+
+  /** E3 — window (crossing = false: both ends inside) / crossing (any part
+      inside) selection of visible member centerlines in a screen rectangle. */
+  _pickBox(x0, y0, x1, y1, crossing) {
+    const r = [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)];
+    const out = [], seen = new Set();
+    for (const s of this._segsScreen) {
+      if (seen.has(s.seg) || !boxHitSeg(r, s.x1, s.y1, s.x2, s.y2, crossing)) continue;
+      seen.add(s.seg); out.push(s.seg);
+    }
+    const order = new Map((this.segs || []).map((sg, i) => [sg, i]));   // model order (not painter order)
+    return out.sort((a, b) => (order.get(a) ?? 1e9) - (order.get(b) ?? 1e9));
   }
 
   _setHover(seg, mx, my) {
@@ -1334,6 +1386,25 @@ export class Viewer3D {
     tt.style.left = Math.min(mx + 14, wrapW - 200) + "px";
     tt.style.top = (my + 14) + "px";
   }
+}
+
+/** E3 — screen segment vs rect [x0, y0, x1, y1]: window = both ends inside;
+    crossing = any point inside (end inside or crossing an edge). */
+export function boxHitSeg(r, ax, ay, bx, by, crossing) {
+  const inside = (x, y) => x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3];
+  const ia = inside(ax, ay), ib = inside(bx, by);
+  if (!crossing) return ia && ib;
+  if (ia || ib) return true;
+  // Liang–Barsky: does the segment cross the rectangle?
+  let t0 = 0, t1 = 1;
+  const dx = bx - ax, dy = by - ay;
+  for (const [p, q] of [[-dx, ax - r[0]], [dx, r[2] - ax], [-dy, ay - r[1]], [dy, r[3] - ay]]) {
+    if (p === 0) { if (q < 0) return false; continue; }
+    const t = q / p;
+    if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; }
+    else { if (t < t0) return false; if (t < t1) t1 = t; }
+  }
+  return t0 <= t1;
 }
 
 function distToSeg(px, py, x1, y1, x2, y2) {
