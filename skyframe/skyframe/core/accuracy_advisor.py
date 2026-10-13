@@ -51,7 +51,11 @@ Codes (thresholds = ``DEFAULTS``, overridable per request):
   zero);
 * ``FRAME_POINT_LOAD_NO_AUTOMESH``  a frame member with no effective auto
   mesh that carries a concentrated load (``MemberLoad`` kind point /
-  moment) strictly inside its span and is attached to a meshed shell.
+  moment) strictly inside its span and is attached to a meshed shell;
+* ``AUTO_LATERAL_MULTI_TOWER``  a model with two or more towers carries a
+  seismic / wind story-force pattern (the auto-lateral generators'
+  output).  Welcome to ETABS v23 p. 3-11: automatic seismic and wind loads
+  "should not be used with models that contain more than one tower".
 """
 
 from __future__ import annotations
@@ -81,7 +85,8 @@ CODES = ("SHELL_ASPECT_RATIO", "SHELL_WARPED", "SHELL_MESH_COARSE",
          "MEMBRANE_SLAB_BENDING", "PLATE_THIN_ON_THICK",
          "PLATE_THICK_ON_THIN", "RIGID_DIAPHRAGM_OPENINGS",
          "CRACKED_MODIFIERS_MISSING", "MASS_SOURCE_MISSING",
-         "FRAME_POINT_LOAD_NO_AUTOMESH")
+         "FRAME_POINT_LOAD_NO_AUTOMESH",
+         "AUTO_LATERAL_MULTI_TOWER")      # benchmark pack (_auto_lat_tower)
 THIN_TYPES = ("shell_thin", "plate_thin")
 THICK_TYPES = ("shell_thick", "plate_thick")
 _KEY = 6
@@ -244,6 +249,20 @@ TEXT = {
         "Assign > Frame > Auto Mesh: enable 'at intermediate joints' and "
         "'at intersections' and set a maximum segment length comparable "
         "to the shell mesh size."),
+    # Welcome to ETABS v23 p. 3-11: automatic seismic / wind loads "should
+    # not be used with models that contain more than one tower".
+    "AUTO_LATERAL_MULTI_TOWER": (
+        "warning", "Auto seismic / wind loads on a multi-tower model",
+        "Code-generated lateral loads are derived per story from story "
+        "weights / facade areas and diaphragm extents; with more than one "
+        "tower the towers share story levels, so the base shear, its "
+        "vertical distribution, the exposure widths and the accidental "
+        "eccentricity are not those of each real tower (ETABS: auto "
+        "seismic and wind loads should not be used with models that "
+        "contain more than one tower).",
+        "Apply user-defined story forces per tower (Define > Load Patterns "
+        "> User Loads) or a response-spectrum case, or analyse each tower "
+        "as its own model to derive its code loads."),
 }
 
 
@@ -650,6 +669,23 @@ def _frame_point_load_checks(model, mesh, col: _Collector, msg: dict
             "to shells but have no frame auto mesh.")
 
 
+def _auto_lat_tower_checks(model, col: _Collector, msg: dict) -> None:
+    """AUTO_LATERAL_MULTI_TOWER: >= 2 towers and a seismic / wind pattern
+    carrying story forces (the auto-lateral generators' output)."""
+    if len(getattr(model, "towers", None) or []) < 2:
+        return
+    for name, pat in model.patterns.items():
+        if pat.kind in ("quake", "seismic", "wind") and pat.story_forces:
+            col.add("AUTO_LATERAL_MULTI_TOWER", name, "pattern",
+                    {"kind": pat.kind,
+                     "story_forces": len(pat.story_forces)})
+    it = col.items.get("AUTO_LATERAL_MULTI_TOWER")
+    if it:
+        msg["AUTO_LATERAL_MULTI_TOWER"] = (
+            f"{it['_n']} seismic / wind story-force pattern(s) on a model "
+            f"with {len(model.towers)} towers.")
+
+
 # --------------------------------------------------------------------------- #
 # entry point
 # --------------------------------------------------------------------------- #
@@ -668,7 +704,8 @@ def accuracy_advice(model: BuildingModel, thresholds=None) -> dict:
                lambda: _diaphragm_checks(model, col, msg),
                lambda: _cracked_checks(model, col, msg),
                lambda: _mass_checks(model, col, msg),
-               lambda: _frame_point_load_checks(model, mesh, col, msg)):
+               lambda: _frame_point_load_checks(model, mesh, col, msg),
+               lambda: _auto_lat_tower_checks(model, col, msg)):
         try:
             fn()
         except Exception:               # one bad object never hides the rest
