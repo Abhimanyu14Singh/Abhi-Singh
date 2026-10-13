@@ -20,7 +20,7 @@ const PD_DEF = () => ({ method: "none", load_factors: {}, max_iterations: 2, tol
 const SOLVERS = ["auto", "band", "umfpack", "mumps", "sparse_general"];
 const TESTS = ["NormDispIncr", "EnergyIncr", "NormUnbalance"];
 const ALGOS = ["Newton", "ModifiedNewton", "KrylovNewton", "NewtonLineSearch", "BFGS"];
-const AO_DEF = () => ({ solver: "auto", eigen_solver: "auto", size_warnings: true, parallel: "auto",
+const AO_DEF = () => ({ solver: "auto", eigen_solver: "auto", size_warnings: true, parallel: "auto", parallel_start: "auto", /* E1 */
   convergence: { mode: "legacy", algorithms: [...ALGOS], tests: [{ type: "NormDispIncr" }, { type: "EnergyIncr", tolerance: 1e-10, max_iterations: 100 }], max_halvings: 4 } });
 const DMP_DEF = () => ({ rayleigh_on_links: "none", rayleigh_stiffness_basis: "committed" });
 const MEMBER_HINGE = ["none", "auto_m3", "fiber_pmm"];
@@ -66,7 +66,7 @@ function pdStore(d, o) {
 function aoNorm(stored) {
   const out = AO_DEF();
   const s = stored && typeof stored === "object" ? stored : {};
-  for (const k of ["solver", "eigen_solver", "size_warnings", "parallel"]) if (k in s) out[k] = s[k];
+  for (const k of ["solver", "eigen_solver", "size_warnings", "parallel", "parallel_start"]) if (k in s) out[k] = s[k];
   if (s.convergence && typeof s.convergence === "object") Object.assign(out.convergence, JSON.parse(JSON.stringify(s.convergence)));
   return out;
 }
@@ -147,7 +147,7 @@ export function wcMockExtend(T, H) {
   const aoRead = d => {
     const o = aoNorm(d.analysis_options || {}), c = o.convergence;
     return { solver: o.solver, eigen_solver: o.eigen_solver, size_warnings: !!o.size_warnings,
-      parallel: typeof o.parallel === "string" ? o.parallel : String(o.parallel), conv_mode: c.mode, algorithms: c.algorithms.join(", "), max_halvings: c.max_halvings };
+      parallel: typeof o.parallel === "string" ? o.parallel : String(o.parallel), parallel_start: o.parallel_start, conv_mode: c.mode, algorithms: c.algorithms.join(", "), max_halvings: c.max_halvings };
   };
   const aoWrite = (d, ch) => {
     const stored = clone(d.analysis_options || {}), conv = { ...(stored.convergence || {}) };
@@ -593,6 +593,7 @@ export function wcMockExtend(T, H) {
     options("analysis_options", "Analysis Options - Solver and Convergence", G_AOPT, [
       col("solver", "Solver", "enum", "none", { enum: SOLVERS }), col("eigen_solver", "Eigen Solver", "enum", "none", { enum: ["auto", "legacy", "lanczos"] }),
       col("size_warnings", "Model-Size Warnings", "bool"), col("parallel", "Parallel (auto / off / 1..8)", "text"),
+      col("parallel_start", "Parallel Workers Start", "enum", "none", { enum: ["auto", "fork", "spawn"] }), /* E1 spawn pool */
       col("conv_mode", "Convergence Mode", "enum", "none", { enum: ["legacy", "robust"] }), col("algorithms", "Algorithms", "text"),
       col("max_halvings", "Max Step Halvings", "int"),
     ], aoRead, aoWrite),

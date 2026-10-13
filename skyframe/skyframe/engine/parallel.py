@@ -45,8 +45,20 @@ Lanes (``analysis_options.parallel``):
 
 Only the sparse (factor-once) solver policy goes parallel, i.e. models at
 or above ``solver_policy.SPARSE_EQ_THRESHOLD`` equations; smaller models
-always run the serial legacy path.  ``fork`` is required (Linux); other
-platforms, ``SKYFRAME_SLOW_PATH=1`` and ``SKYFRAME_PARALLEL=0`` run serial.
+always run the serial legacy path.  ``SKYFRAME_SLOW_PATH=1`` and
+``SKYFRAME_PARALLEL=0`` run serial.
+
+E1 (Windows-capable parallel solves): where ``fork`` is unavailable
+(Windows, macOS) — or when ``analysis_options.parallel_start`` /
+``SKYFRAME_PARALLEL_START`` asks for it — the static, condensation-column
+and mode-shape families run on the persistent SPAWN worker pool of
+:mod:`skyframe.engine.spawn_pool` instead (each worker rebuilds the domain
+once per model, a probe item verifies it; results byte-identical).  Spawn
+is used only at or above :data:`SPAWN_EQ_THRESHOLD` estimated equations
+(the measured break-even, docs/PERFORMANCE.md "Windows-capable parallel
+solves"); the solve-free RS family stays serial in spawn mode.  "auto"
+lanes = ``min(physical performance cores, MAX_LANES)``
+(:func:`performance_cores`; 8 on an 8P+16E Core Ultra 9 285K).
 """
 
 from __future__ import annotations
@@ -61,6 +73,12 @@ from typing import Callable, Dict, List, Sequence
 
 MIN_CORES = 4
 MAX_LANES = 8
+# E1: spawn workers pay a rebuild (process start + import + domain build
+# from the pickled model and mesh); below this many estimated equations a
+# solve is too cheap to win it back -> serial (measured, docs/PERFORMANCE.md
+# "Windows-capable parallel solves")
+SPAWN_EQ_THRESHOLD = 3000
+START_METHODS = ("auto", "fork", "spawn")
 
 stats = {"forks": 0, "worker_items": 0, "fallback_items": 0}
 _IN_WORKER = {"flag": False}       # a worker never forks again
@@ -82,15 +100,34 @@ def option(model) -> object:
 
 
 def cores() -> int:
-    """CPU cores this process may run on."""
-    try:
-        return len(os.sched_getaffinity(0))
-    except (AttributeError, OSError):                    # pragma: no cover
-        return os.cpu_count() or 1
+    """Physical PERFORMANCE cores this process may run on (E1; see
+    :func:`performance_cores`) — the "auto" lane count before the cap."""
+    from skyframe.engine import cpu_topology as _cpu
+    return _cpu.performance_cores()
 
 
 def fork_supported() -> bool:
     return hasattr(os, "fork") and sys.platform.startswith("linux")
+
+
+def start_method(model=None) -> str:
+    """"fork" or "spawn" for this model's parallel families (E1).
+
+    ``SKYFRAME_PARALLEL_START`` (env) overrides
+    ``analysis_options.parallel_start``; "auto" (default) = fork where it
+    exists (Linux), else spawn.  "fork" without fork support = spawn."""
+    want = os.environ.get("SKYFRAME_PARALLEL_START") or "auto"
+    if want not in START_METHODS:
+        want = "auto"
+    if want == "auto":
+        opts = getattr(model, "analysis_options", None) or {}
+        if isinstance(opts, dict):
+            want = opts.get("parallel_start", "auto")
+        if want not in START_METHODS:
+            want = "auto"
+    if want == "spawn" or not fork_supported():
+        return "spawn"
+    return "fork"
 
 
 def lanes(model, asm=None) -> int:
@@ -99,17 +136,24 @@ def lanes(model, asm=None) -> int:
     opt = option(model)
     if (opt == "off" or _IN_WORKER["flag"]
             or os.environ.get("SKYFRAME_PARALLEL") == "0"
-            or os.environ.get("SKYFRAME_SLOW_PATH") == "1"
-            or not fork_supported()):
+            or os.environ.get("SKYFRAME_SLOW_PATH") == "1"):
         return 1
     if asm is None or not _slv.factor_once_ok(asm):
         return 1
     if isinstance(opt, bool):
         return 1
+    if (start_method(model) == "spawn"
+            and hasattr(asm, "node_coords")
+            and _slv.estimate_equations(asm) < SPAWN_EQ_THRESHOLD):
+        return 1              # E1: too small to win back a worker rebuild
     if isinstance(opt, int):
         return max(1, min(int(opt), MAX_LANES))
     n = cores()
     return min(n, MAX_LANES) if n >= MIN_CORES else 1
+
+
+def _spawn(model) -> bool:
+    return start_method(model) == "spawn"
 
 
 def plan(n: int, n_lanes: int) -> Dict[int, List[int]]:
@@ -233,13 +277,25 @@ def fork_map(fn: Callable, items: Sequence, n_lanes: int) -> Dict[int, object]:
 
 
 def map_family(fn: Callable, items: Sequence, n_lanes: int,
-               warm: bool = False) -> List[object]:
+               warm: bool = False, spawn=None) -> List[object]:
     """``[fn(x) for x in items]``: the first item serially in the parent
     (builds / factors the domain the workers inherit) unless ``warm`` (the
     factored analysis is already live), the rest through :func:`fork_map`;
-    results in item order."""
+    results in item order.
+
+    ``spawn`` = ``(engine, kind, common)``: in spawn mode (E1) the rest
+    goes to the spawn pool instead; the parent always solves the first
+    item itself (the workers' probe) — ``warm`` is irrelevant there."""
     if not items:
         return []
+    if (spawn is not None and n_lanes > 1 and len(items) > 1
+            and _spawn(spawn[0].model)):
+        from skyframe.engine import spawn_pool as _sp
+        eng, kind, common = spawn
+        first = fn(items[0])
+        rest = _sp.pool_map(eng, kind, common, items[1:], n_lanes, fn,
+                            probe_item=items[0], probe_result=first)
+        return [first] + [rest[k] for k in range(len(items) - 1)]
     if warm and n_lanes > 1:
         out = fork_map(fn, items, n_lanes)
         return [out[k] for k in range(len(items))]
@@ -269,7 +325,7 @@ def prefetch_static(eng, names: Sequence[str]) -> None:
     times = eng.__dict__.setdefault("_par_case_times", {})
     t0 = time.perf_counter()
     try:
-        eng.run_static(elig[0])            # build + factor in the parent
+        res0 = eng.run_static(elig[0])     # build + factor in the parent
     except (RuntimeError, ValueError, ArithmeticError):
         _REUSE["owner"] = None             # as run()'s attempt() does;
         _REUSE["loaded"] = False           # the loop re-runs and reports
@@ -281,17 +337,15 @@ def prefetch_static(eng, names: Sequence[str]) -> None:
         return
 
     def solve(name):
-        t = time.perf_counter()
-        try:
-            res = eng.run_static(name)
-        except (RuntimeError, ValueError, ArithmeticError):
-            _REUSE["owner"] = None         # the run() loop re-runs and
-            _REUSE["loaded"] = False       # reports it (as attempt())
-            _REUSE["factored"] = None
-            return None
-        return res, time.perf_counter() - t
+        return static_item(eng, name)
 
-    out = fork_map(solve, elig[1:], n_lanes)
+    if _spawn(model):                      # E1: spawn worker pool
+        from skyframe.engine import spawn_pool as _sp
+        out = _sp.pool_map(eng, "static", {}, elig[1:], n_lanes, solve,
+                           probe_item=elig[0],
+                           probe_result=res0)
+    else:
+        out = fork_map(solve, elig[1:], n_lanes)
     for k, name in enumerate(elig[1:]):
         rec = out.get(k)
         if rec is None:
@@ -299,6 +353,22 @@ def prefetch_static(eng, names: Sequence[str]) -> None:
         res, dt = rec
         eng._case_cache[name] = res
         times[name] = dt
+
+
+def static_item(eng, name):
+    """``(CaseResults, wall time)`` of one plain linear static case, or
+    None when it fails (the run() loop then re-runs and reports it, as
+    ``attempt()`` does).  Shared by the forked and the spawned workers."""
+    from skyframe.engine.opensees_engine import _REUSE
+    t = time.perf_counter()
+    try:
+        res = eng.run_static(name)
+    except (RuntimeError, ValueError, ArithmeticError):
+        _REUSE["owner"] = None
+        _REUSE["loaded"] = False
+        _REUSE["factored"] = None
+        return None
+    return res, time.perf_counter() - t
 
 
 def factored_live(eng, asm) -> bool:
@@ -328,8 +398,8 @@ def prefetch_rs(eng, names: Sequence[str]) -> None:
     n_lanes = lanes(model, asm)
     todo = [n for n in names if n in model.rs_cases
             and n not in eng._rs_cache]
-    if n_lanes <= 1 or len(todo) < 2:
-        return
+    if n_lanes <= 1 or len(todo) < 2 or _spawn(model):
+        return          # (E1: spawn mode keeps the cheap RS family serial)
     n_massed = asm.free_massed_dofs()
     for name in todo:
         rs = model.rs_cases[name]

@@ -11,6 +11,8 @@ The contract is in CONTRACT.md "Analysis performance, solver policy and converge
 
 The follow-up pass on meshed models (parallel solve families, one domain build per run, a faster mesher) is at the end of this document: [Meshed models: parallel solve families](#meshed-models-parallel-solve-families-v119). Its contract is CONTRACT.md "Meshed-model performance: parallel solves and fewer rebuilds"; its tests are in `tests/test_meshed_perf.py`.
 
+Parallel solves on Windows (no fork; a persistent spawn worker pool) are in [Windows-capable parallel solves](#windows-capable-parallel-solves-spawn-worker-pool-e1), with measured fork/spawn/serial numbers and a labelled 8-P-core projection.
+
 The older v0.26 notes, about small models, are in `docs/PERF_NOTES.md`.
 
 ## Benchmark models
@@ -461,3 +463,106 @@ equations, 7 840 shells.
   is 4e-14.
 * **MUMPS vs UmfPack displacements:** 6e-14 (rigid diaphragms) and 3e-13
   (no diaphragm) on the 10-story meshed building.
+
+## Windows-capable parallel solves (spawn worker pool, E1)
+
+The v1.19 parallel families need `os.fork()`, so the Windows desktop build
+ran every family serially. This pass adds a persistent **spawn** worker
+pool (`engine/spawn_pool.py`) that works without fork. It is the default
+on Windows and can be selected on Linux (`analysis_options.parallel_start:
+"spawn"` or `SKYFRAME_PARALLEL_START=spawn`). The contract is CONTRACT.md
+"Windows-capable parallel solves (spawn worker pool)". The tests are in
+`tests/test_spawn_pool.py`.
+
+### Design in one paragraph
+
+Worker processes start once and stay warm. Each one receives the pickled
+model and the parent's mesh (so it does not re-mesh), builds its own
+OpenSees domain once per model, and then serves batches: static case
+names, condensation-column unit loads, mode-shape load vectors. The pool
+is keyed on a SHA-256 of the model's canonical JSON, so an unchanged model
+re-run reuses the built domains and any edit rebuilds them in the same
+processes. Items follow the fork path's deterministic plan and merge by
+index. Each batch also carries the family's first item, which the parent
+already solved. The worker solves it too and returns its SHA-256, and the
+parent only accepts the batch when the digests match. A worker that
+raises, dies or fails that probe has its items re-solved by the parent.
+Worker threads are pinned to 1 (`OMP/OPENBLAS/MKL_NUM_THREADS=1` in the
+child's start environment, before numpy or OpenSees load).
+
+### Measured here (4-core Linux container, Python 3.11, openseespy 3.7.1)
+
+Conditions:
+
+* `OMP_NUM_THREADS=1`, 4 lanes (the parent plus 3 workers);
+* each mode is a fresh process. "Cold" is its first run: process start,
+  meshing, a cold pool. "Warm" is a second run of an unchanged model in
+  the same process: mesh-cache hit, and in spawn mode a warm pool;
+* the whole run includes `run()`, `to_dict` and the JSON dump;
+* the machine was shared with other jobs, so the table gives the best of
+  3 runs (2 for the small models). Individual runs varied by up to ±40 %.
+
+| model | equations | serial cold / warm | fork cold / warm | spawn cold / warm | SHA-256 of results JSON (all modes) |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 20s-5x5-meshed | 27 720 (MUMPS) | 38.2 / 38.1 | 21.5 / 21.7 | 27.4 / 20.9 | `073c81558b336453` |
+| tower50: `build_system('rc_dual_core', {'stories': 50})` | 14 070 (UmfPack) | 110.7 / 84.6 | 65.9 / 39.2 | 71.1 / 42.1 | `cb5d7755b9a44fc4` |
+
+Times are in seconds. Speedups (warm) over serial:
+
+* 20s-5x5-meshed: 1.8x fork, 1.8x spawn;
+* tower50: 2.2x fork, 2.0x spawn.
+
+Cold, spawn is 1.4x / 1.6x.
+
+Where spawn's cold-run extra time goes (traced tower50 cold run, `spawn_pool.trace`):
+
+* each worker's init (unpickle the model, attach the parent's mesh, build the domain) takes 0.35 s;
+* the static family's probe solve, which is the worker's first factorization, takes 2.1–2.3 s;
+* the probes of the column and mode families take 0.3 s and 0.8 s;
+* the parent's longest wait for a worker is 1.8 s.
+
+The rest of the cold gap to fork is the solve-free RS family: 6.0 s on tower50, which spawn keeps serial. A worker would need the whole modal result and its unit responses shipped to it, and its probe would cost as much as the work for 2 RS cases.
+
+The meshing of tower50 (28 s, in `core/mesh._members_on_edge`) is serial in every mode. It is the same cost in all three columns and is what separates cold from warm.
+
+### When spawn pays off (the `SPAWN_EQ_THRESHOLD`)
+
+These runs force spawn with the threshold lifted, 4 lanes, best of 2:
+
+| model | equations | serial cold / warm | spawn cold / warm |
+| --- | ---: | ---: | ---: |
+| 10s-5x5-frame | 1 110 | 6.8 / 5.1 | 6.9 / 5.6 |
+| 20s-5x5-frame | 2 220 | 12.1 / 11.5 | 13.0 / 11.0 |
+| 40s-5x5-frame | 4 440 | 29.3 / 29.6 | 24.0 / 23.3 |
+| 10s-5x5-meshed | 13 860 | 27.5 / 28.1 | 19.4 / 17.9 |
+
+* At 1 110 equations spawn loses both cold and warm.
+* At 2 220 it loses cold and roughly breaks even warm.
+* From 4 440 equations up it wins.
+
+`parallel.SPAWN_EQ_THRESHOLD = 3000` therefore keeps spawn mode serial below 3 000 estimated equations. Fork has no rebuild cost and keeps the v1.19 rule (any sparse-policy model). Results are identical either way: every row above has one SHA-256 for all of its modes.
+
+### Projection for the owner's Core Ultra 9 285K (8 P-cores) — PROJECTION, not measured
+
+"auto" uses `min(physical performance cores, 8)` lanes. On the 285K that is 8: `GetLogicalProcessorInformationEx` reports 8 cores with the top efficiency class and 16 E-cores.
+
+The projection uses Amdahl with the contention factor measured here. A warm run splits into:
+
+* a serial part S: first static case, RS, CR, results JSON;
+* a parallel part P: the remaining static cases, the condensation columns and the mode shapes.
+
+The model is `T(L) = S + k·P/L`. The tower50 trace gives P ≈ 65 s (150 columns at ≈0.32 s, 12 modes at ≈0.6 s, 5 statics at ≈1.6 s) and S ≈ 20 s. The measured 4-lane spawn time then implies k ≈ 1.36, the memory-bandwidth slow-down of concurrent solves, as in v1.19.
+
+| model (warm) | measured serial | measured 4 lanes (spawn) | projected 8 lanes, k = 1.36 | projected 8 lanes, k = 1.0 |
+| --- | ---: | ---: | ---: | ---: |
+| tower50 | 84.6 | 42.1 | ≈ 31 + ≈ 3 probes ≈ 34 (2.5x) | ≈ 28 (3.0x) |
+| 20s-5x5-meshed | 38.1 | 20.9 | ≈ 16 + ≈ 2 ≈ 18 (2.1x) | ≈ 16 (2.4x) |
+
+Absolute times on the 285K will be lower anyway: its P-cores are much faster per core than this 2.8 GHz Xeon. The ratios are the projection. Cold runs add the serial meshing and one worker init (≈0.4 s plus the first-factorization probe).
+
+### What still needs checking on real Windows
+
+* The CI step `SkyFrame.exe --selftest-parallel` (and `SkyFrameCLI.exe`) in `build-installers.yml` exercises the frozen spawn path. It has not run yet: this container has no Windows runner.
+* The process start cost under Windows `CreateProcess` plus Defender scanning of the frozen executable. Expect about 1–2 s per worker on the first run only; the pool stays warm afterwards.
+* That `GetLogicalProcessorInformationEx` reports 8 cores of the top `EfficiencyClass` on the 285K (`skyframe.engine.cpu_topology.performance_cores()`).
+* Memory: each warm worker holds one OpenSees domain. Measured here through the HTTP server: ≈0.30 GB RSS per worker on 20s-5x5-meshed (parent 0.81 GB) and ≈0.15 GB on 10s-5x5-meshed. The same three processes were re-initialized for the second model rather than restarted. Idle workers stop after 15 min (`SKYFRAME_POOL_IDLE_S`).

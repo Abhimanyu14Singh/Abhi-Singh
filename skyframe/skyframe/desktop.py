@@ -9,6 +9,9 @@ Modes:
     skyframe                  native desktop window (default)
     skyframe --server-only    headless HTTP server (CI / remote use)
     skyframe --smoke          boot, self-check /api/health, exit 0/1
+    skyframe --selftest-parallel
+                              run a small analysis on the spawn solver
+                              worker pool, compare with serial, exit 0/1
 
 If the native window can't start — most often a frozen Windows build where
 pywebview's pythonnet/.NET host (``Python.Runtime.dll``) fails to initialize
@@ -62,6 +65,11 @@ def _wait_healthy(port: int, timeout: float = 30.0) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # E1: spawned solver workers (engine/spawn_pool.py) re-enter a FROZEN
+    # executable; this must run before any GUI / server start.  No-op
+    # when not frozen (packaging/launch.py calls it even earlier).
+    import multiprocessing
+    multiprocessing.freeze_support()
     parser = argparse.ArgumentParser(prog="skyframe", description=__doc__)
     parser.add_argument("--server-only", action="store_true",
                         help="run the HTTP server without a window")
@@ -70,7 +78,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=0,
                         help="port (default: 8600 for --server-only, "
                              "random for the desktop window)")
+    parser.add_argument("--selftest-parallel", action="store_true",
+                        help="solve a small model on the spawn worker "
+                             "pool, compare with serial, exit 0/1")
     args = parser.parse_args(argv)
+
+    if args.selftest_parallel:              # E1: no server, no window
+        from .engine.parallel_selftest import main as _selftest
+        code = _selftest()
+        for stream in (sys.stdout, sys.stderr):
+            if stream is not None:
+                stream.flush()
+        if getattr(sys, "frozen", False):
+            os._exit(code)                  # as --smoke (frozen shutdown)
+        return code
 
     port = args.port or (8600 if args.server_only and not args.smoke
                          else _free_port())
