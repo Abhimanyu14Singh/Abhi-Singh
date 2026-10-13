@@ -92,6 +92,7 @@ export function createHistory(sky) {
     for (const r of redoStack) chars -= entryChars(r);
     redoStack = [];
     while (undoStack.length > CAP || (chars > MAX_CHARS && undoStack.length > 1)) chars -= entryChars(undoStack.shift());
+    if (sky.mhOnHistoryEntry) { try { sky.mhOnHistoryEntry(e, base); } catch (err) { console.error(err); } }   // Model History: auto checkpoint before bulk edits (js/mhistory.js)
     base = cur;
     lastLabel = label;
     sky.__histSel = JSON.parse(JSON.stringify(S.selection || []));

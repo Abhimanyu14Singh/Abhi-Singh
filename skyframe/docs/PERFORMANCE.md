@@ -905,3 +905,45 @@ data, membrane member loads and membrane nodal loads. Tests:
 `tests/test_mesh_edge_index.py` (tolerance-band cases at 0.5, 0.999, 1.001
 and 2 × `_TOL`, 300 random edges plus every slab edge, whole-mesh equality,
 scope clean-up, edited member list falls back to the full scan).
+
+## Model history and load-path explainer (beyond ETABS)
+
+Measured here: 4-core Linux container, Python 3.11, openseespy 3.7.1, quiet
+machine, best of 3–5 runs (median in brackets). Nothing was measured on the
+owner's Core Ultra 9 285K; these are single-threaded Python costs, so expect
+them to scale with single-core speed (roughly 1.5–2× faster there —
+projection, not measured).
+
+Model History on the 50-story `rc_dual_core` template (4 400 frames,
+1 400 shells, 2.43 MB model JSON):
+
+| operation | time |
+| --- | ---: |
+| structural diff, 3 edits (`core/model_diff.diff`) | 0.31 s (0.47 s) |
+| structural diff, identical models | 0.29 s (0.32 s) |
+| restore every difference (`apply_restore`) | 0.50 s (0.61 s) |
+| write a checkpoint (gzip 6 + atomic write; 73 KB on disk) | 0.17 s (0.22 s) |
+| read a checkpoint | 0.05 s |
+| deduplicated auto checkpoint (hash only) | 0.15 s (0.17 s) |
+| `model.to_dict()` (paid by the "before analysis" hook) | 0.27 s |
+
+The acceptance test `tests/test_model_history.py::test_large_model_diff_under_one_second`
+pins the diff below 1 s. The "before analysis" hook therefore adds about
+0.3–0.45 s to a 50-story analysis request (to_dict + hash, + gzip when the
+model changed); `SKYFRAME_HISTORY_AUTO=off` removes it. Results are not
+affected (test `test_auto_checkpoints_do_not_change_results`).
+
+Explain Result on a 20-story `quick_building` (5 × 4 bays, 1 580 frames,
+whole `run()` 6.7 s):
+
+| target / case | first call | cached |
+| --- | ---: | ---: |
+| reaction, static case of 3 patterns (1 re-solved, 2 stored) | 0.57 s | 0.001 s |
+| reaction, additive combo of stored cases | 0.002 s | 0.001 s |
+| reaction, CQC response-spectrum case (12 modes re-solved) | 5.3 s | 0.003 s |
+
+The RS breakdown repeats the engine's modal solve and one static solve per
+mode (the run discards the per-mode results), so the first call costs about
+as much as the RS part of the analysis; later targets of the same case reuse
+the cached modes (6-entry cache per model signature). Sum checks: relative
+error ≤ 5e-15 in all three cases.

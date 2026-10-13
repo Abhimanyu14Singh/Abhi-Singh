@@ -327,6 +327,18 @@
   },
   {
     "area": "Interface & workflow",
+    "feature": "Model history with visual diff",
+    "etabs": "None (File > Save As copies and the .$et backup; no checkpoints, no model comparison)",
+    "skyframe": "Tools > Model History: named checkpoints plus automatic ones on save, before analysis, before bulk edits and before a restore (stored next to the model files / app data folder, gzip, bounded with pruning, pinning); structural diff of any two checkpoints or a checkpoint vs the current model (joints, frames, shells, links, supports, sections, materials, loads, cases, combos, stories, grids, options; uid matching with geometric / content fallback; field-level changes); changes coloured in 3D, plan and elevation (added green, removed ghosted red, changed amber); restore a whole checkpoint or checked objects as one undo step",
+    "status": "beyond",
+    "evidence": "core/model_diff.py; core/model_history.py; api/model_history_api.py; js/mhistory.js; js/mock_mhistory.js; tests/test_model_history.py (50-story diff < 1 s); CONTRACT 'Model history and visual diff'",
+    "gap": "",
+    "value": "high",
+    "effort": "M",
+    "phase": null
+  },
+  {
+    "area": "Interface & workflow",
     "feature": "Save / open / recent / file format",
     "etabs": "File > Open/Save (.EDB binary), Save As, Export .e2k/.$et text",
     "skyframe": "Save/open named .skyframe JSON models, Save As, recent files; open human-readable JSON format",
@@ -2508,6 +2520,18 @@
     "effort": "S",
     "phase": null,
     "flag": "Beyond claim is weak while not user-facing"
+  },
+  {
+    "area": "Results & output",
+    "feature": "Load-path explainer (result contribution breakdown)",
+    "etabs": "None (combination and modal results are shown combined; contributions must be rebuilt by hand from the per-case tables)",
+    "skyframe": "Tools > Explain Result: for a support reaction, joint displacement, frame force at a station, story response, base reaction or pier force, the ranked contributions per load pattern (linear static cases, superposition from stored or re-solved pattern responses), per case x factor with the governing member of envelope / max-min combos (nested combos flattened, patterns nested below), per mode for response spectrum (signed modal values, share of R^2, CQC cross terms) and the governing step of time histories; ranked table + bar chart with deep links to the deformed / mode shape; nonlinear cases get an explanatory message",
+    "status": "beyond",
+    "evidence": "core/load_path.py; api/load_path_api.py; js/explain.js; js/mock_explain.js; tests/test_load_path.py (portal-frame reactions per pattern vs hand values, combo factors, 2-DOF RS modal values vs hand SRSS / CQC); CONTRACT 'Load-path explainer'",
+    "gap": "",
+    "value": "med",
+    "effort": "M",
+    "phase": null
   },
   {
     "area": "Results & output",

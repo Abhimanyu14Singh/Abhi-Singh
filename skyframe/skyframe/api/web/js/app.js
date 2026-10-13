@@ -120,6 +120,7 @@ import { mockValidateReleases as relMockValidate } from "./mock_releases.js";   
 
 import { initA8Results as a8InitResults } from "./a8results.js";   // A8: spandrels · results export xlsx/sqlite · report tables/snapshots/.docx
 import { initWaveCResults as wcInitWaveCResults } from "./wavec_results.js";   // Wave C: pier/spandrel/link 3D diagrams · video export · Compare Results · TH output
+import { initBeyondTools as bxInitBeyondTools } from "./beyond_init.js";   // beyond ETABS: Tools › Model History · Explain Result (js/beyond_init.js)
 import { wcMockValidate as wcMockValidateModel } from "./mock_wavec.js";   // Wave C: th_output (mock)
 
 import { initModalX as mxInitModalX } from "./modalx.js";   // TH function tools · named mass sources · modal cases (js/modalx.js)   // File › Import ▸ / Export ▸ E2K · IFC · DXF · Excel (js/exchange.js)
@@ -8701,6 +8702,8 @@ async function boot() {
   try { wcInitDyn(window.__sky); } catch (err) { console.error("wave C dynamics init failed", err); }   // Wave C (js/wavec_dyn.js)
 
   try { wcInitLinkExtC(window.__sky); } catch (err) { console.error("wave C links init failed", err); }   // js/linkext_c.js
+
+  try { bxInitBeyondTools(window.__sky); } catch (err) { console.error("beyond tools init failed", err); }   // Tools › Model History · Explain Result (js/beyond_init.js)
 }
 
 boot();
