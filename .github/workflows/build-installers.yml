@@ -89,6 +89,27 @@ jobs:
           [ "${{ matrix.os_name }}" = "windows" ] && bin="${bin}.exe"
           "$bin" --smoke
 
+      # E1: parallel solves on the SPAWN worker pool inside the frozen app
+      # (workers re-enter the executable via multiprocessing.freeze_support;
+      # the run must match the serial run byte for byte).  Exit 0 = OK.
+      - name: Parallel self-test of the frozen binary (spawn workers)
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          bin="packaging/dist/SkyFrame/SkyFrameCLI"
+          [ "${{ matrix.os_name }}" = "windows" ] && bin="${bin}.exe"
+          "$bin" --selftest-parallel
+
+      - name: Parallel self-test of the windowed SkyFrame.exe (Windows)
+        if: matrix.os_name == 'windows'
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $p = Start-Process -FilePath "packaging/dist/SkyFrame/SkyFrame.exe" `
+                 -ArgumentList "--selftest-parallel" -Wait -PassThru
+          Write-Host "SkyFrame.exe --selftest-parallel exit code $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { exit 1 }
+
       - name: Upload the app folder as a workflow artifact
         uses: actions/upload-artifact@v4
         with:

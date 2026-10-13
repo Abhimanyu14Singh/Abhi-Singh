@@ -15,7 +15,8 @@ CONTRACT "Analysis performance, solver policy and convergence strategy".
                     "tolerance": 1e-10, "max_iterations": 100}],
          "max_halvings": 4},
      "size_warnings": true,
-     "parallel": "auto" | "off" | 1..8}
+     "parallel": "auto" | "off" | 1..8,
+     "parallel_start": "auto" | "fork" | "spawn"}
 
 * ``solver`` — see :mod:`skyframe.engine.solver_policy` ("auto" keeps the
   legacy BandGeneral path, bit-identical, below the size threshold).
@@ -36,6 +37,11 @@ CONTRACT "Analysis performance, solver policy and convergence strategy".
   uses up to 8 processes when at least 4 cores are available, "off" (or 1)
   is serial, an int sets the number of processes.  Results are
   byte-identical either way.
+* ``parallel_start`` (E1) — how the parallel workers start: "auto"
+  (default) forks where the OS can (Linux) and uses the persistent spawn
+  worker pool elsewhere (Windows); "spawn" forces the pool (A/B on Linux);
+  "fork" asks for fork (spawn where fork does not exist).  See
+  :mod:`skyframe.engine.spawn_pool`.
 * ``size_warnings`` — warn (results ``warning`` + ``model_size`` block) when
   the model exceeds sizes that will be slow.
 
@@ -56,9 +62,10 @@ ALGORITHMS = ("Newton", "ModifiedNewton", "KrylovNewton",
 TESTS = ("NormDispIncr", "EnergyIncr", "NormUnbalance")
 MAX_HALVINGS_CAP = 12
 KEYS = ("solver", "eigen_solver", "convergence", "size_warnings",
-        "parallel")
+        "parallel", "parallel_start")          # E1 + parallel_start
 PARALLEL_MODES = ("auto", "off")
 MAX_PARALLEL = 8
+PARALLEL_STARTS = ("auto", "fork", "spawn")      # E1
 EIGEN_SOLVERS = ("auto", "legacy", "lanczos")   # v1.24 + lanczos
 CONV_KEYS = ("mode", "algorithms", "tests", "max_halvings")
 TEST_KEYS = ("type", "tolerance", "max_iterations")
@@ -78,7 +85,7 @@ def convergence_defaults() -> dict:
 def defaults() -> dict:
     return {"solver": "auto", "eigen_solver": "auto",
             "convergence": convergence_defaults(), "size_warnings": True,
-            "parallel": "auto"}
+            "parallel": "auto", "parallel_start": "auto"}
 
 
 def normalized(model_or_opts) -> dict:
@@ -88,7 +95,8 @@ def normalized(model_or_opts) -> dict:
         opts = getattr(model_or_opts, "analysis_options", None)
     out = defaults()
     if isinstance(opts, dict):
-        for k in ("solver", "eigen_solver", "size_warnings", "parallel"):
+        for k in ("solver", "eigen_solver", "size_warnings", "parallel",
+                  "parallel_start"):
             if k in opts:
                 out[k] = opts[k]
         conv = opts.get("convergence")
@@ -129,6 +137,12 @@ def validate_analysis_options(model) -> None:
         raise ValueError("analysis_options.size_warnings must be a bool")
     if "parallel" in opts:
         _validate_parallel(opts["parallel"])
+    if "parallel_start" in opts and (                       # E1
+            not isinstance(opts["parallel_start"], str)
+            or opts["parallel_start"] not in PARALLEL_STARTS):
+        raise ValueError(f"analysis_options.parallel_start must be one of "
+                         f"{list(PARALLEL_STARTS)} (got "
+                         f"{opts['parallel_start']!r})")
     conv = opts.get("convergence")
     if conv is None:
         return

@@ -297,6 +297,7 @@ def _ao_read(d):
     return {"solver": o["solver"], "eigen_solver": o["eigen_solver"],
             "size_warnings": bool(o["size_warnings"]),
             "parallel": str(par) if not isinstance(par, str) else par,
+            "parallel_start": o["parallel_start"],          # E1
             "conv_mode": conv["mode"],
             "algorithms": ", ".join(conv["algorithms"]),
             "max_halvings": conv["max_halvings"]}
@@ -1132,6 +1133,7 @@ def extend(T: List[Table]) -> None:
     """Hook called once by ``modeltables._build_catalogue``."""
     from .model import PANEL_ZONE_OPTIONS
     from .pdelta_options import PDELTA_METHODS, PDELTA_INCLUDE_IN
+    from .analysis_options import PARALLEL_STARTS as _PSTARTS   # E1
     from .analysis_options import (SOLVERS, EIGEN_SOLVERS,
                                    CONVERGENCE_MODES, TESTS)
     from .damping_options import (RAYLEIGH_ON_LINKS,
@@ -1296,6 +1298,8 @@ def extend(T: List[Table]) -> None:
             Col("eigen_solver", "Eigen Solver", "enum", enum=EIGEN_SOLVERS),
             Col("size_warnings", "Model-Size Warnings", "bool"),
             Col("parallel", "Parallel (auto / off / 1..8)", "text"),
+            Col("parallel_start", "Parallel Workers Start", "enum",
+                enum=_PSTARTS),                     # E1 spawn pool
             Col("conv_mode", "Convergence Mode", "enum",
                 enum=CONVERGENCE_MODES),
             Col("algorithms", "Algorithms", "text"),

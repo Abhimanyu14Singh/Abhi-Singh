@@ -9442,7 +9442,9 @@ models: parallel solve families". The tests are in
 * `validate()` raises `ValueError` on any other value, including bools,
   floats, 0 and 9.
 * `SKYFRAME_PARALLEL=0` or `SKYFRAME_SLOW_PATH=1` forces serial.
-* Parallel runs need `os.fork` (Linux). Other platforms run serial.
+* Parallel runs use `os.fork` on Linux. Other platforms (Windows) use
+  the spawn worker pool: see "Windows-capable parallel solves (spawn
+  worker pool)".
 
 ### Engine behaviour (`engine/parallel.py`)
 
@@ -15511,3 +15513,95 @@ key W), Quick Draw Walls (`draw-wd-quick`), Walls Along Beams
   skipped. One finished polyline or quick-draw batch is one undo step.
 * Typed input while drawing (display units): `L` along the cursor, `L<A`
   polar (degrees CCW from +X), `@dx,dy` relative, `x,y` absolute.
+
+## Windows-capable parallel solves (spawn worker pool)
+
+Extends "Meshed-model performance: parallel solves and fewer rebuilds"
+to platforms without `fork` (the Windows desktop build). Code:
+`engine/spawn_pool.py` (pool + worker), `engine/cpu_topology.py`
+(performance-core count), `engine/parallel_selftest.py`
+(`--selftest-parallel`); hooks in `engine/parallel.py`,
+`engine/modal_condensed.py`, `core/analysis_options.py`,
+`core/modeltables_wave_c.py`, `desktop.py`, `packaging/launch.py`,
+`js/dlgstd_cases.js` (one tab) and `js/mock_dbedit_wc.js` (one column).
+Tests: `tests/test_spawn_pool.py`. Numbers: `docs/PERFORMANCE.md`
+"Windows-capable parallel solves".
+
+### Model field `analysis_options.parallel_start` (new key, optional)
+
+```json
+{"analysis_options": {"parallel_start": "auto" | "fork" | "spawn"}}
+```
+
+* `"auto"` (default): `fork` where the OS has it (Linux), else the spawn
+  worker pool (Windows, macOS).
+* `"spawn"`: always the spawn pool (A/B on Linux).
+* `"fork"`: fork; where fork does not exist, spawn.
+* Env `SKYFRAME_PARALLEL_START=auto|fork|spawn` overrides the model value.
+* Validation: any other value (including non-strings) raises `ValueError`.
+  `{"parallel_start": "auto"}` and default models serialize byte-identically
+  (`analysis_options` is emitted only when not the default).
+* DB table "Analysis Options - Solver and Convergence" gains the enum
+  column `parallel_start` ("Parallel Workers Start"). The Analysis Options
+  dialog gains a **Solver** tab (`js/e1_parallel.js`) with "Parallel
+  processes" (auto / off / 2..8 → `analysis_options.parallel`) and
+  "Worker processes" (→ `parallel_start`). A value set back to "auto" is
+  removed and an emptied `analysis_options` is deleted.
+
+### Lanes (`analysis_options.parallel`, semantics unchanged)
+
+* `"auto"` = `min(physical performance cores, 8)` when that count is at
+  least 4, else serial. Performance cores: on Windows,
+  `GetLogicalProcessorInformationEx` (cores of the highest
+  `EfficiencyClass`; 8 on a Core Ultra 9 285K). On Linux, the affinity CPUs
+  (restricted to `/sys/devices/cpu_core/cpus` on Intel hybrid) counted
+  once per physical core. Fallback: the logical CPU count.
+  `SKYFRAME_PERF_CORES=<n>` overrides.
+* `"off"` / `1` is serial; an int `2..8` sets that many processes.
+* Spawn mode only: models below `parallel.SPAWN_EQ_THRESHOLD` estimated
+  equations (the measured break-even, see PERFORMANCE.md) run serially.
+
+### Spawn pool behaviour
+
+* Worker processes start on first use (`multiprocessing` "spawn" context).
+  Their start environment has `OMP_NUM_THREADS = OPENBLAS_NUM_THREADS =
+  MKL_NUM_THREADS = 1` (also VECLIB / NUMEXPR), `SKYFRAME_PARALLEL=0` and
+  `SKYFRAME_SPAWN_WORKER=1`. They never fan out. They never import the GUI
+  or start the HTTP server (the target is `spawn_pool._worker_main`).
+* Each worker receives the pickled `engine.source_model` and the parent's
+  mesh (from the mesh cache, so it does not re-mesh) ONCE per model and
+  builds its own elastic domain. Pool key = SHA-256 of the sorted-key JSON
+  of `model.to_dict()`. Any edit changes it and the existing processes
+  re-initialize from the new model. Workers stay warm between runs. They
+  are stopped after `SKYFRAME_POOL_IDLE_S` seconds idle (default 900) and
+  at exit.
+* Families on the pool: plain linear static cases, condensed-modal unit-load
+  columns, mode-shape solves (+ unit modal responses). The solve-free RS
+  family stays serial in spawn mode.
+* Plan: the parent solves the family's first item itself. The rest follow
+  `parallel.plan` (lane 0 = parent, which solves the last item last) and
+  merge by item index.
+* Probe: every batch also carries the first item. The worker solves it on
+  its own domain and returns the SHA-256 of the pickled result. The
+  parent accepts the batch only if that equals the digest of its own
+  result. Otherwise the worker is benched for that model and its items
+  are re-solved by the parent.
+* A worker that raises or dies has its items re-solved by the parent
+  (a dead worker is replaced on next use). Results are byte-identical to
+  the serial run in every case.
+* `spawn_pool.stats` counts `starts, inits, batches, worker_items,
+  fallback_items, probe_mismatch, deaths`.
+
+### Frozen builds
+
+* `packaging/launch.py` calls `multiprocessing.freeze_support()` first
+  inside its `__main__` guard, before importing the app. `desktop.main`
+  calls it before parsing arguments.
+* `skyframe --selftest-parallel` (also `SkyFrame.exe` / `SkyFrameCLI`)
+  solves a small meshed model serially and on 2 spawn lanes (size
+  threshold lifted). It prints `SkyFrame parallel self-test {json}` with
+  `ok, worker_items, probe_mismatch, fallback_items, identical, sha256,
+  seconds`. It exits 0 when workers solved items, every probe matched and
+  the two results JSON are identical, else 1. No server, no window.
+  CI (`build-installers.yml`) runs it in the frozen CLI binary on every OS
+  and in the windowed `SkyFrame.exe` on Windows.

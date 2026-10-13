@@ -129,17 +129,15 @@ def solve(eng, asm, n: int
     n_lanes = _par.lanes(eng.model, asm)
 
     def g_column(key):
-        _solve_loads(eng, [(key, 1.0)])
-        col = [ops.nodeDisp(t, d) for (t, d) in dofs]
-        # the CR unit-load solve of _master_rz is THIS solve (same
-        # domain, same unit load, same factorization) -> memo
-        rz = (float(ops.nodeDisp(key[0])[5]) if key[0] in masters
-              else None)
-        return col, rz
+        return g_column_item(eng, dofs, masters, key)
 
     warm = _par.factored_live(eng, asm)   # no serial first solve needed
+    # (E1: spawn-mode workers run the same g_column_item on their own
+    # rebuilt domain; engine/spawn_pool.py)
     for j, (key, (col, rz)) in enumerate(
-            zip(dofs, _par.map_family(g_column, dofs, n_lanes, warm))):
+            zip(dofs, _par.map_family(g_column, dofs, n_lanes, warm,
+                                      spawn=(eng, "mcd_column",
+                                             {"dofs": dofs})))):
         G[:, j] = col
         if rz is not None:
             rz_memo[key] = rz
@@ -178,23 +176,44 @@ def solve(eng, asm, n: int
                                  for i in range(nm) if phi_m[i] != 0.0]))
 
     def mode_solve(job):
-        mode, lam, loads = job
-        _solve_loads(eng, loads)
-        shape = {t: list(ops.nodeDisp(t)) for t in tags}
-        unit = (_unit_response(eng, asm, shape, lam) if want_units
-                else None)
-        return shape, unit
+        return mode_item(eng, asm, tags, want_units, job)
 
     # full shapes (+ unit responses): independent solves, parallel too
     for (mode, lam, _), (shape, unit) in zip(
             jobs, _par.map_family(mode_solve, jobs, n_lanes,
-                                  _par.factored_live(eng, asm))):
+                                  _par.factored_live(eng, asm),
+                                  spawn=(eng, "mcd_mode",
+                                         {"want_units": want_units}))):
         shapes[mode] = shape
         lambdas.append(lam)
         if want_units:
             units[mode] = unit
     eng._mcd_rz_memo = rz_memo
     return lambdas, shapes, units
+
+
+def g_column_item(eng, dofs, masters, key):
+    """One condensation column: the massed-DOF displacements under a unit
+    load at ``key`` (+ the CR memo value at a diaphragm master).  Shared
+    by the serial loop, the forked workers and the spawn-pool workers."""
+    _solve_loads(eng, [(key, 1.0)])
+    col = [ops.nodeDisp(t, d) for (t, d) in dofs]
+    # the CR unit-load solve of _master_rz is THIS solve (same
+    # domain, same unit load, same factorization) -> memo
+    rz = (float(ops.nodeDisp(key[0])[5]) if key[0] in masters
+          else None)
+    return col, rz
+
+
+def mode_item(eng, asm, tags, want_units, job):
+    """One full mode shape (+ its unit modal response): the static solve
+    under ``lam M phi_m``.  Shared like :func:`g_column_item`."""
+    mode, lam, loads = job
+    _solve_loads(eng, loads)
+    shape = {t: list(ops.nodeDisp(t)) for t in tags}
+    unit = (_unit_response(eng, asm, shape, lam) if want_units
+            else None)
+    return shape, unit
 
 
 def _units_linear(asm) -> bool:
