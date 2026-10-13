@@ -2138,7 +2138,7 @@
     "feature": "Large-model scalability",
     "etabs": "Routine 100k+ joint models, multithreaded solver and eigen",
     "skyframe": "Benchmarked at 50k-220k equations: MUMPS factor reuse above 20 000 equations, sparse shift-invert Lanczos modal (no band Arpack), sparse stability check up to 400 000 equations; Wave E2: multithreaded MKL PARDISO (one symmetric factorization, block right-hand sides, eigsh on the factor) for every linear flow",
-    "status": "full",
+    "status": "partial",
     "evidence": "docs/PERFORMANCE.md §Large models (v1.24); engine/solver_policy.py; engine/sparse_modal.py; core/stability_sparse.py; engine/pardiso_solver.py; docs/PERFORMANCE.md §PARDISO (E2)",
     "gap": "Multithreaded solver closed by PARDISO (E2); the per-case OpenSees element loop for result recovery (one step per case) remains single-threaded",
     "value": "high",

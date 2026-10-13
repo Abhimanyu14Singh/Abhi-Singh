@@ -1,13 +1,13 @@
-# SkyFrame vs ETABS v22: parity status (v1.25.0, 2026-10-12)
+# SkyFrame vs ETABS v22: parity status (v1.26.0, 2026-10-13)
 
 Source: `skyframe/docs/etabs_parity_matrix.json`. A row is full only when the engine and the UI both exist and the gap is empty. Rows with a `flag` hold values entered from memory or not checked against a third-party program (see docs/REVIEW_FLAGS.md).
 
 ## Counts by status
 
-| Status | Re-audit (v1.24, start of Wave C) | Now (v1.25) |
+| Status | Re-audit (v1.24, start of Wave C) | Now (v1.26) |
 |---|---|---|
-| full | 152 | 203 |
-| partial | 64 | 18 |
+| full | 152 | 202 |
+| partial | 64 | 19 |
 | missing | 5 | 0 |
 | beyond | 11 | 11 |
 | out_of_scope | 10 | 10 |
@@ -27,6 +27,8 @@ Source: `skyframe/docs/etabs_parity_matrix.json`. A row is full only when the en
 - **Properties (C9):** anisotropic materials and material angle; Section Designer moment-curvature; any-material layered shells; CSV table export.
 - **Owner requests (D1-D4):** ETABS-style Draw Walls / Quick Draw Walls; tabbed Display Options per window; unit-aware section editors; centre-of-mass fix (CR verified); Template Library with 14 structural-system templates.
 
+- **Performance (E1-E3, v1.26):** Windows-capable parallel solves (persistent spawn worker pool, 8 performance-core lanes on a 285K); Intel MKL PARDISO for every linear analysis (one multithreaded Cholesky reused by statics, modes, Ritz, RS, CR and buckling; modal 163 s -> 8 s on a 220k-equation model); GPU (WebGL2 / Direct3D on Windows) 3D renderer under View > Renderer, with GPU picking, shader contours and mode animation.
+
 ## Remaining partial rows (exact gaps)
 
 - **[partial] Geometry objects / Pier labels**: Frame pier labels done (Wave C3); pier forces still in-plane P, V, M only (no V3, T, M2)
@@ -37,6 +39,7 @@ Source: `skyframe/docs/etabs_parity_matrix.json`. A row is full only when the en
 - **[partial] Loads / Auto wind other codes (GB 50009, TSC, KDS, Mexican, etc.)**: BS 6399-2, API 4F, Italian NTC wind added (Wave C4); GB 50009 beta_z still uses a linear mode shape
 - **[partial] Analysis / Fast Nonlinear Analysis (FNA)**: Takeda/Pivot/BRB/coupled/T-C and other links run in FNA (Waves C5/C6); frame-hinge cases still refused; HDR and isotropic links need direct integration
 - **[partial] Analysis / Staged construction with creep/shrinkage**: Shell creep/shrinkage added (Wave C6, opt-in); members with end releases creep axially only; step method needs user stages
+- **[partial] Analysis / Large-model scalability**: Multithreaded solver closed by PARDISO (E2); the per-case OpenSees element loop for result recovery (one step per case) remains single-threaded
 - **[partial] Results & output / Frame force diagrams**: 3D pier/spandrel/link diagrams added (Wave C7); link diagrams only for elastic links on static cases and single-valued combos
 - **[partial] Results & output / Shell stresses (S11, S22, S12, top/bottom, von Mises)**: Stresses still derived from resultants; no TH shell stresses
 - **[partial] Results & output / Pier forces**: All case types and 3D diagrams done (Wave C7); in-plane P, V, M only
