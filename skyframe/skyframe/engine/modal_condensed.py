@@ -138,8 +138,11 @@ def solve(eng, asm, n: int
         return col, rz
 
     warm = _par.factored_live(eng, asm)   # no serial first solve needed
+    from skyframe.engine import pardiso_solver as _pds   # E2 block solve
+    pblk = _pds.g_columns(eng, asm, dofs, masters)
     for j, (key, (col, rz)) in enumerate(
-            zip(dofs, _par.map_family(g_column, dofs, n_lanes, warm))):
+            zip(dofs, pblk if pblk is not None
+                else _par.map_family(g_column, dofs, n_lanes, warm))):
         G[:, j] = col
         if rz is not None:
             rz_memo[key] = rz

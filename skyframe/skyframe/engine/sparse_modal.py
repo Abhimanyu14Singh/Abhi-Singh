@@ -81,6 +81,10 @@ def solve(eng, asm, n: int
     if eng._asm is asm:                      # adopt the fresh elastic build
         _REUSE["owner"] = weakref.ref(eng)
         _REUSE["loaded"] = False
+    from skyframe.engine import pardiso_solver as _pds   # E2: eigsh on
+    pres = _pds.eigsh_modes(eng, asm, n)                 # the PARDISO factor
+    if pres is not None:
+        return pres
     space = _gk.Space(asm.node_coords)
     dofs = _mcd.massed_dofs(asm)
     rows = np.array([6 * space.idx[t] + d - 1 for (t, d) in dofs],

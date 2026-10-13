@@ -42,6 +42,7 @@ import { poxMockAugment as poxMockAugmentResults } from "./mock_pomethods.js";  
 
 import { tdMockAugment as tdMockAugmentResults } from "./mock_timedep.js";
 import { wcMockAugment as wc3MockAugmentResults } from "./mock_wavec3.js";   // Wave C frame pier forces   // step creep time history + tendon elements
+import { soMockAugment as soMockAugmentResults } from "./mock_solveropts.js";   // E2: results.extra.solver (PARDISO)
 const G = 9.80665;
 
 function mulberry32(seed) {
@@ -3307,6 +3308,7 @@ export function mockResults(model) {
   r.combo_status = combo_status;
   g3MockNlsExtend(model, r);                      // G3 — results.nonlinear_static / diaphragms + chained case_status
   c9MockTowersAugment(model, r);                  // C9 — per-tower drifts + results.towers / story_tower
+  soMockAugmentResults(model, r);                 // E2 — results.extra.solver (PARDISO)
 
   // active DOF — zero the inactive translations in the mock displacements
   const dofs = new Set(normalizeActiveDof(model.active_dof));

@@ -212,6 +212,7 @@ from skyframe.engine import frame_piers as _fpe   # Wave C frame pier forces
 from skyframe.core import static_ecc as _secc     # Wave C ecc overrides
 
 from skyframe.engine import modal_cases as _mcx    # named modal cases / Ritz
+from skyframe.engine import pardiso_solver as _pds  # E2 MKL PARDISO path
 from skyframe.core.frame_axes import member_local_axes as _fa_member_local_axes  # noqa: E501
 from skyframe.core.frame_axes import sync_members_if_etabs as _fa_sync
 from skyframe.core.model import (DAMPER_DEFAULT_ALPHA, DAMPER_DEFAULT_K,
@@ -1647,6 +1648,9 @@ class AnalysisResults:
 
     modal_cases: Dict[str, dict] = field(default_factory=dict)
     #   named modal cases (engine/modal_cases.py; emitted only when defined)
+    extra: Dict[str, object] = field(default_factory=dict)
+    #   E2: {"solver": ...} PARDISO report (engine/pardiso_solver.py;
+    #   emitted only when PARDISO was requested or chosen by the policy)
 
     def to_dict(self) -> dict:
         d = {
@@ -1725,6 +1729,8 @@ class AnalysisResults:
 
         if self.modal_cases:             # named modal cases (when defined)
             d["modal_cases"] = self.modal_cases
+        if self.extra:                   # E2 extra.solver (PARDISO only)
+            d["extra"] = dict(self.extra)
         return d
 
 
@@ -2212,6 +2218,7 @@ class OpenSeesEngine:
         from . import curved as _curved     # curved frames (no-op if none)
         _curved.attach(self, res)
         _tw.attach(self, res)               # C9 towers summary (if any)
+        _pds.attach(self, res)              # E2 results extra.solver
         return res
 
     def _run_plan(self) -> dict:
@@ -2587,7 +2594,9 @@ class OpenSeesEngine:
             return _nls.run_modal_from_case(self, num_modes)
         # large models: the live reused elastic domain IS the standard
         # build -> no rebuild (engine/parallel.reuse_for_modal)
-        hit, asm = _par.reuse_for_modal(self, num_modes)
+        hit, asm = (_pds.reuse_for_modal(self, num_modes)   # E2 PARDISO
+                    if _pds.active(self)
+                    else _par.reuse_for_modal(self, num_modes))
         if hit is not None:
             return hit
         if asm is None:
@@ -2783,6 +2792,7 @@ class OpenSeesEngine:
 
         ops.wipe()
         ops.model("basic", "-ndm", 3, "-ndf", 6)
+        _pds.record_begin(self, transf_name, hinge_case, _pdx)   # E2
         asm = _Assembly(mesh=mesh)
 
         # --- nodes: every deduped mesh point (frame endpoints, split points,
@@ -5913,6 +5923,8 @@ class OpenSeesEngine:
         factorization).  Otherwise (BandGeneral, slow path, a domain this
         engine does not own) exactly the legacy :meth:`_setup_analysis`.
         """
+        if _slv.pardiso_active(asm) and _pds.prepare_solve(self, asm):
+            return                       # E2: solved by PARDISO (see module)
         if (_slow_path() or not _slv.factor_once_ok(asm)
                 or _reuse_owner() is not self):
             self._setup_analysis(asm)

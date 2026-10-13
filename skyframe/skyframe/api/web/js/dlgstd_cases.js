@@ -22,6 +22,7 @@ import * as dcCX from "./combo_refs.js";
 import { rsxDirOptions as dcRsxDirs, rsxGroups as dcRsxGroups } from "./rs_ext.js";   // RS ext: U3 / angle / multi-dir / CQC3 / ecc
 
 import { lcOpenDesignCombos as dcLcDesignCombos } from "./loadcodes.js";   // design combos by code (js/loadcodes.js)
+import { soSolverPanel as dcSoSolverPanel } from "./solveropts.js";   // E2: Solver tab (PARDISO / threads)
 import {
   el, esc, clone, isNum, dkForm, dkGroup, dkAdvanced, dkTabs, dkList, dkNote, dkDialog,
   dkDraft, dkCommit, uniqueName,
@@ -668,6 +669,7 @@ export function openAnalysisOptions(sky, { tab = "dof" } = {}) {
     { id: "modal", label: "Modal", body: modalPanel },
     { id: "pdelta", label: "P-Delta", body: pdPanel },
     { id: "model", label: "Model", body: modelPanel },
+    { id: "solver", label: "Solver", body: dcSoSolverPanel(F, D) },   // E2 (js/solveropts.js)
   ], { active: tab, id: "dcOptTabs" });
   const more = el("button", { type: "button", class: "btn btn-small dk-legacy", id: "dcOptCasesRun", title: "Pick which cases the next run analyses (applies these edits first)" }, ["Load Cases to Run…"]);
   const dlg = dkDialog({

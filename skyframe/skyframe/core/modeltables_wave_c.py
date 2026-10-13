@@ -297,6 +297,7 @@ def _ao_read(d):
     return {"solver": o["solver"], "eigen_solver": o["eigen_solver"],
             "size_warnings": bool(o["size_warnings"]),
             "parallel": str(par) if not isinstance(par, str) else par,
+            "pardiso_threads": str(o["pardiso_threads"]),       # E2
             "conv_mode": conv["mode"],
             "algorithms": ", ".join(conv["algorithms"]),
             "max_halvings": conv["max_halvings"]}
@@ -324,6 +325,16 @@ def _ao_write(d, changed):
                 except ValueError:
                     raise ValueError("Parallel: use auto, off or 1..8") \
                         from None
+        elif k == "pardiso_threads":                     # E2
+            s = str(v).strip()
+            if s == "auto":
+                stored.pop("pardiso_threads", None)
+            else:
+                try:
+                    stored["pardiso_threads"] = int(s)
+                except ValueError:
+                    raise ValueError("PARDISO threads: use auto or "
+                                     "1..256") from None
         elif k == "conv_mode":
             conv["mode"] = v
         elif k == "algorithms":
@@ -1296,6 +1307,8 @@ def extend(T: List[Table]) -> None:
             Col("eigen_solver", "Eigen Solver", "enum", enum=EIGEN_SOLVERS),
             Col("size_warnings", "Model-Size Warnings", "bool"),
             Col("parallel", "Parallel (auto / off / 1..8)", "text"),
+            Col("pardiso_threads", "PARDISO Threads (auto / 1..256)",
+                "text"),                                          # E2
             Col("conv_mode", "Convergence Mode", "enum",
                 enum=CONVERGENCE_MODES),
             Col("algorithms", "Algorithms", "text"),

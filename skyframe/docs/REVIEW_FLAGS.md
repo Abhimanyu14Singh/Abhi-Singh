@@ -280,3 +280,28 @@ before it is relied on. Each one can be overridden by an explicit parameter.
     matched and dims.r = 0. Their exact-outline gate is 3 % on A.
   - CISC `mass` is the designation mass, which is rounded (up to 3 % from
     A x 7850).
+
+## PARDISO solver (Wave E2) - licences and review points
+
+- **Licences of the optional "fast" extra**:
+  - `pypardiso` (haasad/PyPardisoProject) is BSD-3-Clause.
+  - It pulls the pip wheels `mkl`, `intel-openmp`, `tbb`, `tcmlib`, `umf`, `intel-cmplr-lib-ur` and `onemkl-license`. They are licensed under the **Intel Simplified Software License** (ISSL, the `mkl` wheel metadata, version 2026.1.0 here), which permits redistribution of the binaries in our installer with the licence text.
+  - **Action before a release**: ship the ISSL text (from the `onemkl-license` wheel) inside the Windows / Linux bundle, next to the third-party notices.
+  - `scipy` (BSD-3-Clause) becomes a declared dependency of the extra.
+- **Exactness rests on OpenSees itself**:
+  - K and M are OpenSees' own element matrices, read in a scratch domain with the `GimmeMCK` integrator and a `FullGeneral` `printA`.
+  - The recorded build is replayed into the identical domain.
+  - Result recovery is OpenSees' own (a Diagonal / `Linear -factorOnce` step).
+  - **Probed behaviour relied on** (openseespy 3.7.1):
+    - A `Diagonal` / `Linear -factorOnce` step applies the loads and updates and commits every element without forming a tangent. It adds `R / diag`, which is round-off at the written solution and zero after a domain change.
+    - Re-issuing `integrator` re-sets the analysis up (slow, and it breaks MUMPS factors), so the path steers the load factor with `setTime`.
+    - `printA` / `printB` spoil a factor-once Diagonal system, so the path never calls them.
+    - Guards: the first solve per factorization checks OpenSees' residual (element forces) and that the update step left the solution unchanged. Either failing means fallback.
+    - Re-probe after an openseespy upgrade (`tests/test_pardiso.py`).
+- **Element-matrix memo**:
+  - Matrices are keyed on relative node coordinates rounded to 1e-10 m.
+  - Two congruent elements whose coordinates differ by less than 5e-11 m share a matrix. The relative error is about 1e-11, inside the 1e-9 contract.
+- **Process parallelism**:
+  - With PARDISO active, the fork-parallel families of `engine/parallel.py` still run. Forked workers call MKL after the parent factorized, which was tested on Linux: exact, and 1.6x faster than serial on 10s-5x5-meshed. `KMP_BLOCKTIME=0` and one-thread substitutions keep the workers from oversubscribing.
+  - The E1 Windows (spawn) worker pool must consult `solver_policy.pardiso_active(asm)`. A spawned worker has no factor.
+- **Projection**: the docs/PERFORMANCE.md numbers for the Core Ultra 9 285K are a labelled projection from 1/2/4-thread scaling measured in a 4-core container, not measurements.

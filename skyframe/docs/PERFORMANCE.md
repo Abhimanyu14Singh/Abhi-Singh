@@ -461,3 +461,147 @@ equations, 7 840 shells.
   is 4e-14.
 * **MUMPS vs UmfPack displacements:** 6e-14 (rigid diaphragms) and 3e-13
   (no diaphragm) on the 10-story meshed building.
+
+## PARDISO (E2): one multithreaded factorization for the linear analyses
+
+The linear flows can now run on Intel MKL PARDISO:
+
+* linear static cases;
+* centre-of-rigidity unit loads;
+* RS modal statics;
+* condensation columns, mode shapes and unit responses;
+* the sparse eigen solve;
+* Ritz vectors;
+* FEM-buckling reference and Lanczos solves.
+
+PARDISO comes from `pypardiso`, BSD-3-Clause. It brings `mkl`, which is under the Intel Simplified Software License (see docs/REVIEW_FLAGS.md). It is installed with `pip install skyframe[fast]`.
+
+The contract is CONTRACT.md "PARDISO linear solver (MKL)". The code is `engine/pardiso_solver.py` and the tests are `tests/test_pardiso.py`.
+
+### Approach chosen, and why
+
+**(a) Matrices from OpenSees itself.** This approach was chosen. OpenSees 3.7.1 returns a matrix from `printA` only for the dense `FullGeneral` system, which needs n² memory. It has no element stiffness response either: probed `eleResponse` with `stiff`, `stiffness`, `tangent` and `K`. So the matrices are built as follows:
+
+* **Element matrices.** The standard elastic build is recorded. Each *distinct* element is instantiated alone in a scratch domain, and its K and M are read with `GimmeMCK` + `FullGeneral` `printA`. "Distinct" means the same type, the same non-tag arguments, the same canonical transformation and the same node coordinates relative to its first node. These are OpenSees' own element matrices, exact by construction.
+* **Cost.** One element takes about 0.3 ms. Regular buildings have very few distinct elements: 6 for every meshed benchmark and 8 for the 50-story tower. Extraction therefore costs 0.03–0.17 s.
+* **Domain.** The recording is replayed into the identical domain, so result recovery is unchanged.
+* **Constraints.** They are applied through the Transformation handler's own matrices: rigid diaphragm, rigidLink beam/bar and equalDOF.
+
+**(b) Our own numpy element formulations.** Not needed, and not exact by construction. The shells would require re-implementing MITC4/DKG assumed-strain and drilling terms; v1.19 rejected that for the same reason.
+
+**Result recovery.** It stays in OpenSees:
+
+1. PARDISO's displacements are written into the domain with `setNodeDisp`.
+2. A `Diagonal` / `Linear -factorOnce` step applies the loads and updates every element. It forms no element tangent.
+3. Element-load right-hand sides are OpenSees' fixed-end forces.
+4. The first solve of each factorization is checked against OpenSees' residual. Anything outside the allow-list falls back to OpenSees, and the reason is written to `extra.solver`.
+
+Two measured traps shaped this step:
+
+* Re-issuing `integrator` on a live analysis re-sets the whole analysis up. That costs +0.45 s per step at 28k equations, and it is also the cause of the old MUMPS "-3 wrong JOB state" retries. The path steers the load factor with `setTime` instead.
+* With other processes on the cores, spinning MKL threads made single right-hand-side solves 20x slower. So `KMP_BLOCKTIME=0` is set, and substitutions with fewer than 8 right-hand sides use one thread.
+
+### Measurement conditions
+
+* This 4-core container: `OMP_NUM_THREADS=OPENBLAS_NUM_THREADS=1` for OpenSees, MKL on 4 threads (`pardiso_threads: "auto"`).
+* One `OpenSeesEngine(model).run()` + `to_dict` + JSON per row, 12 modes.
+* Load average 0.6–1.6 during the final runs. Other agents shared the machine earlier, and those noisy runs are not used.
+* "OpenSees" is today's policy (UmfPack below 20 000 equations, MUMPS above, fork-parallel families on 4 lanes), run with `SKYFRAME_PARDISO=0`.
+* "PARDISO" is `solver: "pardiso"`, also with the fork-parallel families: forked workers inherit the factor.
+* Scripts are in the scratch `e2/` folder (`bench_e2.py`, `cmpj.py`).
+
+### Whole run (seconds, measured here)
+
+| model | equations | OpenSees path | PARDISO | speedup | worst relative difference |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 10s-5x5-meshed | 13 860 | 13.0 (UmfPack) | 12.0 | 1.09x | 1.7e-11 |
+| 20s-5x5-meshed | 27 720 | 27.9 (MUMPS) | 24.5 | 1.14x | 7.0e-11 |
+| **20s-8x6-meshed** | 50 760 | 59.4 (MUMPS) | **48.5** | **1.23x** | 6.7e-11 (1) |
+| **50-story `rc_dual_core` tower** | 14 070 | 92.4 (UmfPack) | **81.6** | **1.13x** | 6.2e-11 |
+| **20s-8x6-meshed 1.0 m, no diaphragm** | 220 920 | 403.0 (MUMPS) | **180.2** | **2.24x** | 2.3e-10 |
+
+Earlier serial-PARDISO runs on frame-only models (bench3, before the fork families were enabled):
+
+* 10s-5x5-frame, 1 110 equations: 3.9 s → 5.0 s;
+* 20s-8x6-frame, 3 840 equations: 17.0 s → 17.9 s.
+
+At those sizes the factorization is not the cost. This sets the `"auto"` threshold at **10 000 estimated equations** (`PARDISO_EQ_THRESHOLD`), between the 3 840-equation loss and the 13 860-equation gain.
+
+How the differences were measured:
+
+* The worst relative difference is `core/results_compare.compare` over every numeric result. It is sign- and degenerate-subspace invariant for modes. Values of pure round-off size (|v| < 1e-15) are floored to 0, because the other solvers differ by the same noise: UmfPack vs Band on the frame3d oracle gives 0.32 raw and 4e-14 floored.
+* (1) As in v1.24, five deflection-check display strings differ in the last digit, for example `L/2907241` vs `L/2907242`. They are the rounded ratios of ~1e-7 m deflections.
+
+### Phase breakdown (s), OpenSees → PARDISO
+
+| phase | 10s-5x5-meshed | 20s-8x6-meshed | 50-story tower | 220 920 eq |
+| --- | ---: | ---: | ---: | ---: |
+| `_build` (incl. recording, extraction, replay, assembly) | 0.5 → 1.6 | 3.2 → 7.0 | 43.0 → 45.9 | 8.4 → 14.7 |
+| static cases | 3.0 → 4.0 | 14.3 → 17.1 | 48.7 → 51.0 (build inside) | 43.5 → 33.7 |
+| modal | 5.1 → 2.6 | 16.0 → 10.2 | 19.8 → 4.9 | 163.2 → 7.9 |
+| RS cases | 1.7 → 1.8 | 7.5 → 6.8 | 5.3 → 6.3 | 138.3 → 116.6 |
+| `ops.analyze` (all OpenSees steps / solves) | 5.0 → 1.6 | 16.3 → 6.4 | 17.5 → 0.9 | 208.2 → 27.7 |
+| `to_dict` + JSON | 2.3 → 2.6 | 9.7 → 9.7 | 11.6 → 12.3 | 19.0 → 16.9 |
+| peak RSS (MB) | 487 → 599 | 1 730 → 1 855 | 1 658 → 1 734 | 2 823 → 2 490 |
+
+Inside PARDISO, from `extra.solver.timing` (s):
+
+| | extract | replay | assemble | factor | solves | eigsh |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 20s-8x6-meshed | 0.10 | 0.14 | 3.0 | 0.48 | 0.81 | — |
+| 220 920 eq | 0.17 | 0.25 | 7.1 | 2.78 | 2.73 | 5.0 |
+
+What the table shows:
+
+* The modal analysis is where PARDISO wins. Condensation is one block solve of all massed-DOF columns, and the sparse eigen path is `eigsh` on the factor instead of MUMPS Lanczos steps through OpenSees.
+* Static and RS phases are dominated by OpenSees' per-case element loop and by result extraction. PARDISO does not change those; only the factorization goes away.
+
+### Thread scaling (measured here, 20s-8x6-meshed: 50 760 equations, nnz(L) 5.5 M)
+
+| MKL threads | factor | 60-RHS block solve | 1-RHS solve |
+| ---: | ---: | ---: | ---: |
+| 1 | 0.98 s | 0.68 s | 19 ms |
+| 2 | 0.59 s | 0.35 s | 19 ms |
+| 4 | 0.47 s | 0.35 s | 19 ms |
+
+For comparison, the MUMPS factorization measured in v1.24 took 7.6 s at 75 000 equations and was not multithreaded on this build.
+
+### Projection for the Core Ultra 9 285K — NOT measured
+
+This is a projection, not a measurement. Assumptions:
+
+* about 1.5–2x the single-thread speed of this container;
+* 8 P-cores for MKL;
+* on Windows, no `fork`, so the OpenSees recovery runs serially unless the E1 worker pool parallelises it.
+
+Projected effect:
+
+* The solver share of a run (factor + solves + eigsh: 1.3 s at 50 760 equations, 10.5 s at 220 920 here) becomes a few seconds.
+* The OpenSees element loop and the Python extraction remain the bulk. The 220 920-equation run is projected at roughly 90–150 s, against roughly 200–270 s for the OpenSees path. The 20s-8x6-meshed run is projected at roughly 25–35 s.
+
+Re-measure on the machine with `bench_e2.py`.
+
+### Fallbacks (explicit allow-list; the reason goes to `extra.solver.reason`)
+
+Fallback to OpenSees for:
+
+* `pypardiso` / MKL missing;
+* non-standard builds (hinge, pushover, P-Delta, corotational, model-wide P-Delta). These are counted as `opensees_builds`, not as fallbacks;
+* nonlinear members, links or compression-only springs;
+* ground displacements;
+* initial-strain materials;
+* element, material or section types outside the linear-elastic set;
+* MP constraints other than rigidDiaphragm, rigidLink or equalDOF, or chained ones;
+* a failed residual check;
+* any PARDISO error.
+
+### Equivalence evidence
+
+* Benchmarks: the table above. Every row is ≤ 2.3e-10 relative, inside 1e-9.
+* Oracle models: frame3d 3.8e-13, portal_nodal 3.7e-14, shell_wall 2.6e-13 (floored).
+* `tests/test_pardiso.py` pins:
+  * closed-form cantilever, fixed-base portal (24EI/h³ (1+6ρ)/(4+6ρ)) and uniaxial shell plate (u = qa/Et);
+  * equality with the OpenSees path for static, modal, RS, CR, condensed modal, Ritz, eigsh vs Lanczos and FEM buckling;
+  * fork-parallel vs serial;
+  * the fallbacks and the runtime residual guard;
+  * options, the DB-edit table, the run log and the self-test.

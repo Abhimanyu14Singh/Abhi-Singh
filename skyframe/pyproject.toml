@@ -18,6 +18,10 @@ desktop = ["pywebview>=5.0", "rhino3dm>=8.0,<9"]
 # Rhino .3dm import / link (skyframe.io.rhino3dm_io); optional at runtime
 rhino = ["rhino3dm>=8.0,<9"]
 dev = ["pytest>=8.0", "pyinstaller>=6.0"]
+# E2: Intel MKL PARDISO linear solver (pypardiso: BSD-3-Clause; it pulls
+# mkl / intel-openmp / tbb, redistributable under the Intel Simplified
+# Software License) -- optional, SkyFrame falls back to OpenSees without it
+fast = ["pypardiso>=0.4.6", "scipy>=1.10"]
 
 [project.scripts]
 skyframe = "skyframe.desktop:main"

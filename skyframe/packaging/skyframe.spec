@@ -38,6 +38,37 @@ try:
 except Exception:
     pass
 
+# E2: Intel MKL PARDISO (optional "fast" extra).  pypardiso is pure Python;
+# the MKL runtime ships as data files of the mkl / intel-openmp / tbb wheels
+# (<prefix>/Library/bin/*.dll on Windows, <prefix>/lib/lib*.so* on Linux),
+# which collect_all cannot see -> add them as binaries at the bundle root,
+# where engine/pardiso_solver.find_mkl_rt looks (sys._MEIPASS).
+try:
+    import glob as _glob
+    import os as _os
+    import site as _site
+    d, b, h = collect_all("pypardiso")
+    datas += d; binaries += b; hiddenimports += h
+    hiddenimports += ["scipy.sparse", "scipy.sparse.linalg",
+                      "scipy.sparse.linalg._eigen.arpack"]
+    _pats = (["mkl_*.dll", "libiomp5md.dll", "tbb*.dll", "tcm*.dll",
+              "umf*.dll"] if sys.platform == "win32" else
+             ["libmkl_*.so*", "libiomp5.so", "libtbb*.so*", "libtcm*.so*",
+              "libumf*.so*"])
+    _roots = {sys.prefix, sys.base_prefix}
+    for _sp in _site.getsitepackages():
+        _roots.add(_os.path.dirname(_os.path.dirname(_sp)))
+    _seen = set()
+    for _r in _roots:
+        for _sub in ("Library/bin", "lib", "bin", ""):
+            for _pat in _pats:
+                for _f in _glob.glob(_os.path.join(_r, _sub, _pat)):
+                    if _os.path.basename(_f) not in _seen:
+                        _seen.add(_os.path.basename(_f))
+                        binaries.append((_f, "."))
+except Exception:
+    pass  # built without the "fast" extra: the app runs on OpenSees only
+
 a = Analysis(
     ["launch.py"],
     pathex=[".."],
