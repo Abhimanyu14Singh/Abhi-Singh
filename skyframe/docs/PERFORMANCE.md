@@ -876,3 +876,32 @@ Fallback to OpenSees for:
   * fork-parallel vs serial;
   * the fallbacks and the runtime residual guard;
   * options, the DB-edit table, the run log and the self-test.
+
+## Mesher: edge-beam search for membrane slabs (v1.26.1)
+
+`core/mesh._members_on_edge` looked for the beams under every membrane-slab
+edge by scanning **every** frame member (slab edges × all members, pure
+Python). On the 50-story tower that was most of the meshing time.
+
+Change: `edge_index_scope(model)` builds one numpy bounding-box table of the
+members per meshing pass (`mesh_model`, the accuracy advisor's membrane
+check, and the one-way distribution that runs inside `mesh_model`). Each
+edge first keeps only members whose box overlaps the edge's box grown by
+`2 × _TOL`. That is a strict superset of the members the exact test can
+accept (both end points within `_TOL` of the line and an overlapping span
+put a point of the member within `2 × _TOL` of the segment), and the
+survivors still go through the unchanged per-member test in model order, so
+results are identical. The index lives only inside the `with` block and is
+skipped if the member list changes inside it.
+
+| model (meshing only, 4-core container) | members / shells | before | after | speedup | mesh digest |
+| --- | ---: | ---: | ---: | ---: | --- |
+| tower50 `rc_dual_core` | 4 400 / 1 400 | 22.55 s | 1.78 s | 12.7x | `25bda63ec8f66560` (same) |
+| `steel_deck`, 20 stories | 1 640 / 540 | 1.74 s | 0.18 s | 9.9x | `a46468ed445074de` (same) |
+| `flat_slab_perimeter`, 30 stories | 840 / 270 | 0.19 s | 0.18 s | — | `bd029fb0d6f266ee` (same) |
+
+The digest is a SHA-256 over the mesh points, segments, quads, tributary
+data, membrane member loads and membrane nodal loads. Tests:
+`tests/test_mesh_edge_index.py` (tolerance-band cases at 0.5, 0.999, 1.001
+and 2 × `_TOL`, 300 random edges plus every slab edge, whole-mesh equality,
+scope clean-up, edited member list falls back to the full scan).

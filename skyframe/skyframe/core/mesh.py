@@ -362,6 +362,62 @@ def _split_member(member: FrameMember, pool: _PointPool,
 # --------------------------------------------------------------------------- #
 # membrane slab two-way tributary distribution
 # --------------------------------------------------------------------------- #
+class _EdgeIndex:
+    """Axis-aligned bounding boxes of every member (numpy), built once per
+    meshing pass.  A member returned by :func:`_members_on_edge` has both
+    end points within ``_TOL`` of the edge line and a span overlapping the
+    edge, so some point of it lies within ``2 * _TOL`` of the edge segment:
+    its box must overlap the edge's box grown by ``2 * _TOL``.  The box test
+    is therefore an exact pre-filter; survivors (in model order) still go
+    through the original per-member test, so results are identical."""
+
+    _PAD = 2.0 * _TOL + 1e-9
+
+    def __init__(self, model: BuildingModel):
+        import numpy as np
+        self.members = model.members
+        self.n = len(model.members)
+        pts = np.array([[tuple(map(float, m.pi)), tuple(map(float, m.pj))]
+                        for m in model.members], dtype=float).reshape(-1, 2, 3)
+        self.lo = pts.min(axis=1)
+        self.hi = pts.max(axis=1)
+
+    def candidates(self, pa: Vec3, pb: Vec3):
+        import numpy as np
+        if self.n == 0:
+            return []
+        elo = np.minimum(pa, pb) - self._PAD
+        ehi = np.maximum(pa, pb) + self._PAD
+        hit = np.all(self.hi >= elo, axis=1) & np.all(self.lo <= ehi, axis=1)
+        return [self.members[k] for k in np.flatnonzero(hit)]
+
+
+# active index for the model being meshed (set by edge_index_scope only, so
+# it can never outlive the pass that built it or see an edited model)
+_EDGE_IDX: Dict[int, _EdgeIndex] = {}
+
+
+class edge_index_scope:
+    """``with edge_index_scope(model): ...`` — speeds up every
+    :func:`_members_on_edge` call on ``model`` inside the block (the model's
+    members must not change inside it).  Re-entrant; no-op when nested."""
+
+    def __init__(self, model: BuildingModel):
+        self.model = model
+        self.owner = False
+
+    def __enter__(self):
+        if id(self.model) not in _EDGE_IDX:
+            _EDGE_IDX[id(self.model)] = _EdgeIndex(self.model)
+            self.owner = True
+        return self
+
+    def __exit__(self, *exc):
+        if self.owner:
+            _EDGE_IDX.pop(id(self.model), None)
+        return False
+
+
 def _members_on_edge(model: BuildingModel, pa: Vec3, pb: Vec3
                      ) -> List[Tuple[FrameMember, float, float]]:
     """Members collinear with the edge line whose span overlaps [0, L].
@@ -371,7 +427,13 @@ def _members_on_edge(model: BuildingModel, pa: Vec3, pb: Vec3
     length = _norm(_sub(pb, pa))
     u = tuple(d / length for d in _sub(pb, pa))
     found: List[Tuple[FrameMember, float, float]] = []
-    for m in model.members:
+    idx = _EDGE_IDX.get(id(model))
+    if (idx is not None and idx.members is model.members
+            and idx.n == len(model.members)):
+        pool = idx.candidates(pa, pb)
+    else:
+        pool = model.members
+    for m in pool:
         ss = []
         on_line = True
         for p in (tuple(map(float, m.pi)), tuple(map(float, m.pj))):
@@ -815,6 +877,11 @@ def edge_tie_chains(mesh: "MeshedModel"
 # --------------------------------------------------------------------------- #
 def mesh_model(model: BuildingModel) -> MeshedModel:
     """Mesh all shell regions and reconcile frame members with the mesh."""
+    with edge_index_scope(model):        # exact pre-filter for edge beams
+        return _mesh_model(model)
+
+
+def _mesh_model(model: BuildingModel) -> MeshedModel:
     pool = _PointPool()
     # member endpoints FIRST, in model order (keeps v0.1 node numbering when
     # the model has no shells)

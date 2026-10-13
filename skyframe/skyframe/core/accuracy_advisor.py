@@ -384,6 +384,12 @@ def _loaded_out_of_plane(model, r) -> bool:
 
 
 def _membrane_checks(model, col: _Collector, msg: dict) -> None:
+    from .mesh import edge_index_scope
+    with edge_index_scope(model):          # exact edge-beam pre-filter
+        _membrane_checks_body(model, col, msg)
+
+
+def _membrane_checks_body(model, col: _Collector, msg: dict) -> None:
     from .mesh import _members_on_edge
     from .shell_types import shell_type_of
     n_edge, n_type = 0, 0
