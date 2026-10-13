@@ -66,6 +66,7 @@ import numpy as np
 import openseespy.opensees as ops
 
 from skyframe.core import towers_ext as _twx     # C9 towers
+from skyframe.engine.step_results import user_stage as _gsr_user_stage   # Wave G stage states
 from skyframe.core.groups import (GROUP_KINDS, normalize_group,
                                   normalize_stages)
 from skyframe.core.model import (AreaLoad, BuildingModel, LoadCase,
@@ -567,6 +568,7 @@ def run_user_staged(engine: OpenSeesEngine, name: str) -> StagedResults:
         else:
             acc["reac"] = {}
         snap = full_state(f"{name} @ {st['name']}")
+        _gsr_user_stage(engine, name, st["name"], snap)   # Wave G stage states (no-op unless requested)
         stage_out.append({
             "name": st["name"], "duration_days": st["duration_days"],
             "t_start": T_s, "t_end": T_s + st["duration_days"],

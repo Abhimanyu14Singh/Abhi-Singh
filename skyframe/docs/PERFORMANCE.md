@@ -905,3 +905,60 @@ data, membrane member loads and membrane nodal loads. Tests:
 `tests/test_mesh_edge_index.py` (tolerance-band cases at 0.5, 0.999, 1.001
 and 2 × `_TOL`, 300 random edges plus every slab edge, whole-mesh equality,
 scope clean-up, edited member list falls back to the full scan).
+
+## Results in every view: step states and the results layer (Wave G)
+
+All numbers were measured in this container: 4 cores, no GPU (the GPU renderer
+runs on SwiftShader, a software rasterizer), headless Chromium. A second
+analysis job ran on the same cores during most of the browser timings, so
+those numbers are pessimistic. The owner's Core Ultra 9 285K / RTX 5090 was
+not measured. On that machine the browser timings should be well below
+these, and the GPU path then rasterizes in hardware; that is a projection, not
+a measurement.
+
+### `POST /api/results/steps` (re-run of one case with the step recorder)
+
+| model (quick building) | case | plain run | + recorder, 40 frames | + envelope | full JSON | lazy index | one step slice |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 × 3 bays, 10 stories, 510 members | TH, 1 000 steps | 18.5 s | 20.2 s | 25.6 s (stride 8) | 32 MB | 1.07 MB | 0.58 MB, 0.1 s |
+| 6 × 4 bays, 20 stories, 1 860 members | TH, 1 000 steps | 77.7 s | 85.9 s | 98.5 s (stride 26) | 117 MB | — | — |
+| same | pushover, 100 steps | 272 s | 302 s (with envelope) | | | | |
+
+The recorder adds about 10 % to the run: joint displacements, reactions and
+member stations are read at the 40 frame steps only. The envelope adds
+another 15–30 %, because it reads every `stride`-th step. The stride keeps the
+envelope work under 5 × 10⁶ samples. A full payload with station blocks for
+every frame (32–117 MB) is too large to send to the browser, so the toolbar
+asks for `members: "lazy"`. The index then carries the steps, the joint
+displacements, the reactions, the envelope and the per-step peak forces
+(`member_peaks`, which keep the diagram scale fixed). The station blocks
+are fetched per step from the cached run (`member_steps`). During playback
+the next 8 steps are fetched ahead. Floats go out with 12 significant digits,
+a relative error of 5e-13.
+
+### Drawing per frame (main 3D view, 10 stories, 5 × 4 bays, 790 members)
+
+| what the view draws | Classic canvas, median / p90 | GPU (SwiftShader), median / p90 |
+| --- | ---: | ---: |
+| model only | 2.0 / 3.8 ms | 0.7 / 1.2 ms |
+| deformed shape | 8.3 / 19.9 ms | 0.6 / 1.6 ms |
+| + M3 diagrams, fill | 16.3 / 46.7 ms | 16.9 / 22.3 ms |
+| + values at controlling stations (decluttered) | 57.3 / 78.1 ms | 53.8 / 66.1 ms |
+| + \|U\| displacement contour | 29.4 / 40.0 ms | 13.6 / 17.8 ms |
+| TH step change + redraw (deformed + diagram + contour) | 30.3 / 38.5 ms | 45.7 / 85.0 ms |
+| plan pan / zoom repaint (deformed + diagram + values + contour) | 5.8 / 9.0 ms | — |
+
+Optimizations that went in after the first measurement (Classic):
+* Diagram fills: one fill path per member and sign instead of one per
+  station interval. A single path for the whole model was slower in the
+  software rasterizer: 170 ms against 20 ms.
+* Diagram outlines and contour line segments: drawn in a few batched
+  `Path2D`s, 64 colour buckets for the contours.
+* Value labels: approximate widths instead of `measureText`, an 8 px
+  occupancy-grid declutter, and no labels on members drawn shorter than
+  24 px. The controlling-values case went from 92 ms to 57 ms.
+
+In GPU mode the displacement contours are a three.js layer. Positions,
+displacements and colours are per-vertex attributes uploaded once per state,
+and the deformation scale is a uniform. The diagrams and labels are drawn by
+the 2D overlay pass, as in Classic.

@@ -282,6 +282,7 @@ export function initEtabs(sky) {
       { label: "By Story…", act: "sel-story", fn: () => sky.selectx && sky.selectx.openByStory() },
       { label: "By Plane…", act: "sel-plane", hint: "XY · XZ · YZ", fn: () => sky.selectx && sky.selectx.openByPlane() },
       { label: "By Group…", act: "sel-group", fn: () => sky.openSelectByGroup && sky.openSelectByGroup() },
+      { label: "More Criteria", aliases: ["Select By", "By Result"], hideEmpty: true, sub: [] },   // Wave G: By Result… + attribute pickers (js/g_probe.js)
     ]},
     { name: "Assign", accel: "a", items: [
       { label: "Joint", sub: [

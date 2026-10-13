@@ -52,6 +52,7 @@ export function initWbViews(sky) {
     if (sky.vx && sky.vx.opts) { try { v.display = clone(sky.vx.opts()); } catch { /* not JSON */ } }
     if (sky.dispOpts && v.view !== "3d") { const dw = sky.dispOpts.captureView(v.view); if (dw) v.display = Object.assign(v.display || {}, { dp_windows: dw }); }   // D2: plan / elevation display options
     if (WIN.layout !== "1") v.display = Object.assign(v.display || {}, { wb_windows: { layout: WIN.layout, panes: WIN.panes.map(p => p.state()) } });
+    if (sky.results && sky.results.captureView) { try { const rv = sky.results.captureView(); if (rv) v.display = Object.assign(v.display || {}, { g_results: rv }); } catch (e) { /* optional */ } }   // Wave G: results view (case / step / display, js/g_results.js)
     return v;
   }
   function apply(v) {
@@ -79,13 +80,14 @@ export function initWbViews(sky) {
     }
     const disp = v.display || {};
     if (sky.vx && sky.vx.set) {
-      const vxo = { ...disp }; delete vxo.wb_windows; delete vxo.dp_windows;   // D2: per-window 2D display options travel separately
+      const vxo = { ...disp }; delete vxo.wb_windows; delete vxo.dp_windows; delete vxo.g_results;   // D2: per-window 2D display options travel separately (Wave G: + results view)
       if (Object.keys(vxo).length && !("dp" in vxo)) vxo.dp = null;   // D2: a view saved without extras resets them
       if (Object.keys(vxo).length) { try { sky.vx.set(vxo); } catch (e) { console.warn("named view display", e); } }
     }
     if (sky.dispOpts && v.view !== "3d") { try { sky.dispOpts.restoreView(v.view, disp.dp_windows); } catch (e) { console.warn("named view display", e); } }   // D2
     if (disp.wb_windows) setLayout(disp.wb_windows.layout, disp.wb_windows.panes);
     else if (WIN.layout !== "1") setLayout("1");
+    if (disp.g_results && sky.results && sky.results.applyView) { try { sky.results.applyView(disp.g_results); } catch (e) { console.warn("named view results", e); } }   // Wave G
     if (sky.etabs && sky.etabs.refresh) sky.etabs.refresh();
     return true;
   }

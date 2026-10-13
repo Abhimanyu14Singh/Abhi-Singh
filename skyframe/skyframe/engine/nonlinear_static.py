@@ -419,9 +419,13 @@ def run_case(eng, name: str) -> NonlinearStaticResults:
         rec.record()
         if cxr is not None:
             cxr.record(i, lam)                   # Wave C cut forces
+        if gsr is not None:
+            gsr.record_nls(i, lam)               # Wave G step states
 
     from skyframe.engine import cut_results as _cutx
     cxr = _cutx.nls_begin(eng, asm, st)
+    from skyframe.engine import step_results as _gsr   # Wave G (None unless requested)
+    gsr = _gsr.nls_begin(eng, asm, st, case)
     sample(0, 0.0)
     counter = {"i": 0}
 
@@ -435,6 +439,7 @@ def run_case(eng, name: str) -> NonlinearStaticResults:
                          "point": list(asm.node_coords[mon])}
     if cxr is not None:                          # Wave C per-step cuts
         hist["cut_forces"] = dict(cxr.results(), step=list(hist["step"]))
+    _gsr.nls_finish(eng, gsr, name)              # Wave G step states
 
     node_disp = {t: list(ops.nodeDisp(t)) for t in asm.node_coords}
     reactions = _reactions(eng, asm, node_disp)

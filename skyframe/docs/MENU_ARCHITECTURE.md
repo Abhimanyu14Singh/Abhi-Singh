@@ -184,6 +184,8 @@ Select
   Clear Selection          (needs selection)      [sel-clear]
   —
   By Property… [sel-prop] · By Story… [sel-story] · By Plane… [sel-plane] · By Group… [sel-group]
+  More Criteria ▸  (Wave G) By Label… [sel-w8-label] · By Link / Spring Property… [sel-w8-linkprop] ·
+                   By Load Pattern… [sel-w8-pattern] · By Result… [sel-g-byresult]
 
 Assign
   Joint ▸   Restraints / Springs [asn-support] · Springs (Named Property)… [asn-b9-jsprings] ·
@@ -235,6 +237,7 @@ Display
   Nonlinear Results ▸  Static Pushover Curve [dis-pushover] · Nonlinear Static Results… [dis-nls] · Hinge Results… [dis-uh-hinges] ·
                        Staged Construction Results… [dis-stages] · Hyperstatic Results… [dis-pt-hyper]
   —
+  Results Display Options…   (Wave G, per view)   [dis-g-opts]   (+ Force Diagrams ▸ Diagrams for Frame Object… [dis-g-detail])
   Show Tables…                       Alt+T        [dis-tables]
   Show Group…                                     [dis-group]
 

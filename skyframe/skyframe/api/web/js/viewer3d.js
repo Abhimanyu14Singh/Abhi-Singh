@@ -1136,6 +1136,8 @@ export class Viewer3D {
     if (this.pfOverlay) { try { this.pfOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
     // Wave C hook — pier / spandrel / link diagrams + video caption (js/wc_diagrams.js)
     if (this.wcOverlay) { try { this.wcOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
+    // Wave G hook — shared results layer: diagrams / contours / reactions / piers per view (js/g_overlay.js)
+    if (this.gResOverlay) { try { this.gResOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
 
     // ---- axis triad
     this._renderTriad(ctx, w, h);

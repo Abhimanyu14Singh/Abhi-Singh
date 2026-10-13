@@ -138,6 +138,7 @@ import { initLinkExtC as wcInitLinkExtC } from "./linkext_c.js";   // wave C: co
 import { wbMockAugment as wbMockAugmentResults } from "./mock_wbdamp.js";   // wave B ?mock=1 results (composite ζ, freq-dependent-link note)
 
 import { initWaveB as wbInitWaveB } from "./waveb.js";   // Wave B: Irregularity Checks · joint-local reactions (js/waveb.js)
+import { initGResults as gResInitResults } from "./g_results.js";   // Wave G: results in every view · results toolbar · member detail · select by result · watch list (js/g_*.js)
 import { initWaveC as wvcInitWaveC } from "./wavec4.js";   // Wave C: RS function from file · USGS site lookup (js/wavec.js)
 import { wbMockGroupedApplies as wbMockGrouped, wbMockAsce7Grouped as wbMockAsce7 } from "./mock_waveb.js";   // Wave B ?mock=1 grouped ASCE 7 combos
 
@@ -8701,6 +8702,8 @@ async function boot() {
   try { wcInitDyn(window.__sky); } catch (err) { console.error("wave C dynamics init failed", err); }   // Wave C (js/wavec_dyn.js)
 
   try { wcInitLinkExtC(window.__sky); } catch (err) { console.error("wave C links init failed", err); }   // js/linkext_c.js
+
+  try { gResInitResults(window.__sky); } catch (err) { console.error("Wave G results init failed", err); }   // Wave G: shared results overlay layer (js/g_results.js)
 }
 
 boot();
