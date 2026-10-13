@@ -283,6 +283,8 @@ export function initEtabs(sky) {
       { label: "By Plane…", act: "sel-plane", hint: "XY · XZ · YZ", fn: () => sky.selectx && sky.selectx.openByPlane() },
       { label: "By Group…", act: "sel-group", fn: () => sky.openSelectByGroup && sky.openSelectByGroup() },
       { label: "Select Using", sub: [] },   // Wave F: Intersecting Line · Window / Crossing · Selection Filter · 3D drag mode (js/w8_select.js, js/f_init.js)
+
+      { label: "More Criteria", aliases: ["Select By", "By Result"], hideEmpty: true, sub: [] },   // Wave G: By Result… + attribute pickers (js/g_probe.js)
     ]},
     { name: "Assign", accel: "a", items: [
       { label: "Joint", sub: [

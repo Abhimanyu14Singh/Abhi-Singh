@@ -2437,6 +2437,10 @@ def create_app() -> Flask:
     from skyframe.api.assign_api import register as _fasn_register
     _fasn_register(app, _state)
 
+    # Wave G: results toolbar step / envelope states (step_results_api)
+    from skyframe.api.step_results_api import register as _gsr_register
+    _gsr_register(app, _state)
+
     return app
 
 

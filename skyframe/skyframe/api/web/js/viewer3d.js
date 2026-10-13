@@ -1138,6 +1138,8 @@ export class Viewer3D {
     if (this.pfOverlay) { try { this.pfOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
     // Wave C hook — pier / spandrel / link diagrams + video caption (js/wc_diagrams.js)
     if (this.wcOverlay) { try { this.wcOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
+    // Wave G hook — shared results layer: diagrams / contours / reactions / piers per view (js/g_overlay.js)
+    if (this.gResOverlay) { try { this.gResOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }
 
     // Wave F hook — shared selection highlight, hover pre-highlight, line springs, pick rubber band (js/f_select3d.js)
     if (this.fSelOverlay) { try { this.fSelOverlay(ctx, P, this); } catch (e) { /* never break the render */ } }

@@ -286,6 +286,8 @@ export class GpuBackend {
     this.syncContour(contour);
     this.syncTint(!overlayActive);
     this.syncDeformed(deform, VX, vxo, sky);
+    // Wave G hook — displacement contours on (deformed) objects: per-vertex colour + displacement attributes (js/g_overlay.js)
+    if (v.gResGL) { try { v.gResGL(this, { THREE, FatLines, TriBuilder, makeMeshMat, cssRGBA, RO }); } catch (e) { this.lastError = String(e && e.stack || e); } }
 
     // ---- camera + uniforms
     this.setCamera();

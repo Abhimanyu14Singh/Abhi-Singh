@@ -15970,3 +15970,146 @@ calls `sky.results.openDetail(obj)` when present, else the Analyze-mode Member
 panel / reactions / shell contours. `sky.f.ctxItems(ref)` and
 `sky.f.ctxPick(viewer, event)` are used by `js/workflow.js`; `sky.f.pick`
 offers `pickAt / pickList / hitsAt / pickBox / pickLine / setFilter`.
+
+## Step and envelope results for graphics; results in every view (Wave G)
+
+ETABS shows deformed shapes and member force diagrams of multi-step cases at
+a chosen step / time or as the max / min envelope ("Multivalued Options"),
+and draws results in every window (plan, elevation, 3D). Backend: the step
+recorder `skyframe/engine/step_results.py` and `POST /api/results/steps`
+(`skyframe/api/step_results_api.py`, one register line in `server.py`).
+Frontend: `js/g_core.js` (pure results model), `js/g_results.js`
+(controller, `sky.results`), `js/g_overlay.js` (drawing in every view),
+`js/g_results_bar.js` (results toolbar + Results Display Options),
+`js/g_detail.js` (member detail window), `js/g_probe.js` (Select by Result,
+result watch list), `js/mock_g_steps.js` (`?mock=1`).
+
+### `POST /api/results/steps`
+
+Body `{case, frames = 40 (1..400), members = true, envelope = false}`.
+Re-runs ONE time-history (direct integration), pushover, nonlinear static
+or staged case of the current model on a fresh engine with the recorder on
+(the analysis code path is unchanged; the hooks only read the domain) and
+returns:
+
+```jsonc
+{"case": "THX", "kind": "th" | "pushover" | "nonlinear_static" | "staged",
+ "n_steps": 160, "steps": [20, 40, ...],          // recorded 1-based steps (NL static: + 0)
+ "axis": {"name": "t" | "roof_disp" | "load_factor" | "stage", "values": [...]},
+ "labels": ["Story1", ...],                       // staged only
+ "node_disp":  {"<step>": {"<tag>": [ux, uy, uz, rx, ry, rz]}},
+ "reactions":  {"<step>": {"<support tag>": [FX, FY, FZ, MX, MY, MZ]}},
+ "member_stations": {"<step>": {"<uid>": {"x", "N", "V2", "V3", "T", "M2", "M3"}}},
+ "envelope": {"max": {"node_disp", "reactions", "member_stations"},   // envelope=true,
+              "min": {...}, "samples": int, "stride": int},         // TH / pushover / NL static
+ "base_shear": [...],                              // pushover only
+ "frames": 40, "elapsed_s": 0.4, "record_s": 0.2, "cached": false}
+```
+
+* Steps: `frames` evenly spaced, the last step always included (the
+  `th_output.frames` rule; `frames >= n` keeps every step).
+* Time history: every quantity is past the gravity state (like every TH
+  series); member stations = `cut_results.live_stations` of the step minus
+  those of the gravity state; reactions fold support hinge duplicates and
+  add spring reactions (`nonlinear_static._reactions`). FNA / modal-history
+  / named-modal-case histories are refused (400; direct integration only).
+* Pushover / nonlinear static: the TOTAL state at the step; nonlinear
+  static step `i` uses the span-load records scaled by the step's load
+  factor (the cut-force recorder rule); entry 0 = the initial state.
+* Staged: the accumulated state at the end of every stage (per-story
+  stages: story k built and loaded; user stage lists: each stage), plus a
+  `"Final"` step when include_live / shrinkage add increments afterwards.
+* Envelope: signed max / min over EVERY step; on very large runs every
+  `stride`-th step (`stride = ceil(n_steps × samples per step / 5e6)`,
+  reported).
+* A small per-process cache (3 recorded runs, keyed by the model JSON and
+  the normalized request) answers repeated toolbar requests (`cached:
+  true`).
+* `member_peaks: {"<step>": {"N", "V2", "V3", "T", "M2", "M3"}}` — the
+  largest |value| over all members at every recorded step (the diagram
+  auto scale stays fixed over the steps without the station blocks).
+* Lazy members: `members: "lazy"` records the station blocks but returns
+  the index WITHOUT `member_stations` and with `members_lazy: true`; the
+  same body + `member_steps: [step, ...]` (≤ 400 recorded step numbers)
+  returns `{case, kind, member_stations: {"<step>": {...}}, cached}` from
+  the cached run (re-run only when evicted). The toolbar always uses the
+  lazy form (a 510-member, 40-frame TH: index 1.07 MB, one step slice
+  0.58 MB, against 32 MB in full) and prefetches 8 steps ahead while
+  playing.
+* Floats are written with 12 significant digits (relative ≤ 5e-13).
+* 400 `{error}`: bad body, `frames` outside 1..400, a case that is not one
+  of the four kinds, a non-direct-integration time history, `members` not
+  true / false / "lazy", `member_steps` not a list of integers.
+
+**Legacy byte-identical**: the hooks (`run_time_history`, `run_pushover`,
+`run_staged`, `nonlinear_static.run_case`, `staged_user`) return at once
+unless the ENGINE carries `_gres_req`, which only this endpoint sets on its
+own fresh engine; no model or results key is added. `engine.run()` results
+with and without a request are byte-identical (test); a 3-story frame with
+TH + pushover + nonlinear static + staged (+ include_live) and a user-staged
+model hash identically to the base commit.
+
+Validation (`tests/test_step_results.py`): staged column (P = 100 / 200 /
+300 kN, EA = 4.8e6 kN, h = 3 m) stage-1 settlement = −P1 h / EA, column
+axials after stage j = 100 / 300 / 600 kN, last stage = final state (per-
+story and user stages); elastic nonlinear static step i = (i/n) × final
+(1e-7) and last step = the case's final state (1e-9); elastic pushover
+monitored DOF = capacity-curve roof displacement (exact), linear scaling;
+linear TH roof displacement = story history (exact), base shear from the
+recorded column station shears = base reaction (1e-7), column end moments
+M(0) − M(L) = V L, envelope max / min = history max / min; endpoint
+validation, cache, model untouched.
+
+### Results model and views (frontend)
+
+* Case catalogue keys: `c:` case · `k:` combo · `rs:` · `st:` staged ·
+  `nl:` · `th:` · `po:` · `modal` · `bk:` buckling. Response-spectrum
+  results stay positive envelopes (no sign is invented; the deformed RS
+  shape is the envelope magnitudes, as ETABS). Max / min combinations and
+  step envelopes offer Max, Min and Max/Min (two curves; the deformed
+  envelope takes per DOF the value of larger magnitude, sign kept).
+* Multi-step sources: recorded step states (endpoint) → TH animation frames
+  (`th_output.frames`) → the TH story-translation frame source of the video
+  export (`wc_video.wcThFrames`, unchanged) → nonlinear static history
+  (final state scaled by λ, labelled a preview). Modal / buckling: mode
+  stepping, period / λ in the title, cyclic animation.
+* Every view keeps its own display (`sky.results.viewOpts(id)`, ids
+  `main3d`, `plan`, `elev`, `pane0..3`): deformed shape (3D: the viewer's
+  own pipeline via its `grpCaseData` / `autoScale` / `_deformedPolyline`
+  instance hooks — both renderers; 2D: in-plane projection with wire shadow
+  and cubic / chord frames), frame diagrams P V2 V3 T M2 M3 (+ in-plane V /
+  M in 2D views: the bending whose moment vector is normal to the view
+  plane) with Fill / Show Values on Diagram / Values at Controlling
+  Stations (ends + interior max and min) and auto (fixed over the steps) or
+  user scale, displacement contours on objects or on the deformed shape
+  (GPU: per-vertex colour + displacement attributes, `gResGL` hook in
+  `gpu/renderer.js`; Classic: painter-sorted cells), shell contours of
+  `js/shellres.js` on slabs in plan / walls in elevation / panes / the
+  deformed shape, reactions, pier / spandrel / elastic-link diagrams, hinge
+  states (stepped with the toolbar), tower / group filter. Hooks:
+  `viewer3d.js` (`gResOverlay`), `gpu/renderer.js` (`gResGL`), `app.js`
+  (import + init), `wb_views.js` (named views carry `display.g_results =
+  {case, step, env, view}`), `etabs.js` (empty `Select › More Criteria`
+  submenu).
+* Results toolbar: case · ◀ step / time ▶ · Step | Max | Min | Max/Min ·
+  Play / Pause · speed · cycles · active-view display · All views ·
+  Options… · Member… · Watch. Menus: Display › Results Display Options…
+  (`dis-g-opts`), Display › Force Diagrams › Diagrams for Frame Object…
+  (`dis-g-detail`), Select › More Criteria › By Result… (`sel-g-byresult`;
+  the W8 By Label / Link Property / Load Pattern pickers move into the same
+  submenu, Select = 12 entries), Tools › Result Watch List (`tool-g-watch`).
+* `sky.results.openDetail(obj)` — obj: member uid / segment / `{type:
+  "member"|"shell"|"pier"|"spandrel"|"link"|"joint", uid | label |
+  point}`; null = the selected member. Frame panels: equivalent loads
+  (−ΔV/Δx per station interval, −ΔV point loads at repeated stations) +
+  listed member loads, V2/M3, V3/M2, P/T, deflection (exact recovered
+  `member_deflections` when present, else cubic Hermite from the joint
+  displacements; absolute or relative to the chord). Scroll for Values:
+  exact at stations, linear between; Show Max.
+* Select by Result / probes: `sky.results.selectByResult({objType: frame |
+  joint | shell | link | story, quantity, mode: absmax | max | min, op,
+  threshold (SI), face?, group?, add?})`; `sky.results.pin(probe)` with
+  probe types `joint_disp`, `joint_drift`, `member_end`, `member_max`,
+  `member_at`, `reaction`, `pier`, `shell` (S = F/t ± 6M/t², top = +3
+  face), `story_drift`, `link`; joints are matched by coordinates so a
+  probe survives a re-run; CSV export.

@@ -212,6 +212,7 @@ from skyframe.engine import frame_piers as _fpe   # Wave C frame pier forces
 from skyframe.core import static_ecc as _secc     # Wave C ecc overrides
 
 from skyframe.engine import modal_cases as _mcx    # named modal cases / Ritz
+from skyframe.engine import step_results as _gsr   # Wave G step states for graphics (no-op unless requested)
 from skyframe.engine import pardiso_solver as _pds  # E2 MKL PARDISO path
 from skyframe.core.frame_axes import member_local_axes as _fa_member_local_axes  # noqa: E501
 from skyframe.core.frame_axes import sync_members_if_etabs as _fa_sync
@@ -6824,6 +6825,7 @@ class OpenSeesEngine:
         from skyframe.design.hinges import hinge_state as _hstate
         from skyframe.engine.user_hinges import Recorder as _UHRec
         uh_rec = _UHRec(asm)                         # B10 user hinges
+        gsr = _gsr.po_begin(self, asm, name, case.steps)   # Wave G step states (None unless requested)
         for k in range(case.steps):
             ok = po_strat.static(po_integ)
             if ok != 0:
@@ -6887,6 +6889,9 @@ class OpenSeesEngine:
                 if abs(rot) > hinge_rot.get(uid, 0.0):
                     hinge_rot[uid] = abs(rot)
             uh_rec.record(hinge_rot)
+            if gsr is not None:
+                gsr.record(k + 1, roof_disp[-1])         # Wave G step states
+        _gsr.po_finish(self, gsr, name)                  # Wave G
 
         hinge_detail: List[dict] = []
         for (uid, end), spec in asm.hinge_backbone.items():
@@ -7328,6 +7333,8 @@ class OpenSeesEngine:
                                                    {"__stage__": 1.0})}
                 eng = OpenSeesEngine(sub)
                 accumulate(eng, eng.run_static("__stage__"))
+                if tdn_loop is tdn:
+                    _gsr.staged_snap(self, name, k, acc)   # Wave G stage states (no-op unless requested)
 
             if tdn_loop is not None and tdn_loop["eps_inf"] > 0.0:
                 # shrinkage increment on the full structure (age-adjusted
@@ -7374,6 +7381,7 @@ class OpenSeesEngine:
         eng_full = OpenSeesEngine(sub)
         oneshot = eng_full.run_static("__oneshot__")
         full_asm = eng_full._asm
+        _gsr.staged_finish(self, name, full_asm, _pkey, acc)   # Wave G stage states (no-op unless requested)
 
         zeros6 = np.zeros(6)
         node_disp = {t: [float(v) for v in disp_acc.get(_pkey(c), zeros6)]
@@ -7612,6 +7620,7 @@ class OpenSeesEngine:
             base0 = base_fxfy()
         twcut = _twx.th_begin(self, asm, th)   # C9: per-tower cut (or None)
         cxr = _cutx.th_begin(self, asm, th, len(accel))   # Wave C cuts/shells
+        gsr = _gsr.th_begin(self, asm, th, len(accel))    # Wave G step states (None unless requested)
 
         if mc is None:
             ops.timeSeries("Path", 1, "-dt", float(dt),
@@ -7735,6 +7744,8 @@ class OpenSeesEngine:
                 pfr.record(k)
             if cxr is not None:
                 cxr.record(k)                      # Wave C
+            if gsr is not None:
+                gsr.record(k + 1, (k + 1) * dt)    # Wave G step states
 
         def peak(vals: Sequence[float]) -> float:
             return max(abs(v) for v in vals) if len(vals) else 0.0
@@ -7774,6 +7785,7 @@ class OpenSeesEngine:
             twcut.finish(result, svx, svy)
         if cxr is not None:                               # Wave C
             cxr.finish(result)
+        _gsr.th_finish(self, gsr, name)                   # Wave G step states
 
         _wth.finish(result, _wic, asm)          # Wave C initial state
         self._th_cache[name] = result
