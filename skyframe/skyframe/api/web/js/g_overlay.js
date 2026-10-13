@@ -198,13 +198,14 @@ export function gInitOverlay(sky, api) {
     const W = sky.wb && sky.wb.windows;
     const panes = W && W.panes ? W.panes() : [];
     panes.forEach((p, i) => {
-      const id = "pane" + i;
+      const id = p.gId || "pane" + i;                       // Wave H: stable id per docked window
       if (p.v) attach3d(p.v, id);
       else if (p.ed) attach2d(p.ed, id, p.kind === "elev" ? "elev" : "plan");
       const view = api.view(id);
       if (view && view.obj !== (p.v || p.ed)) { if (p.v) { attached.delete(p.v); attach3d(p.v, id); } else if (p.ed) { attached.delete(p.ed); attach2d(p.ed, id, p.kind === "elev" ? "elev" : "plan"); } }
     });
-    for (const id of api.viewIds()) if (/^pane\d+$/.test(id) && +id.slice(4) >= panes.length) api._R.views.delete(id);
+    const live = new Set(panes.map((p, i) => p.gId || "pane" + i));   // Wave H: drop the views of closed / popped windows
+    for (const id of api.viewIds()) if (/^pane(\d+|_w\d+)$/.test(id) && !live.has(id)) api._R.views.delete(id);
   }
 
   /* ================================================================ 3D draw */
@@ -851,6 +852,13 @@ export function gInitOverlay(sky, api) {
     for (const u of L.uniforms || []) { if (u.uDisp) u.uDisp.value = def; }
     view.glCells = (L.objs || []).length;
     be.showLayer("gres", true);
+  }
+
+  /* Wave H hook: draw every view with ITS results state (own case / step or a compare-view
+     synthetic state) — js/g_results.js withView; js/h_dock.js. */
+  if (api.withView) {
+    const hw = f => (...a) => { const vw = a.find(x => x && x.opts && x.id && "obj" in x); return vw ? api.withView(vw, () => f(...a)) : f(...a); };
+    draw3d = hw(draw3d); draw2d = hw(draw2d); syncGL = hw(syncGL); applyDeformed = hw(applyDeformed);
   }
 
   /* ================================================================ install */

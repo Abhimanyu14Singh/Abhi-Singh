@@ -51,7 +51,8 @@ export function initWbViews(sky) {
     }
     if (sky.vx && sky.vx.opts) { try { v.display = clone(sky.vx.opts()); } catch { /* not JSON */ } }
     if (sky.dispOpts && v.view !== "3d") { const dw = sky.dispOpts.captureView(v.view); if (dw) v.display = Object.assign(v.display || {}, { dp_windows: dw }); }   // D2: plan / elevation display options
-    if (WIN.layout !== "1") v.display = Object.assign(v.display || {}, { wb_windows: { layout: WIN.layout, panes: WIN.panes.map(p => p.state()) } });
+    if (sky.hDock) { const hl = sky.hDock.capture(); if (hl) v.display = Object.assign(v.display || {}, { h_dock: hl }); }   // Wave H: docking layout (js/h_dock.js)
+    else if (WIN.layout !== "1") v.display = Object.assign(v.display || {}, { wb_windows: { layout: WIN.layout, panes: WIN.panes.map(p => p.state()) } });
     if (sky.results && sky.results.captureView) { try { const rv = sky.results.captureView(); if (rv) v.display = Object.assign(v.display || {}, { g_results: rv }); } catch (e) { /* optional */ } }   // Wave G: results view (case / step / display, js/g_results.js)
     return v;
   }
@@ -80,12 +81,13 @@ export function initWbViews(sky) {
     }
     const disp = v.display || {};
     if (sky.vx && sky.vx.set) {
-      const vxo = { ...disp }; delete vxo.wb_windows; delete vxo.dp_windows; delete vxo.g_results;   // D2: per-window 2D display options travel separately (Wave G: + results view)
+      const vxo = { ...disp }; delete vxo.wb_windows; delete vxo.dp_windows; delete vxo.g_results; delete vxo.h_dock;   // Wave H   // D2: per-window 2D display options travel separately (Wave G: + results view)
       if (Object.keys(vxo).length && !("dp" in vxo)) vxo.dp = null;   // D2: a view saved without extras resets them
       if (Object.keys(vxo).length) { try { sky.vx.set(vxo); } catch (e) { console.warn("named view display", e); } }
     }
     if (sky.dispOpts && v.view !== "3d") { try { sky.dispOpts.restoreView(v.view, disp.dp_windows); } catch (e) { console.warn("named view display", e); } }   // D2
-    if (disp.wb_windows) setLayout(disp.wb_windows.layout, disp.wb_windows.panes);
+    if (sky.hDock) sky.hDock.restore(disp.h_dock || disp.wb_windows || null);   // Wave H: docking layout (old 1–4 pane layouts migrate)
+    else if (disp.wb_windows) setLayout(disp.wb_windows.layout, disp.wb_windows.panes);
     else if (WIN.layout !== "1") setLayout("1");
     if (disp.g_results && sky.results && sky.results.applyView) { try { sky.results.applyView(disp.g_results); } catch (e) { console.warn("named view results", e); } }   // Wave G
     if (sky.etabs && sky.etabs.refresh) sky.etabs.refresh();
@@ -120,7 +122,7 @@ export function initWbViews(sky) {
     const F = vForm();
     const kind = activeKind();
     return vDialog({ id: "wbViewSave", title: "Save Named View", iconId: "menu-view", size: "sm", form: F,
-      intro: `Saves the current <b>${kind === "3d" ? "3D" : kind === "elev" ? "elevation" : "plan"}</b> view: camera, ${kind === "plan" ? "story" : kind === "elev" ? "grid line" : "orbit"}${WIN.layout !== "1" ? ", the window layout" : ""} and display options.`,
+      intro: `Saves the current <b>${kind === "3d" ? "3D" : kind === "elev" ? "elevation" : "plan"}</b> view: camera, ${kind === "plan" ? "story" : kind === "elev" ? "grid line" : "orbit"}${(sky.hDock ? sky.hDock.layout() : WIN.layout) !== "1" ? ", the window layout" : ""} and display options.`,
       body: [vGroup("Named View", [F.text(V, "name", { label: "View name", id: "wbViewName",
         hint: "An existing name is replaced by the current view." })])],
       onOk: () => { try { save(V.name); toast("Named view", `“${V.name.trim()}” saved in the model`); } catch (e) { return e.message; } } });
@@ -130,7 +132,7 @@ export function initWbViews(sky) {
       items: () => views().map(v => ({ key: v.name, v })),
       columns: [{ label: "Name", get: it => it.v.name }, { label: "View", get: it => (it.v.view === "3d" ? "3D" : it.v.view === "elev" ? "Elevation" : "Plan") },
         { label: "Story / line", get: it => it.v.story || it.v.elev_line || "—" },
-        { label: "Windows", get: it => ((it.v.display || {}).wb_windows ? LAYOUTS[it.v.display.wb_windows.layout] || "" : "") }],
+        { label: "Windows", get: it => { const d = it.v.display || {}; return d.h_dock ? `${Object.keys(d.h_dock.wins || {}).length} windows` : d.wb_windows ? LAYOUTS[d.wb_windows.layout] || "" : ""; } }],   // Wave H
       actions: [
         { label: "Show View", id: "wbViewShow", needsSel: true, fn: k => { show(k); d.close(); } },
         { label: "Save Current As…", id: "wbViewAdd", fn: () => { d.close(); openSave(); } },
@@ -286,6 +288,7 @@ export function initWbViews(sky) {
     });
   }
   function setLayout(layout, paneStates) {
+    if (sky.hDock) return sky.hDock.setPreset(layout, paneStates);   // Wave H: presets build docking layouts (js/h_dock.js)
     layout = String(layout || "1");
     if (!LAYOUTS[layout]) layout = "1";
     const prev = WIN.panes.map(p => p.state());

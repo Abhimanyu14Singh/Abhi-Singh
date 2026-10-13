@@ -59,6 +59,18 @@ export function initGResults(sky) {
     refCache: new Map(),
   };
   const results = () => S.results || null;
+  /* Wave H hook: per-window results state (js/h_dock.js, js/h_compare.js) — a view may own its
+     case / step / envelope (view.sel; null = follows the results toolbar) or show a synthetic
+     state (view.stateFn: compare-view difference / other run). R.sel resolves to the view being
+     drawn (withView), else to the ACTIVE window's own state, else to the toolbar state. */
+  const H = { ctx: null, g: R.sel, force: false, gen: 0, memo: new WeakMap() };
+  { let st0 = null; Object.defineProperty(R.memo, "st", { get: () => st0, set: v => { if (v === null) H.gen++; st0 = v; } }); }
+  const hActiveOwn = () => { if (H.force) return null; const v = R.views.get(activeView()); return v && v.sel ? v : null; };
+  Object.defineProperty(R, "sel", {
+    get: () => (H.force ? H.g : H.ctx ? (H.ctx.sel || H.g) : ((hActiveOwn() || {}).sel || H.g)),
+    set: s => { const t = H.force ? null : H.ctx ? H.ctx : hActiveOwn(); if (t && t.sel) t.sel = s; else H.g = s; },
+  });
+  function withView(view, fn) { const p = H.ctx; H.ctx = view || null; try { return fn(); } finally { H.ctx = p; } }
 
   /* ---------------------------------------------------------------- catalogue / state */
   function catalog() {
@@ -71,21 +83,24 @@ export function initGResults(sky) {
   const fmt = (kind, v) => (v == null || !isFinite(v) ? "—" : `${gRU.fmt(kind, v, kind === "period" ? 2 : 1)} ${gRU.label(kind)}`.trim());
   const thFrames = (r, n) => (sky.wcVideo && sky.wcVideo.thFrames ? sky.wcVideo.thFrames(r, n) : null);
   function state() {
+    if (H.ctx && H.ctx.stateFn) { try { return H.ctx.stateFn() || null; } catch (err) { return null; } }   // Wave H: synthetic state
     const r = results(), e = entry();
     const sd = stepDataOf(e);
-    const sig = [r, R.sel.key, R.sel.step, R.sel.env, sd];
-    if (R.memo.st !== null && R.memo.sig && sig.every((x, i) => x === R.memo.sig[i])) return R.memo.st;
+    const selObj = R.sel;                                   // Wave H: one memo per results state (window)
+    const sig = [r, selObj.key, selObj.step, selObj.env, sd];
+    const hm = H.memo.get(selObj);
+    if (hm && hm.gen === H.gen && hm.sig.every((x, i) => x === sig[i])) return hm.st;
     R.memo.sig = sig;
-    R.memo.st = r && e ? gC.extractState(r, R.sel, sd, { fmt, thFrames }) : null;
+    const st = r && e ? gC.extractState(r, selObj, sd, { fmt, thFrames }) : null;
+    H.memo.set(selObj, { sig, st, gen: H.gen });
     // lazily served station blocks (large models): fetch the shown step (+ the next ones while playing)
-    const st = R.memo.st;
     if (st && sd && sd.members_lazy && st.axis && st.axis.source === "steps" && R.sel.env === "step" && !st.member_stations) {
       const ids = st.axis.ids, i = st.stepIndex;
       const want = [ids[i]];
       if (R.play.on) for (let k = 1; k <= 8; k++) want.push(ids[(i + k) % ids.length]);
       fetchMemberSteps(e, sd, want);
     }
-    return R.memo.st;
+    return st;
   }
   const memberJobs = new Set();
   async function fetchMemberSteps(e, sd, ids) {
@@ -165,7 +180,7 @@ export function initGResults(sky) {
   function notify(immediate) {
     const run = () => {
       pending = 0;
-      for (const v of R.views.values()) { try { v.redraw && v.redraw(); } catch (e) { console.error("results view redraw", e); } }
+      for (const v of R.views.values()) { try { v.redraw && withView(v, () => v.redraw()); } catch (e) { console.error("results view redraw", e); } }
       for (const fn of R.listeners) { try { fn(state()); } catch (e) { console.error("results listener", e); } }
     };
     if (immediate) { if (pending) cancelAnimationFrame(pending); run(); return; }
@@ -303,7 +318,7 @@ export function initGResults(sky) {
       const period = 1.8 / Math.max(0.05, P.speed);
       P.phase = Math.sin(2 * Math.PI * P.t / period);
       if (P.cycles > 0 && P.t >= P.cycles * period) { pause(); return; }
-      for (const v of R.views.values()) { try { v.animate && v.animate(); } catch (e) { /* never break */ } }
+      for (const v of R.views.values()) { try { v.animate && withView(v, () => v.animate()); } catch (e) { /* never break */ } }
     } else {
       const ax = axis();
       if (!ax.n) { pause(); return; }
@@ -341,7 +356,7 @@ export function initGResults(sky) {
     const P = R.play;
     if (P.raf) cancelAnimationFrame(P.raf);
     P.on = false; P.raf = 0; P.phase = 1;
-    for (const v of R.views.values()) { try { v.animate && v.animate(); } catch (e) { /* never break */ } }
+    for (const v of R.views.values()) { try { v.animate && withView(v, () => v.animate()); } catch (e) { /* never break */ } }
     notify();
   }
   const phase = () => (R.play.on && cyclic() ? R.play.phase : 1);
@@ -365,11 +380,13 @@ export function initGResults(sky) {
     notify(true);
   }
   function activeView() {
+    if (sky.hDock && sky.hDock.activeGId) { const hid = sky.hDock.activeGId(); if (hid) return hid; }   // Wave H: the active docked window
     const W = sky.wb && sky.wb.windows;
     if (W && W.layout && W.layout() !== "1") {
       const ps = W.panes();
       const i = Math.max(0, ps.findIndex(p => p.el && p.el.classList.contains("is-focus")));
-      if (R.views.has("pane" + i)) return "pane" + i;
+      const pid = (ps[i] && ps[i].gId) || "pane" + i;
+      if (R.views.has(pid)) return pid;
     }
     if (S.mode === "model") return S.view === "elev" ? "elev" : "plan";
     return "main3d";
@@ -395,6 +412,13 @@ export function initGResults(sky) {
 
   /* ---------------------------------------------------------------- events */
   function resetForResults() {
+    H.force = true;                                         // Wave H: the toolbar state; own window states are checked below
+    try { resetForResults0(); } finally { H.force = false; }
+    const cat = catalog();
+    for (const v of R.views.values()) if (v.sel && !cat.some(e => e.key === v.sel.key)) v.sel = null;
+    notify();
+  }
+  function resetForResults0() {
     pause();
     R.steps = {}; R.errors = {}; R.loading = {};
     R.memo.st = null; R.refCache.clear();
@@ -434,6 +458,8 @@ export function initGResults(sky) {
     registerView, viewIds, viewOpts, setViewOpts, activeView, view: id => R.views.get(id) || null,
     subscribe, redraw: () => notify(),
     captureView, applyView,
+    withView, hCtx: () => H.ctx, globalSel: () => ({ ...H.g }),   // Wave H
+    setGlobalSel: s => { H.g = { key: null, step: -1, env: "step", ...(s || {}) }; R.memo.st = null; notify(true); },
     _R: R,
   };
   const prevApi = sky.results;

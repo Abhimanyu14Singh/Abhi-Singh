@@ -1045,3 +1045,53 @@ In GPU mode the displacement contours are a three.js layer. Positions,
 displacements and colours are per-vertex attributes uploaded once per state,
 and the deformation scale is a uniform. The diagrams and labels are drawn by
 the 2D overlay pass, as in Classic.
+
+## Windows, pop-outs and the compare view (Wave H)
+
+Measured in this container (4 cores, no GPU, headless Chromium, node 22,
+CPython). The owner's Core Ultra 9 285K / RTX 5090 and a real WebView2 were
+not measured; there the browser numbers should be lower (projection, not a
+measurement).
+
+### Sync between the main window and a pop-out
+
+| what | measured here |
+| --- | ---: |
+| model snapshot per top-level key (50 stories, 6 × 5 bays, 5 650 members, 2.5 MB JSON) | 15.7 ms |
+| delta after editing ONE member (whole `members` key travels, the undo-history unit) | 15.2 ms, 2.2 MB |
+| applying that delta in the other window (`JSON.parse` of the key) | 13.8 ms |
+| `structuredClone` of the snapshot (BroadcastChannel post) | 2.6 ms |
+| `structuredClone` of a 10-story results object (15.3 MB JSON) — sent once per pop-out and per new run | 164 ms |
+| selection main → pop-out, BroadcastChannel, median / max of 12 | 114 / 132 ms |
+| selection main → pop-out, server relay (long-poll), median / max of 12 | 121 / 183 ms |
+
+The selection latency is dominated by the 150 ms selection poll (the app has
+no selection event); the transport itself adds a few ms (BroadcastChannel)
+or one HTTP round trip (relay). A per-key model delta keeps a small edit on
+a big model at the cost of one top-level key; sending a JSON patch of the
+`members` array would cut the 2.2 MB further (not needed at these timings).
+
+### Docking layout
+
+| what | measured here |
+| --- | ---: |
+| Arrange Windows on a 34-window layout (reducer) | 0.08 ms |
+| serialise + validate + rebuild that layout (named view restore, model part) | 0.22 ms |
+
+Each docked 3D window is a full Viewer3D (Classic or GPU) with its own
+render loop; N windows cost about N times one view while they all redraw
+(an idle window does not redraw). Linked cameras copy the camera once per
+animation frame (one frame of lag).
+
+### Compare view: difference fields
+
+| what (10 stories, 5 × 4 bays: 340 joints, 790 members, case DEAD vs EQX) | measured here |
+| --- | ---: |
+| `core/compare_view.compare_fields` (Python, `POST /api/results/compare/fields`) | 108 ms |
+| the same with renumbered joints (coordinate matching) | ≈ 110 ms |
+| `hcFieldDifference` (JS mirror, step / envelope states, `?mock=1`) | 26.7 ms |
+
+`compare_view.scales` reproduces `results_compare._scales` exactly (pinned in
+`tests/test_h_windows.py`) with the key collapse memoised per key string:
+68 ms instead of 380 ms on the DEAD state above, which took the endpoint from
+410 ms to 108 ms.
