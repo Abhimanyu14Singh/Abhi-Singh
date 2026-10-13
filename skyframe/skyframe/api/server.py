@@ -2441,6 +2441,10 @@ def create_app() -> Flask:
     from skyframe.api.step_results_api import register as _gsr_register
     _gsr_register(app, _state)
 
+    # Wave H: pop-out window sync relay + compare-view differences (h_sync_api)
+    from skyframe.api.h_sync_api import register as _hsy_register
+    _hsy_register(app, _state, _tables_lookup)
+
     return app
 
 

@@ -76,15 +76,15 @@
   {
     "area": "Interface & workflow",
     "feature": "Multiple simultaneous view windows",
-    "etabs": "Options > Windows: up to 4 tiled display windows, each with its own view/display state",
-    "skyframe": "View > Windows: 1-4 panes (plan/elev/3D), independent cameras, shared selection, draw tools per pane; Wave G: every pane is a full results view (deformed / mode / step shapes, frame / pier / spandrel / link diagrams, contours, reactions, hinge states) with its own display choice and 'Apply to all views'",
-    "status": "partial",
-    "evidence": "js/wb_views.js; js/g_overlay.js (panes); tests/e2e/g_results.e2e.mjs",
-    "gap": "Panes are fixed CSS tiles inside the main window (1-4, no resize); no floating / pop-out windows or second-monitor use; ETABS allows any number of windows with Arrange Windows (10 tiled + tabs)",
+    "etabs": "Any number of model windows; Options > Arrange Windows tiles up to 10 (the 3rd splits the 2nd, the 4th the 1st), further windows become tabs; each window has its own view, display options and results plot; Set Display Options acts on the active window unless Apply to All Windows",
+    "skyframe": "Docking layout over the drawing area: resizable splits (drag the splitter, arrow keys), tab groups (drag a window tab onto another window: centre = tab, edge = split), any number of windows (View › Windows › New Window, ≤ 40), Arrange Windows with the ETABS rule (≤ 10 tiles, extras as tabs of window 1); every window is Plan / Elevation / 3D (Classic and GPU) / Table / Plot with its own story / grid line / camera, its own Set Display Options (3D windows: own viewext instance) and its own results state (case / step / envelope or 'Toolbar case'; display choice of the Wave G layer); Same as Active Window and Apply to All Windows; active window highlighted and every menu / the results toolbar acts on it; linked cameras for any two windows; Model Explorer docked left, Properties panel docked right; layouts in named views (old 1–4 pane layouts migrate) and remembered per project and per monitor setup; View › Windows 1 / 2 / 3 / 4 presets kept",
+    "status": "full",
+    "evidence": "js/h_dock_core.js, js/h_dock.js, js/h_win.js, js/h_panels.js, js/h_init.js; hooks in js/g_results.js / g_overlay.js / dispopts.js / viewext.js / wb_views.js; tests/test_h_windows.py; tests/e2e/h_windows.e2e.mjs; CONTRACT 'Windows, pop-outs and side-by-side compare (Wave H)'",
+    "gap": "",
     "value": "low",
     "effort": "M",
     "phase": "R3",
-    "audit": "Wave G 2026-10-13"
+    "audit": "Wave H 2026-10-13"
   },
   {
     "area": "Interface & workflow",
@@ -338,6 +338,19 @@
     "value": "high",
     "effort": "M",
     "phase": null
+  },
+  {
+    "area": "Interface & workflow",
+    "feature": "Side-by-side compare view",
+    "etabs": "None (one results plot per window, no linked cameras, no difference plots)",
+    "skyframe": "View › Windows › Compare Side by Side…: two 3D windows with one camera (linked orbit / pan / zoom) showing two cases / steps of a run, the same case of an earlier analysis run vs the current one, or a Model History checkpoint vs the current model, plus an optional difference window: B − A displacement contours on the deformed difference shape or frame-force difference diagrams (Compare Results engine: family scales and flag count via POST /api/results/compare/fields, exact JS mirror for steps / envelopes) or the model-diff colouring; End Compare restores the layout; linked cameras also for any two windows",
+    "status": "beyond",
+    "evidence": "js/h_compare.js, js/h_compare_core.js, core/compare_view.py, api/h_sync_api.py; tests/test_h_windows.py (hand values, JS mirror = Python); tests/e2e/h_windows.e2e.mjs",
+    "gap": "",
+    "value": "high",
+    "effort": "M",
+    "phase": null,
+    "audit": "Wave H 2026-10-13"
   },
   {
     "area": "Interface & workflow",
@@ -3037,14 +3050,14 @@
     "area": "Interface & workflow",
     "feature": "Floating / pop-out windows and multi-monitor",
     "etabs": "Display windows and forms float, can move to a second monitor and reopen where they were left (v22.5)",
-    "skyframe": "—",
-    "status": "missing",
-    "evidence": "skyframe/desktop.py creates one pywebview window",
-    "gap": "No pop-out windows; desktop shell has a single window",
+    "skyframe": "Any window pops out into its own OS window (window ⋯ menu, View › Windows › Pop Out Active Window, or drag its tab out of the layout) and docks back (Dock Back, or closing the OS window); desktop app: extra pywebview windows through a js_api bridge (skyframe/desktop_windows.py; pywebview sends window.open to the system browser), browser build: window.open; the pop-out renders that one view from the same local server URL and stays in sync with the main window both ways over BroadcastChannel with an automatic server-relay fallback (/api/hsync): selection, model edits (per top-level key), results toolbar and window results state, linked cameras, undo / redo (one history in the main window), new results; closing the main window closes the pop-outs; pop-out positions / sizes remembered per monitor setup and restored on screen (ETABS v22.5); --selftest-windows desktop check",
+    "status": "full",
+    "evidence": "js/h_sync.js, js/h_sync_core.js, skyframe/api/h_sync_api.py, skyframe/desktop_windows.py, skyframe/desktop.py (--selftest-windows); tests/test_h_windows.py (protocol, relay, desktop bridge); tests/e2e/h_windows.e2e.mjs (window.open pop-out, sync both ways); docs/UI_LAYOUT.md 'Windows and pop-outs (Wave H)' (what to check on Windows)",
+    "gap": "Desktop path (pywebview create_window + BroadcastChannel / relay between WebView2 windows) is implemented and its page logic self-tested in Chromium here; confirm on Windows with skyframe --selftest-windows",
     "value": "high",
     "effort": "M",
     "phase": null,
-    "audit": "results-presentation audit 2026-10-13"
+    "audit": "Wave H 2026-10-13"
   },
   {
     "area": "Interface & workflow",

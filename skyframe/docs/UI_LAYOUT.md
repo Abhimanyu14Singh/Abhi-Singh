@@ -171,3 +171,60 @@ defaults.
 * `filterExplorer(q)`, `fit()` and `folded()`
 
 `__sky.ux.toolbar` also gains `button(id)`, `groups()` and `group(id)`.
+
+## Windows and pop-outs (Wave H)
+
+The drawing area holds a docking layout of view windows (`js/h_dock.js`)
+whenever more than the single classic view is open (View › Windows presets,
+New Window, Compare Side by Side…):
+
+```
+┌ explorer ┬──────────── docking layout (#wbPanes.h-dock) ─────────────┬ properties ┐
+│          │ [1 Plan · Story3 ×][4 Table ×] + │ [2 3D ×] +             │ (Wave F    │
+│          │ kind · story · case ◀▶ ··· Fit ⋯ │ kind · case ··· ⛓ Fit ⋯ │  panel,    │
+│          │            window 1              ┃       window 2          │  docked    │
+│          │                                  ┃ (splitter: drag / ← →)  │  right)    │
+└──────────┴──────────────────────────────────┸─────────────────────────┴────────────┘
+```
+
+* Tab strip per group: click = show, drag onto another window = add as a
+  tab (centre) or split (edge, drop indicator); drag outside the layout =
+  pop out; × closes; + adds a tab of the same view.
+* Window header: view kind, story / grid line, the window's results case
+  ("Toolbar case" = follows the results toolbar; blue border = own case),
+  ◀ ▶ step / mode, ⛓ when the camera is linked, Fit, ⋯ (Pop Out / Dock
+  Back, Same as Active Window, Apply to All Windows, Link Camera with
+  Window n, Unlink, Split Right / Down, Close).
+* The active window has an accent outline; Set Display Options (Ctrl+W),
+  the results toolbar, Select commands and Intersecting Line act on it.
+* Pop-out window: the same page (`?hpop=w2&hs=<channel>`) shows one window
+  over the whole OS window (`.h-popout-host`, z-index 70: dialogs and
+  context menus of the pop-out still open above it).
+
+Persistence (localStorage, guarded): `skyframe.h.layouts.v1` =
+`{<project>: {<monitor key>: {t, layout}}}` (≤ 30 projects),
+`skyframe.h.popouts.v1` = `{<monitor key>: {<window id> | "kind:<kind>":
+{x, y, w, h}}}`. Named views store the layout in `display.h_dock`.
+
+### What to check on Windows (WebView2 desktop build)
+
+This container has no WebView2; the browser path (`window.open`,
+BroadcastChannel and the server relay) is covered by
+`tests/e2e/h_windows.e2e.mjs`, the desktop path by unit tests with a fake
+pywebview. On the Windows build:
+
+1. `SkyFrame.exe --selftest-windows` — prints `SkyFrame windows selftest:
+   {"ok": true, "transport": "bc" | "server", ...}` and exits 0. `"server"`
+   means the two WebView2 windows did not share a BroadcastChannel (separate
+   profiles) and the relay was used — fine, but note it.
+2. Pop out a 3D window, drag it to the second monitor, resize it, close it
+   (it docks back), pop it out again: it reopens at the same place / size.
+   Unplug the second monitor and pop out: the window opens on the primary
+   monitor.
+3. With a pop-out open: select in either window, change the results case,
+   draw a beam in the main window, Ctrl+Z in the pop-out (undoes in the main
+   window), run the analysis (the pop-out shows the new results), close the
+   main window (the pop-out closes too).
+4. GPU renderer in a pop-out (the pop-out URL carries the main window's
+   renderer) and the Windows graphics setting for SkyFrame.exe /
+   msedgewebview2.exe (High performance) applying to the new window.

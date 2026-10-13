@@ -227,7 +227,13 @@ export class GpuBackend {
     this.lastStats.cpu_ms = +(performance.now() - t0).toFixed(2);
   }
 
-  sky() { try { return this.getSky() || {}; } catch (e) { return {}; } }
+  sky() {
+    try {
+      const s = this.getSky() || {};
+      // Wave H: a docked 3D window has its own display options (viewer.vxApi, js/viewext.js instance)
+      return this.v && this.v.vxApi ? Object.assign(Object.create(s), { vx: this.v.vxApi }) : s;
+    } catch (e) { return {}; }
+  }
 
   renderGL() {
     const v = this.v, sky = this.sky();

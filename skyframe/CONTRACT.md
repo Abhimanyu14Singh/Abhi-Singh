@@ -16113,3 +16113,203 @@ validation, cache, model untouched.
   `member_at`, `reaction`, `pier`, `shell` (S = F/t ± 6M/t², top = +3
   face), `story_drift`, `link`; joints are matched by coordinates so a
   probe survives a re-run; CSV export.
+
+## Windows, pop-outs and side-by-side compare (Wave H)
+
+ETABS shows any number of model windows (Options › Arrange Windows tiles up
+to 10, further windows become tabs of the first), each with its own view,
+display options and results plot; Set Display Options acts on the active
+window unless *Apply to All Windows*; floating windows reopen where they were
+left on any monitor (v22.5). Wave H replaces the fixed View › Windows tiles
+with a docking layout and adds OS pop-out windows and a side-by-side compare
+view (beyond ETABS).
+
+Frontend (new modules): `js/h_dock_core.js` (pure layout model + reducer),
+`js/h_dock.js` (docking UI), `js/h_win.js` (one window), `js/h_panels.js`
+(table / plot windows), `js/h_sync_core.js` (pure sync protocol),
+`js/h_sync.js` (pop-outs + transports), `js/h_compare_core.js` (pure
+difference fields), `js/h_compare.js` (compare view), `js/h_init.js`
+(entry, menus), `h.css`. Backend: `skyframe/api/h_sync_api.py` (relay +
+compare endpoint, one register line in `server.py`),
+`skyframe/core/compare_view.py`, `skyframe/desktop_windows.py` (pywebview
+js_api bridge) and three hooks in `skyframe/desktop.py`.
+
+Shared-file hooks (small, commented): `app.js` (import + init line,
+`hAdoptResults` for pop-outs), `g_results.js` (per-window results state:
+`R.sel` resolves to the view being drawn / the active window's own state /
+the toolbar; `withView`, `view.stateFn`, per-state memo; `activeView` asks
+the dock), `g_overlay.js` (draw functions wrapped in `withView`; stable pane
+ids `pane_<win>`), `g_results_bar.js` (window names), `dispopts.js` (stable
+window ids, 3D windows' own options), `viewext.js` (per-viewer instance mode
+`initViewExt(sky, {viewer, opts, onChange})`), `gpu/renderer.js` (uses the
+viewer's own `vxApi`), `wb_views.js` (presets / named views delegate to the
+dock), `f_props.js` (Properties column of the dock), `wc_compare.js`
+(`wcRuns` export).
+
+### Docking layout
+
+```jsonc
+{"v": 1,
+ "root": null | Node,                     // null = the classic single view
+ "wins": {"w1": WinState, ...},           // docked and popped windows
+ "active": "w1", "next": 5,               // ids are never reused
+ "links": [["w1", "w2"]],                 // linked-camera groups
+ "popped": {"w3": {"near": "w2", "zone": "bottom"}},   // where it docks back
+ "preset": "2v"?}                         // View › Windows preset it came from
+// Node = {"t": "split", "dir": "row"|"col", "sizes": [f, ...] (sum 1, ≥ 0.05), "kids": [Node, ...]}
+//      | {"t": "tabs", "wins": ["w1", ...], "cur": "w1"}
+// WinState = {"id", "kind": "plan"|"elev"|"3d"|"table"|"plot", "story"?, "line"?,
+//             "camera"?, "title"?, "res"?: {"sel"?: {key, step, env}, "view"?: {...}},
+//             "disp"?: 3D display options, "dp"?: plan / elevation display options,
+//             "table"?: {key, filter?}, "plot"?: {mode, q, dir, fn?}, "cmp"?: {role, mode}}
+```
+
+* Presets: View › Windows Single / Two (side by side, stacked) / Three /
+  Four keep their act ids (`vx-wb-win-1|2v|2h|3|4`) and build the old tiles
+  exactly (3: window 1 spans both rows; 4: 2 × 2 row major; kinds plan, 3D,
+  elevation, plan). Old named views with `display.wb_windows = {layout,
+  panes}` migrate (`hMigrate`).
+* Arrange Windows (ETABS): windows in creation order; ≤ 10 tiles in
+  ceil(n/2) columns (the 3rd window splits the 2nd, the 4th splits the 1st,
+  further ones split the columns from the last backwards); windows 11+
+  become tabs of window 1.
+* Reducer actions (`hReduce`, pure): add (target window + zone center /
+  left / right / top / bottom), close, activate, move (tab drag), resize
+  (path of kid indices + sizes), patch, popout (remembers the neighbour and
+  side), dock (back to that place, or a target), link / unlink, arrange.
+  Same-direction splits flatten, single-kid splits collapse, empty groups
+  vanish, sizes renormalise.
+* Validation (`hDeserialize`): version 1, ids `w\d{1,4}`, ≤ 40 windows,
+  known kinds, every window in exactly one tab group or popped, no unknown
+  references — otherwise the layout is refused (the view falls back to the
+  single window).
+* Saved in named views as `display.h_dock` (free JSON of the existing
+  `named_views` workspace key; written only when a view is saved, so
+  untouched models stay byte-identical) and automatically per project
+  (file / model name) and per monitor setup in localStorage
+  `skyframe.h.layouts.v1` — never in the model file.
+
+### Windows
+
+Each window = Plan (own story) / Elevation (own grid line) / 3D (own camera;
+Classic and GPU renderers) / Table (any Show Tables table, filtered to the
+window's case) / Plot (story response: max displacement, drift ratio or
+story shear in X / Y; or a time-history plot function). Plan, elevation and
+3D windows are Wave G views (`pane_<id>`) with their own display choice and,
+optionally, their OWN results state (header case list: "Toolbar case" =
+follows the results toolbar; ◀ ▶ step / mode); the results toolbar and every
+menu act on the ACTIVE window (highlighted). Set Display Options (Ctrl+W)
+lists every window; 3D windows keep their own 3D options (a `viewext`
+instance). Window ⋯ menu: Pop Out / Dock Back, Same as Active Window (the
+window active before), Apply to All Windows, Link Camera with Window n,
+Unlink, Split Right / Down, Close. Menus (View › Windows, 13 entries):
+New Window `vx-h-new`, Arrange Windows `vx-h-arrange`, Pop Out Active Window
+`vx-h-popout`, Dock All Pop-outs `vx-h-dockall`, Link 3D Window Cameras
+`vx-h-linkcam` (check), Apply Active Window to All `vx-h-applyall`, Compare
+Side by Side… `vx-h-compare`. Model Explorer docks left (unchanged); the
+Properties panel (Wave F) docks in a column right of the layout.
+
+Linked cameras copy yaw / pitch / dist / target (3D) or the pan / zoom of
+plan / elevation windows of the same kind every frame from the window that
+moved (one frame of lag; inertia stops on the followers).
+
+### Pop-out windows and sync
+
+URL: the same local server page `?hpop=<win>&hs=<channel>` (+ `mock`,
+`renderer`). Desktop: `window.pywebview.api.open_window(wid, query, title,
+x, y, w, h)` → `webview.create_window` (pywebview handles WebView2's
+NewWindowRequested by sending a page's `window.open` to the system browser,
+so it is not used there); only whitelisted query keys, ids `w\d{1,3}`, ≤ 16
+windows; `close_window`, `list_windows`, `screens`; closing the main window
+closes every pop-out. Browser: `window.open(url, name, "popup,left,top,
+width,height")`.
+
+Transport: `BroadcastChannel("skyframe-h-<channel>")`; if a pop-out gets no
+answer within 1.5 s (or the main window sees no BroadcastChannel hello
+within 2 s) both sides also use the server relay:
+
+```
+POST /api/hsync/<channel>   {"msg": {...}}            -> {"seq": n}
+GET  /api/hsync/<channel>?after=<seq>&wait=<0..25 s>  -> {"seq", "msgs": [{"seq", "msg"}]}
+```
+
+channel `[A-Za-z0-9_-]{4,64}`; per channel the last 500 messages / 64 MB
+(oldest dropped), one message ≤ 48 MB (413), idle channels forgotten after
+10 min, ≤ 64 channels; 400 on a bad channel / body / wait. `?hsync=bc|
+server` forces one transport.
+
+Envelope `{v: 1, ch, id, seq, from: "main"|"w<n>", to: "*"|"main"|"w<n>",
+type, body}`; duplicates (both transports) dropped by id. Types: hello,
+snap (model as per-key JSON, results, selection, toolbar state, window
+state, linked peers), welcome, model / edit (changed top-level keys as JSON
+strings + deleted keys — the undo-history unit), sel, res (toolbar state +
+the pop-out window's own results state), results, cmd (undo / redo run in
+the main window: one history), cam (linked cameras), ping (2 s heartbeat
+with the OS rectangle), dock, bye, close. A pop-out never posts the model
+to the server and never autosaves (`S.dirty` is cleared after each sync).
+Closing a pop-out (OS close) docks its window back; positions / sizes are
+stored per monitor key (`"x,y,WxH|..."` of every screen; desktop: pywebview
+screens) in localStorage `skyframe.h.popouts.v1` and clamped onto a screen
+that still exists.
+
+`--selftest-windows` (desktop) loads `?mock=1&hselftest=1`: the page pops
+out a 3D window, waits for the handshake, selects member 1, the pop-out
+answers with member 2, the main window checks it and reports through
+`selftest_result`; exit 0 / 1 (90 s timeout). The same page logic runs in
+a browser (`window.__hSelftest`).
+
+### Side-by-side compare view
+
+View › Windows › Compare Side by Side… (`vx-h-compare`): two 3D windows
+with one camera and an optional third difference window:
+
+* two cases / steps of this run (any catalogue key; step / mode number for
+  multi-step cases);
+* two analysis runs: an earlier run of this session (Tools › Compare
+  Results run list) vs the current run — a model version with results;
+* model version: a Model History checkpoint (geometry) vs the current model;
+  the difference window colours added / removed / changed objects
+  (`/api/history/compare`, `core/model_diff.py`).
+
+The difference window draws `B − A` through the Wave G layer: displacement
+contour (U, Ux, Uy, Uz) on the deformed difference shape, or a frame force
+difference diagram (M3, M2, V2, V3, P, T). End Compare restores the previous
+layout.
+
+`POST /api/results/compare/fields` body `{a: results | "current", b:
+results | "current", case_a: "c:<case>" | "k:<combo>" | "rs:<case>" |
+"modal:<n>", case_b?, env: "max" | "min", rtol = 1e-6, atol = 0}` →
+
+```jsonc
+{"node_disp": {"<tag of A>": [dux, duy, duz, drx, dry, drz]},   // B − A
+ "reactions": {...}, "member_stations": {"<uid>": {"x", "N", "V2", "V3", "T", "M2", "M3"}},
+ "only_a": {"node_disp": [...], ...}, "only_b": {...},
+ "stats": {"node_disp": {"max_abs", "at": [tag, dof], "scale", "rel", "max_trans", "at_trans"},
+           "reactions": {...}, "member_stations": {"M3": {"max_abs", "at": [uid, x], "scale", "rel"}, ...}},
+ "n_flagged": 4, "equal": false, "rtol", "atol", "case_a", "case_b", "env", "same_run", "n_nodes_matched"}
+```
+
+Joints of B match A by tag at the same place (1e-6 m), else by coordinates;
+frame stations by uid, B linearly interpolated onto A's stations when they
+differ; a value is flagged when `|d| > max(atol, rtol · S)` with `S` the
+quantity-family scale of run A (`results_compare._scales`, the Compare
+Results rule). `js/h_compare_core.js` is the exact mirror (pinned equal in
+`tests/test_h_windows.py`) used for steps / envelopes and in `?mock=1`; the
+live app asks the endpoint for case states and shows its summary (max |ΔU|,
+max |Δcomponent|, flag count) in the difference window. 400 on a bad body,
+unknown key, step keys (`th:`, `po:`, `st:`, `nl:` are compared in the
+browser), env not max / min, missing current results.
+
+Validation: two cases of one run (hand values: ΔU of joint 1 = 0.003 m,
+joint 2 = [0.0015, 0, −0.002, 0, 0.001, 0], scale S = 0.010, rel = 0.3,
+reaction Δ = [−3, 0, 10, …], M3 at mid-span −50 interpolated from stations
+[0, 5] → Δ = [25, −18.75, 0], 11 flagged); two runs with renumbered joints
+matched by coordinates; a 1e-9 relative change not flagged.
+
+**Legacy byte-identical**: no model key is added (layouts live in named
+views only when saved, else in localStorage); every analysis path is
+untouched; a model without named views round-trips byte-identically.
+Tests: `tests/test_h_windows.py` (layout presets / migration / reducer /
+Arrange rule / serialisation, sync protocol, compare fields + JS mirror,
+relay, desktop bridge, model round trip) and `tests/e2e/h_windows.e2e.mjs`
+(SKYFRAME_E2E=1; mock + live × Classic + GPU).

@@ -66,6 +66,8 @@ function runResults(sky, id) {
   const h = runs.history.find(x => x.id === id) || runs.files.find(x => x.id === id);
   return h ? h.results : null;
 }
+/** Wave H: the session's runs for the side-by-side compare view (js/h_compare.js). */
+export const wcRuns = { options: sky => runOptions(sky), results: (sky, id) => runResults(sky, id), track: sky => track(sky) };
 export function wcAddResultFile(name, obj) {
   const id = `file${runs.files.length + 1}`;
   runs.files.push({ id, label: name, results: obj });

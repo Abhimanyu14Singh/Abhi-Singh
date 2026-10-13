@@ -55,7 +55,9 @@ const COMPS_2D = [["VIN", "Shear (in-plane)"], ["MIN", "Moment (in-plane)"]];
 const CONTOURS = [["", "No contour"], ["UX", "Ux"], ["UY", "Uy"], ["UZ", "Uz"], ["U", "|U| resultant"], ["UXY", "|U| plan"], ["RX", "Rx"], ["RY", "Ry"], ["RZ", "Rz"]];
 const VALUES = [["fill", "Fill diagram"], ["values", "Show values on diagram"], ["controlling", "Values at controlling stations"]];
 const ENVS = [["step", "Step"], ["max", "Max"], ["min", "Min"], ["maxmin", "Max/Min"]];
-const VIEW_NAME = id => (id === "main3d" ? "3D" : id === "plan" ? "Plan" : id === "elev" ? "Elevation" : id.startsWith("pane") ? `Window ${+id.slice(4) + 1}` : id);
+const VIEW_NAME = id => (id === "main3d" ? "3D" : id === "plan" ? "Plan" : id === "elev" ? "Elevation"
+  : /^(pane_|htable_|hplot_)w\d+$/.test(id) ? `Window ${id.split("_w")[1]}`   // Wave H docked windows
+    : id.startsWith("pane") ? `Window ${+id.slice(4) + 1}` : id);
 
 export function gInitBar(sky, api) {
   const S = sky.store;

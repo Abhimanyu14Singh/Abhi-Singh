@@ -419,10 +419,14 @@ function vxMemberStations(model, mm, prof, t0, t1, chunkLen, zcuts = []) {
 /* ================================================================
    Module state + init
    ================================================================ */
-export function initViewExt(sky) {
-  const viewer = sky.viewer;
+export function initViewExt(sky, inst = null) {
+  // Wave H: `inst` = {viewer, opts, onChange} builds a per-window instance (docked 3D windows,
+  // js/h_win.js): own options, no toolbar chips, no session storage; returns its API (+ destroy)
+  const viewer = inst ? inst.viewer : sky.viewer;
   if (!viewer) return;
-  let opts = vxLoad();
+  const offs = [];
+  const on = (ev, fn) => { document.addEventListener(ev, fn); offs.push(() => document.removeEventListener(ev, fn)); };
+  let opts = inst ? vxNormalize(inst.opts || null) : vxLoad();
   let isDef = vxIsDefault(opts);
   let ver = 0;                      // bumps on model / option edits
   let geo = null;                   // cached geometry
@@ -435,12 +439,14 @@ export function initViewExt(sky) {
   const setOpts = patch => {
     opts = vxNormalize({ ...opts, ...patch, show: { ...opts.show, ...((patch && patch.show) || {}) }, cut: { ...opts.cut, ...((patch && patch.cut) || {}) } });
     isDef = vxIsDefault(opts);
-    vxSave(opts); ver++; redraw(); syncChips();
-    document.dispatchEvent(new CustomEvent("sky:vx-changed"));   // D2: display options follow every toggle
+    if (!inst) vxSave(opts);
+    ver++; redraw(); syncChips();
+    if (inst) { try { inst.onChange && inst.onChange(vxClone(opts)); } catch (e) { /* never break */ } }
+    else document.dispatchEvent(new CustomEvent("sky:vx-changed"));   // D2: display options follow every toggle
     return vxClone(opts);
   };
-  document.addEventListener("sky:model-changed", () => { ver++; redraw(); });
-  document.addEventListener("sky:results-changed", () => redraw());
+  on("sky:model-changed", () => { ver++; redraw(); });
+  on("sky:results-changed", () => redraw());
 
   /* ---------------- filters ---------------- */
   const selKey = () => (S().selection || []).map(r => `${r.type}:${r.uid}`).sort().join("|");
@@ -1510,7 +1516,7 @@ export function initViewExt(sky) {
   cutAxis.addEventListener("change", () => { const [a, b] = [(viewer._bbox || [[0, 0, 0], [10, 10, 10]])[0][axIdx(cutAxis.value)], (viewer._bbox || [[0, 0, 0], [10, 10, 10]])[1][axIdx(cutAxis.value)]]; setOpts({ cut: { axis: cutAxis.value, coord: (a + b) / 2 } }); });
   cutRange.addEventListener("input", () => { const [a, b] = cutSpan(); setOpts({ cut: { coord: a + (b - a) * (+cutRange.value) / 1000 } }); });
   cutFlip.addEventListener("click", () => setOpts({ cut: { keep: opts.cut.keep === "below" ? "above" : "below" } }));
-  if (chipBar && anchor) {
+  if (!inst && chipBar && anchor) {
     anchor.after(chipExtrude, chipSel, chipCut, chipOpts);
     chipOpts.after(cutGroup);
   }
@@ -1528,7 +1534,7 @@ export function initViewExt(sky) {
     }
     selWatch();
   }
-  document.addEventListener("sky:units-changed", () => syncChips());
+  on("sky:units-changed", () => syncChips());
   // selection-only view follows selection edits (store.selection has no event)
   let selTimer = null, lastSel = "";
   function selWatch() {
@@ -1594,7 +1600,7 @@ export function initViewExt(sky) {
 
   syncChips();
   redraw();
-  sky.vx = {
+  const vxApi = {
     opts: () => vxClone(opts), set: setOpts, reset: () => setOpts(vxDefaults()),
     openDisplayOptions, close: () => vxCloseDialog("vxDisplayModal"),
     toggleExtrude, toggleSelOnly, toggleCut, benchmark,
@@ -1605,4 +1611,9 @@ export function initViewExt(sky) {
     meshOf: uid => { const mm = getGeo().memberMeshes.find(x => x.uid === uid); return mm && mm.parts.length ? mm.parts.map(p => ({ n: p.full.n, K: p.full.K, V: Array.from(p.full.V) })) : null; },
     profileOf: (name, lod = "full") => { const m = model(); return m ? vxProfileOf(m, name, (m.sections || {})[name], lod) : null; },
   };
+  if (inst) {                                    // Wave H: per-window instance
+    vxApi.destroy = () => { offs.forEach(f => f()); offs.length = 0; if (selTimer) { clearInterval(selTimer); selTimer = null; } };
+    return vxApi;
+  }
+  sky.vx = vxApi;
 }

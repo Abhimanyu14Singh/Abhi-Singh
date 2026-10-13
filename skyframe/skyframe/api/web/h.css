@@ -1,0 +1,65 @@
+/* SkyFrame Wave H — docking windows, tabs, splitters, pop-outs (js/h_dock.js, js/h_sync.js) */
+.h-dock { position: absolute; inset: 0; z-index: 30; display: flex; background: var(--border, #2a3442); gap: 0; }
+.h-dock-main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; }
+.h-dock-main > * { flex: 1 1 auto; }
+.h-dock-props { flex: 0 0 300px; max-width: 40%; min-width: 220px; overflow: auto; background: var(--surface-1, #121a24); border-left: 1px solid var(--border, #2a3442); }
+.h-dock-props.hidden { display: none; }
+.h-dock-props > .f-dock3d { position: static; width: auto; max-height: none; border: 0; }
+.h-split { display: flex; min-width: 0; min-height: 0; }
+.h-split-row { flex-direction: row; }
+.h-split-col { flex-direction: column; }
+.h-splitter { flex: 0 0 5px; background: var(--border, #2a3442); position: relative; z-index: 2; outline: none; }
+.h-splitter-row { cursor: col-resize; }
+.h-splitter-col { cursor: row-resize; }
+.h-splitter:hover, .h-splitter:focus-visible, .h-splitter.is-drag { background: var(--accent, #35b5e5); }
+.h-group { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg, #0b1220); }
+.h-tabs { display: flex; align-items: stretch; gap: 1px; flex: none; background: var(--surface-2, #0e151e); border-bottom: 1px solid var(--border, #2a3442);
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; min-height: 24px; }
+.h-tab { display: inline-flex; align-items: center; gap: 5px; padding: 2px 4px 2px 8px; font-size: 11.5px; color: var(--text-2, #8b98a8);
+  cursor: grab; user-select: none; white-space: nowrap; border-right: 1px solid var(--border, #2a3442); max-width: 220px; touch-action: none; }
+.h-tab .h-tab-lbl { overflow: hidden; text-overflow: ellipsis; }
+.h-tab .h-tab-num { color: var(--accent, #35b5e5); font-weight: 700; }
+.h-tab.is-cur { background: var(--bg, #0b1220); color: var(--text-1, #e8edf3); }
+.h-tab.is-active { box-shadow: inset 0 2px 0 var(--accent, #35b5e5); }
+.h-tab:focus-visible { outline: 1px solid var(--accent, #35b5e5); outline-offset: -1px; }
+.h-tab-x, .h-tab-add { background: none; border: 0; color: inherit; cursor: pointer; font-size: 13px; line-height: 1; padding: 0 4px; border-radius: 3px; }
+.h-tab-x:hover, .h-tab-add:hover { background: rgba(255,255,255,.08); color: #fff; }
+.h-tab-add { padding: 0 8px; color: var(--text-2, #8b98a8); }
+.h-group-body { position: relative; flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; }
+.h-group-body > .h-win { flex: 1 1 auto; }
+.h-win.h-hidden { display: none; }
+.h-win.is-focus { box-shadow: inset 0 0 0 2px var(--accent, #35b5e5); }
+.h-win-head { flex-wrap: wrap; row-gap: 3px; overflow: hidden; }
+.h-win-head .mini-select { max-width: 130px; min-width: 56px; flex: 0 1 auto; }
+.h-win-res { display: inline-flex; align-items: center; gap: 3px; }
+.h-win-res.hidden { display: none; }
+.h-win-res .h-win-case { max-width: 140px; }
+.h-win.h-own-res .h-win-case { border-color: var(--accent, #35b5e5); }
+.h-win-steplab { font-size: 10.5px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h-win-link { color: var(--accent, #35b5e5); font-size: 12px; }
+.h-win-link.hidden { display: none; }
+.h-cmp-sum { font-size: 11px; color: var(--text-1, #e8edf3); background: rgba(53,181,229,.12); border-radius: 4px; padding: 1px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 360px; }
+.h-cmp-sum i { font-style: normal; font-weight: 700; }
+.h-drag-ghost { position: fixed; z-index: 200; pointer-events: none; padding: 3px 9px; border-radius: 4px; font-size: 11.5px;
+  background: var(--surface-1, #121a24); color: var(--text-1, #e8edf3); border: 1px solid var(--accent, #35b5e5); box-shadow: 0 4px 14px rgba(0,0,0,.4); }
+.h-drop-ind { position: fixed; z-index: 199; pointer-events: none; background: rgba(53,181,229,.18); border: 2px solid var(--accent, #35b5e5); border-radius: 3px; }
+.h-drop-ind.hidden { display: none; }
+.h-menu { position: fixed; z-index: 120; min-width: 210px; padding: 4px 0; background: var(--surface-1, #121a24); border: 1px solid var(--border-soft, #2a3340);
+  border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.45); display: flex; flex-direction: column; }
+.h-menu-item { background: none; border: 0; text-align: left; padding: 6px 14px; font-size: 12.5px; color: var(--text-1, #e8edf3); cursor: pointer; }
+.h-menu-item:hover:not([disabled]), .h-menu-item:focus-visible { background: rgba(53,181,229,.16); outline: none; }
+.h-menu-item[disabled] { opacity: .45; cursor: default; }
+.h-panel-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 4px 6px; border-bottom: 1px solid var(--border, #2a3442); flex: none; font-size: 11.5px; }
+.h-panel-bar [hidden] { display: none; }
+.h-win[data-kind="table"] .h-win-body, .h-win[data-kind="plot"] .h-win-body { display: flex; flex-direction: column; }
+.h-tbl-host { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; }
+.h-tbl-host > .vg { flex: 1 1 auto; }
+.h-tbl-find { width: 140px; }
+.h-panel-msg { padding: 6px 10px; font-size: 11.5px; }
+.h-panel-msg.hidden { display: none; }
+.h-plot-host { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.h-plot-svg { display: block; }
+/* pop-out window: one view fills the page; the app chrome stays underneath */
+.h-popout-host { position: fixed; inset: 0; z-index: 70; }
+html.h-popout body { overflow: hidden; }
+@media (pointer: coarse) { .h-splitter { flex-basis: 10px; } .h-tab { min-height: 32px; } }

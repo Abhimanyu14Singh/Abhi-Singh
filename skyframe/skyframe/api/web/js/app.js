@@ -140,7 +140,8 @@ import { initLinkExtC as wcInitLinkExtC } from "./linkext_c.js";   // wave C: co
 import { wbMockAugment as wbMockAugmentResults } from "./mock_wbdamp.js";   // wave B ?mock=1 results (composite ζ, freq-dependent-link note)
 
 import { initWaveB as wbInitWaveB } from "./waveb.js";   // Wave B: Irregularity Checks · joint-local reactions (js/waveb.js)
-import { initGResults as gResInitResults } from "./g_results.js";   // Wave G: results in every view · results toolbar · member detail · select by result · watch list (js/g_*.js)
+import { initGResults as gResInitResults } from "./g_results.js";
+import { initH as hInitH } from "./h_init.js";   // Wave H: docking windows · pop-outs · side-by-side compare (js/h_*.js)   // Wave G: results in every view · results toolbar · member detail · select by result · watch list (js/g_*.js)
 import { initWaveC as wvcInitWaveC } from "./wavec4.js";   // Wave C: RS function from file · USGS site lookup (js/wavec.js)
 import { wbMockGroupedApplies as wbMockGrouped, wbMockAsce7Grouped as wbMockAsce7 } from "./mock_waveb.js";   // Wave B ?mock=1 grouped ASCE 7 combos
 
@@ -3587,6 +3588,21 @@ function clearResults() {
   setStatus("ready", "Ready");
   document.dispatchEvent(new CustomEvent("sky:results-changed"));
   return true;
+}
+
+/** Wave H — a pop-out window adopts the main window's results (js/h_sync.js). */
+function hAdoptResults(results) {
+  store.results = results || null;
+  store.overlay = { ...store.overlay, deformed: false, modal: false, buckling: false };
+  viewer.setResults(store.results);
+  rebuildCaseSelect();
+  if (store.results) { rebuildModeSelect(); rebuildThSelects(); rebuildPoSelect(); rebuildBuckSelect(); }
+  setResultsAvailable(!!store.results);
+  if (store.results) renderResultsTabs();
+  syncOverlayUI();
+  renderSummary();
+  setStatus(store.results ? "solved" : "ready", store.results ? "Solved ✓" : "Ready");
+  document.dispatchEvent(new CustomEvent("sky:results-changed"));
 }
 
 /* ---- tiny promise-based confirm modal */
@@ -8609,6 +8625,7 @@ async function boot() {
     notRunEntries, syncRunStatusBadge, fetchMaterialCurve, fetchUnitsTable,
     mockMaterialCurve, keepSetup, markDirty,
     clearResults,   // Wave C model lock (js/wc_lock.js)
+    hAdoptResults,  // Wave H pop-out windows (js/h_sync.js)
   };
 
   AS.initAssign(window.__sky);                   // Assign dialogs → __sky.assign / open* (additive)
@@ -8712,6 +8729,8 @@ async function boot() {
   try { fInitF(window.__sky); } catch (err) { console.error("Wave F init failed", err); }   // Wave F: select / assign in every view (js/f_init.js) — after the menus and dialogs
 
   try { gResInitResults(window.__sky); } catch (err) { console.error("Wave G results init failed", err); }   // Wave G: shared results overlay layer (js/g_results.js)
+
+  try { hInitH(window.__sky); } catch (err) { console.error("Wave H init failed", err); }   // Wave H: docking windows · pop-outs · compare view (js/h_init.js)
 }
 
 boot();

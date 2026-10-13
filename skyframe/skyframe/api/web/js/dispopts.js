@@ -59,6 +59,13 @@ export function initDisplayOptions(sky) {
   /* ================================================================ windows */
   const W = () => sky.wb && sky.wb.windows;
   const panes = () => { const w = W(); return w && w.layout && w.layout() !== "1" ? w.panes() : []; };
+  // Wave H: docked windows carry a stable id (p.dpId) and 3D windows their own 3D options (p.vx, js/viewext.js instance)
+  const paneId = (p, i) => p.dpId || "w" + (i + 1);
+  const paneOf = win => panes().find((p, i) => paneId(p, i) === win) || null;
+  const own = p => !!p && (p.kind === "plan" || p.kind === "elev" || (p.kind === "3d" && !!p.vx));
+  const vxPane = win => { const p = paneOf(win); return p && p.kind === "3d" && p.vx ? p : null; };
+  const is3dWin = win => win === "3d" || !!vxPane(win);
+  const winLabel = win => WIN_LABEL[win] || (/^w\d+$/.test(win || "") ? `Window ${win.slice(1)}` : String(win));
   /** The window the dialog targets by default (ETABS: the active window). */
   function activeWin() {
     const ps = panes();
@@ -66,8 +73,8 @@ export function initDisplayOptions(sky) {
       const f = document.querySelector(".wb-pane.is-focus");
       const i = f ? +f.dataset.pane : 0;
       const p = ps[i];
-      if (p && p.kind !== "3d") return "w" + (i + 1);
-      if (p) return "3d";
+      if (own(p)) return paneId(p, i);
+      if (p && p.kind === "3d") return "3d";
     }
     if (S.mode === "analyze") return "3d";
     return S.view === "elev" ? "elev" : "plan";
@@ -75,20 +82,21 @@ export function initDisplayOptions(sky) {
   /** All windows that exist now. */
   function windowsNow() {
     const out = ["plan", "elev", "3d"];
-    panes().forEach((p, i) => { if (p.kind !== "3d") out.push("w" + (i + 1)); });
+    panes().forEach((p, i) => { if (own(p)) out.push(paneId(p, i)); });
     return out;
   }
   function winOfEditor(ed) {
     if (ed === sky.planEditor) return "plan";
     if (ed === sky.elevEditor) return "elev";
     const ps = panes();
-    for (let i = 0; i < ps.length; i++) if (ps[i].ed === ed) return "w" + (i + 1);
+    for (let i = 0; i < ps.length; i++) if (ps[i].ed === ed) return paneId(ps[i], i);
     return null;
   }
   const baseDefault = () => store.default ? DPC.dpClone(store.default) : DPC.dpDefaults();
 
   /* ================================================================ get / set */
   function get(win) {
+    { const vp = vxPane(win); if (vp) return DPC.dpFromVx(vp.vx.opts()); }   // Wave H: a 3D window's own options
     if (win === "3d") return sky.vx && sky.vx.opts ? DPC.dpFromVx(sky.vx.opts()) : (store.windows["3d"] || baseDefault());
     return DPC.dpClone(store.windows[win] || baseDefault());
   }
@@ -102,12 +110,14 @@ export function initDisplayOptions(sky) {
     let ed = null;
     if (win === "plan") ed = sky.planEditor;
     else if (win === "elev") ed = sky.elevEditor;
-    else { const p = panes()[+win.slice(1) - 1]; ed = p && p.ed; }
+    else { const p = paneOf(win); ed = p && p.ed; if (p && p.v) p.v._dirty = true; }
     if (ed && ed.refresh) { try { ed.refresh(); } catch (e) { console.error(e); } }
     if (win === "plan") syncStoryBadge();
   }
   function set(win, s) {
     s = DPC.dpNormalize(s);
+    const vp = vxPane(win);                                 // Wave H: a 3D window's own options
+    if (vp) { vp.vx.set(DPC.dpToVx(s)); if (vp.v) { vp.v.canvas.style.background = DPC.DP_BACKGROUND_CSS[s.other.background] || ""; vp.v._dirty = true; } syncBars(); return DPC.dpClone(s); }
     if (win === "3d") {
       store.windows["3d"] = s;
       if (sky.vx && sky.vx.set) sky.vx.set(DPC.dpToVx(s));   // → sky:vx-changed → persist + sync
@@ -389,8 +399,8 @@ export function initDisplayOptions(sky) {
 
   /* ================================================================ dialog */
   function open(win, tab) {
-    win = win && WIN_LABEL[win] ? win : activeWin();
-    const is3d = win === "3d";
+    win = win && (WIN_LABEL[win] || paneOf(win)) ? win : activeWin();
+    const is3d = is3dWin(win);
     const D = get(win);
     const F = dpForm();
     const m = S.model || {};
@@ -399,7 +409,7 @@ export function initDisplayOptions(sky) {
 
     // window target
     const winSel = dpEl("select", { class: "dk-select", id: "dpWin", "aria-label": "Window" });
-    for (const w of windowsNow()) winSel.appendChild(dpEl("option", { value: w, selected: w === win ? true : null }, [WIN_LABEL[w] + (w === activeWin() ? " (active)" : "")]));
+    for (const w of windowsNow()) winSel.appendChild(dpEl("option", { value: w, selected: w === win ? true : null }, [winLabel(w) + (w === activeWin() ? " (active)" : "")]));
     winSel.addEventListener("change", () => open(winSel.value, tabs.current()));
     const head = dpEl("div", { class: "dp-head" }, [dpEl("label", { class: "dk-label", for: "dpWin" }, ["Window"]), winSel,
       dpEl("span", { class: "muted dp-head-note", text: is3d ? "Same options as View › Extruded View / Show Local Axes and the 3D chips." : "Plan and elevation windows: options marked “3D” apply to the 3D window." })]);
@@ -507,7 +517,7 @@ export function initDisplayOptions(sky) {
     };
     const dlg = dpDialog({
       id: DP_DLG, title: "Set Display Options", size: "lg", iconId: "menu-display",
-      intro: `Display options of the <b>${WIN_LABEL[win]}</b>. Each window keeps its own options (ETABS View › Set Display Options, Ctrl+W).`,
+      intro: `Display options of the <b>${winLabel(win)}</b>. Each window keeps its own options (ETABS View › Set Display Options, Ctrl+W).`,
       body: [head, tabs], tabs, form: F, extra,
       onOk: () => { commit(); },
       onApply: () => { commit(); },

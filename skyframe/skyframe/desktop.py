@@ -13,6 +13,13 @@ Modes:
                               run a small analysis on the spawn solver
                               worker pool, compare with serial, exit 0/1
     skyframe --selftest-pardiso   MKL PARDISO loads + solves, exit 0/1
+    skyframe --selftest-windows   Wave H: main window pops out a second
+                              window, checks the sync both ways, exit 0/1
+
+Pop-out view windows (Wave H) are extra pywebview windows opened through the
+``js_api`` bridge of :mod:`skyframe.desktop_windows` (pywebview routes a
+page's ``window.open`` to the system browser, so it is not used); closing
+the main window closes them.
 
 If the native window can't start — most often a frozen Windows build where
 pywebview's pythonnet/.NET host (``Python.Runtime.dll``) fails to initialize
@@ -117,6 +124,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--selftest-parallel", action="store_true",
                         help="solve a small model on the spawn worker "
                              "pool, compare with serial, exit 0/1")
+    parser.add_argument("--selftest-windows", action="store_true",
+                        help="Wave H: open a pop-out window, check the "
+                             "main <-> pop-out sync, close both, exit 0/1")
     args = parser.parse_args(argv)
     if args.selftest_pardiso:                  # E2 frozen smoke check
         import json as _json
@@ -164,11 +174,24 @@ def main(argv: list[str] | None = None) -> int:
     try:
         os.environ.update(webview2_gpu_env())   # E3: WebGL2 on the GPU (Windows)
         import webview  # deferred: GUI libs not needed for headless modes
-        webview.create_window(WINDOW_TITLE, url, width=1440, height=900,
-                              min_size=(1100, 700))
+        # Wave H: pop-out view windows (skyframe/desktop_windows.py) — the
+        # page opens extra pywebview windows through this js_api bridge
+        from .desktop_windows import DesktopWindows, attach_main
+        wins = DesktopWindows(webview, url, WINDOW_TITLE)
+        main_url = url + ("?mock=1&hselftest=1" if args.selftest_windows else "")
+        main_win = webview.create_window(WINDOW_TITLE, main_url, width=1440,
+                                         height=900, min_size=(1100, 700),
+                                         js_api=wins)
+        attach_main(main_win, wins)
+        if args.selftest_windows:
+            return _selftest_windows(webview, wins, main_win)
         webview.start()
         return 0
     except Exception as exc:  # noqa: BLE001 — degrade gracefully, never crash
+        if args.selftest_windows:
+            print(f"SkyFrame windows selftest: native windows unavailable "
+                  f"({exc.__class__.__name__}: {exc})", flush=True)
+            os._exit(1)
         print(f"SkyFrame: native window unavailable "
               f"({exc.__class__.__name__}: {exc}).\n"
               f"Opening in your default browser instead.", file=sys.stderr)
@@ -179,6 +202,32 @@ def main(argv: list[str] | None = None) -> int:
             pass
         _serve_forever(url)
         return 0
+
+
+def _selftest_windows(webview, wins, main_win, timeout: float = 90.0) -> int:
+    """Wave H frozen check: the page (``?hselftest=1``) pops out a window,
+    verifies the sync both ways and reports via ``selftest_result``."""
+    import json as _json
+    box = {"code": 1}
+
+    def watch():
+        rep = wins.wait_selftest(timeout)
+        ok = bool(rep and rep.get("ok"))
+        print("SkyFrame windows selftest: " + _json.dumps(
+            rep or {"ok": False, "error": f"timeout after {timeout:.0f} s"}),
+            flush=True)
+        box["code"] = 0 if ok else 1
+        try:
+            wins.close_all()
+            main_win.destroy()
+        except Exception:  # noqa: BLE001
+            pass
+        os._exit(box["code"])
+
+    threading.Thread(target=watch, daemon=True).start()
+    webview.start()
+    os._exit(box["code"])
+    return box["code"]
 
 
 def _serve_forever(url: str) -> None:

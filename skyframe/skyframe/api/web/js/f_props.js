@@ -68,15 +68,17 @@ export function initFProps(sky, F) {
   function place() {
     const analyze = S.mode === "analyze";
     // shown whenever it is on (not only with a selection): the 3D view must not change size under the cursor
-    const want = analyze && pref.on ? (pref.float ? "float" : "dock") : "home";
+    const hSlot = sky.hDock && sky.hDock.propsSlot ? sky.hDock.propsSlot(pref.on) : null;   // Wave H: docks right of the window layout (js/h_dock.js)
+    const want = hSlot ? "hdock" : analyze && pref.on ? (pref.float ? "float" : "dock") : "home";
     dockBtn.textContent = pref.float ? "⇲" : "⇱";
     dockBtn.title = pref.float ? "Dock the panel to the right of the 3D view" : "Float the panel over the 3D view (drag its header)";
-    dockBtn.hidden = !analyze; closeBtn.hidden = !analyze;
+    dockBtn.hidden = !analyze || !!hSlot; closeBtn.hidden = !analyze && !hSlot;
     if (want === where && (want !== "home" || panel.parentElement === home)) { panel.classList.toggle("f-props-hidden", false); return; }
     where = want;
     panel.classList.remove("f-float", "f-dock3d");
     panel.style.left = panel.style.top = panel.style.right = "";
-    if (want === "home") {
+    if (want === "hdock") { hSlot.appendChild(panel); panel.classList.add("f-dock3d"); }
+    else if (want === "home") {
       if (panel.parentElement !== home) home.insertBefore(panel, homeNext && homeNext.parentNode === home ? homeNext : null);
     } else if (want === "dock") {
       const row = dock3d();
@@ -91,6 +93,7 @@ export function initFProps(sky, F) {
     if (sky.viewer && sky.viewer._resize) requestAnimationFrame(() => sky.viewer._resize());
   }
   const mo = new MutationObserver(() => place());
+  document.addEventListener("sky:wb-windows", () => setTimeout(place, 0));   // Wave H: dock opened / closed
   for (const id of ["drawMain", "analyzeMain"]) { const n = $(id); if (n) mo.observe(n, { attributes: true, attributeFilter: ["class"] }); }
   document.querySelectorAll(".tab[data-tab]").forEach(t => t.addEventListener("click", () => setTimeout(place, 0)));
 
