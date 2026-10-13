@@ -12,6 +12,7 @@ Modes:
     skyframe --selftest-parallel
                               run a small analysis on the spawn solver
                               worker pool, compare with serial, exit 0/1
+    skyframe --selftest-pardiso   MKL PARDISO loads + solves, exit 0/1
 
 If the native window can't start — most often a frozen Windows build where
 pywebview's pythonnet/.NET host (``Python.Runtime.dll``) fails to initialize
@@ -107,6 +108,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="run the HTTP server without a window")
     parser.add_argument("--smoke", action="store_true",
                         help="boot, verify /api/health, then exit")
+    parser.add_argument("--selftest-pardiso", action="store_true",
+                        help="E2: check that MKL PARDISO loads and solves "
+                             "a frame equal to OpenSees, then exit 0/1")
     parser.add_argument("--port", type=int, default=0,
                         help="port (default: 8600 for --server-only, "
                              "random for the desktop window)")
@@ -114,6 +118,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="solve a small model on the spawn worker "
                              "pool, compare with serial, exit 0/1")
     args = parser.parse_args(argv)
+    if args.selftest_pardiso:                  # E2 frozen smoke check
+        import json as _json
+        from skyframe.engine import pardiso_solver as _pds
+        rep = _pds.selftest()
+        print("SkyFrame PARDISO selftest: " + _json.dumps(rep), flush=True)
+        os._exit(0 if rep.get("ok") else 1)
 
     if args.selftest_parallel:              # E1: no server, no window
         from .engine.parallel_selftest import main as _selftest

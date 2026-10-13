@@ -23,6 +23,12 @@ Policy (``model.analysis_options["solver"]``):
   to solver round-off (measured 1e-15 .. 1e-13 relative).
 * ``"band"`` — always the legacy BandGeneral (A/B reference path).
 * ``"umfpack"`` / ``"mumps"`` / ``"sparse_general"`` — force that solver.
+* ``"pardiso"`` (Wave E2) — Intel MKL PARDISO for every linear flow of the
+  standard elastic build (:mod:`skyframe.engine.pardiso_solver`); anything
+  it cannot represent exactly falls back to the OpenSees system below
+  (UmfPack / MUMPS by size) with the reason in results ``extra.solver``.
+  ``"auto"`` uses it at/above ``pardiso_solver.PARDISO_EQ_THRESHOLD`` (10 000)
+  estimated equations when ``pypardiso`` imports (else today's path).
 
 Only linear-system choice changes; the eigen solver (``ops.eigen``) keeps its
 own legacy policy.  ``SparseSYM`` is deliberately NOT offered: on
@@ -57,7 +63,8 @@ SPARSE_EQ_THRESHOLD = 300
 # Below the threshold "auto" is unchanged (byte-identical).
 MUMPS_EQ_THRESHOLD = 20000
 
-SOLVERS = ("auto", "band", "umfpack", "mumps", "sparse_general")
+SOLVERS = ("auto", "band", "umfpack", "mumps", "sparse_general",
+           "pardiso")                                  # E2: + pardiso
 
 _SYSTEM = {"band": "BandGeneral", "umfpack": "UmfPack", "mumps": "Mumps",
            "sparse_general": "SparseGeneral"}
@@ -88,8 +95,24 @@ def choose(model, asm) -> Tuple[str, str]:
     """``(system, note)`` for an assembly — ``system`` is the OpenSees
     ``system`` command name; ``note`` is a warning ("" normally) when a
     forced band solver was replaced to avoid a memory blow-up (see
-    :func:`skyframe.engine.model_size.band_fallback`)."""
+    :func:`skyframe.engine.model_size.band_fallback`).
+
+    E2: called once at the end of every ``_build``; it also ends the
+    PARDISO build recording and, when the policy picks PARDISO, attaches
+    the factorable system to ``asm`` (``pardiso_solver.adopt``)."""
+    out = _choose(model, asm)
+    from skyframe.engine import pardiso_solver as _pds
+    _pds.adopt(model, asm, estimate_equations(asm))
+    return out
+
+
+def _choose(model, asm) -> Tuple[str, str]:
     name = solver_name(model)
+    if name == "pardiso":           # E2: the OpenSees fallback system
+        neq = estimate_equations(asm)
+        if neq >= MUMPS_EQ_THRESHOLD and mumps_available():
+            return "Mumps", ""
+        return "UmfPack", ""
     if name == "auto":
         neq = estimate_equations(asm)
         if neq >= MUMPS_EQ_THRESHOLD and mumps_available():   # v1.24
@@ -120,9 +143,12 @@ def threads_info() -> dict:
     bundled reference BLAS is single-threaded), so no multithreaded path
     is enabled; the run inherits the process' OMP_NUM_THREADS."""
     import os
+    from skyframe.engine import pardiso_solver as _pds   # E2
     return {"mumps": mumps_available(),
             "omp_num_threads": os.environ.get("OMP_NUM_THREADS"),
-            "multithreaded": False}
+            "multithreaded": False,
+            "pardiso": _pds.available(),
+            "pardiso_threads": _pds.physical_cores()}
 
 
 def system_of(asm) -> str:
@@ -147,8 +173,24 @@ def apply_system(asm) -> None:
 
 
 def factor_once_ok(asm) -> bool:
-    """True when the assembly's system supports ``Linear -factorOnce``."""
+    """True when the assembly's system supports ``Linear -factorOnce``.
+
+    E2: unchanged while PARDISO owns the assembly's solves (the OpenSees
+    fallback system keeps its value), so the fork-parallel solve families
+    of engine/parallel.py still run: a forked worker inherits the PARDISO
+    factor copy-on-write and solves with one MKL thread (measured exact
+    and 1.6x faster than serial on the 10-story meshed benchmark)."""
     return system_of(asm) in FACTOR_ONCE_SYSTEMS
+
+
+def pardiso_active(asm) -> bool:
+    """E2: True when PARDISO owns the linear solves of this assembly.
+    Coordination hook for worker pools (engine/parallel.py): a FORKED
+    worker can use the inherited factor; a SPAWNED worker (Windows) has
+    no factor and must rebuild the engine itself (its first solve then
+    builds its own PARDISO system) or solve in the parent."""
+    S = getattr(asm, "_pds", None) if asm is not None else None
+    return bool(S is not None and S.ok)
 
 
 def describe(asm) -> Optional[dict]:
@@ -171,8 +213,8 @@ def analyze_reused(eng, asm) -> int:
     is set up again (a fresh factorization of the same stiffness — the
     result equals a refactored solve) and the step is re-run.  UmfPack /
     BandGeneral paths are untouched (byte-identical)."""
-    if system_of(asm) != "Mumps":
-        return ops.analyze(1)
+    if system_of(asm) != "Mumps" or pardiso_active(asm):   # E2: PARDISO
+        return ops.analyze(1)                  # step after prepare_solve
     from skyframe.engine.opensees_engine import _quiet_native_output
     with _quiet_native_output():            # the expected MUMPS chatter
         ok = ops.analyze(1)

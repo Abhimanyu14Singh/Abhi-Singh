@@ -23,6 +23,7 @@ import { rsxDirOptions as dcRsxDirs, rsxGroups as dcRsxGroups } from "./rs_ext.j
 
 import { lcOpenDesignCombos as dcLcDesignCombos } from "./loadcodes.js";   // design combos by code (js/loadcodes.js)
 import { e1SolverPanel as dcE1SolverPanel } from "./e1_parallel.js";   // E1: Solver tab (parallel lanes / worker start)
+import { soSolverPanel as dcSoSolverPanel } from "./solveropts.js";   // E2: Solver tab (PARDISO / threads)
 import {
   el, esc, clone, isNum, dkForm, dkGroup, dkAdvanced, dkTabs, dkList, dkNote, dkDialog,
   dkDraft, dkCommit, uniqueName,
@@ -669,7 +670,7 @@ export function openAnalysisOptions(sky, { tab = "dof" } = {}) {
     { id: "modal", label: "Modal", body: modalPanel },
     { id: "pdelta", label: "P-Delta", body: pdPanel },
     { id: "model", label: "Model", body: modelPanel },
-    { id: "solver", label: "Solver", body: dcE1SolverPanel(F, D) },   // E1 hook
+    { id: "solver", label: "Solver", body: (() => { const d = document.createElement("div"); d.append(dcSoSolverPanel(F, D), dcE1SolverPanel(F, D)); return d; })() },   // E2 (js/solveropts.js) + E1 (js/e1_parallel.js)
   ], { active: tab, id: "dcOptTabs" });
   const more = el("button", { type: "button", class: "btn btn-small dk-legacy", id: "dcOptCasesRun", title: "Pick which cases the next run analyses (applies these edits first)" }, ["Load Cases to Run…"]);
   const dlg = dkDialog({

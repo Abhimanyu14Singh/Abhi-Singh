@@ -133,11 +133,14 @@ def solve(eng, asm, n: int
 
     warm = _par.factored_live(eng, asm)   # no serial first solve needed
     # (E1: spawn-mode workers run the same g_column_item on their own
-    # rebuilt domain; engine/spawn_pool.py)
+    # rebuilt domain; engine/spawn_pool.py.  E2: PARDISO block solve first)
+    from skyframe.engine import pardiso_solver as _pds   # E2 block solve
+    pblk = _pds.g_columns(eng, asm, dofs, masters)
     for j, (key, (col, rz)) in enumerate(
-            zip(dofs, _par.map_family(g_column, dofs, n_lanes, warm,
-                                      spawn=(eng, "mcd_column",
-                                             {"dofs": dofs})))):
+            zip(dofs, pblk if pblk is not None
+                else _par.map_family(g_column, dofs, n_lanes, warm,
+                                     spawn=(eng, "mcd_column",
+                                            {"dofs": dofs})))):
         G[:, j] = col
         if rz is not None:
             rz_memo[key] = rz

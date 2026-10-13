@@ -15674,3 +15674,97 @@ Known and accepted differences from Classic:
 **Desktop.** On Windows, `skyframe.desktop.webview2_gpu_env(env, platform)` appends `--ignore-gpu-blocklist --enable-gpu-rasterization --force_high_performance_gpu` to `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`. A value the user has already set is kept. `SKYFRAME_NO_GPU_FLAGS=1` turns this off.
 
 **Tests.** `tests/test_gpu_renderer.py`.
+
+## PARDISO linear solver (MKL)
+
+Wave E2. Engine: `skyframe/engine/pardiso_solver.py`. Hooks:
+
+* `engine/solver_policy.py`: `choose`, `factor_once_ok`, `pardiso_active`, `analyze_reused`;
+* `OpenSeesEngine._build`, `_setup_linear_reused`, `run_modal` and `run`;
+* `modal_condensed.solve` (the condensation columns as one block solve);
+* `sparse_modal.solve` (eigsh);
+* `sparse_solve.EngineSolver` (the Lanczos and buckling operators).
+
+Optional dependency: `pip install skyframe[fast]`. It installs `pypardiso` (BSD-3-Clause) and `mkl` (Intel Simplified Software License).
+
+### Options (`model.analysis_options`)
+
+```
+{"solver": "auto" | "band" | "umfpack" | "mumps" | "sparse_general" | "pardiso",
+ "pardiso_threads": "auto" | 1..256}
+```
+
+* `"pardiso"`: every linear flow of the standard elastic build runs on PARDISO. Anything outside the allow-list falls back to OpenSees: UmfPack below 20 000 estimated equations, MUMPS at or above.
+* `"auto"` (default): PARDISO at or above `PARDISO_EQ_THRESHOLD` (10 000 estimated equations, measured: docs/PERFORMANCE.md "PARDISO") when `pypardiso` imports. Below the threshold, or without `pypardiso`, the policy is exactly today's and results are byte-identical.
+* `pardiso_threads`:
+  * `"auto"` uses every physical core; an `MKL_NUM_THREADS` environment variable takes precedence;
+  * an int sets MKL's thread count;
+  * default values are never serialized;
+  * invalid values raise `ValueError` (POST /api/model returns 400).
+* DB-edit table `analysis_options`: new text column `pardiso_threads` (`auto` or 1..256).
+* UI: Analyze › Analysis Options › **Solver** tab (`js/solveropts.js`), with the solver, the PARDISO thread count and the eigen solver.
+
+### What runs on PARDISO
+
+* linear static cases;
+* centre-of-rigidity unit loads;
+* RS modal statics;
+* modal condensation columns: one block solve of every massed-DOF unit load;
+* mode shapes and unit modal responses;
+* the sparse eigen path: `scipy.sparse.linalg.eigsh` in shift-invert mode (sigma = 0) with the PARDISO factor as operator. It replaces the MUMPS Lanczos when PARDISO is active;
+* Ritz vectors;
+* the FEM-buckling reference solve and Lanczos operator.
+
+There is one factorization per elastic build: METIS ordering, `mtype` 2 (Cholesky), falling back to -2 (Bunch-Kaufman LDL^T).
+
+How the results keep OpenSees semantics:
+
+* **Matrices.** K and M are assembled from the element matrices OpenSees itself returns. Each distinct element is instantiated alone in a scratch domain and read with `GimmeMCK` + `FullGeneral` `printA`. The matrices are memoised by element type, arguments, transformation and relative coordinates.
+* **Domain.** The recorded build is replayed into an identical domain.
+* **Constraints.** They use the Transformation handler's matrices (rigid diaphragm, rigidLink beam/bar, equalDOF).
+* **Recovery.** Displacements are written into the domain with `setNodeDisp -commit`. An OpenSees `Diagonal` / `Linear -factorOnce` step then applies the loads and updates every element. Reactions, member forces and shell resultants therefore come from OpenSees unchanged.
+* **Element loads.** Their right-hand sides are OpenSees' own fixed-end forces: one step applies the loads, then `F0 = eleForce - K_e u_e` at the stepped state.
+
+Guard: the first solve of every factorization checks OpenSees' own residual `T^T (P - sum eleForce(u))` after the update step, which must be <= 1e-8 relative; the update step must also leave the solution unchanged. For pure solves the check uses a pseudo-random field and compares `K u` from `eleForce` with the assembled `K u`.
+
+### Fallback allow-list (reason in `extra.solver.reason`)
+
+The run falls back to OpenSees when:
+
+* `pypardiso` / MKL cannot be imported;
+* the build is not the standard elastic build (hinge, pushover, P-Delta, corotational or model-wide P-Delta builds);
+* the model has nonlinear members, device links or compression-only springs;
+* the model has ground displacements;
+* the model has initial-strain materials;
+* an element type is outside this set: elasticBeamColumn, ElasticTimoshenkoBeam, Truss, zeroLength, zeroLengthSection, twoNodeLink, ShellMITC4, ShellDKGQ, ASDShellQ4, ShellDKGT, ASDShellT3;
+* a uniaxial material is anything other than linear `Elastic` (Eneg = E), `Parallel` or `InitStrainMaterial`;
+* an nD material or section is outside the linear elastic set;
+* an MP constraint is anything other than rigidDiaphragm, rigidLink or equalDOF, or the constraints are chained or constrain a fixed dof;
+* the residual check fails;
+* PARDISO reports any error.
+
+Nonlinear analyses (TH, pushover, staged construction, NL static, P-Delta cases) always run on OpenSees.
+
+### Results
+
+`results.extra.solver` is written only when PARDISO was requested or chosen by the policy:
+
+```
+{"requested": "pardiso" | "auto", "used": bool, "engine": "pardiso" | "opensees",
+ "reason": "" | <fallback reason>, "builds": int, "solves": int, "rhs": int,
+ "domain_solves": int, "extracted": int, "opensees_builds": int,
+ "equations": int, "nnz": int,
+ "nodes": int, "elements": int, "distinct_elements": int, "mtype": 2 | -2,
+ "nnz_factor": int, "threads": int, "residual_check": float,
+ "timing": {"extract", "replay", "assemble", "factor", "solve", "eigsh"?: s}}
+```
+
+`opensees_builds` counts the run's P-Delta / hinge / corotational builds. They are OpenSees analyses by design, so they are not fallbacks and leave `reason` empty.
+
+The run log (`/api/run_log`) carries `solver` = {requested, engine, used, reason, equations, threads, rhs, timing}.
+
+The `engine/parallel.py` fork-parallel solve families keep running while PARDISO is active (`solver_policy.factor_once_ok` is unchanged). A forked worker inherits the PARDISO factor copy-on-write and solves with one MKL thread (`KMP_BLOCKTIME=0`); its results equal the serial run. `solver_policy.pardiso_active(asm)` is the coordination hook for spawn-based pools (Windows): a spawned worker has no factor, so it rebuilds (and gets its own PARDISO system) or leaves the solve to the parent.
+
+### Frozen build
+
+`SkyFrameCLI --selftest-pardiso` prints a JSON report. It exits 0 when MKL loads and a 3-story frame solves equal to OpenSees within 1e-9. The PyInstaller spec collects `pypardiso` and the MKL / OpenMP / TBB runtime libraries into the bundle root.

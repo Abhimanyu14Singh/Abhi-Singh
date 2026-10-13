@@ -150,7 +150,7 @@ def build_run_log(model, results: dict, case_times: Dict[str, float],
     combos = [{"name": n, "status": s}
               for n, s in (results.get("combo_status") or {}).items()]
     modal = results.get("modal") or {}
-    return {"version": RUN_LOG_VERSION,
+    out = {"version": RUN_LOG_VERSION,
             "started": started or utc_now(),
             "total_s": round(float(total_s), 6),
             "model_name": results.get("model_name", model.name),
@@ -161,6 +161,12 @@ def build_run_log(model, results: dict, case_times: Dict[str, float],
                        "modes": len(modal.get("periods") or [])},
             "cases": cases, "combos": combos,
             "warnings": _collect_warnings(results, py_warnings)}
+    sol = (results.get("extra") or {}).get("solver")
+    if sol:                     # E2: which linear solver ran, and why not
+        out["solver"] = {k: sol.get(k) for k in
+                         ("requested", "engine", "used", "reason",
+                          "equations", "threads", "rhs", "timing")}
+    return out
 
 
 DEFAULT_REPORT_TABLES = ("load_pattern_summary", "load_case_equilibrium",

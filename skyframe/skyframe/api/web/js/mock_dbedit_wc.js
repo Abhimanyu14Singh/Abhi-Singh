@@ -17,10 +17,10 @@ export const WC_QUANTITIES = { temp_delta: "degC", temp_gradient: "degC/m" };
 const DOF6 = ["UX", "UY", "UZ", "RX", "RY", "RZ"];
 const PDELTA_METHODS = ["none", "non_iterative_mass", "iterative_loads"];
 const PD_DEF = () => ({ method: "none", load_factors: {}, max_iterations: 2, tolerance: 0.001, include_in: "all_linear" });
-const SOLVERS = ["auto", "band", "umfpack", "mumps", "sparse_general"];
+const SOLVERS = ["auto", "band", "umfpack", "mumps", "sparse_general", "pardiso"];   // E2: + pardiso
 const TESTS = ["NormDispIncr", "EnergyIncr", "NormUnbalance"];
 const ALGOS = ["Newton", "ModifiedNewton", "KrylovNewton", "NewtonLineSearch", "BFGS"];
-const AO_DEF = () => ({ solver: "auto", eigen_solver: "auto", size_warnings: true, parallel: "auto", parallel_start: "auto", /* E1 */
+const AO_DEF = () => ({ solver: "auto", eigen_solver: "auto", size_warnings: true, parallel: "auto", parallel_start: "auto", pardiso_threads: "auto", /* E1 + E2 */
   convergence: { mode: "legacy", algorithms: [...ALGOS], tests: [{ type: "NormDispIncr" }, { type: "EnergyIncr", tolerance: 1e-10, max_iterations: 100 }], max_halvings: 4 } });
 const DMP_DEF = () => ({ rayleigh_on_links: "none", rayleigh_stiffness_basis: "committed" });
 const MEMBER_HINGE = ["none", "auto_m3", "fiber_pmm"];
@@ -66,7 +66,7 @@ function pdStore(d, o) {
 function aoNorm(stored) {
   const out = AO_DEF();
   const s = stored && typeof stored === "object" ? stored : {};
-  for (const k of ["solver", "eigen_solver", "size_warnings", "parallel", "parallel_start"]) if (k in s) out[k] = s[k];
+  for (const k of ["solver", "eigen_solver", "size_warnings", "parallel", "parallel_start", "pardiso_threads"]) if (k in s) out[k] = s[k];
   if (s.convergence && typeof s.convergence === "object") Object.assign(out.convergence, JSON.parse(JSON.stringify(s.convergence)));
   return out;
 }
@@ -147,7 +147,7 @@ export function wcMockExtend(T, H) {
   const aoRead = d => {
     const o = aoNorm(d.analysis_options || {}), c = o.convergence;
     return { solver: o.solver, eigen_solver: o.eigen_solver, size_warnings: !!o.size_warnings,
-      parallel: typeof o.parallel === "string" ? o.parallel : String(o.parallel), parallel_start: o.parallel_start, conv_mode: c.mode, algorithms: c.algorithms.join(", "), max_halvings: c.max_halvings };
+      parallel: typeof o.parallel === "string" ? o.parallel : String(o.parallel), parallel_start: o.parallel_start, pardiso_threads: String(o.pardiso_threads), conv_mode: c.mode, algorithms: c.algorithms.join(", "), max_halvings: c.max_halvings };
   };
   const aoWrite = (d, ch) => {
     const stored = clone(d.analysis_options || {}), conv = { ...(stored.convergence || {}) };
@@ -157,6 +157,11 @@ export function wcMockExtend(T, H) {
         if (s === "auto" || s === "off") stored.parallel = s;
         else if (/^[-+]?\d+$/.test(s)) stored.parallel = parseInt(s, 10);
         else throw new Error("Parallel: use auto, off or 1..8");
+      } else if (k === "pardiso_threads") {   // E2
+        const s = String(v).trim();
+        if (s === "auto") delete stored.pardiso_threads;
+        else if (/^\d+$/.test(s) && +s >= 1 && +s <= 256) stored.pardiso_threads = parseInt(s, 10);
+        else throw new Error("PARDISO threads: use auto or 1..256");
       } else if (k === "conv_mode") conv.mode = v;
       else if (k === "algorithms") conv.algorithms = textList(v);
       else if (k === "max_halvings") conv.max_halvings = v;
@@ -594,6 +599,7 @@ export function wcMockExtend(T, H) {
       col("solver", "Solver", "enum", "none", { enum: SOLVERS }), col("eigen_solver", "Eigen Solver", "enum", "none", { enum: ["auto", "legacy", "lanczos"] }),
       col("size_warnings", "Model-Size Warnings", "bool"), col("parallel", "Parallel (auto / off / 1..8)", "text"),
       col("parallel_start", "Parallel Workers Start", "enum", "none", { enum: ["auto", "fork", "spawn"] }), /* E1 spawn pool */
+      col("pardiso_threads", "PARDISO Threads (auto / 1..256)", "text"),   /* E2 */
       col("conv_mode", "Convergence Mode", "enum", "none", { enum: ["legacy", "robust"] }), col("algorithms", "Algorithms", "text"),
       col("max_halvings", "Max Step Halvings", "int"),
     ], aoRead, aoWrite),

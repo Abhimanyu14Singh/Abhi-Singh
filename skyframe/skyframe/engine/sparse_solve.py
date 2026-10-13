@@ -61,6 +61,12 @@ class EngineSolver:
 
     def __call__(self, f: np.ndarray) -> np.ndarray:
         from skyframe.engine.opensees_engine import _REUSE
+        from skyframe.engine import pardiso_solver as _pds   # E2: K^-1 f
+        u = _pds.engine_solve(self.eng, self.space, f)       # w/o domain
+        if u is not None:
+            self.count += 1
+            self.system = "PARDISO"
+            return u
         eng = self.eng
         asm = eng._elastic_domain()
         eng._seg_span_loads = {}

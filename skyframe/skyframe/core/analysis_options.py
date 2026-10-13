@@ -5,7 +5,9 @@ CONTRACT "Analysis performance, solver policy and convergence strategy".
 
 ``BuildingModel.analysis_options`` is a plain dict (empty = every default)::
 
-    {"solver": "auto" | "band" | "umfpack" | "mumps" | "sparse_general",
+    {"solver": "auto" | "band" | "umfpack" | "mumps" | "sparse_general"
+               | "pardiso",
+     "pardiso_threads": "auto" | 1..256,
      "eigen_solver": "auto" | "legacy" | "lanczos",
      "convergence": {
          "mode": "legacy" | "robust",
@@ -20,6 +22,10 @@ CONTRACT "Analysis performance, solver policy and convergence strategy".
 
 * ``solver`` — see :mod:`skyframe.engine.solver_policy` ("auto" keeps the
   legacy BandGeneral path, bit-identical, below the size threshold).
+* ``pardiso_threads`` (E2) — MKL threads of the PARDISO solver
+  (:mod:`skyframe.engine.pardiso_solver`): "auto" (default) = every
+  physical core (``MKL_NUM_THREADS`` in the environment wins), an int sets
+  the count.  Only read when PARDISO runs.
 * ``eigen_solver`` — "auto" lets large (sparse-policy) models use the exact
   massed-DOF condensation of :mod:`skyframe.engine.modal_condensed` for the
   MODAL case and (v1.24) large models with more massed DOFs than the
@@ -55,14 +61,16 @@ import copy
 import math
 from typing import Dict
 
-SOLVERS = ("auto", "band", "umfpack", "mumps", "sparse_general")
+SOLVERS = ("auto", "band", "umfpack", "mumps", "sparse_general",
+           "pardiso")                                  # E2: + pardiso
 CONVERGENCE_MODES = ("legacy", "robust")
 ALGORITHMS = ("Newton", "ModifiedNewton", "KrylovNewton",
               "NewtonLineSearch", "BFGS")
 TESTS = ("NormDispIncr", "EnergyIncr", "NormUnbalance")
 MAX_HALVINGS_CAP = 12
 KEYS = ("solver", "eigen_solver", "convergence", "size_warnings",
-        "parallel", "parallel_start")          # E1 + parallel_start
+        "parallel", "parallel_start", "pardiso_threads")   # E1 + E2
+MAX_PARDISO_THREADS = 256
 PARALLEL_MODES = ("auto", "off")
 MAX_PARALLEL = 8
 PARALLEL_STARTS = ("auto", "fork", "spawn")      # E1
@@ -85,7 +93,7 @@ def convergence_defaults() -> dict:
 def defaults() -> dict:
     return {"solver": "auto", "eigen_solver": "auto",
             "convergence": convergence_defaults(), "size_warnings": True,
-            "parallel": "auto", "parallel_start": "auto"}
+            "parallel": "auto", "parallel_start": "auto", "pardiso_threads": "auto"}
 
 
 def normalized(model_or_opts) -> dict:
@@ -96,7 +104,7 @@ def normalized(model_or_opts) -> dict:
     out = defaults()
     if isinstance(opts, dict):
         for k in ("solver", "eigen_solver", "size_warnings", "parallel",
-                  "parallel_start"):
+                  "parallel_start", "pardiso_threads"):
             if k in opts:
                 out[k] = opts[k]
         conv = opts.get("convergence")
@@ -143,6 +151,8 @@ def validate_analysis_options(model) -> None:
         raise ValueError(f"analysis_options.parallel_start must be one of "
                          f"{list(PARALLEL_STARTS)} (got "
                          f"{opts['parallel_start']!r})")
+    if "pardiso_threads" in opts:                       # E2
+        _validate_pardiso_threads(opts["pardiso_threads"])
     conv = opts.get("convergence")
     if conv is None:
         return
@@ -185,6 +195,16 @@ def _validate_parallel(v) -> None:
         raise ValueError(f"analysis_options.parallel must be one of "
                          f"{list(PARALLEL_MODES)} or an int "
                          f"1..{MAX_PARALLEL} (got {v!r})")
+
+
+def _validate_pardiso_threads(v) -> None:
+    if v == "auto":
+        return
+    if (isinstance(v, bool) or not isinstance(v, int)
+            or not 1 <= v <= MAX_PARDISO_THREADS):
+        raise ValueError(f"analysis_options.pardiso_threads must be "
+                         f"\"auto\" or an int 1..{MAX_PARDISO_THREADS} "
+                         f"(got {v!r})")
 
 
 def _validate_test(t) -> None:

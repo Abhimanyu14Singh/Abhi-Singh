@@ -276,6 +276,17 @@ def fork_map(fn: Callable, items: Sequence, n_lanes: int) -> Dict[int, object]:
     return results
 
 
+def _pardiso_owned(eng) -> bool:
+    """E2: a spawned worker has no PARDISO factor, and the parent solves
+    each further item with a cheap back-substitution, so PARDISO-owned
+    families stay in the parent (CONTRACT "Windows-capable parallel solves")."""
+    try:
+        from skyframe.engine import pardiso_solver as _pds
+        return bool(_pds.active(eng))
+    except Exception:
+        return False
+
+
 def map_family(fn: Callable, items: Sequence, n_lanes: int,
                warm: bool = False, spawn=None) -> List[object]:
     """``[fn(x) for x in items]``: the first item serially in the parent
@@ -289,7 +300,7 @@ def map_family(fn: Callable, items: Sequence, n_lanes: int,
     if not items:
         return []
     if (spawn is not None and n_lanes > 1 and len(items) > 1
-            and _spawn(spawn[0].model)):
+            and _spawn(spawn[0].model) and not _pardiso_owned(spawn[0])):
         from skyframe.engine import spawn_pool as _sp
         eng, kind, common = spawn
         first = fn(items[0])

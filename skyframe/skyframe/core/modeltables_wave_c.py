@@ -298,6 +298,7 @@ def _ao_read(d):
             "size_warnings": bool(o["size_warnings"]),
             "parallel": str(par) if not isinstance(par, str) else par,
             "parallel_start": o["parallel_start"],          # E1
+            "pardiso_threads": str(o["pardiso_threads"]),       # E2
             "conv_mode": conv["mode"],
             "algorithms": ", ".join(conv["algorithms"]),
             "max_halvings": conv["max_halvings"]}
@@ -325,6 +326,16 @@ def _ao_write(d, changed):
                 except ValueError:
                     raise ValueError("Parallel: use auto, off or 1..8") \
                         from None
+        elif k == "pardiso_threads":                     # E2
+            s = str(v).strip()
+            if s == "auto":
+                stored.pop("pardiso_threads", None)
+            else:
+                try:
+                    stored["pardiso_threads"] = int(s)
+                except ValueError:
+                    raise ValueError("PARDISO threads: use auto or "
+                                     "1..256") from None
         elif k == "conv_mode":
             conv["mode"] = v
         elif k == "algorithms":
@@ -1300,6 +1311,8 @@ def extend(T: List[Table]) -> None:
             Col("parallel", "Parallel (auto / off / 1..8)", "text"),
             Col("parallel_start", "Parallel Workers Start", "enum",
                 enum=_PSTARTS),                     # E1 spawn pool
+            Col("pardiso_threads", "PARDISO Threads (auto / 1..256)",
+                "text"),                                          # E2
             Col("conv_mode", "Convergence Mode", "enum",
                 enum=CONVERGENCE_MODES),
             Col("algorithms", "Algorithms", "text"),
