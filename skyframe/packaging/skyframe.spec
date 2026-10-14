@@ -124,3 +124,17 @@ coll = COLLECT(
     a.datas,
     name="SkyFrame",
 )
+
+# .NET Framework config next to each exe: pythonnet (pywebview's native
+# window) loads Python.Runtime.dll with Assembly.LoadFrom; files extracted from
+# a downloaded ZIP carry the internet-zone mark, and without this switch .NET
+# refuses them ("Failed to resolve Python.Runtime.Loader.Initialize").
+if sys.platform == "win32":
+    import os as _os3
+    _cfg = ('<?xml version="1.0" encoding="utf-8"?>\n<configuration>\n'
+            '  <runtime>\n    <loadFromRemoteSources enabled="true"/>\n'
+            '  </runtime>\n</configuration>\n')
+    for _exe in ("SkyFrame", "SkyFrameCLI"):
+        with open(_os3.path.join(DISTPATH, "SkyFrame", _exe + ".exe.config"),
+                  "w", encoding="utf-8") as _fh:
+            _fh.write(_cfg)

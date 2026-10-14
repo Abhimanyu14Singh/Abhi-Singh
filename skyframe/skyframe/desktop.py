@@ -104,6 +104,36 @@ def _wait_healthy(port: int, timeout: float = 30.0) -> bool:
     return False
 
 
+def unblock_bundle(root: str | None = None) -> int:
+    """Remove the Windows "downloaded from the internet" mark (the NTFS
+    ``Zone.Identifier`` stream) from the bundled .NET / native libraries.
+
+    A ZIP downloaded from GitHub marks every extracted file; .NET Framework
+    then refuses to load pythonnet's ``Python.Runtime.dll`` ("Failed to
+    resolve Python.Runtime.Loader.Initialize") and the native window falls
+    back to the browser.  Only acts in a frozen Windows build; returns the
+    number of files unblocked.  Never raises."""
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return 0
+    base = root or getattr(sys, "_MEIPASS", None) or os.path.dirname(sys.executable)
+    n = 0
+    for sub in ("pythonnet", "clr_loader", "webview", ""):
+        top = os.path.join(base, sub) if sub else base
+        if not os.path.isdir(top):
+            continue
+        walker = os.walk(top) if sub else [(top, [], os.listdir(top))]
+        for dirpath, _dirs, files in walker:
+            for f in files:
+                if not f.lower().endswith((".dll", ".exe", ".pyd")):
+                    continue
+                try:
+                    os.remove(os.path.join(dirpath, f) + ":Zone.Identifier")
+                    n += 1
+                except OSError:
+                    pass
+    return n
+
+
 def main(argv: list[str] | None = None) -> int:
     # E1: spawned solver workers (engine/spawn_pool.py) re-enter a FROZEN
     # executable; this must run before any GUI / server start.  No-op
@@ -173,6 +203,7 @@ def main(argv: list[str] | None = None) -> int:
     # back to opening the app in the default browser instead of crashing.
     try:
         os.environ.update(webview2_gpu_env())   # E3: WebGL2 on the GPU (Windows)
+        unblock_bundle()                        # downloaded-ZIP mark blocks pythonnet
         import webview  # deferred: GUI libs not needed for headless modes
         # Wave H: pop-out view windows (skyframe/desktop_windows.py) — the
         # page opens extra pywebview windows through this js_api bridge

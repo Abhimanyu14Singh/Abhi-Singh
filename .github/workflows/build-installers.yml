@@ -114,6 +114,26 @@ jobs:
           Write-Host "SkyFrame.exe --selftest-parallel exit code $($p.ExitCode)"
           if ($p.ExitCode -ne 0) { exit 1 }
 
+      # The native window (pywebview -> pythonnet -> .NET) must start even
+      # when Windows marks the files as downloaded from the internet (what a
+      # GitHub ZIP does on the user's PC).  Copy the app, add that mark to
+      # every binary, then open a real window + pop-out and check the sync.
+      # Informational until hosted runners are confirmed to allow GUI windows.
+      - name: Native window + pop-out self-test, files marked as downloaded (Windows)
+        if: matrix.os_name == 'windows'
+        shell: pwsh
+        timeout-minutes: 10
+        continue-on-error: true
+        run: |
+          $dst = Join-Path $env:RUNNER_TEMP "SkyFrame-motw"
+          Copy-Item -Recurse -Force "packaging/dist/SkyFrame" $dst
+          Get-ChildItem $dst -Recurse -Include *.dll,*.exe,*.pyd | ForEach-Object {
+            Set-Content -Path $_.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3"
+          }
+          & (Join-Path $dst "SkyFrameCLI.exe") --selftest-windows
+          Write-Host "SkyFrameCLI.exe --selftest-windows exit code $LASTEXITCODE"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       - name: Upload the app folder as a workflow artifact
         uses: actions/upload-artifact@v4
         with:
