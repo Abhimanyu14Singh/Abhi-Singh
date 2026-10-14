@@ -104,6 +104,75 @@ def _wait_healthy(port: int, timeout: float = 30.0) -> bool:
     return False
 
 
+def _window_diagnostics() -> dict:
+    """Facts that explain a pythonnet / native-window failure on Windows."""
+    info: dict = {}
+    if sys.platform != "win32":
+        return info
+    base = getattr(sys, "_MEIPASS", None) or os.path.dirname(sys.executable)
+    dll = os.path.join(base, "pythonnet", "runtime", "Python.Runtime.dll")
+    info["python_runtime_dll"] = os.path.isfile(dll)
+    try:
+        with open(dll + ":Zone.Identifier", encoding="utf-8",
+                  errors="replace") as fh:
+            info["zone_identifier"] = fh.read().strip().replace("\r", "")[:80]
+    except OSError:
+        info["zone_identifier"] = None
+    try:
+        import winreg
+        k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                           r"SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full")
+        info["netfx_release"] = winreg.QueryValueEx(k, "Release")[0]
+    except Exception:  # noqa: BLE001
+        info["netfx_release"] = None
+    info["exe_config"] = os.path.isfile(sys.executable + ".config")
+    return info
+
+
+def find_app_browser() -> str | None:
+    """Microsoft Edge (or Chrome / Chromium) for a chromeless app window."""
+    import shutil
+    cands = []
+    if sys.platform == "win32":
+        for root in (os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles"),
+                     os.environ.get("LOCALAPPDATA")):
+            if root:
+                cands += [os.path.join(root, "Microsoft", "Edge", "Application", "msedge.exe"),
+                          os.path.join(root, "Google", "Chrome", "Application", "chrome.exe")]
+    for c in cands:
+        if os.path.isfile(c):
+            return c
+    for name in ("msedge", "microsoft-edge", "google-chrome", "chromium",
+                 "chromium-browser", "chrome"):
+        w = shutil.which(name)
+        if w:
+            return w
+    return None
+
+
+def open_app_window(url: str):
+    """Open SkyFrame in its own Edge/Chrome *app* window (no tabs or address
+    bar, GPU-accelerated, pop-outs via window.open) with a dedicated profile,
+    so the process lives exactly as long as SkyFrame's windows.  Returns the
+    Popen, or None when no such browser is installed."""
+    import subprocess
+    exe = find_app_browser()
+    if not exe:
+        return None
+    base = (os.environ.get("LOCALAPPDATA") if sys.platform == "win32"
+            else os.path.expanduser("~/.local/share")) or os.path.expanduser("~")
+    prof = os.path.join(base, "SkyFrame", "app-window")
+    os.makedirs(prof, exist_ok=True)
+    args = [exe, f"--app={url}", f"--user-data-dir={prof}", "--no-first-run",
+            "--no-default-browser-check", "--window-size=1440,900",
+            "--force_high_performance_gpu"]
+    try:
+        return subprocess.Popen(args, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
+    except OSError:
+        return None
+
+
 def unblock_bundle(root: str | None = None) -> int:
     """Remove the Windows "downloaded from the internet" mark (the NTFS
     ``Zone.Identifier`` stream) from the bundled .NET / native libraries.
@@ -219,13 +288,31 @@ def main(argv: list[str] | None = None) -> int:
         webview.start()
         return 0
     except Exception as exc:  # noqa: BLE001 — degrade gracefully, never crash
+        import json as _json
+        diag = _window_diagnostics()
         if args.selftest_windows:
             print(f"SkyFrame windows selftest: native windows unavailable "
                   f"({exc.__class__.__name__}: {exc})", flush=True)
+            print("SkyFrame windows diagnostics: " + _json.dumps(
+                dict(diag, app_window_browser=find_app_browser())), flush=True)
             os._exit(1)
         print(f"SkyFrame: native window unavailable "
-              f"({exc.__class__.__name__}: {exc}).\n"
-              f"Opening in your default browser instead.", file=sys.stderr)
+              f"({exc.__class__.__name__}: {exc}); diagnostics "
+              f"{_json.dumps(diag)}", file=sys.stderr)
+        # second choice: SkyFrame in its own Edge / Chrome app window
+        proc = open_app_window(url)
+        if proc is not None:
+            print("SkyFrame: opened in its own app window (Microsoft Edge "
+                  "app mode).", flush=True)
+            t0 = time.time()
+            proc.wait()
+            if time.time() - t0 > 5.0:      # the user closed the app window
+                os._exit(0)
+            # the launch handed over to an already-running app window
+            # (same profile): keep serving until Ctrl+C / console closed
+            _serve_forever(url)
+            return 0
+        print("Opening in your default browser instead.", file=sys.stderr)
         try:
             import webbrowser
             webbrowser.open(url)

@@ -27,3 +27,26 @@ def test_targets_zone_identifier_streams(tmp_path, monkeypatch):
     assert all(p.endswith(":Zone.Identifier") for p in removed)
     assert any("Python.Runtime.dll" in p for p in removed)
     assert not any("readme.txt" in p for p in removed)
+
+
+def test_app_window_args(tmp_path, monkeypatch):
+    seen = {}
+
+    class P:
+        def __init__(self, args, **kw):
+            seen["args"] = args
+
+    import subprocess
+    monkeypatch.setattr(desktop, "find_app_browser", lambda: "/x/msedge")
+    monkeypatch.setattr(subprocess, "Popen", P)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(desktop.sys, "platform", "win32")
+    assert desktop.open_app_window("http://127.0.0.1:5/") is not None
+    a = seen["args"]
+    assert a[0] == "/x/msedge" and "--app=http://127.0.0.1:5/" in a
+    assert any(x.startswith("--user-data-dir=") and "SkyFrame" in x for x in a)
+
+
+def test_no_browser_returns_none(monkeypatch):
+    monkeypatch.setattr(desktop, "find_app_browser", lambda: None)
+    assert desktop.open_app_window("http://127.0.0.1:5/") is None
