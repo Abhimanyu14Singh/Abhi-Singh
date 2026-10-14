@@ -45,6 +45,14 @@ export function initHSync(sky, dock) {
   const ch = isPop ? String(Q.get("hs") || "") : "m" + Math.random().toString(36).slice(2, 12);
   const force = Q.get("hsync");
   const desk = () => (window.pywebview && window.pywebview.api && typeof window.pywebview.api.open_window === "function" ? window.pywebview.api : null);
+  // desktop shell (?desktop=1 from skyframe/desktop.py): pywebview fills window.pywebview.api some time after the
+  // page boots ("pywebviewready"); until then window.open would go to the system browser, so wait for the bridge
+  const isDesk = () => Q.get("desktop") === "1" || !!window.pywebview;
+  async function deskWait(ms = 15000) {
+    const t = Date.now();
+    while (!desk() && isDesk() && Date.now() - t < ms) await new Promise(r => setTimeout(r, 100));
+    return desk();
+  }
   const seen = HS.hsSeen();
   const stats = { sent: 0, recv: 0, bc: 0, server: 0, last: null };
   let applying = false;
@@ -81,7 +89,7 @@ export function initHSync(sky, dock) {
   function relayStop() { relay.on = false; try { relay.ctl && relay.ctl.abort(); } catch { /* ignore */ } }
   // pop-out: once the relay runs (no BroadcastChannel answer); main: only for pop-outs that reached it over the relay
   // send on the relay too whenever it runs: in WebView2 / some browsers BroadcastChannel can work one way only
-  const useRelay = () => force === "server" || (relay.on && (isPop || Object.keys(pops).length > 0));
+  const useRelay = () => force === "server" || relay.on;
   function send(type, body = {}, to = "*") {
     const m = HS.hsMake(ch, me, type, body, to);
     seen(m.id);
@@ -174,7 +182,7 @@ export function initHSync(sky, dock) {
     const q = new URLSearchParams();
     q.set("hpop", id); q.set("hs", ch);
     if (S.mock || Q.has("mock")) q.set("mock", "1");
-    for (const k of ["renderer", "hsync"]) if (Q.get(k)) q.set(k, Q.get(k));
+    for (const k of ["renderer", "hsync", "desktop"]) if (Q.get(k)) q.set(k, Q.get(k));
     if (!q.has("renderer") && sky.gpu3d && sky.gpu3d.mode) { const md = sky.gpu3d.mode(); if (md === "gpu" || md === "classic") q.set("renderer", md); }   // same 3D renderer as the main window
     if (Q.get("hselftest")) q.set("hselftest", "1");
     return { url: location.pathname + "?" + q.toString(), query: Object.fromEntries(q.entries()) };
@@ -192,13 +200,15 @@ export function initHSync(sky, dock) {
     const title = `SkyFrame — Window ${id.slice(1)} (${(dock.KIND_LABEL || {})[st.kind] || st.kind})`;
     const p = pops[id] = { kind: st.kind, desktop: false, handle: null, seen: Date.now(), ready: false, rect, state: st };
     if (force !== "bc") relayStart();   // listen on the server relay as well as BroadcastChannel (duplicates are dropped by id)
-    const d = desk();
+    const d = await deskWait();
     if (d) {
       p.desktop = true;
       try {
         const r = await d.open_window(id, query, title, rect.x, rect.y, rect.w, rect.h);
         if (!r || !r.ok) throw new Error((r && r.error) || "the shell refused the window");
       } catch (e) { delete pops[id]; dock._reduce({ type: "dock", id }); toast("Pop out", `Could not open a window: ${e.message}`, "error"); return false; }
+    } else if (isDesk()) {
+      delete pops[id]; dock._reduce({ type: "dock", id }); toast("Pop out", "The desktop window bridge is not ready — try again in a moment.", "error"); return false;
     } else {
       const feat = `popup=yes,left=${rect.x},top=${rect.y},width=${rect.w},height=${rect.h}`;
       let h = null;
@@ -430,10 +440,11 @@ export function initHSync(sky, dock) {
   async function runSelftest() {
     const t0 = Date.now();
     const until = async (fn, ms) => { const t = Date.now(); while (Date.now() - t < ms) { const v = fn(); if (v) return v; await new Promise(r => setTimeout(r, 100)); } return null; };
-    const report = rep => {
+    const report = async rep => {
       window.__hSelftest = rep;
-      const d = window.pywebview && window.pywebview.api;
-      if (!isPop && d && d.selftest_result) { try { d.selftest_result(rep); } catch { /* ignore */ } }
+      if (isPop) return;
+      const d = await deskWait();
+      if (d && d.selftest_result) { try { await d.selftest_result(rep); } catch { /* ignore */ } }
     };
     if (isPop) {
       // the pop-out answers the main window's selection with its own (second member)
@@ -445,6 +456,7 @@ export function initHSync(sky, dock) {
     }
     try {
       if (!(await until(() => S.model && dock && sky.results, 30000))) throw new Error("app did not boot");
+      if (isDesk() && !(await deskWait(30000))) throw new Error("desktop window bridge (pywebview api) not ready");
       if (!dock.L().root) dock.add({ kind: "3d" });
       const id = dock.add({ kind: "3d" });
       const ok = await popout(id);

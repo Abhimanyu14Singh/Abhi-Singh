@@ -278,7 +278,10 @@ def main(argv: list[str] | None = None) -> int:
         # page opens extra pywebview windows through this js_api bridge
         from .desktop_windows import DesktopWindows, attach_main
         wins = DesktopWindows(webview, url, WINDOW_TITLE)
-        main_url = url + ("?mock=1&hselftest=1" if args.selftest_windows else "")
+        # desktop=1: the page waits for the js_api bridge before a pop-out
+        # (window.open in pywebview goes to the system browser)
+        main_url = url + ("?desktop=1&mock=1&hselftest=1"
+                          if args.selftest_windows else "?desktop=1")
         main_win = webview.create_window(WINDOW_TITLE, main_url, width=1440,
                                          height=900, min_size=(1100, 700),
                                          js_api=wins)

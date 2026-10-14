@@ -40,7 +40,7 @@ from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
 WID_RE = re.compile(r"^w\d{1,3}$")
-QUERY_KEYS = ("hpop", "hs", "mock", "renderer", "hsync", "hselftest")
+QUERY_KEYS = ("hpop", "hs", "mock", "renderer", "hsync", "hselftest", "desktop")
 MAX_WINDOWS = 16
 
 
