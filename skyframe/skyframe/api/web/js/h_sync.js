@@ -80,7 +80,8 @@ export function initHSync(sky, dock) {
   }
   function relayStop() { relay.on = false; try { relay.ctl && relay.ctl.abort(); } catch { /* ignore */ } }
   // pop-out: once the relay runs (no BroadcastChannel answer); main: only for pop-outs that reached it over the relay
-  const useRelay = () => force === "server" || (isPop ? relay.on : relay.on && Object.values(pops).some(p => p.via === "server"));
+  // send on the relay too whenever it runs: in WebView2 / some browsers BroadcastChannel can work one way only
+  const useRelay = () => force === "server" || (relay.on && (isPop || Object.keys(pops).length > 0));
   function send(type, body = {}, to = "*") {
     const m = HS.hsMake(ch, me, type, body, to);
     seen(m.id);
@@ -190,8 +191,7 @@ export function initHSync(sky, dock) {
     const { url, query } = popUrl(id);
     const title = `SkyFrame — Window ${id.slice(1)} (${(dock.KIND_LABEL || {})[st.kind] || st.kind})`;
     const p = pops[id] = { kind: st.kind, desktop: false, handle: null, seen: Date.now(), ready: false, rect, state: st };
-    if (force === "server") relayStart();
-    else if (force !== "bc") setTimeout(() => { if (pops[id] && !pops[id].via) relayStart(); }, 2000);   // no hello over BroadcastChannel → listen on the server relay
+    if (force !== "bc") relayStart();   // listen on the server relay as well as BroadcastChannel (duplicates are dropped by id)
     const d = desk();
     if (d) {
       p.desktop = true;
@@ -398,7 +398,7 @@ export function initHSync(sky, dock) {
       if (Date.now() - t0 > 1500 && !relay.on && force !== "bc") relayStart();   // no answer over BroadcastChannel → server relay
       hello();
     }, 500);
-    if (force === "server") relayStart();
+    if (force !== "bc") relayStart();   // both transports from the start; duplicates are dropped by id
     setTimeout(hello, 0);
     // undo / redo run in the main window (one history)
     window.addEventListener("keydown", e => {
