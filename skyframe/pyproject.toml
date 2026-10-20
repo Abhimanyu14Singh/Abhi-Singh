@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skyframe"
-version = "1.27.4"
+version = "1.28.0"
 description = "SkyFrame - building analysis studio powered by OpenSees"
 requires-python = ">=3.10"
 dependencies = [
@@ -32,3 +32,4 @@ include = ["skyframe*"]
 [tool.setuptools.package-data]
 "skyframe.api" = ["web/*", "web/js/*", "web/js/gpu/*", "web/vendor/*/*/*"]   # E3: GPU renderer + vendored three.js (offline)
 "skyframe" = ["data/*/*.json"]
+"skyframe.engine_service" = ["schema/*.json", "schema/examples/*.json"]

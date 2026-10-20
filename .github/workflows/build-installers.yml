@@ -134,6 +134,31 @@ jobs:
           Write-Host "SkyFrameCLI.exe --selftest-windows exit code $LASTEXITCODE"
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      # Engine service (docs/ENGINE_SERVICE.md): solve a Supa model from the
+      # frozen exe, then run the local service, post a job from an allowed
+      # page origin and poll it to the result (each job is a spawned process).
+      - name: Engine service self-test of the frozen binary
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          bin="packaging/dist/SkyFrame/SkyFrameCLI"
+          [ "${{ matrix.os_name }}" = "windows" ] && bin="${bin}.exe"
+          model="$RUNNER_TEMP/portal.model.json"
+          cp skyframe/engine_service/schema/examples/portal.supa_model.json "$model"
+          "$bin" --engine-solve "$model"
+          python -c "import json,sys; r=json.load(open(sys.argv[1])); m=r['pieces']['b']['D']['M']; print('beam M', m); sys.exit(0 if abs(m-50)<0.05 else 1)" "$RUNNER_TEMP/portal.out.json"
+          "$bin" --engine-service --port 8766 --allow-origin https://supa.example.com &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8766/engine/version && break; sleep 1; done
+          echo
+          job=$(curl -sf -H "Origin: https://supa.example.com" -H "Content-Type: application/json" \
+                --data-binary @"$model" http://127.0.0.1:8766/engine/supa/solve | python -c "import json,sys; print(json.load(sys.stdin)['job'])")
+          for i in $(seq 1 60); do
+            st=$(curl -sf "http://127.0.0.1:8766/engine/jobs/$job?wait=5" | python -c "import json,sys; print(json.load(sys.stdin)['state'])")
+            echo "job $job: $st"; [ "$st" = "done" ] && break; [ "$st" = "failed" ] && exit 1
+          done
+          curl -sf "http://127.0.0.1:8766/engine/jobs/$job/result" | python -c "import json,sys; r=json.load(sys.stdin); print('engine', r['engine']['name'], r['engine']['api']); sys.exit(0 if abs(r['pieces']['b']['D']['M']-50)<0.05 else 1)"
+          kill %1 || true
+
       - name: Upload the app folder as a workflow artifact
         uses: actions/upload-artifact@v4
         with:

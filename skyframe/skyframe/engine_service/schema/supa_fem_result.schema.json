@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skyframe.local/schema/supa_fem_result/0.1.0",
+  "title": "Supa FemResult (from GET /engine/jobs/<id>/result)",
+  "description": "Every field of supa-fem-kit's FemResult with the same meaning, plus 'engine' (optional, added). Units: kip, foot.",
+  "type": "object",
+  "required": ["pieces", "dia", "balance", "nodeU", "maxU", "maxAt", "loose", "dofs", "notes"],
+  "$defs": {
+    "nums": {"type": "array", "items": {"type": "number"}},
+    "nmv": {"type": "object", "required": ["N", "M", "V"],
+            "properties": {"N": {"type": "number", "description": "axial, tension positive"},
+                           "M": {"type": "number", "description": "largest resultant moment along the piece"},
+                           "V": {"type": "number", "description": "largest resultant shear along the piece"}}},
+    "xyz": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3}
+  },
+  "properties": {
+    "pieces": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"$ref": "#/$defs/nmv"}}},
+    "dia": {"type": "array", "items": {"type": "object", "required": ["id", "z", "u"],
+            "properties": {"id": {"type": "string"}, "z": {"type": "number"},
+                           "u": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}}}}},
+    "balance": {"type": "object", "additionalProperties": {"type": "object", "required": ["applied", "reactions"],
+                "properties": {"applied": {"$ref": "#/$defs/xyz"}, "reactions": {"$ref": "#/$defs/xyz"}}}},
+    "nodeU": {"type": "object", "additionalProperties": {"$ref": "#/$defs/nums"}},
+    "maxU": {"type": "object", "additionalProperties": {"type": "number"}},
+    "maxAt": {"type": "object", "additionalProperties": {"type": "integer"}},
+    "loose": {"type": "integer", "minimum": 0},
+    "looseNodes": {"type": "array", "items": {"type": "integer"}},
+    "dofs": {"type": "integer", "minimum": 0},
+    "notes": {"type": "array", "items": {"type": "string"}},
+    "engine": {
+      "type": "object",
+      "description": "Added by the SkyFrame engine: who solved it, how long, and the stability report.",
+      "properties": {"name": {"type": "string"}, "api": {"type": "string"}, "seconds": {"type": "number"},
+                     "stability": {"type": "object"}}
+    }
+  }
+}

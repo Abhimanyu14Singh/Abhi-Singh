@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skyframe.local/schema/supa_fem_model/0.1.0",
+  "title": "Supa FemModel (input to POST /engine/supa/solve)",
+  "description": "Supa's element-level model, exactly as supa-fem-kit/src/types.ts defines it. Units: kip and foot (E in ksf, A in ft2, I in ft4, loads in k/ft).",
+  "type": "object",
+  "required": ["xyz", "fixed", "els", "dia", "nodeLoads", "diaLoads"],
+  "$defs": {
+    "case": {"enum": ["D", "L", "Wx", "Wy", "Ex", "Ey"]},
+    "vec3": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+    "perCase": {
+      "type": "object",
+      "properties": {"D": {"$ref": "#/$defs/nums"}, "L": {"$ref": "#/$defs/nums"}, "Wx": {"$ref": "#/$defs/nums"},
+                     "Wy": {"$ref": "#/$defs/nums"}, "Ex": {"$ref": "#/$defs/nums"}, "Ey": {"$ref": "#/$defs/nums"}},
+      "additionalProperties": false
+    },
+    "nums": {"type": "array", "items": {"type": "number"}}
+  },
+  "properties": {
+    "xyz": {"description": "Node coordinates, flat [x0, y0, z0, x1, ...], ft. z is up.", "$ref": "#/$defs/nums"},
+    "fixed": {"description": "Per node: fully fixed (all 6 DOF).", "type": "array", "items": {"type": "boolean"}},
+    "els": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["i", "j", "E", "G", "A", "Iy", "Iz", "J", "yh", "ri", "rj", "src", "kind", "q"],
+        "properties": {
+          "i": {"type": "integer", "minimum": 0}, "j": {"type": "integer", "minimum": 0},
+          "E": {"type": "number", "exclusiveMinimum": 0}, "G": {"type": "number", "exclusiveMinimum": 0},
+          "A": {"type": "number", "exclusiveMinimum": 0}, "Iy": {"type": "number", "minimum": 0},
+          "Iz": {"type": "number", "minimum": 0}, "J": {"type": "number", "minimum": 0},
+          "yh": {"description": "Hint for local y; local z = x cross y.", "$ref": "#/$defs/vec3"},
+          "ri": {"type": "boolean", "description": "Bending released at end i (both axes; torsion never)."},
+          "rj": {"type": "boolean"},
+          "src": {"type": "string", "description": "The Supa member or wall the element belongs to; '' for arms."},
+          "kind": {"enum": ["frame", "wall", "arm"]},
+          "q": {"type": "object", "description": "Uniform load along the element, global axes, k/ft, per case.",
+                "propertyNames": {"$ref": "#/$defs/case"}, "additionalProperties": {"$ref": "#/$defs/vec3"}}
+        }
+      }
+    },
+    "dia": {
+      "type": "array",
+      "items": {"type": "object", "required": ["id", "x", "y", "z", "nodes"],
+                "properties": {"id": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"},
+                               "z": {"type": "number"}, "nodes": {"type": "array", "items": {"type": "integer", "minimum": 0}}}}
+    },
+    "nodeLoads": {"description": "Per case: [fx, fy, fz] per node, flat, kip.", "$ref": "#/$defs/perCase"},
+    "diaLoads": {"description": "Per case: [fx, fy, mz] per diaphragm, flat, kip and kip-ft.", "$ref": "#/$defs/perCase"},
+    "notes": {"type": "array", "items": {"type": "string"}}
+  }
+}

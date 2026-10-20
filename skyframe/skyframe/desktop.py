@@ -226,7 +226,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--selftest-windows", action="store_true",
                         help="Wave H: open a pop-out window, check the "
                              "main <-> pop-out sync, close both, exit 0/1")
+    parser.add_argument("--engine-service", action="store_true",
+                        help="run only the analysis engine service on "
+                             "127.0.0.1 (default port 8766) for host apps "
+                             "such as Supa; see docs/ENGINE_SERVICE.md")
+    parser.add_argument("--allow-origin", action="append", default=[],
+                        help="with --engine-service: a web page origin "
+                             "allowed to call the engine (repeatable)")
+    parser.add_argument("--engine-solve", metavar="MODEL",
+                        help="solve a Supa FemModel JSON file with the "
+                             "engine, write <model>.out.json, exit 0/1")
     args = parser.parse_args(argv)
+    if args.engine_solve or args.engine_service:   # the engine alone: no UI server
+        from .engine_service.__main__ import main as _engine
+        code = _engine(["solve", args.engine_solve] if args.engine_solve else
+                       ["serve"] + (["--port", str(args.port)] if args.port else [])
+                       + [x for o in args.allow_origin for x in ("--allow-origin", o)])
+        if getattr(sys, "frozen", False):
+            for stream in (sys.stdout, sys.stderr):
+                if stream is not None:
+                    stream.flush()
+            os._exit(code)
+        return code
     if args.selftest_pardiso:                  # E2 frozen smoke check
         import json as _json
         from skyframe.engine import pardiso_solver as _pds

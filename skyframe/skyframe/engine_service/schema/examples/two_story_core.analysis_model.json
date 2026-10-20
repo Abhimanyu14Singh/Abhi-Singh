@@ -1,0 +1,47 @@
+{
+  "schema": "skyframe.analysis_model/0.1",
+  "units": {"force": "kip", "length": "ft"},
+  "project": {"code": "ASCE 7-22", "pDelta": {"on": true, "loads": {"D": 1.2, "L": 0.5}}},
+  "stories": [{"name": "Base", "elevation": 0, "base": true}, {"name": "L2", "elevation": 14}, {"name": "Roof", "elevation": 28}],
+  "materials": [
+    {"id": "C8", "type": "concrete", "E": 734400, "nu": 0.2, "unitWeight": 0.15, "fc": 8},
+    {"id": "A992", "type": "steel", "E": 4176000, "nu": 0.3, "unitWeight": 0.49, "fy": 50}
+  ],
+  "frameSections": [
+    {"id": "W14X90", "material": "A992", "catalogue": "W14X90"},
+    {"id": "W18X35", "material": "A992", "catalogue": "W18X35"}
+  ],
+  "areaSections": [
+    {"id": "Wall18", "material": "C8", "thickness": 1.5, "kind": "wall"},
+    {"id": "Deck", "material": "C8", "thickness": 0.5, "kind": "deck", "span": "one-way",
+     "deck": {"ribDepth": 0.25, "ribSpacing": 1.0, "toppingThickness": 0.375}}
+  ],
+  "objects": {
+    "frames": [
+      {"id": "col:A1:L1", "i": [0, 0, 0], "j": [0, 0, 14], "section": "W14X90", "role": "column", "system": "frame-1"},
+      {"id": "beam:A1-B1:L2", "i": [0, 0, 14], "j": [30, 0, 14], "section": "W18X35", "role": "beam",
+       "releaseI": [false, false, false, false, true, true], "releaseJ": [false, false, false, false, true, true], "system": "floor-1"}
+    ],
+    "areas": [
+      {"id": "wall:core-N:L1", "boundary": [[30, 0, 0], [50, 0, 0], [50, 0, 14], [30, 0, 14]], "section": "Wall18", "pier": "P1", "system": "core"},
+      {"id": "floor:L2", "boundary": [[0, -20, 14], [50, -20, 14], [50, 0, 14], [0, 0, 14]], "section": "Deck", "system": "floor-1"}
+    ],
+    "baseFixed": true
+  },
+  "diaphragms": [{"id": "D:L2", "story": "L2", "kind": "rigid"}],
+  "loadPatterns": [{"id": "D", "type": "dead", "selfWeight": 1}, {"id": "SDL", "type": "superdead"},
+                   {"id": "L", "type": "live"}, {"id": "Ex", "type": "seismic"}],
+  "loads": {
+    "area": [{"pattern": "SDL", "area": "floor:L2", "value": 0.015}, {"pattern": "L", "area": "floor:L2", "value": 0.05}],
+    "storyForces": [{"pattern": "Ex", "diaphragm": "D:L2", "fx": 120, "fy": 0}]
+  },
+  "massSource": {"selfMass": true, "patterns": {"SDL": 1.0}},
+  "cases": [
+    {"id": "D", "type": "linear-static", "loads": {"D": 1, "SDL": 1}},
+    {"id": "L", "type": "linear-static", "loads": {"L": 1}},
+    {"id": "Ex", "type": "linear-static", "loads": {"Ex": 1}},
+    {"id": "Modal", "type": "modal", "targetMass": 0.9},
+    {"id": "Ex-drift", "type": "linear-static", "loads": {"Ex": 1}, "modifierSet": "service"}
+  ],
+  "combos": [{"id": "1.2D+1.6L", "type": "add", "terms": {"D": 1.2, "L": 1.6}}]
+}
