@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SOM OPT</title>
+    <link rel="icon" href="somopt.png" />
+    <link rel="stylesheet" href="app.css" />
+    <!-- The theme from the first paint, and the 3D view's ground under everything until the app has
+         drawn, so the window opens on the colour it settles to rather than flashing another. -->
+    <script>
+      document.documentElement.dataset.theme = localStorage.getItem('somopt.theme') === 'dark' ? 'dark' : 'light'
+      document.documentElement.classList.add('starting')
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="app.js"></script>
+  </body>
+</html>
