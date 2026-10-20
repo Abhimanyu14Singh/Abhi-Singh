@@ -1,0 +1,29 @@
+  Starting the engine
+  Checking the model
+  Assembling
+  Factoring
+  Solving L
+  Solving Wx
+  Solving Wy
+  Solving Ex
+  Solving Ey
+nodes 11665, elements 26795, diaphragms 76, equations 35283, 13.0 s
+unheld nodes (moved more than 1 ft under D or L): 1448
+note: 1448 node(s) move more than 1 ft under dead or live load although the model is stable: framing that nothing holds up stiffly enough (72 of them are free ends of members). Largest 72.7 ft at node 9154.
+
+case   applied fx fy fz                     reactions fx fy fz                   out of balance
+D             0.0       0.0 -202848.9          0.0      -0.0  202848.9   0.000%
+L             0.0       0.0  -62235.6         -0.0       0.0   62235.6   0.000%
+Wx         7354.3       0.0       0.0      -7354.3       0.0       0.0   0.000%
+Wy            0.0    9347.4       0.0          0.0   -9347.4       0.0   0.000%
+Ex         9756.3       0.0       0.0      -9756.3      -0.0      -0.0   0.000%
+Ey            0.0    9756.3       0.0         -0.0   -9756.3       0.0   0.000%
+
+against models/demo.result.json: largest difference over largest value
+case   max u      drift      N          M          V
+D      0.93%      0.01%      0.02%      0.69%      0.03%      
+L      0.92%      0.01%      0.04%      0.69%      0.03%      
+Wx     0.00%      0.00%      0.00%      0.00%      0.00%      
+Wy     0.00%      0.00%      0.00%      0.00%      0.00%      
+Ex     0.00%      0.01%      0.00%      0.00%      0.00%      
+Ey     0.00%      0.00%      0.00%      0.00%      0.00%      
