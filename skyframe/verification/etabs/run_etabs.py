@@ -5,9 +5,10 @@ export the results.  Runs on the ETABS machine with Python + comtypes only.
     python run_etabs.py F1 --close     # close ETABS afterwards (default: leave it open to look)
     python run_etabs.py --update       # replace this script with the latest version
 
-Writes, in a folder named after the case (beside this script):
-    F1.EDB              the ETABS model, open it to look
-    F1.etabs.json       the results: send this file back
+Writes everything under C:\SkyFrameVerification (change with --out), one
+folder per case:
+    C:\SkyFrameVerification\F1\F1.EDB          the ETABS model, open it to look
+    C:\SkyFrameVerification\F1\F1.etabs.json   the results: send this file back
 and prints each check against its hand-calculated answer.
 
 Every value the script sets on a section is read back from ETABS and
@@ -28,6 +29,7 @@ RAW = ("https://raw.githubusercontent.com/Abhimanyu14Singh/Abhi-Singh/"
        "claude/etabs-opensees-ui-rebuild-kt2zwh/skyframe/verification/etabs/")
 ETABS_EXE = r"C:\Program Files\Computers and Structures\ETABS 23\ETABS.exe"
 HERE = Path(__file__).resolve().parent
+OUT_ROOT = r"C:\SkyFrameVerification"
 
 KIP_FT_F = 4                 # eUnits.kip_ft_F
 MAT_NODESIGN = 3             # eMatType.NoDesign
@@ -164,6 +166,7 @@ def main(argv=None) -> int:
     ap.add_argument("--etabs", default=ETABS_EXE, help="full path to ETABS.exe")
     ap.add_argument("--close", action="store_true", help="close ETABS when done")
     ap.add_argument("--local", help="use this case JSON file instead of downloading it")
+    ap.add_argument("--out", default=OUT_ROOT, help="folder for the ETABS models and results")
     ap.add_argument("--update", action="store_true", help="download the latest version of this script")
     a = ap.parse_args(argv)
 
@@ -175,8 +178,10 @@ def main(argv=None) -> int:
         ap.error("give a case id, e.g. F1")
     case = json.loads(Path(a.local).read_text() if a.local else fetch(f"cases/{a.case}.json"))
     say(f"{case['id']}: {case['title']}")
-    work = HERE / case["id"]
-    work.mkdir(exist_ok=True)
+    work = Path(a.out) / case["id"]
+    work.mkdir(parents=True, exist_ok=True)
+    (work / f"{case['id']}.case.json").write_text(json.dumps(case, indent=1), encoding="utf-8")
+    say(f"Saving to {work}")
 
     import comtypes.client
     helper = comtypes.client.CreateObject("ETABSv1.Helper")
