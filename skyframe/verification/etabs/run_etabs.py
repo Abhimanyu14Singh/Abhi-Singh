@@ -991,6 +991,8 @@ def modal_results(sm, case: dict) -> dict:
 
 
 def pick(res: dict, chk: dict):
+    if chk["quantity"] == "value":                       # a named scalar an extension exported
+        return (res.get("values") or {}).get(chk["key"])
     if chk["quantity"] == "buckling":
         f = (res.get("buckling") or {}).get(chk["case"]) or []
         return f[chk["mode"] - 1] if chk["mode"] <= len(f) else None

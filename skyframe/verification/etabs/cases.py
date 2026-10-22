@@ -369,8 +369,8 @@ CASES.update(cases_nonlin.CASES)
 # group in "ext")
 import importlib  # noqa: E402
 
-for _f in sorted(HERE.glob("cases_x_*.py")):
-    CASES.update(importlib.import_module(_f.stem).CASES)
+for _xf in sorted(HERE.glob("cases_x_*.py")):
+    CASES.update(importlib.import_module(_xf.stem).CASES)
 
 
 def get(cid: str) -> dict:
