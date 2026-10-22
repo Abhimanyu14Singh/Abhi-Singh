@@ -1,0 +1,11 @@
+== L5: Temperature load
+Building the model ...
+  section BM: A 0.1, I22 0.002, I33 0.03, J 0.0005, As2 0.0, As3 0.0 (read back)
+Running the analysis ...
+Reading results ...
+check            hand        ETABS  difference
+T-P           -135.72      -135.72  0.000%
+T-UX          0.00975      0.00975  0.000%
+T-P0                0            0  0.000%
+T-FX                0            0  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\L5\L5.EDB; largest difference from the hand calculation 0.000%

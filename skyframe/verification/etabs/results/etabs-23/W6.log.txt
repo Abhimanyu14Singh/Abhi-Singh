@@ -1,0 +1,13 @@
+== W6: Mismatched wall and slab meshes
+Building the model ...
+  area section WALL: wall, thickness 1.0, shell type 1 (read back)
+  area section SLAB: slab, thickness 0.5, shell type 1 (read back)
+  25 area objects; edge constraints on
+Running the analysis ...
+Reading results ...
+  ETABS analysed 27 area elements for 25 area objects  (it meshed the objects further: meshes differ from SkyFrame)
+check            hand        ETABS  difference
+Q-FZ             14.4         14.4  0.000%
+Q-UZ                -  -0.00185902  compared with SkyFrame only
+Q-UZw               -  -1.5924e-05  compared with SkyFrame only
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\W6\W6.EDB; largest difference from the hand calculation 0.000%

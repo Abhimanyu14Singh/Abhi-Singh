@@ -162,17 +162,18 @@ def S1() -> dict:
     I33, I22, J = 0.02, 0.005, 0.0005
     G = E / (2 * (1 + STEEL_NU))
     k = [500.0, 400.0, 5000.0, 30000.0, 20000.0, 1000.0]     # kx ky kz (k/ft), krx kry krz (k-ft/rad)
-    top = [0.0, 0.0, L]
+    z0 = 12.0                                                # off the Base level (ETABS pins Base joints)
+    base, top = [0.0, 0.0, z0], [0.0, 0.0, z0 + L]
     return {
         "id": "S1", "title": "Point springs at a column base",
         "purpose": ("Springs instead of fixity: the top moves by the column's own bending plus the base slip "
                     "and the base rotation carried up the height. Spring forces are the reactions."),
         "units": "kip-ft", "settings": dict(_COMMON, supports="six point springs at the base, no restraint"),
         "materials": _mat(), "sections": [_col_section()],
-        "stories": [{"name": "Story1", "height": L}],
-        "frames": [{"id": "C1", "i": [0.0, 0.0, 0.0], "j": top, "section": "COL", "angle": 0.0}],
+        "stories": [{"name": "Story1", "height": z0}, {"name": "Story2", "height": L}],
+        "frames": [{"id": "C1", "i": base, "j": top, "section": "COL", "angle": 0.0}],
         "supports": [],
-        "springs": [{"at": [0.0, 0.0, 0.0], "k": k}],
+        "springs": [{"at": base, "k": k}],
         "patterns": [{"name": "PX"}, {"name": "PY"}, {"name": "PZ"}, {"name": "TZ"}],
         "pointLoads": [{"pattern": "PX", "at": top, "f": [P, 0, 0, 0, 0, 0]},
                        {"pattern": "PY", "at": top, "f": [0, P, 0, 0, 0, 0]},
@@ -186,7 +187,7 @@ def S1() -> dict:
             _j("PZ-UZ", "Top settles", "PZ", top, "UZ", -5 * P * (L / (E * 0.1) + 1 / k[2]), "-N (L/EA + 1/kz)"),
             _j("TZ-RZ", "Top twists", "TZ", top, "RZ", P * (L / (G * J) + 1 / k[5]), "T (L/GJ + 1/krz)"),
             _b("PX-FX", "Spring force is the reaction", "PX", "FX", -P, "-P"),
-            _b("PX-MY", "Base moment", "PX", "MY", -P * L, "-PL"),
+            _b("PX-MY", "Reaction moment about the origin", "PX", "MY", -P * (z0 + L), "-P z_top"),
         ],
     }
 

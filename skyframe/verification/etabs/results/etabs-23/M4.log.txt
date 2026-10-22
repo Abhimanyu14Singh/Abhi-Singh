@@ -1,0 +1,10 @@
+== M4: P-Delta
+Building the model ...
+  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+Running the analysis ...
+Reading results ...
+check            hand        ETABS  difference
+H-UX        0.0689655    0.0689655  0.000%
+PDH-UX      0.0870137    0.0868475  0.191%
+PDH-M         146.104      145.864  0.164%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\M4\M4.EDB; largest difference from the hand calculation 0.191%

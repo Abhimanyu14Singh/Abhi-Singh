@@ -1,0 +1,14 @@
+== L3: Self-weight
+Building the model ...
+  section COL: A 1.0, I22 0.08333333333333333, I33 0.08333333333333333, J 0.1406, As2 0.0, As3 0.0 (read back)
+  section BM: A 2.0, I22 0.16666666666666666, I33 0.6666666666666666, J 0.4580000000000001, As2 0.0, As3 0.0 (read back)
+  area section SLAB: slab, thickness 0.5, shell type 3 (read back)
+  1 area objects
+Running the analysis ...
+Reading results ...
+  ETABS analysed 1 area elements for 1 area objects
+check            hand        ETABS  difference
+SW-FZ            61.2         61.2  0.000%
+SW-P            -15.3        -15.3  0.000%
+SW-MX             612          612  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\L3\L3.EDB; largest difference from the hand calculation 0.000%

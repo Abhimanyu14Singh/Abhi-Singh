@@ -1,0 +1,15 @@
+== W1: Cantilever wall, three meshes
+Building the model ...
+  area section WALL: wall, thickness 1.0, shell type 1 (read back)
+  252 area objects
+Running the analysis ...
+Reading results ...
+  ETABS analysed 252 area elements for 252 area objects
+check            hand        ETABS  difference
+P2-UX         0.02025    0.0197166  2.634%
+P2-MY           -2400        -2400  0.000%
+P4-UX         0.02025    0.0200543  0.966%
+P4-MY           -2400        -2400  0.000%
+P8-UX         0.02025    0.0201804  0.344%
+P8-MY           -2400        -2400  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\W1\W1.EDB; largest difference from the hand calculation 2.634%

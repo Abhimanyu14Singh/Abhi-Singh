@@ -1,0 +1,14 @@
+== O3: Combinations and envelopes
+Building the model ...
+  section BM: A 0.1, I22 0.002, I33 0.03, J 0.0005, As2 0.0, As3 0.0 (read back)
+Running the analysis ...
+Reading results ...
+check            hand        ETABS  difference
+C1-UZ       -0.168373    -0.168373  0.000%
+C1-M              225          225  0.000%
+C1-FZ              60           60  0.000%
+ENV-UZmax   -0.0420932   -0.0420932  0.000%
+ENV-UZmin   -0.0841864   -0.0841864  0.000%
+ENV-FZmax           30           30  0.000%
+ENV-FZmin           15           15  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\O3\O3.EDB; largest difference from the hand calculation 0.000%

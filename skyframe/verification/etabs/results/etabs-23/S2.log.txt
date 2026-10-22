@@ -1,0 +1,16 @@
+== S2: Pinned bases on vertical springs
+Building the model ...
+  section COL: A 1.0, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+  section BM: A 1.0, I22 0.002, I33 0.03, J 0.0005, As2 0.0, As3 0.0 (read back)
+  spring at [0.0, 0.0, 0.0]: [0.0, 0.0, 2000.0, 0.0, 0.0, 0.0] (read back)
+  spring at [20.0, 0.0, 0.0]: [0.0, 0.0, 2000.0, 0.0, 0.0, 0.0] (read back)
+Running the analysis ...
+Reading results ...
+check            hand        ETABS  difference
+H-UX        0.0572605    0.0572605  0.000%
+H-UZ           -0.003       -0.003  0.000%
+H-Mbase             0            0  0.000%
+H-Mtop             60           60  0.000%
+H-P                -6           -6  0.000%
+H-FZ                0 -1.36424e-14  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\S2\S2.EDB; largest difference from the hand calculation 0.000%

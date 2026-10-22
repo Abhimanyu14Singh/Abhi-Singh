@@ -6,7 +6,9 @@ Looks at every branch of the repository on GitHub for files named
 ``<case>.etabs.json`` that ETABS wrote (``"program": "ETABS"``), in any folder,
 takes the newest copy of each case, and stores it as the reference
 ``results/etabs-23/<case>.etabs.json`` (plus the run's ``.log.txt`` when it
-sits beside it).  Then it prints the three-way comparison for every case
+sits beside it).  Results from a run of an older version of a model (its
+``.case.json`` differs from the current definition) are skipped, and removed
+from the store.  Then it prints the three-way comparison for every case
 that changed.  Exit 0 = nothing new or all compared; 2 = new results with a
 failing value.
 """
@@ -48,6 +50,23 @@ def found() -> dict:
     return best
 
 
+_TEXT_ONLY = ("title", "purpose", "settings", "checks", "notes")
+
+
+def model_part(case: dict) -> dict:
+    """What ETABS built: the definition without its descriptions and checks."""
+    return {k: v for k, v in json.loads(json.dumps(case)).items() if k not in _TEXT_ONLY}
+
+
+def stale(ref: str, path: str, case: dict) -> bool:
+    """True when the ETABS run used a different model from the current definition (its .case.json)."""
+    try:
+        ran = json.loads(git("show", f"{ref}:{path[: -len('.etabs.json')] + '.case.json'}"))
+    except (json.JSONDecodeError, subprocess.CalledProcessError):
+        return False                             # no record of the model: take the results
+    return model_part(ran) != model_part(case)
+
+
 def main() -> int:
     sys.path.insert(0, str(HERE))
     sys.path.insert(1, str(HERE.parents[1]))
@@ -59,6 +78,12 @@ def main() -> int:
     new = []
     for cid, (when, ref, path, d) in sorted(found().items()):
         out = DEST / f"{cid}.etabs.json"
+        if cid in C.CASES and stale(ref, path, C.get(cid)):
+            if out.exists():                     # stored from the old model: drop it until the rerun
+                out.unlink()
+                (DEST / f"{cid}.log.txt").unlink(missing_ok=True)
+                print(f"{cid}: stored ETABS results removed, the model has changed since that run")
+            continue
         text = json.dumps(d, indent=1)
         if out.exists() and out.read_text() == text:
             continue

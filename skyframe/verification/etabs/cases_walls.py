@@ -216,15 +216,16 @@ def W4() -> dict:
 def W5() -> dict:
     """Square plates under uniform load: simply supported, and clamped (Timoshenko's coefficients)."""
     a, t, q, n = 20.0, 0.5, 0.2, 10
+    z = 12.0                                   # off the Base level (ETABS pins Base joints)
     D = CONC_E * t**3 / (12 * (1 - CONC_NU**2))
     areas, supports = [], []
     for k, (name, rest) in enumerate((("SS", [1, 1, 1, 0, 0, 0]), ("CL", [1] * 6))):
         x0 = 30.0 * k
         areas.append({"id": name, "section": "PLATE", "mesh": [n, n],
-                      "corners": [[x0, 0, 0], [x0 + a, 0, 0], [x0 + a, a, 0], [x0, a, 0]]})
+                      "corners": [[x0, 0, z], [x0 + a, 0, z], [x0 + a, a, z], [x0, a, z]]})
         g = _grid(0.0, a, n)
         edge = {(x, y) for x in g for y in (0.0, a)} | {(x, y) for y in g for x in (0.0, a)}
-        supports += [{"at": [x0 + x, y, 0.0], "restraint": rest} for x, y in sorted(edge)]
+        supports += [{"at": [x0 + x, y, z], "restraint": rest} for x, y in sorted(edge)]
     return {
         "id": "W5", "title": "Plates under uniform load",
         "purpose": ("Out-of-plane bending of a 20 ft square, 6 in plate (span / thickness 40, thin), meshed 10 x "
@@ -237,11 +238,11 @@ def W5() -> dict:
         "patterns": [{"name": "QSS"}, {"name": "QCL"}],
         "areaLoads": [{"pattern": "QSS", "area": "SS", "q": q}, {"pattern": "QCL", "area": "CL", "q": q}],
         "checks": [
-            dict(_j("QSS-UZ", "Simply supported: centre deflection", "QSS", [a / 2, a / 2, 0.0], "UZ",
+            dict(_j("QSS-UZ", "Simply supported: centre deflection", "QSS", [a / 2, a / 2, z], "UZ",
                     -0.00406235 * q * a**4 / D, "-0.00406 q a^4 / D (Navier)"), tol=[0.02, 0.02]),
             _b("QSS-FZ", "Simply supported: total reaction", "QSS", "FZ", q * a * a, "q a^2"),
             dict(_j("QCL-UZ", "Clamped: centre deflection (10 x 10 mesh is about 3% flexible, converging)", "QCL",
-                    [30.0 + a / 2, a / 2, 0.0], "UZ", -0.00126532 * q * a**4 / D, "-0.00127 q a^4 / D"),
+                    [30.0 + a / 2, a / 2, z], "UZ", -0.00126532 * q * a**4 / D, "-0.00127 q a^4 / D"),
                  tol=[0.03, 0.03]),
             _b("QCL-FZ", "Clamped: total reaction", "QCL", "FZ", q * a * a, "q a^2"),
         ],
@@ -271,9 +272,12 @@ def W6() -> dict:
         "areaLoads": [{"pattern": "Q", "area": "SLAB", "q": q}],
         "checks": [
             _b("Q-FZ", "Total reaction", "Q", "FZ", q * L * L, "q L^2"),
-            _j("Q-UZ", "Slab deflection at mid-span, mid-width", "Q", [L / 2, L / 2, L], "UZ", None,
-               "programs compared"),
-            _j("Q-UZw", "Wall top settles between the meshes", "Q", [L / 2, 0.0, L], "UZ", None, "programs compared"),
+            dict(_j("Q-UZ", "Slab deflection at mid-span, mid-width", "Q", [L / 2, L / 2, L], "UZ", None,
+                    "programs compared"), tol=[1e-3, 0.05],
+                 note="ETABS re-cuts the slab at the wall's nodes (27 elements for 25 objects), SkyFrame ties "
+                      "the meshes with edge constraints: the meshes differ, so 5% is allowed"),
+            dict(_j("Q-UZw", "Wall top settles between the meshes", "Q", [L / 2, 0.0, L], "UZ", None,
+                    "programs compared"), tol=[1e-3, 0.05]),
         ],
     }
 
@@ -284,8 +288,9 @@ def D2() -> dict:
     I, A = t * d**3 / 12, t * d
     hand = 5 * w * L**4 / (384 * CONC_E * I) + w * L * L / (8 * 5 / 6 * CONC_G * A)
     ys = _grid(0.0, d, 5)
-    sup = [{"at": [0.0, y, 0.0], "restraint": [1 if y == 0.0 else 0, 1, 1, 0, 0, 0]} for y in ys]
-    sup += [{"at": [L, y, 0.0], "restraint": [0, 1, 1, 0, 0, 0]} for y in ys]
+    z = 12.0                                   # off the Base level (ETABS pins Base joints)
+    sup = [{"at": [0.0, y, z], "restraint": [1 if y == 0.0 else 0, 1, 1, 0, 0, 0]} for y in ys]
+    sup += [{"at": [L, y, z], "restraint": [0, 1, 1, 0, 0, 0]} for y in ys]
     return {
         "id": "D2", "title": "Semi-rigid floor",
         "purpose": ("A 60 x 20 ft floor with no diaphragm constraint, held at its short edges and loaded along "
@@ -297,12 +302,12 @@ def D2() -> dict:
         "stories": [{"name": "Story1", "height": 12.0}],
         "frames": [],
         "areas": [{"id": "FL", "section": "FLOOR", "mesh": [20, 5],
-                   "corners": [[0, 0, 0], [L, 0, 0], [L, d, 0], [0, d, 0]]}],
+                   "corners": [[0, 0, z], [L, 0, z], [L, d, z], [0, d, z]]}],
         "supports": sup,
         "patterns": [{"name": "WY"}],
-        "pointLoads": _edge_loads("WY", [[x, 0.0, 0.0] for x in _grid(0.0, L, 20)], w * L, 1),
+        "pointLoads": _edge_loads("WY", [[x, 0.0, z] for x in _grid(0.0, L, 20)], w * L, 1),
         "checks": [
-            dict(_j("WY-UY", "Midspan in-plane deflection, far edge", "WY", [L / 2, d, 0.0], "UY", hand,
+            dict(_j("WY-UY", "Midspan in-plane deflection, far edge", "WY", [L / 2, d, z], "UY", hand,
                     "5wL^4/384EI + wL^2/(8 5/6 G A), deep-beam theory (approximate)"), tol=[0.05, 0.02]),
             _b("WY-FY", "Total reaction", "WY", "FY", -w * L, "-w L"),
         ],

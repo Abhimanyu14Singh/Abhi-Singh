@@ -1,0 +1,14 @@
+== F9: Insertion point: beam hung from its top face
+Building the model ...
+  section BM: A 0.1, I22 0.002, I33 0.03, J 0.0005, As2 0.0, As3 0.0 (read back)
+  frame B1: cardinal point 8, stiffness transformed True (read back)
+  frame B2: cardinal point 8, stiffness transformed True (read back)
+Running the analysis ...
+Reading results ...
+check            hand        ETABS  difference
+W-P           130.435      130.435  0.000%
+W-Mmid        127.174      127.174  0.000%
+W-UZ       -0.0805261   -0.0805261  0.000%
+W-FZ               60           60  0.000%
+W-FX                0 -2.91038e-14  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\F9\F9.EDB; largest difference from the hand calculation 0.000%
