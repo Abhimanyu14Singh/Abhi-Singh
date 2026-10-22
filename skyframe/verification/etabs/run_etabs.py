@@ -485,6 +485,8 @@ def pick(res: dict, chk: dict):
         return c["base"].get(chk["comp"])
     if chk["quantity"] == "joint":
         k = ["UX", "UY", "UZ", "RX", "RY", "RZ"].index(chk["comp"])
+        if not c["joints"]:
+            return None
         best = min(c["joints"], key=lambda j: math.dist(j["xyz"], chk["at"]))
         return best["u"][k] if math.dist(best["xyz"], chk["at"]) < 1e-3 else None
     rows = c["frames"].get(chk["frame"]) or []
