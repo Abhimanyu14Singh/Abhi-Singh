@@ -9,6 +9,10 @@ included, as in ETABS's analysis run) and timed twice; the faster run is reporte
 
 from __future__ import annotations
 
+# OpenSeesPy first: on Windows its DLLs fail to load once numpy / scipy / PARDISO have loaded their own
+# MKL ("Failed to import openseespy on Windows")
+import openseespy.opensees  # noqa: F401,E402  isort: skip
+
 import argparse
 import json
 import os

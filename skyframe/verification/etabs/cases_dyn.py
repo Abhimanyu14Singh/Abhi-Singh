@@ -327,36 +327,48 @@ def M2() -> dict:
     }
 
 
+def _cqc(values, omegas, zeta=0.05):
+    """CQC of modal responses (Der Kiureghian, equal damping in every mode)."""
+    tot = 0.0
+    for vi, wi in zip(values, omegas):
+        for vj, wj in zip(values, omegas):
+            r = wj / wi
+            rho = 8 * zeta**2 * (1 + r) * r**1.5 / ((1 - r * r)**2 + 4 * zeta**2 * r * (1 + r)**2)
+            tot += vi * rho * vj
+    return math.sqrt(tot)
+
+
 def M3() -> dict:
-    """Response spectrum (constant 0.4 g, SRSS) on the M1 building along X."""
+    """Response spectrum (constant 0.4 g, CQC at 5%) on the M1 building along X."""
     modes, k, m = _m1_modes()
     Sa = 0.4 * G_FT
-    V2, U2, V2top = 0.0, 0.0, 0.0
-    n = _M1["n"]
+    V, U, Vtop, w = [], [], [], []
     for T, d, w2, phi in modes:
         if d != "X":
             continue
         gam = sum(phi) / sum(v * v for v in phi)                # equal floor masses
-        V2 += (Sa * m * gam * sum(phi)) ** 2
-        U2 += (gam * phi[-1] * Sa / w2) ** 2
-        V2top += (Sa * m * gam * phi[-1]) ** 2                    # top-story shear = roof inertia force
+        V.append(Sa * m * gam * sum(phi))
+        U.append(gam * phi[-1] * Sa / w2)
+        Vtop.append(Sa * m * gam * phi[-1])                       # top-story shear = roof inertia force
+        w.append(math.sqrt(w2))
     return dict({
-        "id": "M3", "title": "Response spectrum, SRSS",
-        "purpose": ("A flat 0.4 g spectrum along X on the M1 building, modes combined by SRSS: base shear and "
-                    "roof displacement from the closed-form modes."),
+        "id": "M3", "title": "Response spectrum, CQC",
+        "purpose": ("A flat 0.4 g spectrum along X on the M1 building, modes combined by CQC at 5% damping: base "
+                    "shear and roof displacement from the closed-form modes. (ETABS 23's API cannot change a "
+                    "spectrum case's combination or damping, so the test uses its defaults, CQC and 5%.)"),
         "units": "kip-ft",
-        "settings": dict(_DYN, spectrum="constant 0.4 g, 5% damping", combination="SRSS, one direction",
+        "settings": dict(_DYN, spectrum="constant 0.4 g, 5% damping", combination="CQC, one direction",
                          eccentricity="none"),
         "patterns": [], "modal": {"case": "MODES", "modes": 9},
         "spectra": [{"name": "FLAT", "points": [[0.0, 0.4], [10.0, 0.4]], "damping": 0.05}],
-        "rsCases": [{"name": "RSX", "dir": "X", "function": "FLAT", "scale": G_FT, "combine": "SRSS",
+        "rsCases": [{"name": "RSX", "dir": "X", "function": "FLAT", "scale": G_FT, "combine": "CQC",
                      "damping": 0.05}],
         "checks": [
-            _b("RSX-FX", "Base shear", "RSX", "FX", math.sqrt(V2), "SRSS of Sa M_eff,j"),
-            _j("RSX-UX", "Roof displacement", "RSX", [0.0, 0.0, 3 * _M1["h"]], "UX", math.sqrt(U2),
-               "SRSS of Gamma_j phi_roof,j Sa / omega_j^2"),
-            _f("RSX-V3", "Top-story column shear", "RSX", "C1S3", "i", "V2", math.sqrt(V2top) / 4,
-               "SRSS of the roof inertia force, a quarter per column"),
+            _b("RSX-FX", "Base shear", "RSX", "FX", _cqc(V, w), "CQC of Sa M_eff,j"),
+            _j("RSX-UX", "Roof displacement", "RSX", [0.0, 0.0, 3 * _M1["h"]], "UX", _cqc(U, w),
+               "CQC of Gamma_j phi_roof,j Sa / omega_j^2"),
+            _f("RSX-V3", "Top-story column shear", "RSX", "C1S3", "i", "V2", _cqc(Vtop, w) / 4,
+               "CQC of the roof inertia force, a quarter per column"),
         ],
     }, **_m1_model())
 

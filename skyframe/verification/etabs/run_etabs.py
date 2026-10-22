@@ -60,8 +60,29 @@ def ok(ret, what: str) -> None:
         raise Stop(f"ETABS refused: {what} (return code {code})")
 
 
+HEAD_API = ("https://api.github.com/repos/Abhimanyu14Singh/Abhi-Singh/commits/"
+            "claude/etabs-opensees-ui-rebuild-kt2zwh")
+RAW_AT = "https://raw.githubusercontent.com/Abhimanyu14Singh/Abhi-Singh/{}/skyframe/verification/etabs/"
+_SHA: list = []
+
+
+def _head() -> str:
+    """The branch's latest commit.  Files are fetched at that commit: the branch URL is served from a
+    cache for several minutes after a push, and a run right after one would get yesterday's files."""
+    if not _SHA:
+        try:
+            req = urllib.request.Request(HEAD_API, headers={"Accept": "application/vnd.github.sha"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                sha = r.read().decode().strip()
+            _SHA.append(sha if len(sha) == 40 else "")
+        except Exception:
+            _SHA.append("")
+    return _SHA[0]
+
+
 def fetch(name: str) -> bytes:
-    with urllib.request.urlopen(RAW + name, timeout=30) as r:
+    sha = _head()
+    with urllib.request.urlopen((RAW_AT.format(sha) if sha else RAW) + name, timeout=30) as r:
         return r.read()
 
 
@@ -101,21 +122,31 @@ def build(sm, case: dict) -> dict:
             say(f"  section {s['name']} modifiers (read back): {list(back[0])}")
         say(f"  section {s['name']}: A {area}, I22 {i22}, I33 {i33}, J {tors}, As2 {as2}, As3 {as3} (read back)")
 
-    names = {}
+    names, flipped = {}, set()
     for f in case["frames"]:
         (xi, yi, zi), (xj, yj, zj) = f["i"], f["j"]
         r = sm.FrameObj.AddByCoord(xi, yi, zi, xj, yj, zj, "", f["section"], f["id"], "Global")
         ok(r, f"frame {f['id']}")
         names[f["id"]] = r[0]
+        # ETABS draws horizontal members towards +X / +Y: everything given per end (releases, rigid
+        # zones, partial-length loads) goes on the end ETABS calls i or j, not the definition's
+        if drawn_reversed(sm, r[0], f):
+            flipped.add(f["id"])
+        swap = f["id"] in flipped
         # ETABS adds end length offsets from connectivity by default: with rigid-zone factor 0 the
         # stiffness is unchanged, but forces are reported at the joint FACES (a column below a
         # 1.5 ft beam stops at 10.5 ft). Offsets off, so stations run joint to joint as in SkyFrame.
         rz = f.get("rigid") or {}
-        ok(sm.FrameObj.SetEndLengthOffset(r[0], False, float(rz.get("i", 0.0)), float(rz.get("j", 0.0)),
-                                          float(rz.get("factor", 0.0))), f"frame {f['id']} end offsets")
+        oi, oj = float(rz.get("i", 0.0)), float(rz.get("j", 0.0))
+        if swap:
+            oi, oj = oj, oi
+        ok(sm.FrameObj.SetEndLengthOffset(r[0], False, oi, oj, float(rz.get("factor", 0.0))),
+           f"frame {f['id']} end offsets")
         if f.get("releases"):
             dofs = ("P", "V2", "V3", "T", "M2", "M3")
             ri, rj = f["releases"].get("i", {}), f["releases"].get("j", {})
+            if swap:
+                ri, rj = rj, ri
             ok(sm.FrameObj.SetReleases(r[0], [d in ri for d in dofs], [d in rj for d in dofs],
                                        [float(ri.get(d, 0.0)) for d in dofs], [float(rj.get(d, 0.0)) for d in dofs]),
                f"frame {f['id']} releases")
@@ -147,8 +178,11 @@ def build(sm, case: dict) -> dict:
     for s in case["supports"]:
         ok(sm.PointObj.SetRestraint(point(s["at"]), [bool(v) for v in s["restraint"]]), f"support at {s['at']}")
     for p in case["patterns"]:
-        ok(sm.LoadPatterns.Add(p["name"], PATTERN_OTHER, float(p.get("selfWeight", 0.0)), True),
-           f"load pattern {p['name']}")
+        sw = float(p.get("selfWeight", 0.0))
+        if sm.LoadPatterns.Add(p["name"], PATTERN_OTHER, sw, True) != 0:
+            # a new model already has Dead and Live (names ignore case): use it, with our self-weight
+            ok(sm.LoadPatterns.SetSelfWTMultiplier(p["name"], sw), f"load pattern {p['name']}")
+            say(f"  load pattern {p['name']} already defined, used with self-weight multiplier {sw}")
     for ld in case.get("pointLoads", []):
         ok(sm.PointObj.SetLoadForce(point(ld["at"]), ld["pattern"], [float(v) for v in ld["f"]],
                                     False, "Global", 0), f"load {ld['pattern']} at {ld['at']}")
@@ -158,14 +192,18 @@ def build(sm, case: dict) -> dict:
                                           float(ld["w"]), float(ld["w"]), "Global", True, True, 0),
            f"uniform load {ld['pattern']} on {ld['frame']}")
     for ld in case.get("frameLoads", []):
+        swap = ld["frame"] in flipped                    # distances measured from ETABS's i end
         if ld["type"] == "point":
+            a = 1.0 - float(ld["a"]) if swap else float(ld["a"])
             # MyType 1 = force; Dir 10 = gravity; relative distance; add to what is there
-            ok(sm.FrameObj.SetLoadPoint(names[ld["frame"]], ld["pattern"], 1, 10, float(ld["a"]), float(ld["P"]),
+            ok(sm.FrameObj.SetLoadPoint(names[ld["frame"]], ld["pattern"], 1, 10, a, float(ld["P"]),
                                         "Global", True, False, 0), f"point load {ld['pattern']} on {ld['frame']}")
         else:
-            ok(sm.FrameObj.SetLoadDistributed(names[ld["frame"]], ld["pattern"], 1, 10, float(ld["a"]),
-                                              float(ld["b"]), float(ld["w1"]), float(ld["w2"]), "Global", True,
-                                              False, 0), f"distributed load {ld['pattern']} on {ld['frame']}")
+            a, b, w1, w2 = float(ld["a"]), float(ld["b"]), float(ld["w1"]), float(ld["w2"])
+            if swap:
+                a, b, w1, w2 = 1.0 - b, 1.0 - a, w2, w1
+            ok(sm.FrameObj.SetLoadDistributed(names[ld["frame"]], ld["pattern"], 1, 10, a, b, w1, w2, "Global",
+                                              True, False, 0), f"distributed load {ld['pattern']} on {ld['frame']}")
     for ld in case.get("tempLoads", []):
         # MyType 1 = uniform temperature change (deg F in kip-ft-F units)
         ok(sm.FrameObj.SetLoadTemperature(names[ld["frame"]], ld["pattern"], 1, float(ld["dT"]), "", False, 0),
@@ -184,6 +222,15 @@ def build(sm, case: dict) -> dict:
         case.pop("_etabs_names", None)
     clear_unasked_restraints(sm, case)
     return names
+
+
+def drawn_reversed(sm, fname: str, f: dict) -> bool:
+    """True when ETABS put the frame's end i at the definition's j point."""
+    pts = sm.FrameObj.GetPoints(fname, "", "")
+    ok(pts, f"end points of {f['id']}")
+    c = sm.PointObj.GetCoordCartesian(pts[0], 0, 0, 0, "Global")
+    ok(c, f"coordinates of {f['id']} end i")
+    return math.dist(c[:3], f["i"]) > 1e-6
 
 
 def clear_unasked_restraints(sm, case: dict) -> None:
@@ -254,6 +301,89 @@ def set_spectrum(sm, fn: dict) -> str:
                + f" | Func.FuncRS offers: {_methods(sm.Func.FuncRS)}")
 
 
+def table_keys(sm) -> list:
+    """Every database table this model offers (needs a model open)."""
+    dt = sm.DatabaseTables
+    for call in (lambda: dt.GetAvailableTables(0, [], [], []), lambda: dt.GetAllTables(0, [], [], [], [])):
+        try:
+            t = call()
+            keys = [str(k) for k in t[1]] if isinstance(t, (list, tuple)) and len(t) > 1 else []
+            if keys:
+                return keys
+        except Exception:
+            pass
+    return []
+
+
+def find_table(sm, *words) -> str:
+    """The table key containing every word (case-insensitive), else ''."""
+    for k in table_keys(sm):
+        if all(w.lower() in k.lower() for w in words):
+            return k
+    return ""
+
+
+def edit_table_row(sm, key: str, name: str, values: dict) -> str:
+    """Change fields of the row whose first field is ``name``: ``values`` maps candidate field names
+    (lower case, any of several separated by |) to the new value.  Returns what was set."""
+    dt = sm.DatabaseTables
+    got = dt.GetTableForEditingArray(key, "", 0, [], 0, [])
+    ok(got, f"open table {key}")
+    version, fields, n, data = got[0], list(got[1]), got[2], list(got[3])
+    nf = len(fields)
+    low = [f.lower().replace(" ", "") for f in fields]
+    rows = [k for k in range(n) if str(data[k * nf]).lower() == name.lower()]
+    if not rows:
+        raise Stop(f"table {key}: no row {name!r} (fields {', '.join(fields)})")
+    done = []
+    for cands, v in values.items():
+        col = next((i for c in cands.split("|") for i, f in enumerate(low) if f == c), None)
+        if col is None:
+            col = next((i for c in cands.split("|") for i, f in enumerate(low) if c in f), None)
+        if col is None:
+            raise Stop(f"table {key}: no field like {cands!r} (fields {', '.join(fields)})")
+        for k in rows:
+            data[k * nf + col] = str(v)
+        done.append(f"{fields[col]} = {v}")
+    ok(dt.SetTableForEditingArray(key, version, fields, n, data), f"edit table {key}")
+    r = dt.ApplyEditedTables(True, 0, 0, 0, 0, "")
+    ok(r, f"apply table {key}")
+    if r[1] or r[3]:
+        raise Stop(f"table {key}: {r[1]} fatal errors, {r[3]} errors: {str(r[4])[:400]}")
+    return f"table {key}: " + ", ".join(done)
+
+
+def set_rs_comb_damping(sm, nm: str, rs: dict) -> str:
+    """Modal combination and constant damping of a spectrum case.  ETABS 23's API only reads them
+    (GetModalComb_1, GetDampConstant): where it cannot set them, the case's defaults are read back
+    and must be what the definition asks for."""
+    rsp = sm.LoadCases.ResponseSpectrum
+    comb = {"CQC": 1, "SRSS": 2}[rs["combine"]]
+    damp = float(rs["damping"])
+    out = []
+    if hasattr(rsp, "SetModalComb_1"):
+        ok(rsp.SetModalComb_1(nm, comb, 1.0, 0.0, 1, 0.0), f"{nm} modal combination")
+        out.append(f"{rs['combine']} set")
+    else:
+        got = rsp.GetModalComb_1(nm, 0, 0.0, 0.0, 0, 0.0)
+        ok(got, f"read back {nm} modal combination")
+        if int(got[0]) != comb:
+            raise Stop(f"{nm}: ETABS's API cannot set the modal combination and the case has type {got[0]}, "
+                       f"the definition asks for {rs['combine']} ({comb})")
+        out.append(f"{rs['combine']} (ETABS default, read back)")
+    if hasattr(rsp, "SetDampConstant"):
+        ok(rsp.SetDampConstant(nm, damp), f"{nm} damping")
+        out.append(f"damping {damp} set")
+    else:
+        got = rsp.GetDampConstant(nm, 0.0)
+        ok(got, f"read back {nm} damping")
+        if abs(float(got[0]) - damp) > 1e-9:
+            raise Stop(f"{nm}: ETABS's API cannot set the damping and the case has {got[0]}, "
+                       f"the definition asks for {damp}")
+        out.append(f"damping {got[0]} (ETABS default, read back)")
+    return ", ".join(out)
+
+
 def set_buckling(sm, bc: dict) -> str:
     """A linear buckling case: the API where ETABS has it, else its database table."""
     nm, pats = bc["name"], list(bc["loads"].items())
@@ -291,19 +421,35 @@ def _try(label: str, tried: list, call):
 
 
 def set_gap_link(sm, lk: dict) -> str:
-    """A two-joint gap link (compression only, axial U1 along i -> j) with stiffness k and opening."""
-    name, k, gap = f"GAP_{lk['id']}", float(lk["k"]), float(lk["open"])
+    """A two-joint link, axial U1 along i -> j only: a gap (compression only, stiffness k, opening) or a
+    Plastic (Wen) element (stiffness k, yield force, post-yield ratio, exponent)."""
+    k = float(lk["k"])
     dof = [True, False, False, False, False, False]
     fixed = [False] * 6
     nonlin = [True, False, False, False, False, False]
     ke, ce = [k, 0, 0, 0, 0, 0], [0.0] * 6
-    kk, dis = [k, 0, 0, 0, 0, 0], [gap, 0, 0, 0, 0, 0]
+    kk = [k, 0, 0, 0, 0, 0]
     tried = []
-    if not (_try("PropLink.SetGap", tried, lambda: sm.PropLink.SetGap(name, dof, fixed, nonlin, ke, ce, kk, dis,
-                                                                          0.0, 0.0, "", ""))
-            or _try("PropLink.SetGap (short)", tried, lambda: sm.PropLink.SetGap(name, dof, fixed, nonlin, ke, ce,
-                                                                                  kk, dis, 0.0, 0.0))):
-        raise Stop("gap link property refused: " + "; ".join(tried) + f" | PropLink offers: {_methods(sm.PropLink)}")
+    if lk["type"] == "wen":
+        name = f"WEN_{lk['id']}"
+        fy, ratio, ex = [float(lk["yield"])] + [0.0] * 5, [float(lk["ratio"])] + [0.0] * 5, [float(lk["exp"])] + [2.0] * 5
+        if not (_try("PropLink.SetPlasticWen", tried, lambda: sm.PropLink.SetPlasticWen(
+                    name, dof, fixed, nonlin, ke, ce, kk, fy, ratio, ex, 0.0, 0.0, "", ""))
+                or _try("PropLink.SetPlasticWen (short)", tried, lambda: sm.PropLink.SetPlasticWen(
+                    name, dof, fixed, nonlin, ke, ce, kk, fy, ratio, ex, 0.0, 0.0))):
+            raise Stop("Plastic (Wen) link property refused: " + "; ".join(tried)
+                       + f" | PropLink offers: {_methods(sm.PropLink)}")
+        what = f"Plastic (Wen) k {k}, yield {lk['yield']}, ratio {lk['ratio']}, exponent {lk['exp']}"
+    else:
+        name, gap = f"GAP_{lk['id']}", float(lk["open"])
+        dis = [gap, 0, 0, 0, 0, 0]
+        if not (_try("PropLink.SetGap", tried, lambda: sm.PropLink.SetGap(name, dof, fixed, nonlin, ke, ce, kk, dis,
+                                                                              0.0, 0.0, "", ""))
+                or _try("PropLink.SetGap (short)", tried, lambda: sm.PropLink.SetGap(name, dof, fixed, nonlin, ke,
+                                                                                      ce, kk, dis, 0.0, 0.0))):
+            raise Stop("gap link property refused: " + "; ".join(tried)
+                       + f" | PropLink offers: {_methods(sm.PropLink)}")
+        what = f"gap k {k}, opening {gap}"
     (xi, yi, zi), (xj, yj, zj) = lk["i"], lk["j"]
     r = None
     for label, call in (("LinkObj.AddByCoord", lambda: sm.LinkObj.AddByCoord(xi, yi, zi, xj, yj, zj, "", False,
@@ -320,7 +466,7 @@ def set_gap_link(sm, lk: dict) -> str:
             tried.append(f"{label}: {exc}")
     if r is None:
         raise Stop("gap link refused: " + "; ".join(tried) + f" | LinkObj offers: {_methods(sm.LinkObj)}")
-    return f"gap k {k}, opening {gap}, link {r[0]}"
+    return f"{what}, link {r[0]}"
 
 
 def set_th_function(sm, fn: dict) -> str:
@@ -342,18 +488,29 @@ def set_th_case(sm, case: dict, th: dict) -> str:
     """A linear modal time-history case: ground acceleration along X or Y, constant modal damping."""
     nm, mh = th["name"], sm.LoadCases.ModHistLinear
     steps = [("SetCase", lambda: mh.SetCase(nm)),
-             ("SetModalCase", lambda: mh.SetModalCase(nm, case["modal"]["case"])),
              ("SetLoads", lambda: mh.SetLoads(nm, 1, ["Accel"], ["U1" if th["dir"] == "X" else "U2"],
                                               [th["function"]], [float(th["scale"])], [1.0], [0.0], ["Global"],
-                                              [0.0])),
-             ("SetTimeStep", lambda: mh.SetTimeStep(nm, int(th["steps"]), float(th["dt"]))),
-             ("SetDampConstant", lambda: mh.SetDampConstant(nm, float(th["damping"])))]
+                                              [0.0]))]
     for label, call in steps:
         tried = []
         if not _try(f"ModHistLinear.{label}", tried, call):
             raise Stop("modal time-history case refused: " + "; ".join(tried)
                        + f" | ModHistLinear offers: {_methods(mh)}")
-    return f"modal linear, {th['steps']} steps of {th['dt']} s, damping {th['damping']}"
+    want = {"modalcase": case["modal"]["case"], "outsteps|numsteps|nsteps|numberofsteps": int(th["steps"]),
+            "stepsize|outstepsize|dt": float(th["dt"]), "constdamp|dampconst|constantdamping": float(th["damping"])}
+    if all(hasattr(mh, m) for m in ("SetModalCase", "SetTimeStep", "SetDampConstant")):
+        ok(mh.SetModalCase(nm, case["modal"]["case"]), f"{nm} modal case")
+        ok(mh.SetTimeStep(nm, int(th["steps"]), float(th["dt"])), f"{nm} time steps")
+        ok(mh.SetDampConstant(nm, float(th["damping"])), f"{nm} damping")
+        how = "API"
+    else:
+        # ETABS 23's API sets only the case and its loads: the rest through the load-case table
+        key = find_table(sm, "load case", "modal", "history") or find_table(sm, "load case", "time history")
+        if not key:
+            raise Stop("modal time-history case: the API cannot set its steps or damping and no load-case "
+                       f"table was found; tables offered: {', '.join(table_keys(sm))[:1500]}")
+        how = edit_table_row(sm, key, nm, want)
+    return f"modal linear, {th['steps']} steps of {th['dt']} s, damping {th['damping']} ({how})"
 
 
 def set_pushover(sm, case: dict, po: dict, point) -> str:
@@ -362,7 +519,7 @@ def set_pushover(sm, case: dict, po: dict, point) -> str:
     tried = []
     hinge_api = [n for n in dir(sm.FrameObj) if "inge" in n] if hasattr(sm, "FrameObj") else []
     done = False
-    for fid, mp in po["hinges"].items():
+    for fid, mp in (po.get("hinges") or {}).items():
         fname = names.get(fid, fid)
         for rel in (0.0, 1.0):
             ok_one = False
@@ -378,9 +535,10 @@ def set_pushover(sm, case: dict, po: dict, point) -> str:
                 except Exception as exc:
                     tried.append(f"table Frame Assignments - Hinges: {exc}")
             if not ok_one:
+                hinge_tables = [k for k in table_keys(sm) if "inge" in k]
                 raise Stop("frame hinges: no way found to assign them through the API ("
-                           + "; ".join(tried[-3:]) + f") | FrameObj hinge methods: {hinge_api}; "
-                           "see _api_probe.txt for the hinge tables and their fields")
+                           + "; ".join(tried[-3:]) + f") | FrameObj hinge methods: {hinge_api} | hinge tables: "
+                           f"{hinge_tables}; see _api_probe.txt for their fields")
             done = True
     nm, sn = po["name"], sm.LoadCases.StaticNonlinear
     pn = point(po["control"])
@@ -391,7 +549,8 @@ def set_pushover(sm, case: dict, po: dict, point) -> str:
         t2 = []
         if not _try(f"StaticNonlinear.{label}", t2, call):
             raise Stop("pushover case refused: " + "; ".join(t2) + f" | StaticNonlinear offers: {_methods(sn)}")
-    return f"hinges at both ends of {', '.join(po['hinges'])}; push to {po['target']} ft at {pn}" if done else "?"
+    where = f"hinges at both ends of {', '.join(po['hinges'])}" if done else "no frame hinges (links only)"
+    return f"{where}; push to {po['target']} ft at {pn}"
 
 
 def set_staged(sm, case: dict, sc: dict, point) -> str:
@@ -469,16 +628,19 @@ def api_probe(sm, out_root: Path) -> None:
     except Exception as exc:
         lines.append(f"[FrameObj] {exc}")
     try:
+        # tables exist only with a model open
+        ok(sm.InitializeNewModel(KIP_FT_F), "new model in kip-ft")
+        ok(sm.File.NewGridOnly(1, 12.0, 12.0, 2, 2, 20.0, 20.0), "new grid-only model")
+        sm.LoadCases.ModHistLinear.SetCase("PROBE_TH")
         dt = sm.DatabaseTables
-        t = dt.GetAvailableTables(0, [], [], [])
-        keys = list(t[1]) if isinstance(t, (list, tuple)) and len(t) > 1 else []
+        keys = table_keys(sm)
         lines.append(f"[tables] {len(keys)} available")
         for k in keys:
             lines.append(f"  {k}")
         for k in keys:
-            if any(w in k for w in ("Response Spectrum", "Time History", "Buckling", "Hinge", "Staged")):
+            if any(w.lower() in k.lower() for w in ("Response Spectrum", "History", "Buckling", "Hinge", "Staged")):
                 try:
-                    f = dt.GetAllFieldsInTable(k, 0, [], [], [], [], [], [])
+                    f = dt.GetAllFieldsInTable(k, 0, 0, [], [], [], [], [])
                     lines.append(f"[fields] {k}: " + ", ".join(str(x) for x in f[2]))
                 except Exception as exc:
                     lines.append(f"[fields] {k}: {exc}")
@@ -564,9 +726,7 @@ def build_analysis(sm, case: dict, point) -> None:
         ok(sm.LoadCases.ResponseSpectrum.SetModalCase(nm, case["modal"]["case"]), f"{nm} modal case")
         ok(sm.LoadCases.ResponseSpectrum.SetLoads(nm, 1, ["U1" if rs["dir"] == "X" else "U2"], [rs["function"]],
                                                   [float(rs["scale"])], ["Global"], [0.0]), f"{nm} loads")
-        comb = {"CQC": 1, "SRSS": 2}[rs["combine"]]
-        ok(sm.LoadCases.ResponseSpectrum.SetModalComb_1(nm, comb, 1.0, 0.0, 1, 0.0), f"{nm} modal combination")
-        ok(sm.LoadCases.ResponseSpectrum.SetDampConstant(nm, float(rs["damping"])), f"{nm} damping")
+        say(f"  spectrum case {nm}: {set_rs_comb_damping(sm, nm, rs)}")
         ok(sm.LoadCases.ResponseSpectrum.SetEccentricity(nm, 0.0), f"{nm} eccentricity")
     for pc in case.get("pdeltaCases", []):
         nm = pc["name"]
@@ -941,6 +1101,13 @@ def skyframe_speed(out_root: Path, case: dict) -> None:
                        capture_output=True, text=True)
     for line in (r.stdout + r.stderr).splitlines()[-30:]:
         say("  " + line)
+    if r.returncode:
+        # openseespy hides why its Windows module did not load: import that module directly
+        d = subprocess.run(py + ["-c", "import numpy, scipy\ntry:\n import pypardiso\nexcept Exception: pass\n"
+                                       "import openseespywin.opensees"], capture_output=True, text=True)
+        say("  OpenSeesPy after numpy/scipy/PARDISO: " + ("imports" if d.returncode == 0 else "fails:"))
+        for line in (d.stdout + d.stderr).splitlines()[-8:]:
+            say("    " + line)
 
 
 def _pillow():
@@ -1105,7 +1272,7 @@ def run_case(sm, case: dict, out_root: Path, version: str) -> dict:
     ok(sm.Analyze.RunAnalysis(), "run analysis")
     screenshot(sm, case["id"], work / f"{case['id']}.etabs.png")
     say("Reading results ...")
-    res = {"program": "ETABS", "version": version, "units": "kip-ft", "case": case["id"],
+    res = {"program": "ETABS", "version": version, "units": "kip-ft", "case": case["id"], "runner": RUNNER,
            "cases": results(sm, case, names), "reversed": reversed_frames(sm, case, names)}
     if case.get("modal"):
         res["modal"] = modal_results(sm, case)
@@ -1169,6 +1336,10 @@ def push(repo: Path, summaries: list, out_root: Path) -> None:
 
 
 _TEXT_ONLY = ("title", "purpose", "settings", "checks", "notes")
+RUNNER = 2
+# cases whose ETABS model this script built wrongly before the given runner version, so they rerun:
+# 2 = releases on members ETABS draws from the definition's j end went on the wrong end
+RERUN_BEFORE = {"L1": 2, "L1S": 2, "L2": 2}
 
 
 def needs_run(out_root: Path, cid: str) -> bool:
@@ -1184,6 +1355,13 @@ def needs_run(out_root: Path, cid: str) -> bool:
         return True
     if now.get("benchmark") and not (work / f"{cid}.skyframe-speed.json").exists():
         return True                              # the SkyFrame timing on this PC is still missing
+    if cid in RERUN_BEFORE:
+        try:
+            had = json.loads((work / f"{cid}.etabs.json").read_text(encoding="utf-8")).get("runner", 1)
+        except Exception:
+            had = 1
+        if had < RERUN_BEFORE[cid]:
+            return True
     model = lambda d: {k: v for k, v in d.items() if k not in _TEXT_ONLY}
     return model(ran) != model(now)
 

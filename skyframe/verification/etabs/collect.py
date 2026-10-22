@@ -51,6 +51,8 @@ def found() -> dict:
 
 
 _TEXT_ONLY = ("title", "purpose", "settings", "checks", "notes")
+# results made by run_etabs.py before this runner version are wrong for the case (see run_etabs.RERUN_BEFORE)
+RERUN_BEFORE = {"L1": 2, "L1S": 2, "L2": 2}
 
 
 def model_part(case: dict) -> dict:
@@ -78,11 +80,13 @@ def main() -> int:
     new = []
     for cid, (when, ref, path, d) in sorted(found().items()):
         out = DEST / f"{cid}.etabs.json"
-        if cid in C.CASES and stale(ref, path, C.get(cid)):
+        if cid in C.CASES and (stale(ref, path, C.get(cid))
+                               or d.get("runner", 1) < RERUN_BEFORE.get(cid, 0)):
             if out.exists():                     # stored from the old model: drop it until the rerun
                 out.unlink()
                 (DEST / f"{cid}.log.txt").unlink(missing_ok=True)
-                print(f"{cid}: stored ETABS results removed, the model has changed since that run")
+                print(f"{cid}: stored ETABS results removed, the model (or the runner's build of it) has changed "
+                      "since that run")
             continue
         text = json.dumps(d, indent=1)
         stem = path[: -len(".etabs.json")]

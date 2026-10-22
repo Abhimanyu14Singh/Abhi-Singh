@@ -368,17 +368,56 @@ def N7() -> dict:
         "stories": [{"name": f"Story{k + 1}", "height": h} for k in range(3)],
         "frames": [{"id": f"C{k + 1}", "i": pts[k], "j": pts[k + 1], "section": "COL", "angle": 0.0} for k in range(3)],
         "supports": [{"at": pts[0], "restraint": [1] * 6}],
-        "patterns": [{"name": "DEAD"}],
-        "pointLoads": [{"pattern": "DEAD", "at": pts[k], "f": [0, 0, -P, 0, 0, 0]} for k in (1, 2, 3)],
-        "stagedCases": [{"name": "STG", "pattern": "DEAD"}],
+        "patterns": [{"name": "G"}],
+        "pointLoads": [{"pattern": "G", "at": pts[k], "f": [0, 0, -P, 0, 0, 0]} for k in (1, 2, 3)],
+        "stagedCases": [{"name": "STG", "pattern": "G"}],
         "checks": [
             _j("STG-U1", "Staged: level 1", "STG", pts[1], "UZ", -3 * u, "-3 Ph/EA"),
             _j("STG-U2", "Staged: level 2", "STG", pts[2], "UZ", -4 * u, "-(2 + 2) Ph/EA"),
             _j("STG-U3", "Staged: level 3", "STG", pts[3], "UZ", -3 * u, "-(1 + 1 + 1) Ph/EA"),
-            _j("DEAD-U3", "All at once: level 3", "DEAD", pts[3], "UZ", -6 * u, "-(3 + 2 + 1) Ph/EA"),
+            _j("G-U3", "All at once: level 3", "G", pts[3], "UZ", -6 * u, "-(3 + 2 + 1) Ph/EA"),
             _f("STG-P1", "Staged: bottom column axial", "STG", "C1", "i", "P", -3 * P, "-3P", how="signed"),
         ],
     }
 
 
-CASES.update({"N4": N4, "N5": N5, "N6": N6, "N7": N7})
+def N8() -> dict:
+    """Pushover of a pin-jointed portal braced by one yielding (Plastic Wen) diagonal link."""
+    h, L, Fy, k = 12.0, 20.0, 50.0, 2000.0
+    from defs import _beam_section
+    col = _col_section()
+    bm = dict(_beam_section(), A=1.0)
+    tl, tr = [0.0, 0.0, h], [L, 0.0, h]
+    cos = L / math.hypot(L, h)
+    pin = {"j": {"M2": 0.0, "M3": 0.0}}
+    return {
+        "id": "N8", "title": "Pushover, yielding brace",
+        "purpose": ("A portal whose columns are pinned top and bottom, so a single diagonal brace carries all the "
+                    "sway. The brace is a Plastic (Wen) link (k = 2000 k/ft, yield 50 kips, no hardening): "
+                    "pushed to 5% drift it yields and the base shear levels off at Fy cos(theta). The ETABS "
+                    "API cannot assign frame hinges, so this is the pushover both programs can build."),
+        "units": "kip-ft",
+        "settings": dict(_COMMON, nonlinear="one Plastic (Wen) axial link, exponent 2, post-yield ratio 0; "
+                         "displacement-controlled push at the roof", supports="pinned bases"),
+        "materials": _mat(), "sections": [col, bm],
+        "stories": [{"name": "Story1", "height": h}],
+        "frames": [{"id": "C1", "i": [0.0, 0.0, 0.0], "j": tl, "section": "COL", "angle": 0.0, "releases": pin},
+                   {"id": "C2", "i": [L, 0.0, 0.0], "j": tr, "section": "COL", "angle": 0.0, "releases": pin},
+                   {"id": "B1", "i": tl, "j": tr, "section": "BM", "angle": 0.0}],
+        "supports": [{"at": [0.0, 0.0, 0.0], "restraint": [1, 1, 1, 0, 0, 0]},
+                     {"at": [L, 0.0, 0.0], "restraint": [1, 1, 1, 0, 0, 0]},
+                     {"at": tl, "restraint": [0, 1, 0, 1, 0, 1]}, {"at": tr, "restraint": [0, 1, 0, 1, 0, 1]}],
+        "links": [{"id": "BR", "i": [0.0, 0.0, 0.0], "j": tr, "type": "wen", "k": k, "yield": Fy, "ratio": 0.0,
+                   "exp": 2.0}],
+        "patterns": [{"name": "PUSH"}],
+        "pointLoads": [{"pattern": "PUSH", "at": tl, "f": [1.0, 0, 0, 0, 0, 0]}],
+        "pushover": [{"name": "PO", "pattern": "PUSH", "control": tl, "dir": "X", "target": 0.05 * h,
+                      "steps": 100}],
+        "checks": [
+            dict(_b("PO-FX", "Base shear once the brace yields", "PO", "FX", -Fy * cos, "-Fy cos(theta)"),
+                 tol=[1e-3, 5e-3]),
+        ],
+    }
+
+
+CASES.update({"N4": N4, "N5": N5, "N6": N6, "N7": N7, "N8": N8})

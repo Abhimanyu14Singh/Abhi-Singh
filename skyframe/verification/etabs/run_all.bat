@@ -7,7 +7,8 @@ set "OUT=%REPO%\skyframe\SkyFrameVerification"
 set "RAW=https://raw.githubusercontent.com/Abhimanyu14Singh/Abhi-Singh/claude/etabs-opensees-ui-rebuild-kt2zwh/skyframe/verification/etabs/run_etabs.py"
 
 cd /d "%~dp0"
-if not exist run_etabs.py curl -L -o run_etabs.py "%RAW%"
+rem the latest runner; the random query gets past GitHub's few-minute cache of the file
+curl -f -s -L -o run_etabs.new "%RAW%?t=%RANDOM%%RANDOM%" && move /y run_etabs.new run_etabs.py >nul
 python run_etabs.py --update
 python run_etabs.py --all --force --out "%OUT%"
 

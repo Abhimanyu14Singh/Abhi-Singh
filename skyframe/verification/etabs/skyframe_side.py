@@ -148,10 +148,15 @@ def build(case: dict, only=None):
     for bc in case.get("bucklingCases", []):
         m.add_buckling_case(bc["name"], bc["loads"], num_modes=bc["modes"])
     for lk in case.get("links", []):
-        if lk["type"] != "gap":
+        pi, pj = tuple(c * FT for c in lk["i"]), tuple(c * FT for c in lk["j"])
+        if lk["type"] == "gap":
+            m.add_link(pi, pj, uid=lk["id"], link_type="gap", params={"k": lk["k"] * KIP / FT, "gap": lk["open"] * FT})
+        elif lk["type"] == "wen":                # ETABS Plastic (Wen), axial
+            m.add_link(pi, pj, uid=lk["id"], link_type="plastic_wen",
+                       params={"k": lk["k"] * KIP / FT, "Fy": lk["yield"] * KIP, "ratio": lk["ratio"],
+                               "exp": lk["exp"]})
+        else:
             raise ValueError(f"link type {lk['type']!r} not mapped")
-        m.add_link(tuple(c * FT for c in lk["i"]), tuple(c * FT for c in lk["j"]), uid=lk["id"],
-                   link_type="gap", params={"k": lk["k"] * KIP / FT, "gap": lk["open"] * FT})
     fns = {f["name"]: f for f in case.get("thFunctions", [])}
     for th in case.get("thCases", []):
         if not keep(th["name"]):
@@ -173,9 +178,12 @@ def build(case: dict, only=None):
             continue
         h = max(st["height"] for st in case["stories"]) if len(case["stories"]) == 1 else \
             sum(st["height"] for st in case["stories"])
+        if po.get("hinges"):
+            hinge = dict(hinges="all_ends", My={f: v * KIPFT for f, v in po["hinges"].items()})
+        else:                                    # nonlinearity in links only: hinges that never yield
+            hinge = dict(hinges="column_base", default_My=1e12)
         m.add_pushover_case(po["name"], po["dir"], target_drift=po["target"] / h, steps=po["steps"],
-                            hinges="all_ends", My={f: v * KIPFT for f, v in po["hinges"].items()},
-                            hardening=0.0, control_point=[c * FT for c in po["control"]])
+                            hardening=0.0, control_point=[c * FT for c in po["control"]], **hinge)
     for sc in case.get("stagedCases", []):
         if keep(sc["name"]):
             m.add_staged_case(sc["name"], sc["pattern"])

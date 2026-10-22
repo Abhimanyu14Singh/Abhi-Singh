@@ -1,0 +1,14 @@
+== N5: Gap support (uplift)
+Building the model ...
+  section BM: A 0.1, I22 0.002, I33 0.03, J 0.0005, As2 0.0, As3 0.0 (read back)
+  link G1: gap k 100000.0, opening 0.0, link G1
+Running the analysis ...
+  screenshot N5.etabs.png (ETABS 3-D view only)
+Reading results ...
+check            hand        ETABS  difference
+NLD-R         7.49648      7.49648  0.000%
+NLD-UZ   -7.49648e-05 -7.49648e-05  0.000%
+NLU-UZ       0.212857     0.212857  0.000%
+NLU-R              10           10  0.000%
+NLU-FZ            -10          -10  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\N5\N5.EDB; largest difference from the hand calculation 0.000%
