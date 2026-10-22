@@ -189,13 +189,27 @@ def build(case: dict, only=None):
             m.add_staged_case(sc["name"], sc["pattern"])
     for cb in case.get("combos", []):
         m.add_combo(cb["name"], cb["cases"], "envelope" if cb["type"] == "envelope" else "add")
+    ext = _ext(case)
+    if ext is not None and hasattr(ext, "build"):
+        ext.build(case, m, keep)                 # features the stock keys above do not cover
     return m
+
+
+def _ext(case: dict):
+    """The case's SkyFrame extension module (sf_ext_<group>.py), if it names one."""
+    if not case.get("ext"):
+        return None
+    import importlib
+    return importlib.import_module(f"sf_ext_{case['ext']}")
 
 
 def run(case: dict) -> dict:
     from skyframe import __version__
     from skyframe.engine.opensees_engine import OpenSeesEngine
 
+    ext = _ext(case)
+    if ext is not None and hasattr(ext, "run"):
+        return ext.run(case)                     # the extension runs the whole case itself
     d = OpenSeesEngine(build(case)).run().to_dict()
     nodes = {t: [c / FT for c in xyz] for t, xyz in d["nodes"].items()}
     out: Dict[str, dict] = {}
@@ -251,7 +265,9 @@ def run(case: dict) -> dict:
                       "base": {"FX": sgn * po["base_shear"][-1] / KIP, "FY": 0.0, "FZ": 0.0, "MX": 0.0, "MY": 0.0,
                                "MZ": 0.0},
                       "roof": po["roof_disp"][-1] / FT}
-    res = {"program": "SkyFrame", "version": __version__, "units": "kip-ft", "cases": out}
+    res = {"program": "SkyFrame", "version": __version__, "units": "kip-ft", "cases": out, "values": {}}
+    if ext is not None and hasattr(ext, "results"):
+        ext.results(case, d, res)                # extra outputs, e.g. res["values"][key]
     if case.get("bucklingCases"):
         res["buckling"] = {n: list(b.get("factors", [])) for n, b in (d.get("buckling") or {}).items()}
     if case.get("modal"):

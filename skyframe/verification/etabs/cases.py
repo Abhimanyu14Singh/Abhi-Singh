@@ -364,6 +364,14 @@ CASES.update(cases_walls.CASES)
 CASES.update(cases_bldg.CASES)
 CASES.update(cases_nonlin.CASES)
 
+# extension groups: cases_x_<group>.py, each with CASES (and, where the stock builders do not cover
+# a feature, sf_ext_<group>.py for SkyFrame and etabs_ext_<group>.py for ETABS; a case names its
+# group in "ext")
+import importlib  # noqa: E402
+
+for _f in sorted(HERE.glob("cases_x_*.py")):
+    CASES.update(importlib.import_module(_f.stem).CASES)
+
 
 def get(cid: str) -> dict:
     return CASES[cid]()

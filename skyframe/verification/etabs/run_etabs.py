@@ -218,10 +218,33 @@ def build(sm, case: dict) -> dict:
     case["_etabs_names"] = names
     try:
         build_analysis(sm, case, point)
+        ext = load_ext(case)
+        if ext is not None and hasattr(ext, "build"):
+            ext.build(sm, case, sys.modules[__name__], point, names)   # features the stock keys do not cover
     finally:
         case.pop("_etabs_names", None)
     clear_unasked_restraints(sm, case)
     return names
+
+
+def load_ext(case: dict):
+    """The case's ETABS extension (etabs_ext_<group>.py): the copy next to this script when there is
+    one (--local work), else the latest from GitHub, saved next to this script and imported."""
+    if not case.get("ext"):
+        return None
+    import importlib
+    name = f"etabs_ext_{case['ext']}"
+    if name in sys.modules:
+        return sys.modules[name]
+    path = HERE / f"{name}.py"
+    if not _LOCAL_EXT:
+        path.write_bytes(fetch(f"{name}.py"))
+    if str(HERE) not in sys.path:
+        sys.path.insert(0, str(HERE))
+    return importlib.import_module(name)
+
+
+_LOCAL_EXT: list = []          # non-empty: use the extension files already next to this script
 
 
 def drawn_reversed(sm, fname: str, f: dict) -> bool:
@@ -845,6 +868,7 @@ def output_cases(case: dict) -> list:
     out += [(c["name"], "case") for c in case.get("thCases", [])]
     out += [(c["name"], "case") for c in case.get("pushover", [])]
     out += [(c["name"], "case") for c in case.get("stagedCases", [])]
+    out += [(c, "case") for c in case.get("extCases", [])]      # cases an extension defines
     out += [(c["name"], "combo") for c in case.get("combos", [])]
     return out
 
@@ -1255,6 +1279,14 @@ def run_case(sm, case: dict, out_root: Path, version: str) -> dict:
     work.mkdir(parents=True, exist_ok=True)
     (work / f"{case['id']}.case.json").write_text(json.dumps(case, indent=1), encoding="utf-8")
     say(f"== {case['id']}: {case['title']}")
+    ext = load_ext(case)
+    if ext is not None and hasattr(ext, "run_case"):
+        # the extension builds (or opens), runs and reads the case itself, e.g. a real project
+        res = ext.run_case(sm, case, sys.modules[__name__], work)
+        res.update({"program": "ETABS", "version": version, "units": "kip-ft", "case": case["id"], "runner": RUNNER})
+        (work / f"{case['id']}.etabs.json").write_text(json.dumps(res, indent=1), encoding="utf-8")
+        say(f"Saved the results of {case['id']}")
+        return {"id": case["id"], "ok": True, "worst": 0.0, "folder": str(work)}
     say("Building the model ...")
     names = build(sm, case)
     edb = str(work / f"{case['id']}.EDB")
@@ -1264,6 +1296,8 @@ def run_case(sm, case: dict, out_root: Path, version: str) -> dict:
     if case.get("modal"):
         run.append(case["modal"]["case"])
     run += [b["name"] for b in case.get("bucklingCases", [])]
+    if ext is not None and hasattr(ext, "analysis_cases"):
+        run += list(ext.analysis_cases(case))
     timing = benchmark(sm, case) if case.get("benchmark") else None
     ok(sm.Analyze.SetRunCaseFlag("", False, True), "switch all cases off")
     for cname in run:
@@ -1286,6 +1320,9 @@ def run_case(sm, case: dict, out_root: Path, version: str) -> dict:
             res["buckling"][bc["name"]] = list(bf[4][:bf[0]])
     if timing:
         res["timing"] = timing
+    res["values"] = {}
+    if ext is not None and hasattr(ext, "results"):
+        ext.results(sm, case, sys.modules[__name__], names, res)   # extra outputs: res["values"][key]
     if case.get("areas"):
         try:
             n_elm, n_obj = sm.AreaElm.Count(), sm.AreaObj.Count()
@@ -1387,6 +1424,7 @@ def main(argv=None) -> int:
     out_root = Path(a.out)
     if a.local:
         todo = [json.loads(Path(a.local).read_text())]
+        _LOCAL_EXT.append(True)
     else:
         ids = list(a.cases)
         if a.all:

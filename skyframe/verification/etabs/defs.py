@@ -21,6 +21,12 @@ def _f(cid, label, case, frame, station, comp, hand, formula, how="abs"):
             "station": station, "comp": comp, "hand": hand, "formula": formula, "how": how}
 
 
+def _v(cid, label, key, hand, formula, how="signed", case=None):
+    """A check on a named scalar an extension exports (res["values"][key]) in both programs."""
+    return {"id": cid, "label": label, "case": case, "quantity": "value", "key": key,
+            "hand": hand, "formula": formula, "how": how}
+
+
 def _beam_section(name="BM"):
     return {"name": name, "material": "STEEL", "A": 0.1, "I33": 0.03, "I22": 0.002, "J": 0.0005,
             "As2": 0.0, "As3": 0.0, "depth": 1.5, "width": 0.5}
