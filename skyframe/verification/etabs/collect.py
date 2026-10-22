@@ -85,8 +85,11 @@ def main() -> int:
                 print(f"{cid}: stored ETABS results removed, the model has changed since that run")
             continue
         text = json.dumps(d, indent=1)
-        if out.exists() and out.read_text() == text:
-            continue
+        if out.exists():
+            have = json.loads(out.read_text())
+            # the same run, already stored (possibly with the reversed-frame list added afterwards)
+            if {k: v for k, v in have.items() if k != "reversed"} == {k: v for k, v in d.items() if k != "reversed"}:
+                continue
         out.write_text(text, encoding="utf-8")
         stem = path[: -len(".etabs.json")]
         for ext in (".log.txt", ".etabs.png", ".skyframe-speed.json", ".skyframe-speed.log.txt"):
