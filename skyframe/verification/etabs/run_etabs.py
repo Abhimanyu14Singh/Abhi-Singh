@@ -300,8 +300,8 @@ def _edit_table(sm, key: str, rows: list) -> str:
     ok(dt.SetTableForEditingArray(key, version, fields, n, data), f"edit table {key}")
     r = dt.ApplyEditedTables(True, 0, 0, 0, 0, "")
     ok(r, f"apply table {key}")
-    if r[1] or r[3]:                                        # fatal errors, errors
-        raise Stop(f"table {key}: {r[1]} fatal errors, {r[3]} errors: {str(r[4])[:400]}")
+    if r[0] or r[1]:                                        # fatal errors, errors (then warnings, info, log)
+        raise Stop(f"table {key}: {r[0]} fatal errors, {r[1]} errors: {str(r[4])[:400]}")
     return f"database table ({', '.join(fields)})"
 
 
@@ -371,8 +371,8 @@ def edit_table_row(sm, key: str, name: str, values: dict) -> str:
     ok(dt.SetTableForEditingArray(key, version, fields, n, data), f"edit table {key}")
     r = dt.ApplyEditedTables(True, 0, 0, 0, 0, "")
     ok(r, f"apply table {key}")
-    if r[1] or r[3]:
-        raise Stop(f"table {key}: {r[1]} fatal errors, {r[3]} errors: {str(r[4])[:400]}")
+    if r[0] or r[1]:                                        # fatal errors, errors
+        raise Stop(f"table {key}: {r[0]} fatal errors, {r[1]} errors: {str(r[4])[:400]}")
     return f"table {key}: " + ", ".join(done)
 
 

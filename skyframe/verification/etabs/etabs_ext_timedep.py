@@ -78,8 +78,9 @@ def _write(sm, key: str, version, fields, n, data) -> str:
             err = f"SetTableForEditingArray returned {code}"
         else:
             r = dt.ApplyEditedTables(True, 0, 0, 0, 0, "")
-            err = "" if (r[-1] == 0 and not r[1] and not r[3]) else (
-                f"ApplyEditedTables returned {r[-1]}: {r[1]} fatal errors, {r[3]} errors, {r[2]} warnings: "
+            # out arguments: fatal errors, errors, warnings, info messages, import log
+            err = "" if (r[-1] == 0 and not r[0] and not r[1]) else (
+                f"ApplyEditedTables returned {r[-1]}: {r[0]} fatal errors, {r[1]} errors, {r[2]} warnings: "
                 f"{str(r[4])[:600]}")
     except Exception as exc:
         err = f"{type(exc).__name__}: {exc}"
