@@ -177,7 +177,11 @@ def build(sm, case: dict) -> dict:
             # slab, one-way along its ribs for a ribbed one (SetLoadUniformToFrame is refused, -100)
             ok(sm.AreaObj.SetLoadUniform(an, ld["pattern"], float(ld["q"]), 10, True, "Global", 0),
                f"area load {ld['pattern']} on {ld['area']}")
-    build_analysis(sm, case, point)
+    case["_etabs_names"] = names
+    try:
+        build_analysis(sm, case, point)
+    finally:
+        case.pop("_etabs_names", None)
     clear_unasked_restraints(sm, case)
     return names
 
@@ -201,6 +205,291 @@ def clear_unasked_restraints(sm, case: dict) -> None:
             freed += 1
     if freed:
         say(f"  freed {freed} joints ETABS had restrained without being asked")
+
+
+def _methods(obj) -> str:
+    try:
+        return ", ".join(n for n in dir(obj) if not n.startswith("_"))[:1500]
+    except Exception as exc:
+        return f"(could not list: {exc})"
+
+
+def _edit_table(sm, key: str, rows: list) -> str:
+    """Add records to an ETABS database table: ``rows`` are {field (lower case): value}; fields the
+    table has but a row does not name are left blank.  Returns what ETABS reported."""
+    dt = sm.DatabaseTables
+    got = dt.GetTableForEditingArray(key, "", 0, [], 0, [])
+    ok(got, f"open table {key}")
+    version, fields, n, data = got[0], list(got[1]), got[2], list(got[3])
+    for row in rows:
+        for f in fields:
+            fl = f.lower()
+            v = next((val for k, val in row.items() if fl == k or fl.startswith(k)), "")
+            data.append(str(v))
+    n += len(rows)
+    ok(dt.SetTableForEditingArray(key, version, fields, n, data), f"edit table {key}")
+    r = dt.ApplyEditedTables(True, 0, 0, 0, 0, "")
+    ok(r, f"apply table {key}")
+    if r[1] or r[3]:                                        # fatal errors, errors
+        raise Stop(f"table {key}: {r[1]} fatal errors, {r[3]} errors: {str(r[4])[:400]}")
+    return f"database table ({', '.join(fields)})"
+
+
+def set_spectrum(sm, fn: dict) -> str:
+    """A user response-spectrum function: the API call where ETABS has it, else its database table."""
+    T, Sa = [float(p[0]) for p in fn["points"]], [float(p[1]) for p in fn["points"]]
+    tried = []
+    try:
+        ok(sm.Func.FuncRS.SetUser(fn["name"], len(T), T, Sa, float(fn["damping"])), "spectrum")
+        return "Func.FuncRS.SetUser"
+    except Exception as exc:
+        tried.append(f"FuncRS.SetUser: {exc}")
+    try:
+        return _edit_table(sm, "Functions - Response Spectrum - User Defined",
+                           [{"name": fn["name"], "period": t, "value": a, "damp": float(fn["damping"])}
+                            for t, a in zip(T, Sa)])
+    except Exception as exc:
+        tried.append(f"table: {exc}")
+    raise Stop("response-spectrum function refused: " + "; ".join(tried)
+               + f" | Func.FuncRS offers: {_methods(sm.Func.FuncRS)}")
+
+
+def set_buckling(sm, bc: dict) -> str:
+    """A linear buckling case: the API where ETABS has it, else its database table."""
+    nm, pats = bc["name"], list(bc["loads"].items())
+    tried = []
+    try:
+        lb = sm.LoadCases.Buckling
+        ok(lb.SetCase(nm), "buckling case")
+        ok(lb.SetLoads(nm, len(pats), ["Load"] * len(pats), [p for p, _ in pats], [float(f) for _, f in pats]),
+           "buckling loads")
+        ok(lb.SetParameters(nm, int(bc["modes"]), 1e-9), "buckling modes")
+        return "LoadCases.Buckling"
+    except Exception as exc:
+        tried.append(f"LoadCases.Buckling: {exc}")
+    try:
+        return _edit_table(sm, "Load Case Definitions - Buckling",
+                           [{"name": nm, "nummodes": int(bc["modes"]), "loadtype": "Load Pattern", "loadname": p,
+                             "loadsf": float(f), "mass": "", "initial": "Zero"} for p, f in pats])
+    except Exception as exc:
+        tried.append(f"table: {exc}")
+    raise Stop("buckling case refused: " + "; ".join(tried)
+               + f" | LoadCases offers: {_methods(sm.LoadCases)} | Buckling offers: {_methods(sm.LoadCases.Buckling)}")
+
+
+def _try(label: str, tried: list, call):
+    """Run ``call``; True when it worked, else note why in ``tried``."""
+    try:
+        r = call()
+        code = r[-1] if isinstance(r, (list, tuple)) else r
+        if code == 0:
+            return True
+        tried.append(f"{label} returned {code}")
+    except Exception as exc:
+        tried.append(f"{label}: {exc}")
+    return False
+
+
+def set_gap_link(sm, lk: dict) -> str:
+    """A two-joint gap link (compression only, axial U1 along i -> j) with stiffness k and opening."""
+    name, k, gap = f"GAP_{lk['id']}", float(lk["k"]), float(lk["open"])
+    dof = [True, False, False, False, False, False]
+    fixed = [False] * 6
+    nonlin = [True, False, False, False, False, False]
+    ke, ce = [k, 0, 0, 0, 0, 0], [0.0] * 6
+    kk, dis = [k, 0, 0, 0, 0, 0], [gap, 0, 0, 0, 0, 0]
+    tried = []
+    if not (_try("PropLink.SetGap", tried, lambda: sm.PropLink.SetGap(name, dof, fixed, nonlin, ke, ce, kk, dis,
+                                                                          0.0, 0.0, "", ""))
+            or _try("PropLink.SetGap (short)", tried, lambda: sm.PropLink.SetGap(name, dof, fixed, nonlin, ke, ce,
+                                                                                  kk, dis, 0.0, 0.0))):
+        raise Stop("gap link property refused: " + "; ".join(tried) + f" | PropLink offers: {_methods(sm.PropLink)}")
+    (xi, yi, zi), (xj, yj, zj) = lk["i"], lk["j"]
+    r = None
+    for label, call in (("LinkObj.AddByCoord", lambda: sm.LinkObj.AddByCoord(xi, yi, zi, xj, yj, zj, "", False,
+                                                                            name, lk["id"], "Global")),
+                        ("LinkObj.AddByCoord (short)", lambda: sm.LinkObj.AddByCoord(xi, yi, zi, xj, yj, zj, "",
+                                                                                    False, name))):
+        try:
+            r = call()
+            if (r[-1] if isinstance(r, (list, tuple)) else r) == 0:
+                break
+            tried.append(f"{label} returned {r[-1]}")
+            r = None
+        except Exception as exc:
+            tried.append(f"{label}: {exc}")
+    if r is None:
+        raise Stop("gap link refused: " + "; ".join(tried) + f" | LinkObj offers: {_methods(sm.LinkObj)}")
+    return f"gap k {k}, opening {gap}, link {r[0]}"
+
+
+def set_th_function(sm, fn: dict) -> str:
+    """A user time-history function (time, value): the API where ETABS has it, else its database table."""
+    T, V = [float(p[0]) for p in fn["points"]], [float(p[1]) for p in fn["points"]]
+    tried = []
+    if _try("Func.FuncTH.SetUser", tried, lambda: sm.Func.FuncTH.SetUser(fn["name"], len(T), T, V)):
+        return "Func.FuncTH.SetUser"
+    try:
+        return _edit_table(sm, "Functions - Time History - User Defined",
+                           [{"name": fn["name"], "time": t, "value": v} for t, v in zip(T, V)])
+    except Exception as exc:
+        tried.append(f"table: {exc}")
+    raise Stop("time-history function refused: " + "; ".join(tried)
+               + f" | Func.FuncTH offers: {_methods(getattr(sm.Func, 'FuncTH', None))}")
+
+
+def set_th_case(sm, case: dict, th: dict) -> str:
+    """A linear modal time-history case: ground acceleration along X or Y, constant modal damping."""
+    nm, mh = th["name"], sm.LoadCases.ModHistLinear
+    steps = [("SetCase", lambda: mh.SetCase(nm)),
+             ("SetModalCase", lambda: mh.SetModalCase(nm, case["modal"]["case"])),
+             ("SetLoads", lambda: mh.SetLoads(nm, 1, ["Accel"], ["U1" if th["dir"] == "X" else "U2"],
+                                              [th["function"]], [float(th["scale"])], [1.0], [0.0], ["Global"],
+                                              [0.0])),
+             ("SetTimeStep", lambda: mh.SetTimeStep(nm, int(th["steps"]), float(th["dt"]))),
+             ("SetDampConstant", lambda: mh.SetDampConstant(nm, float(th["damping"])))]
+    for label, call in steps:
+        tried = []
+        if not _try(f"ModHistLinear.{label}", tried, call):
+            raise Stop("modal time-history case refused: " + "; ".join(tried)
+                       + f" | ModHistLinear offers: {_methods(mh)}")
+    return f"modal linear, {th['steps']} steps of {th['dt']} s, damping {th['damping']}"
+
+
+def set_pushover(sm, case: dict, po: dict, point) -> str:
+    """Rigid-plastic M3 hinges at both ends of the listed frames, then a displacement-controlled push."""
+    names = case.get("_etabs_names", {})
+    tried = []
+    hinge_api = [n for n in dir(sm.FrameObj) if "inge" in n] if hasattr(sm, "FrameObj") else []
+    done = False
+    for fid, mp in po["hinges"].items():
+        fname = names.get(fid, fid)
+        for rel in (0.0, 1.0):
+            ok_one = False
+            if hasattr(sm.FrameObj, "SetHingeAssigns"):
+                ok_one = _try("FrameObj.SetHingeAssigns", tried, lambda: sm.FrameObj.SetHingeAssigns(
+                    fname, 1, [f"EPP_M3_{int(mp)}"], [rel], 0))
+            if not ok_one:
+                try:
+                    _edit_table(sm, "Frame Assignments - Hinges",
+                                [{"uniquename": fname, "label": fid, "hinge": f"Auto M3", "reldist": rel,
+                                  "autohingetype": "From Tables In ASCE 41-17", "dof": "M3"}])
+                    ok_one = True
+                except Exception as exc:
+                    tried.append(f"table Frame Assignments - Hinges: {exc}")
+            if not ok_one:
+                raise Stop("frame hinges: no way found to assign them through the API ("
+                           + "; ".join(tried[-3:]) + f") | FrameObj hinge methods: {hinge_api}; "
+                           "see _api_probe.txt for the hinge tables and their fields")
+            done = True
+    nm, sn = po["name"], sm.LoadCases.StaticNonlinear
+    pn = point(po["control"])
+    for label, call in (("SetCase", lambda: sn.SetCase(nm)),
+                        ("SetLoads", lambda: sn.SetLoads(nm, 1, ["Load"], [po["pattern"]], [1.0])),
+                        ("SetLoadApplication", lambda: sn.SetLoadApplication(nm, 2, 2, float(po["target"]), 1,
+                                                                            1 if po["dir"] == "X" else 2, pn, ""))):
+        t2 = []
+        if not _try(f"StaticNonlinear.{label}", t2, call):
+            raise Stop("pushover case refused: " + "; ".join(t2) + f" | StaticNonlinear offers: {_methods(sn)}")
+    return f"hinges at both ends of {', '.join(po['hinges'])}; push to {po['target']} ft at {pn}" if done else "?"
+
+
+def set_staged(sm, case: dict, sc: dict, point) -> str:
+    """Staged construction, one stage per story: add the story's columns and top joint, load what is new."""
+    names = case.get("_etabs_names", {})
+    tops = []
+    z = 0.0
+    for st in case["stories"]:
+        z += st["height"]
+        tops.append(z)
+    groups = []
+    for k, ztop in enumerate(tops):
+        g = f"STAGE{k + 1}"
+        t = []
+        if not _try("GroupDef.SetGroup", t, lambda: sm.GroupDef.SetGroup(g)):
+            raise Stop("group refused: " + "; ".join(t))
+        zbot = 0.0 if k == 0 else tops[k - 1]
+        for f in case["frames"]:
+            if abs(max(f["i"][2], f["j"][2]) - ztop) < 1e-6 and min(f["i"][2], f["j"][2]) >= zbot - 1e-6:
+                ok(sm.FrameObj.SetGroupAssign(names[f["id"]], g, False, 0), f"group {g}: {f['id']}")
+                for p in (f["i"], f["j"]):
+                    if abs(p[2] - ztop) < 1e-6 or (k == 0 and abs(p[2]) < 1e-6):
+                        ok(sm.PointObj.SetGroupAssign(point(p), g, False, 0), f"group {g}: point {p}")
+        groups.append(g)
+    nm, ss = sc["name"], sm.LoadCases.StaticNonlinearStaged
+    n = len(groups)
+    t = []
+    if not _try("StaticNonlinearStaged.SetCase", t, lambda: ss.SetCase(nm)):
+        raise Stop("staged case refused: " + "; ".join(t) + f" | offers: {_methods(ss)}")
+    if not (_try("SetStageDefinitions_2", t, lambda: ss.SetStageDefinitions_2(nm, n, [0.0] * n, [True] * n,
+                                                                              [""] * n, [""] * n))
+            or _try("SetStageDefinitions_1", t, lambda: ss.SetStageDefinitions_1(nm, n, [0.0] * n, [True] * n,
+                                                                                [""] * n, [""] * n))
+            or _try("SetStageDefinitions", t, lambda: ss.SetStageDefinitions(nm, n, [0.0] * n, [True] * n,
+                                                                            [""] * n))):
+        raise Stop("staged definitions refused: " + "; ".join(t) + f" | offers: {_methods(ss)}")
+    for k, g in enumerate(groups, start=1):
+        # operation 1 = add structure, 3 = load objects if new (pattern, factor)
+        args = (nm, k, 2, [1, 3], ["Group", "Group"], [g, g], [0.0, 0.0], ["", "Load"], ["", sc["pattern"]],
+                [0.0, 1.0])
+        if not (_try("SetStageData_2", t, lambda: ss.SetStageData_2(*args))
+                or _try("SetStageData_1", t, lambda: ss.SetStageData_1(*args))
+                or _try("SetStageData", t, lambda: ss.SetStageData(*args))):
+            raise Stop(f"stage {k} refused: " + "; ".join(t[-3:]) + f" | offers: {_methods(ss)}")
+    return f"{n} stages: add each story's group, then load what is new"
+
+
+def api_probe(sm, out_root: Path) -> None:
+    """Write what this ETABS's API offers (objects, methods, database tables and fields) to _api_probe.txt.
+    Never stops the run."""
+    lines = []
+
+    def put(label, obj):
+        try:
+            lines.append(f"[{label}] " + ", ".join(n for n in dir(obj) if not n.startswith("_")))
+        except Exception as exc:
+            lines.append(f"[{label}] not available: {exc}")
+
+    def get(path):
+        obj = sm
+        for part in path.split("."):
+            obj = getattr(obj, part)
+        return obj
+
+    for path in ("Func", "Func.FuncRS", "Func.FuncTH", "LoadCases", "LoadCases.ModalEigen",
+                 "LoadCases.ResponseSpectrum", "LoadCases.StaticNonlinear", "LoadCases.StaticNonlinearStaged",
+                 "LoadCases.DirHistLinear", "LoadCases.DirHistNonlinear", "LoadCases.ModHistLinear",
+                 "LoadCases.Buckling", "PropLink", "LinkObj", "SourceMass", "PropHinge", "GroupDef"):
+        try:
+            put(path, get(path))
+        except Exception as exc:
+            lines.append(f"[{path}] not available: {exc}")
+    try:
+        lines.append("[FrameObj hinge methods] " + ", ".join(n for n in dir(sm.FrameObj) if "inge" in n))
+    except Exception as exc:
+        lines.append(f"[FrameObj] {exc}")
+    try:
+        dt = sm.DatabaseTables
+        t = dt.GetAvailableTables(0, [], [], [])
+        keys = list(t[1]) if isinstance(t, (list, tuple)) and len(t) > 1 else []
+        lines.append(f"[tables] {len(keys)} available")
+        for k in keys:
+            lines.append(f"  {k}")
+        for k in keys:
+            if any(w in k for w in ("Response Spectrum", "Time History", "Buckling", "Hinge", "Staged")):
+                try:
+                    f = dt.GetAllFieldsInTable(k, 0, [], [], [], [], [], [])
+                    lines.append(f"[fields] {k}: " + ", ".join(str(x) for x in f[2]))
+                except Exception as exc:
+                    lines.append(f"[fields] {k}: {exc}")
+    except Exception as exc:
+        lines.append(f"[tables] not available: {exc}")
+    try:
+        out_root.mkdir(parents=True, exist_ok=True)
+        (out_root / "_api_probe.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        say(f"API probe written: {out_root / '_api_probe.txt'}")
+    except Exception as exc:
+        say(f"API probe not written: {exc}")
 
 
 def set_mass_source(sm, elements: bool, masses: bool, pats: list) -> str:
@@ -268,8 +557,7 @@ def build_analysis(sm, case: dict, point) -> None:
         ok(sm.LoadCases.ModalEigen.SetCase(mc["case"]), f"modal case {mc['case']}")
         ok(sm.LoadCases.ModalEigen.SetNumberModes(mc["case"], int(mc["modes"]), 1), f"{mc['case']} modes")
     for fn in case.get("spectra", []):
-        T, Sa = [p[0] for p in fn["points"]], [p[1] for p in fn["points"]]
-        ok(sm.Func.FuncRS.SetUser(fn["name"], len(T), T, Sa, float(fn["damping"])), f"spectrum {fn['name']}")
+        say(f"  spectrum {fn['name']}: {set_spectrum(sm, fn)}")
     for rs in case.get("rsCases", []):
         nm = rs["name"]
         ok(sm.LoadCases.ResponseSpectrum.SetCase(nm), f"response spectrum case {nm}")
@@ -296,12 +584,17 @@ def build_analysis(sm, case: dict, point) -> None:
         ok(sm.LoadCases.StaticNonlinear.SetLoads(nm, len(pats), ["Load"] * len(pats), [p for p, _ in pats],
                                                  [float(f) for _, f in pats]), f"{nm} loads")
     for bc in case.get("bucklingCases", []):
-        nm = bc["name"]
-        ok(sm.LoadCases.Buckling.SetCase(nm), f"buckling case {nm}")
-        pats = list(bc["loads"].items())
-        ok(sm.LoadCases.Buckling.SetLoads(nm, len(pats), ["Load"] * len(pats), [p for p, _ in pats],
-                                          [float(f) for _, f in pats]), f"{nm} loads")
-        ok(sm.LoadCases.Buckling.SetParameters(nm, int(bc["modes"]), 1e-9), f"{nm} modes")
+        say(f"  buckling case {bc['name']}: {set_buckling(sm, bc)}")
+    for lk in case.get("links", []):
+        say(f"  link {lk['id']}: {set_gap_link(sm, lk)}")
+    for fn in case.get("thFunctions", []):
+        say(f"  time-history function {fn['name']}: {set_th_function(sm, fn)}")
+    for th in case.get("thCases", []):
+        say(f"  time-history case {th['name']}: {set_th_case(sm, case, th)}")
+    for po in case.get("pushover", []):
+        say(f"  pushover {po['name']}: {set_pushover(sm, case, po, point)}")
+    for sc in case.get("stagedCases", []):
+        say(f"  staged case {sc['name']}: {set_staged(sm, case, sc, point)}")
     for cb in case.get("combos", []):
         ok(sm.RespCombo.Add(cb["name"], 1 if cb["type"] == "envelope" else 0), f"combination {cb['name']}")
         for cn, f in cb["cases"].items():
@@ -389,6 +682,9 @@ def output_cases(case: dict) -> list:
     out += [(c["name"], "case") for c in case.get("pdeltaCases", [])]
     out += [(c["name"], "case") for c in case.get("nlCases", [])]
     out += [(c["name"], "case") for c in case.get("rsCases", [])]
+    out += [(c["name"], "case") for c in case.get("thCases", [])]
+    out += [(c["name"], "case") for c in case.get("pushover", [])]
+    out += [(c["name"], "case") for c in case.get("stagedCases", [])]
     out += [(c["name"], "combo") for c in case.get("combos", [])]
     return out
 
@@ -411,6 +707,11 @@ def results(sm, case: dict, names: dict) -> dict:
         ok(c, f"coordinates of point {pn}")
         coords[pn] = [c[0], c[1], c[2]]
     ok(sm.Results.Setup.SetOptionNLStatic(3), "nonlinear static results: last step")
+    for opt, val in (("SetOptionModalHist", 1), ("SetOptionDirectHist", 1), ("SetOptionMultiStepStatic", 3)):
+        try:                                     # time-history envelopes; staged construction: last stage
+            getattr(sm.Results.Setup, opt)(val)
+        except Exception:
+            pass
     for cname, kind in output_cases(case):
         ok(sm.Results.Setup.DeselectAllCasesAndCombosForOutput(), "deselect output")
         if kind == "combo":
@@ -613,25 +914,32 @@ def skyframe_speed(out_root: Path, case: dict) -> None:
         return
     zipfile.ZipFile(z).extractall(src)
     py = None
-    for cand in (["py", "-3.11"], ["py", "-3.12"], ["py", "-3.13"], [sys.executable]):
+    for cand in (["py", "-3.11"], ["py", "-3.12"], ["py", "-3.10"], ["py", "-3.13"], [sys.executable]):
         try:
-            if subprocess.run(cand + ["-c", "import sys; print(sys.version)"], capture_output=True).returncode == 0:
-                py = cand
-                break
+            if subprocess.run(cand + ["-c", "import sys"], capture_output=True).returncode != 0:
+                continue
         except OSError:
             continue
+        say(f"SkyFrame speed run: installing OpenSeesPy and PARDISO for {' '.join(cand)} ...")
+        subprocess.run(cand + ["-m", "pip", "install", "--user", "--quiet", "--upgrade", "openseespy",
+                               "openseespywin", "numpy", "scipy", "pypardiso", "flask"], check=False)
+        t = subprocess.run(cand + ["-c", "import openseespy.opensees as o; o.wipe(); print('ok')"],
+                           capture_output=True, text=True)
+        if t.returncode == 0:
+            py = cand
+            break
+        say(f"  OpenSeesPy does not import under {' '.join(cand)}:")
+        for line in (t.stdout + t.stderr).splitlines()[-8:]:
+            say("    " + line)
     if py is None:
-        say("SkyFrame speed run skipped: no Python found")
+        say("SkyFrame speed run skipped: OpenSeesPy imports under none of the Pythons found")
         return
-    say(f"SkyFrame speed run: installing OpenSeesPy and PARDISO for {' '.join(py)} ...")
-    subprocess.run(py + ["-m", "pip", "install", "--user", "--quiet", "openseespy", "numpy", "scipy", "pypardiso",
-                         "flask"], check=False)
     work = out_root / case["id"]
     r = subprocess.run(py + [str(src / "skyframe" / "verification" / "etabs" / "speed_skyframe.py"),
                              "--case", str(work / f"{case['id']}.case.json"),
                              "--out", str(work / f"{case['id']}.skyframe-speed.json")],
                        capture_output=True, text=True)
-    for line in (r.stdout + r.stderr).splitlines()[-12:]:
+    for line in (r.stdout + r.stderr).splitlines()[-30:]:
         say("  " + line)
 
 
@@ -900,6 +1208,10 @@ def main(argv=None) -> int:
     sm = etabs.SapModel
     version = sm.GetVersion()[0]
     say(f"ETABS {version} started")
+    try:
+        api_probe(sm, out_root)
+    except Exception as exc:
+        say(f"API probe failed: {exc}")
     summaries = []
     try:
         for case in todo:

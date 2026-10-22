@@ -1,0 +1,219 @@
+{
+ "id": "N6",
+ "title": "Pushover, plastic hinges",
+ "purpose": "A fixed-base portal pushed sideways to 5% drift. Rigid-plastic moment hinges (Mp = 200 k-ft, no hardening) at both ends of each column: the sway mechanism forms and the base shear levels off at 4 Mp / h.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "nonlinear": "M3 hinges at both column ends, elastic-perfectly-plastic; displacement-controlled push at the roof",
+  "supports": "fixed bases"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  },
+  {
+   "name": "BM",
+   "material": "STEEL",
+   "A": 1.0,
+   "I33": 0.03,
+   "I22": 0.002,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.5,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C2",
+   "i": [
+    20.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "B1",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    1,
+    0,
+    1,
+    0,
+    1
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    1,
+    0,
+    1,
+    0,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "PUSH"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "PUSH",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    1.0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "pushover": [
+  {
+   "name": "PO",
+   "pattern": "PUSH",
+   "control": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "dir": "X",
+   "target": 0.6000000000000001,
+   "steps": 100,
+   "hinges": {
+    "C1": 200.0,
+    "C2": 200.0
+   }
+  }
+ ],
+ "checks": [
+  {
+   "id": "PO-FX",
+   "label": "Base shear at the mechanism",
+   "case": "PO",
+   "quantity": "base",
+   "comp": "FX",
+   "hand": -66.66666666666667,
+   "formula": "-4 Mp / h",
+   "how": "signed"
+  }
+ ]
+}

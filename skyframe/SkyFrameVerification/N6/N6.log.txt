@@ -1,0 +1,5 @@
+== N6: Pushover, plastic hinges
+Building the model ...
+  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+  section BM: A 1.0, I22 0.002, I33 0.03, J 0.0005, As2 0.0, As3 0.0 (read back)
+STOPPED on N6: frame hinges: no way found to assign them through the API (table Frame Assignments - Hinges: ETABS refused: open table Frame Assignments - Hinges (return code -96)) | FrameObj hinge methods: ['GetHingeAssigns', 'GetHingeAssigns_1', '_cFrameObj__com_GetHingeAssigns', '_cFrameObj__com_GetHingeAssigns_1']; see _api_probe.txt for the hinge tables and their fields

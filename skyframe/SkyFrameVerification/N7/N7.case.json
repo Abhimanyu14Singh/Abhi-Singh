@@ -1,0 +1,252 @@
+{
+ "id": "N7",
+ "title": "Staged construction",
+ "purpose": "A column stack built one story at a time, each story's 100 kip load applied when it is built: a floor only shortens under loads placed after it exists, so the levels move 3, 4 and 3 units of Ph/EA instead of 3, 5 and 6 for the load all at once.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "staged": "three stages, one story each: add the story, load it",
+  "supports": "fixed base"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  },
+  {
+   "name": "Story2",
+   "height": 12.0
+  },
+  {
+   "name": "Story3",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C2",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C3",
+   "i": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    36.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "DEAD"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "DEAD",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    0,
+    0,
+    -100.0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "pattern": "DEAD",
+   "at": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    0,
+    0,
+    -100.0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "pattern": "DEAD",
+   "at": [
+    0.0,
+    0.0,
+    36.0
+   ],
+   "f": [
+    0,
+    0,
+    -100.0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "stagedCases": [
+  {
+   "name": "STG",
+   "pattern": "DEAD"
+  }
+ ],
+ "checks": [
+  {
+   "id": "STG-U1",
+   "label": "Staged: level 1",
+   "case": "STG",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": -0.008620689655172414,
+   "formula": "-3 Ph/EA",
+   "how": "signed"
+  },
+  {
+   "id": "STG-U2",
+   "label": "Staged: level 2",
+   "case": "STG",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "comp": "UZ",
+   "hand": -0.011494252873563218,
+   "formula": "-(2 + 2) Ph/EA",
+   "how": "signed"
+  },
+  {
+   "id": "STG-U3",
+   "label": "Staged: level 3",
+   "case": "STG",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    36.0
+   ],
+   "comp": "UZ",
+   "hand": -0.008620689655172414,
+   "formula": "-(1 + 1 + 1) Ph/EA",
+   "how": "signed"
+  },
+  {
+   "id": "DEAD-U3",
+   "label": "All at once: level 3",
+   "case": "DEAD",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    36.0
+   ],
+   "comp": "UZ",
+   "hand": -0.017241379310344827,
+   "formula": "-(3 + 2 + 1) Ph/EA",
+   "how": "signed"
+  },
+  {
+   "id": "STG-P1",
+   "label": "Staged: bottom column axial",
+   "case": "STG",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "i",
+   "comp": "P",
+   "hand": -300.0,
+   "formula": "-3P",
+   "how": "signed"
+  }
+ ]
+}

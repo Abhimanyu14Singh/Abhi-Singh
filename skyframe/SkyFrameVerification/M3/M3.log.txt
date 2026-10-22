@@ -6,29 +6,30 @@ Building the model ...
   diaphragm D2: 4 joints (read back)
   diaphragm D3: 4 joints (read back)
   mass source (PropMaterial.SetMassSource_1): elements False, joint masses True, patterns {}
-STOPPED on M3: AttributeError: SetUser
+  spectrum FLAT: database table (Name, Period, Value, DampRatio, GUID)
+STOPPED on M3: AttributeError: SetModalComb_1
 Traceback (most recent call last):
   File "C:\Users\abhimanyu.singh\AppData\Roaming\Python\Python314\site-packages\comtypes\_post_coinit\_cominterface_meta_patcher.py", line 16, in __getattr__
     fixed_name = self.__map_case__[name.lower()]
                  ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
-KeyError: 'setuser'
+KeyError: 'setmodalcomb_1'
 
 During handling of the above exception, another exception occurred:
 
 Traceback (most recent call last):
-  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 908, in main
+  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 1220, in main
     summaries.append(run_case(sm, case, out_root, version))
                      ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 784, in run_case
+  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 1092, in run_case
     names = build(sm, case)
-  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 180, in build
+  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 182, in build
     build_analysis(sm, case, point)
     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
-  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 272, in build_analysis
-    ok(sm.Func.FuncRS.SetUser(fn["name"], len(T), T, Sa, float(fn["damping"])), f"spectrum {fn['name']}")
-       ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 568, in build_analysis
+    ok(sm.LoadCases.ResponseSpectrum.SetModalComb_1(nm, comb, 1.0, 0.0, 1, 0.0), f"{nm} modal combination")
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "C:\Users\abhimanyu.singh\AppData\Roaming\Python\Python314\site-packages\comtypes\_post_coinit\_cominterface_meta_patcher.py", line 18, in __getattr__
     raise AttributeError(name)  # Should we use exception-chaining?
     ^^^^^^^^^^^^^^^^^^^^^^^^^^
-AttributeError: SetUser
+AttributeError: SetModalComb_1. Did you mean: 'GetModalComb_1'?
 

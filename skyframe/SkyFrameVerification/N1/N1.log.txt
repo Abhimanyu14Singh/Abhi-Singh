@@ -1,29 +1,11 @@
 == N1: Linear buckling
 Building the model ...
   section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
-STOPPED on N1: AttributeError: SetCase
-Traceback (most recent call last):
-  File "C:\Users\abhimanyu.singh\AppData\Roaming\Python\Python314\site-packages\comtypes\_post_coinit\_cominterface_meta_patcher.py", line 16, in __getattr__
-    fixed_name = self.__map_case__[name.lower()]
-                 ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
-KeyError: 'setcase'
-
-During handling of the above exception, another exception occurred:
-
-Traceback (most recent call last):
-  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 908, in main
-    summaries.append(run_case(sm, case, out_root, version))
-                     ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 784, in run_case
-    names = build(sm, case)
-  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 180, in build
-    build_analysis(sm, case, point)
-    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
-  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 300, in build_analysis
-    ok(sm.LoadCases.Buckling.SetCase(nm), f"buckling case {nm}")
-       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\abhimanyu.singh\AppData\Roaming\Python\Python314\site-packages\comtypes\_post_coinit\_cominterface_meta_patcher.py", line 18, in __getattr__
-    raise AttributeError(name)  # Should we use exception-chaining?
-    ^^^^^^^^^^^^^^^^^^^^^^^^^^
-AttributeError: SetCase
-
+  buckling case BUCK: database table (Name, StiffType, NonlinCase, LoadType, LoadName, LoadSF, TransAccSF, RotAccSF, NumModes, EigenTol, DesignType, UserDesType, GUID, Notes)
+Running the analysis ...
+  screenshot N1.etabs.png (ETABS 3-D view only)
+Reading results ...
+check            hand        ETABS  difference
+B1            357.773      357.785  0.003%
+B2            1431.09      1431.14  0.003%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\N1\N1.EDB; largest difference from the hand calculation 0.003%
