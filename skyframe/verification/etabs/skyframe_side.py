@@ -21,14 +21,17 @@ KIPS2FT = KIP / FT              # tonne per kip-s2/ft
 G_FT = 9.80665 / FT             # ft/s2
 
 
-def build(case: dict):
+def build(case: dict, only=None):
+    """``only``: run just these analysis cases (pattern cases, the modal case, nonlinear cases) --
+    the speed benchmark times the linear and nonlinear parts separately."""
+    keep = (lambda n: True) if only is None else (lambda n: n in only)
     from skyframe.core.model import (AreaLoad, BuildingModel, FrameSection, Material, MemberLoad, NodalLoad,
                                      NodalMass, PointSupport, ShellSection, SpringSupport, ThermalLoad)
 
     m = BuildingModel(name=case["id"])
     m.frame_axis_convention = "etabs"           # ETABS default local axes (cases.py settings)
     m.rigid_diaphragms = False
-    m.num_modes = case.get("modal", {}).get("modes", 0)
+    m.num_modes = case.get("modal", {}).get("modes", 0) if keep(case.get("modal", {}).get("case")) else 0
     for mt in case["materials"]:
         # alpha is per deg F and temperatures are deg F: the product alpha dT is unit-free
         m.add_material(Material(mt["name"], E=mt["E"] * KSF, nu=mt["nu"],
@@ -48,6 +51,8 @@ def build(case: dict):
         mem = m.add_member(kind, f["section"], tuple(c * FT for c in f["i"]), tuple(c * FT for c in f["j"]),
                            uid=f["id"], angle=f.get("angle", 0.0))
         mem = mem if mem is not None else next(x for x in m.members if x.uid == f["id"])
+        if f.get("tcLimit"):
+            mem.axial_limit = f["tcLimit"]
         if f.get("cardinal", 10) != 10:
             mem.cardinal_point = int(f["cardinal"])
         if case.get("stationSpacing"):
@@ -86,7 +91,8 @@ def build(case: dict):
         m.supports.append(PointSupport(tuple(c * FT for c in s["at"]), tuple(int(r) for r in s["restraint"])))
     for p in case["patterns"]:
         m.pattern(p["name"], "other").self_weight_factor = p.get("selfWeight", 0.0)
-        m.add_case(p["name"], {p["name"]: 1.0})
+        if keep(p["name"]):
+            m.add_case(p["name"], {p["name"]: 1.0})
     for ld in case.get("pointLoads", []):
         f = ld["f"]
         m.pattern(ld["pattern"], "other").nodal_loads.append(NodalLoad(
@@ -123,6 +129,8 @@ def build(case: dict):
         src = case["massSource"]
         m.mass_options = dict(m.mass_options, self_mass=bool(src.get("elements")), patterns=bool(src.get("patterns")))
         m.mass_source = dict(src.get("patterns") or {})
+        if src.get("elements"):                  # ETABS element self-mass: mass per volume x volume
+            m.mass_source_mode = "element_self_mass"
     spectra = {f["name"]: f for f in case.get("spectra", [])}
     for rs in case.get("rsCases", []):
         fn = spectra[rs["function"]]
@@ -131,6 +139,14 @@ def build(case: dict):
                       scale=rs["scale"] / G_FT)
     for pc in case.get("pdeltaCases", []):
         m.add_case(pc["name"], pc["loads"], geometric="pdelta")
+    geo = {"none": "linear", "pdelta": "pdelta", "large": "corotational"}
+    for nc in case.get("nlCases", []):
+        # "none": SkyFrame solves any case with tension-only members by Newton iteration
+        if not keep(nc["name"]):
+            continue
+        m.add_case(nc["name"], nc["loads"], geometric=geo[nc["geometry"]])
+    for bc in case.get("bucklingCases", []):
+        m.add_buckling_case(bc["name"], bc["loads"], num_modes=bc["modes"])
     for cb in case.get("combos", []):
         m.add_combo(cb["name"], cb["cases"], "envelope" if cb["type"] == "envelope" else "add")
     return m
@@ -170,6 +186,8 @@ def run(case: dict) -> dict:
                  for pn, by_story in ((d.get("piers") or {}).get(cname) or {}).items() for st, v in by_story.items()]
         out[cname] = {"joints": joints, "base": base, "frames": frames, "drifts": drifts, "piers": piers}
     res = {"program": "SkyFrame", "version": __version__, "units": "kip-ft", "cases": out}
+    if case.get("bucklingCases"):
+        res["buckling"] = {n: list(b.get("factors", [])) for n, b in (d.get("buckling") or {}).items()}
     if case.get("modal"):
         md = d.get("modal") or {}
         res["modal"] = {"periods": list(md.get("periods", [])),

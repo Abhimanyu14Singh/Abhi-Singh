@@ -88,11 +88,11 @@ def main() -> int:
         if out.exists() and out.read_text() == text:
             continue
         out.write_text(text, encoding="utf-8")
-        log = path[: -len(".etabs.json")] + ".log.txt"
-        try:
-            (DEST / f"{cid}.log.txt").write_text(git("show", f"{ref}:{log}"), encoding="utf-8")
-        except subprocess.CalledProcessError:
-            pass
+        stem = path[: -len(".etabs.json")]
+        for ext in (".log.txt", ".etabs.png", ".skyframe-speed.json", ".skyframe-speed.log.txt"):
+            r = subprocess.run(["git", "-C", str(REPO), "show", f"{ref}:{stem}{ext}"], capture_output=True)
+            if r.returncode == 0:                # the screenshot, SkyFrame's timing on the same PC, logs
+                (DEST / f"{cid}{ext}").write_bytes(r.stdout)
         new.append(cid)
         print(f"new ETABS results for {cid}: {ref.split('/', 3)[-1]}:{path}")
     if not new:

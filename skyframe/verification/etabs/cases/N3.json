@@ -1,0 +1,408 @@
+{
+ "id": "N3",
+ "title": "Large displacements",
+ "purpose": "A lateral tip load of 2 EI / L^2 swings the tip half a length sideways and drops it 16%: far beyond small-displacement theory. The exact elastica is solved numerically; both programs use 16 elements and P-Delta plus large displacements.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "nonlinear": "P-Delta plus large displacements, nonlinear static",
+  "supports": "fixed base",
+  "axial": "area 10 ft2, practically inextensible"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "STIFF",
+   "material": "STEEL",
+   "A": 10.0,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    0.75
+   ],
+   "section": "STIFF",
+   "angle": 0.0
+  },
+  {
+   "id": "C2",
+   "i": [
+    0.0,
+    0.0,
+    0.75
+   ],
+   "j": [
+    0.0,
+    0.0,
+    1.5
+   ],
+   "section": "STIFF",
+   "angle": 0.0
+  },
+  {
+   "id": "C3",
+   "i": [
+    0.0,
+    0.0,
+    1.5
+   ],
+   "j": [
+    0.0,
+    0.0,
+    2.25
+   ],
+   "section": "STIFF",
+   "angle": 0.0
+  },
+  {
+   "id": "C4",
+   "i": [
+    0.0,
+    0.0,
+    2.25
+   ],
+   "j": [
+    0.0,
+    0.0,
+    3.0
+   ],
+   "section": "STIFF",
+   "angle": 0.0
+  },
+  {
+   "id": "C5",
+   "i": [
+    0.0,
+    0.0,
+    3.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    3.75
+   ],
+   "section": "STIFF",
+   "angle": 0.0
+  },
+  {
+   "id": "C6",
+   "i": [
+    0.0,
+    0.0,
+    3.75
+   ],
+   "j": [
+    0.0,
+    0.0,
+    4.5
+   ],
+   "section": "STIFF",
+   "angle": 0.0
+  },
+  {
+   "id": "C7",
+   "i": [
+    0.0,
+    0.0,
+    4.5
+   ],
+   "j": [
+    0.0,
+    0.0,
+    5.25
+   ],
+   "section": "STIFF",
+   "angle": 0.0
+  },
+  {
+   "id": "C8",
+   "i": [
+    0.0,
+    0.0,
+    5.25
+   ],
+   "j": [
+    0.0,
+    0.0,
+    6.0
+   ],
+   "section": "STIFF",
+   "angle": 0.0
+  },
+  {
+   "id": "C9",
+   "i": [
+    0.0,
+    0.0,
+    6.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    6.75
+   ],
+   "section": "STIFF",
+   "angle": 0.0
+  },
+  {
+   "id": "C10",
+   "i": [
+    0.0,
+    0.0,
+    6.75
+   ],
+   "j": [
+    0.0,
+    0.0,
+    7.5
+   ],
+   "section": "STIFF",
+   "angle": 0.0
+  },
+  {
+   "id": "C11",
+   "i": [
+    0.0,
+    0.0,
+    7.5
+   ],
+   "j": [
+    0.0,
+    0.0,
+    8.25
+   ],
+   "section": "STIFF",
+   "angle": 0.0
+  },
+  {
+   "id": "C12",
+   "i": [
+    0.0,
+    0.0,
+    8.25
+   ],
+   "j": [
+    0.0,
+    0.0,
+    9.0
+   ],
+   "section": "STIFF",
+   "angle": 0.0
+  },
+  {
+   "id": "C13",
+   "i": [
+    0.0,
+    0.0,
+    9.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    9.75
+   ],
+   "section": "STIFF",
+   "angle": 0.0
+  },
+  {
+   "id": "C14",
+   "i": [
+    0.0,
+    0.0,
+    9.75
+   ],
+   "j": [
+    0.0,
+    0.0,
+    10.5
+   ],
+   "section": "STIFF",
+   "angle": 0.0
+  },
+  {
+   "id": "C15",
+   "i": [
+    0.0,
+    0.0,
+    10.5
+   ],
+   "j": [
+    0.0,
+    0.0,
+    11.25
+   ],
+   "section": "STIFF",
+   "angle": 0.0
+  },
+  {
+   "id": "C16",
+   "i": [
+    0.0,
+    0.0,
+    11.25
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "STIFF",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "H"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "H",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    1160.0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "nlCases": [
+  {
+   "name": "LDH",
+   "loads": {
+    "H": 1.0
+   },
+   "geometry": "large"
+  }
+ ],
+ "checks": [
+  {
+   "id": "H-UX",
+   "label": "Small-displacement sway (linear case)",
+   "case": "H",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 8.0,
+   "formula": "PL^3 / 3EI = 0.667 L",
+   "how": "signed"
+  },
+  {
+   "id": "LDH-UX",
+   "label": "Large-displacement sway",
+   "case": "LDH",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 5.921489675424924,
+   "formula": "elastica: 0.4935 L",
+   "how": "signed",
+   "tol": [
+    0.002,
+    0.005
+   ]
+  },
+  {
+   "id": "LDH-UZ",
+   "label": "Tip drops",
+   "case": "LDH",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": -1.9277006006230888,
+   "formula": "elastica: -0.1606 L",
+   "how": "signed",
+   "tol": [
+    0.002,
+    0.005
+   ]
+  },
+  {
+   "id": "LDH-M",
+   "label": "Base moment: the lever arm is the deflected tip height",
+   "case": "LDH",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "i",
+   "comp": "M3",
+   "hand": 11683.867303277217,
+   "formula": "P z_tip",
+   "how": "abs",
+   "tol": [
+    0.002,
+    0.005
+   ]
+  }
+ ]
+}

@@ -355,12 +355,14 @@ CASES = {"F1": F1, "F2": F2, "F3": F3, "F4": F4, "F5": F5, "F6": F6, "F7": F7, "
 import cases_bldg  # noqa: E402
 import cases_dyn  # noqa: E402
 import cases_loads  # noqa: E402
+import cases_nonlin  # noqa: E402
 import cases_walls  # noqa: E402
 
 CASES.update(cases_loads.CASES)
 CASES.update(cases_dyn.CASES)
 CASES.update(cases_walls.CASES)
 CASES.update(cases_bldg.CASES)
+CASES.update(cases_nonlin.CASES)
 
 
 def get(cid: str) -> dict:
