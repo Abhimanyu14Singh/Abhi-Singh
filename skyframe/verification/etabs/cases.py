@@ -351,8 +351,9 @@ def F7() -> dict:
         "checks": [
             _j("W-UZ", "Midspan deflection", "W", mid, "UZ", -w * Lc**4 / (384 * E * I), "-w Lc^4 / 384EI, Lc = 27 ft"),
             _f("W-Mface", "Moment at the support face (1.5 ft from the joint)", "W", "B1", a, "M3", w * Lc**2 / 12, "w Lc^2 / 12"),
-            _f("W-Mjoint", "Moment at the joint", "W", "B1", "i", "M3", w * Lc**2 / 12 + w * Lc / 2 * a + w * a * a / 2,
-               "face moment + V a + w a^2 / 2"),
+            dict(_f("W-Mjoint", "Moment at the joint (inside the rigid zone)", "W", "B1", "i", "M3",
+                    w * Lc**2 / 12 + w * Lc / 2 * a + w * a * a / 2, "face moment + V a + w a^2 / 2"),
+                 etabs=False, note="ETABS reports no stations inside a rigid zone; its first station is the face"),
             _f("W-Mmid", "Midspan moment", "W", "B1", "j", "M3", w * Lc**2 / 24, "w Lc^2 / 24"),
             _b("W-FZ", "Total vertical reaction", "W", "FZ", w * L, "wL"),
         ],

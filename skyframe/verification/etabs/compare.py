@@ -69,7 +69,8 @@ def compare(case: dict, sky: dict, etabs: Optional[dict]) -> list:
     for chk in case["checks"]:
         norm = abs if chk["how"] == "abs" else (lambda v: v)
         s = pick(sky, chk)
-        e = pick(etabs, chk) if etabs else None
+        in_etabs = chk.get("etabs", True)          # False: ETABS does not report this value
+        e = pick(etabs, chk) if (etabs and in_etabs) else None
         s = None if s is None else norm(s)
         e = None if e is None else norm(e)
         h = chk["hand"]
@@ -78,8 +79,9 @@ def compare(case: dict, sky: dict, etabs: Optional[dict]) -> list:
             "id": chk["id"], "label": chk["label"], "formula": chk["formula"], "hand": h,
             "skyframe": s, "etabs": e,
             "sky_vs_hand": status(s, h, t_hand, abs(h)),
-            "etabs_vs_hand": status(e, h, t_hand, abs(h)) if etabs else "not run",
-            "sky_vs_etabs": status(s, e, t_etabs, abs(e)) if (etabs and e is not None) else "not run",
+            "etabs_vs_hand": (status(e, h, t_hand, abs(h)) if in_etabs else "not reported") if etabs else "not run",
+            "sky_vs_etabs": ((status(s, e, t_etabs, abs(e)) if e is not None else "missing") if in_etabs
+                             else "not reported") if etabs else "not run",
         })
     return rows
 

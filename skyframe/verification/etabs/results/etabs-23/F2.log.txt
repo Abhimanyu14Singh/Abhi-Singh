@@ -1,0 +1,12 @@
+== F2: Simply supported beam, uniform load
+Building the model ...
+  section BM: A 0.1, I22 0.002, I33 0.03, J 0.0005, As2 0.0, As3 0.0 (read back)
+Running the analysis ...
+Reading results ...
+check            hand        ETABS  difference
+W-UZ        -0.168373    -0.168373  0.000%
+W-RY        0.0179598    0.0179598  0.000%
+W-FZ               60           60  0.000%
+W-M3              225          225  0.000%
+W-V2               30           30  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\F2\F2.EDB; largest difference from the hand calculation 0.000%

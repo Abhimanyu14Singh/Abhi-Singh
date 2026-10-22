@@ -1,0 +1,12 @@
+== F6: Partial fixity and a torsion release
+Building the model ...
+  section BM: A 0.1, I22 0.002, I33 0.03, J 0.0005, As2 0.0, As3 0.0 (read back)
+Running the analysis ...
+Reading results ...
+check            hand        ETABS  difference
+W-MA            112.5        112.5  0.000%
+W-VB            26.25        26.25  0.000%
+W-FZ               60           60  0.000%
+TQ-T1              10           10  0.000%
+TQ-RX        0.186782     0.186782  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\F6\F6.EDB; largest difference from the hand calculation 0.000%
