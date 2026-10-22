@@ -1,0 +1,103 @@
+"""Three-way comparison: hand calculation, ETABS, SkyFrame.
+
+    python compare.py F1                     # SkyFrame run here + stored ETABS results (if any)
+
+Reads ``cases/<id>.json`` (or builds it from cases.py), runs SkyFrame,
+loads ``results/etabs-23/<id>.etabs.json`` when present, and prints one
+row per check.  Status per value, against the tolerance for its kind:
+exact (inside it), acceptable (inside twice it), fails.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import sys
+from pathlib import Path
+from typing import Optional
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[1]                     # the skyframe project (import skyframe from it)
+ETABS_DIR = HERE / "results" / "etabs-23"
+
+# relative tolerances (the doc "Acceptance tolerances"): vs hand, vs ETABS
+TOL = {"joint": (1e-3, 5e-3), "base": (1e-3, 1e-3), "frame": (1e-3, 5e-3)}
+
+
+def pick(res: dict, chk: dict) -> Optional[float]:
+    c = res["cases"].get(chk["case"])
+    if c is None:
+        return None
+    q = chk["quantity"]
+    if q == "base":
+        return c["base"][chk["comp"]]
+    if q == "joint":
+        k = ["UX", "UY", "UZ", "RX", "RY", "RZ"].index(chk["comp"])
+        best = min(c["joints"], key=lambda j: math.dist(j["xyz"], chk["at"]))
+        if math.dist(best["xyz"], chk["at"]) > 1e-3:
+            return None
+        return best["u"][k]
+    rows = c["frames"].get(chk["frame"]) or []
+    if not rows:
+        return None
+    row = min(rows, key=lambda r: r["station"]) if chk["station"] == "i" else max(rows, key=lambda r: r["station"])
+    return row[chk["comp"]]
+
+
+def status(got: Optional[float], want: float, rel: float, scale: float) -> str:
+    if got is None:
+        return "missing"
+    err = abs(got - want)
+    lim = max(rel * abs(want), rel * scale * 1e-3)
+    if err <= lim:
+        return "exact"
+    if err <= 2 * lim:
+        return "acceptable"
+    return "fails"
+
+
+def compare(case: dict, sky: dict, etabs: Optional[dict]) -> list:
+    rows = []
+    for chk in case["checks"]:
+        norm = abs if chk["how"] == "abs" else (lambda v: v)
+        s = pick(sky, chk)
+        e = pick(etabs, chk) if etabs else None
+        s = None if s is None else norm(s)
+        e = None if e is None else norm(e)
+        h = chk["hand"]
+        t_hand, t_etabs = TOL[chk["quantity"]]
+        rows.append({
+            "id": chk["id"], "label": chk["label"], "formula": chk["formula"], "hand": h,
+            "skyframe": s, "etabs": e,
+            "sky_vs_hand": status(s, h, t_hand, abs(h)),
+            "etabs_vs_hand": status(e, h, t_hand, abs(h)) if etabs else "not run",
+            "sky_vs_etabs": status(s, e, t_etabs, abs(e)) if (etabs and e is not None) else "not run",
+        })
+    return rows
+
+
+def main(argv=None) -> int:
+    sys.path.insert(0, str(HERE))
+    sys.path.insert(1, str(ROOT))
+    import cases as C
+    import skyframe_side as S
+
+    cid = (argv or sys.argv[1:] or ["F1"])[0]
+    case = C.get(cid)
+    sky = S.run(case)
+    ef = ETABS_DIR / f"{cid}.etabs.json"
+    etabs = json.loads(ef.read_text()) if ef.exists() else None
+    rows = compare(case, sky, etabs)
+    fmt = lambda v: "-" if v is None else f"{v:.6g}"
+    print(f"{cid}: {case['title']}   (ETABS results: {'found' if etabs else 'not yet'})")
+    print(f"{'check':8} {'hand':>12} {'SkyFrame':>12} {'ETABS':>12}  sky/hand    etabs/hand  sky/etabs")
+    for r in rows:
+        print(f"{r['id']:8} {fmt(r['hand']):>12} {fmt(r['skyframe']):>12} {fmt(r['etabs']):>12}  "
+              f"{r['sky_vs_hand']:11} {r['etabs_vs_hand']:11} {r['sky_vs_etabs']}")
+    bad = [r for r in rows if "fails" in (r["sky_vs_hand"], r["etabs_vs_hand"], r["sky_vs_etabs"])
+           or r["sky_vs_hand"] == "missing"]
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
