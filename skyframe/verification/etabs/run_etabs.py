@@ -479,6 +479,73 @@ def pick(res: dict, chk: dict):
     return row[chk["comp"]]
 
 
+def _pillow():
+    """PIL.ImageGrab, installing Pillow for this Python on first use; None when it cannot."""
+    try:
+        from PIL import ImageGrab
+        return ImageGrab
+    except ImportError:
+        import subprocess
+        say("Installing Pillow (for the ETABS screenshots) ...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "--user", "--quiet", "pillow"], check=False)
+        try:
+            import site
+            import importlib
+            sys.path.append(site.getusersitepackages())
+            importlib.invalidate_caches()
+            from PIL import ImageGrab
+            return ImageGrab
+        except Exception:
+            return None
+
+
+def screenshot(sm, cid: str, path: Path) -> None:
+    """Save a picture of the ETABS window (the model as ETABS shows it after the run)."""
+    try:
+        import ctypes
+        import time
+        from ctypes import wintypes as W
+        grab = _pillow()
+        if grab is None:
+            say("  no screenshot: Pillow could not be installed")
+            return
+        try:
+            sm.View.RefreshView(0, False)
+        except Exception:
+            pass
+        user32 = ctypes.windll.user32
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            user32.SetProcessDPIAware()
+        found = []
+        proc = ctypes.WINFUNCTYPE(ctypes.c_bool, W.HWND, W.LPARAM)
+
+        def each(h, _):
+            if user32.IsWindowVisible(h):
+                n = user32.GetWindowTextLengthW(h)
+                buf = ctypes.create_unicode_buffer(n + 1)
+                user32.GetWindowTextW(h, buf, n + 1)
+                if "ETABS" in buf.value:
+                    found.append((cid in buf.value, h))
+            return True
+
+        user32.EnumWindows(proc(each), 0)
+        if not found:
+            say("  no screenshot: ETABS window not found")
+            return
+        h = sorted(found, key=lambda t: not t[0])[0][1]
+        user32.ShowWindow(h, 3)                  # maximised
+        user32.SetForegroundWindow(h)
+        time.sleep(2.0)
+        r = W.RECT()
+        user32.GetWindowRect(h, ctypes.byref(r))
+        grab.grab(bbox=(r.left, r.top, r.right, r.bottom), all_screens=True).save(str(path))
+        say(f"  screenshot {path.name}")
+    except Exception as exc:                     # pictures are a bonus: never stop the run for one
+        say(f"  no screenshot: {exc}")
+
+
 def run_case(sm, case: dict, out_root: Path, version: str) -> dict:
     """Build, save, analyse and read one case; returns its summary."""
     work = out_root / case["id"]
@@ -497,6 +564,7 @@ def run_case(sm, case: dict, out_root: Path, version: str) -> dict:
         ok(sm.Analyze.SetRunCaseFlag(cname, True, False), f"switch case {cname} on")
     say("Running the analysis ...")
     ok(sm.Analyze.RunAnalysis(), "run analysis")
+    screenshot(sm, case["id"], work / f"{case['id']}.etabs.png")
     say("Reading results ...")
     res = {"program": "ETABS", "version": version, "units": "kip-ft", "case": case["id"],
            "cases": results(sm, case, names)}
