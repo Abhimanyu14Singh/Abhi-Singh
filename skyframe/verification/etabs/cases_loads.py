@@ -159,6 +159,11 @@ def L1() -> dict:
     }
 
 
+KNOWN_ONE_WAY = ("ETABS's one-way (ribbed membrane) slab sends the load within a quarter span, 2.5 ft, of each "
+                 "short beam to that beam (1.25 kip per end), so the long beams get 6.25 kip instead of 7.5; "
+                 "SkyFrame follows the textbook one-way rule")
+
+
 def L2() -> dict:
     """One-way slab: a 10 x 30 ft bay spanning 10 ft onto the two long beams."""
     E, I = STEEL_E, 0.03
@@ -184,11 +189,14 @@ def L2() -> dict:
         "areaLoads": [{"pattern": "Q", "area": "S1", "q": q}],
         "checks": [
             _b("Q-FZ", "Total vertical reaction", "Q", "FZ", q * Lx * Ly, "q Lx Ly"),
-            _f("Q-Vlong", "Long beam end shear", "Q", "BE1", "i", "V2", w * Ly / 2, "(q Lx / 2) Ly / 2"),
-            _f("Q-Mlong", "Long beam midspan moment", "Q", "BE1", "j", "M3", w * Ly**2 / 8, "(q Lx / 2) Ly^2 / 8"),
-            _j("Q-UZ", "Long beam midspan deflection", "Q", [Lx, Ly / 2, 12.0], "UZ",
-               -5 * w * Ly**4 / (384 * E * I), "-5 w Ly^4 / 384EI"),
-            dict(_f("Q-Vshort", "Short beam carries nothing", "Q", "BS1", "i", "V2", 0.0, "0"), scale=w * Ly / 2),
+            dict(_f("Q-Vlong", "Long beam end shear", "Q", "BE1", "i", "V2", w * Ly / 2, "(q Lx / 2) Ly / 2"),
+                 knownDifference=KNOWN_ONE_WAY),
+            dict(_f("Q-Mlong", "Long beam midspan moment", "Q", "BE1", "j", "M3", w * Ly**2 / 8,
+                    "(q Lx / 2) Ly^2 / 8"), knownDifference=KNOWN_ONE_WAY),
+            dict(_j("Q-UZ", "Long beam midspan deflection", "Q", [Lx, Ly / 2, 12.0], "UZ",
+                    -5 * w * Ly**4 / (384 * E * I), "-5 w Ly^4 / 384EI"), knownDifference=KNOWN_ONE_WAY),
+            dict(_f("Q-Vshort", "Short beam carries nothing", "Q", "BS1", "i", "V2", 0.0, "0"), scale=w * Ly / 2,
+                 knownDifference=KNOWN_ONE_WAY),
         ],
     }
 

@@ -58,6 +58,9 @@ def pick(res: dict, chk: dict) -> Optional[float]:
     if not rows:
         return None
     st = chk["station"]
+    if chk["frame"] in res.get("reversed", []):        # ETABS drew it from the other end
+        top = max(r["station"] for r in rows)
+        st = {"i": "j", "j": "i"}.get(st, top - st if not isinstance(st, str) else st)
     if st == "i":
         row = min(rows, key=lambda r: r["station"])
     elif st == "j":
@@ -95,6 +98,10 @@ def compare(case: dict, sky: dict, etabs: Optional[dict]) -> list:
         # scale: the size a zero (or tiny) answer is judged against, e.g. the load that would be there
         sc = chk.get("scale", abs(h) if h is not None else 0.0)
         vs_hand = (lambda v: "no hand value" if h is None else status(v, h, t_hand, max(abs(h), sc)))
+        known = chk.get("knownDifference")             # an ETABS modelling rule that differs, documented
+        if known:
+            vs_hand_raw = vs_hand
+            vs_hand = (lambda v, f=vs_hand_raw: "known difference" if v is e and f(v) == "fails" else f(v))
         rows.append({
             "id": chk["id"], "label": chk["label"], "formula": chk["formula"], "hand": h,
             "skyframe": s, "etabs": e,
@@ -103,6 +110,8 @@ def compare(case: dict, sky: dict, etabs: Optional[dict]) -> list:
             "sky_vs_etabs": ((status(s, e, t_etabs, max(abs(e), sc)) if e is not None else "missing")
                              if in_etabs else "not reported") if etabs else "not run",
         })
+        if known and rows[-1]["sky_vs_etabs"] == "fails":
+            rows[-1]["sky_vs_etabs"] = "known difference"
     return rows
 
 

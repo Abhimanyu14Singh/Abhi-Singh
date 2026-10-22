@@ -1,0 +1,16 @@
+== D1: Rigid diaphragm, eccentric load
+Building the model ...
+  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+  diaphragm D1 already defined (rigid), used as is
+  diaphragm D1: 4 joints (read back)
+Running the analysis ...
+Reading results ...
+check            hand        ETABS  difference
+PX-UX1      0.0282434    0.0282434  0.000%
+PX-UX2     0.00623939   0.00623939  0.000%
+PX-UY       -0.016503    -0.016503  0.000%
+PX-RZ      -0.0011002   -0.0011002  0.000%
+PX-V          4.09529      4.09529  0.000%
+PX-FX             -10          -10  0.000%
+PX-MZ             200          200  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\D1\D1.EDB; largest difference from the hand calculation 0.000%

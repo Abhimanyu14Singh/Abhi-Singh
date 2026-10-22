@@ -448,6 +448,28 @@ def results(sm, case: dict, names: dict) -> dict:
     return out
 
 
+def reversed_frames(sm, case: dict, names: dict) -> list:
+    """Frames ETABS drew from the definition's j end (it orients horizontal members towards +X / +Y):
+    their stations run from that end, and the comparison reads them mirrored."""
+    out = []
+    by_id = {f["id"]: f for f in case["frames"]}
+    for fid, fname in names.items():
+        try:
+            pts = sm.FrameObj.GetPoints(fname, "", "")
+            ok(pts, f"end points of {fid}")
+            c = sm.PointObj.GetCoordCartesian(pts[0], 0, 0, 0, "Global")
+            ok(c, f"coordinates of {fid} end i")
+            if math.dist(c[:3], by_id[fid]["i"]) > 1e-6:
+                out.append(fid)
+        except Stop:
+            raise
+        except Exception:
+            pass
+    if out:
+        say(f"  ETABS reversed {len(out)} frames: {', '.join(out[:12])}{' ...' if len(out) > 12 else ''}")
+    return out
+
+
 def modal_results(sm, case: dict) -> dict:
     mc = case["modal"]["case"]
     ok(sm.Results.Setup.DeselectAllCasesAndCombosForOutput(), "deselect output")
@@ -493,6 +515,9 @@ def pick(res: dict, chk: dict):
     if not rows:
         return None
     st = chk["station"]
+    if chk["frame"] in res.get("reversed", []):        # ETABS drew it from the other end
+        top = max(r["station"] for r in rows)
+        st = {"i": "j", "j": "i"}.get(st, top - st if not isinstance(st, str) else st)
     if st == "i":
         row = min(rows, key=lambda r: r["station"])
     elif st == "j":
@@ -678,7 +703,7 @@ def run_case(sm, case: dict, out_root: Path, version: str) -> dict:
     screenshot(sm, case["id"], work / f"{case['id']}.etabs.png")
     say("Reading results ...")
     res = {"program": "ETABS", "version": version, "units": "kip-ft", "case": case["id"],
-           "cases": results(sm, case, names)}
+           "cases": results(sm, case, names), "reversed": reversed_frames(sm, case, names)}
     if case.get("modal"):
         res["modal"] = modal_results(sm, case)
     if case.get("bucklingCases"):

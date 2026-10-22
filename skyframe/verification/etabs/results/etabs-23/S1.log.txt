@@ -1,0 +1,14 @@
+== S1: Point springs at a column base
+Building the model ...
+  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+  spring at [0.0, 0.0, 12.0]: [500.0, 400.00000000000006, 5000.0, 30000.0, 20000.0, 1000.0] (read back)
+Running the analysis ...
+Reading results ...
+check            hand        ETABS  difference
+PX-UX        0.160966     0.160966  0.000%
+PY-UY        0.348862     0.348862  0.000%
+PZ-UZ      -0.0114368   -0.0114368  0.000%
+TZ-RZ        0.159425     0.159425  0.000%
+PX-FX             -10          -10  0.000%
+PX-MY            -240         -240  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\S1\S1.EDB; largest difference from the hand calculation 0.000%

@@ -350,7 +350,8 @@
    "comp": "V2",
    "hand": 7.5,
    "formula": "(q Lx / 2) Ly / 2",
-   "how": "abs"
+   "how": "abs",
+   "knownDifference": "ETABS's one-way (ribbed membrane) slab sends the load within a quarter span, 2.5 ft, of each short beam to that beam (1.25 kip per end), so the long beams get 6.25 kip instead of 7.5; SkyFrame follows the textbook one-way rule"
   },
   {
    "id": "Q-Mlong",
@@ -362,7 +363,8 @@
    "comp": "M3",
    "hand": 56.25,
    "formula": "(q Lx / 2) Ly^2 / 8",
-   "how": "abs"
+   "how": "abs",
+   "knownDifference": "ETABS's one-way (ribbed membrane) slab sends the load within a quarter span, 2.5 ft, of each short beam to that beam (1.25 kip per end), so the long beams get 6.25 kip instead of 7.5; SkyFrame follows the textbook one-way rule"
   },
   {
    "id": "Q-UZ",
@@ -377,7 +379,8 @@
    "comp": "UZ",
    "hand": -0.042093211206896554,
    "formula": "-5 w Ly^4 / 384EI",
-   "how": "signed"
+   "how": "signed",
+   "knownDifference": "ETABS's one-way (ribbed membrane) slab sends the load within a quarter span, 2.5 ft, of each short beam to that beam (1.25 kip per end), so the long beams get 6.25 kip instead of 7.5; SkyFrame follows the textbook one-way rule"
   },
   {
    "id": "Q-Vshort",
@@ -390,7 +393,8 @@
    "hand": 0.0,
    "formula": "0",
    "how": "abs",
-   "scale": 7.5
+   "scale": 7.5,
+   "knownDifference": "ETABS's one-way (ribbed membrane) slab sends the load within a quarter span, 2.5 ft, of each short beam to that beam (1.25 kip per end), so the long beams get 6.25 kip instead of 7.5; SkyFrame follows the textbook one-way rule"
   }
  ]
 }
