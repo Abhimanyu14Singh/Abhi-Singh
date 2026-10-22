@@ -20,7 +20,7 @@ KIPFT = KIP * FT                # kN m
 
 
 def build(case: dict):
-    from skyframe.core.model import BuildingModel, FrameSection, Material, NodalLoad, PointSupport
+    from skyframe.core.model import BuildingModel, FrameSection, Material, MemberLoad, NodalLoad, PointSupport
 
     m = BuildingModel(name=case["id"])
     m.frame_axis_convention = "etabs"           # ETABS default local axes (cases.py settings)
@@ -50,6 +50,9 @@ def build(case: dict):
         m.pattern(ld["pattern"], "other").nodal_loads.append(NodalLoad(
             tuple(c * FT for c in ld["at"]), fx=f[0] * KIP, fy=f[1] * KIP, fz=f[2] * KIP,
             mx=f[3] * KIPFT, my=f[4] * KIPFT, mz=f[5] * KIPFT))
+    for ld in case.get("distLoads", []):
+        m.pattern(ld["pattern"], "other").member_loads.append(
+            MemberLoad(ld["frame"], "udl", ld["w"] * KIP / FT, direction="gravity"))
     return m
 
 
