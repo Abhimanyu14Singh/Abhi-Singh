@@ -87,7 +87,11 @@ def main() -> int:
         text = json.dumps(d, indent=1)
         stem = path[: -len(".etabs.json")]
         extras = 0
+        log = subprocess.run(["git", "-C", str(REPO), "show", f"{ref}:{stem}.log.txt"], capture_output=True)
+        clean_shot = b"(ETABS 3-D view only)" in log.stdout   # older runs grabbed whole screens: never kept
         for ext in (".log.txt", ".etabs.png", ".skyframe-speed.json", ".skyframe-speed.log.txt"):
+            if ext == ".etabs.png" and not clean_shot:
+                continue
             r = subprocess.run(["git", "-C", str(REPO), "show", f"{ref}:{stem}{ext}"], capture_output=True)
             if r.returncode == 0:                # the screenshot, SkyFrame's timing on the same PC, logs
                 dest = DEST / f"{cid}{ext}"
