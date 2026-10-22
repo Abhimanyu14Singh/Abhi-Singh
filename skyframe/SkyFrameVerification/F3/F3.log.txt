@@ -1,0 +1,15 @@
+== F3: Fixed-fixed beam, uniform and point load
+Building the model ...
+  section BM: A 0.1, I22 0.002, I33 0.03, J 0.0005, As2 0.0, As3 0.0 (read back)
+Running the analysis ...
+Reading results ...
+check            hand        ETABS  difference
+W-UZ       -0.0336746   -0.0336746  0.000%
+W-Mend            150          150  0.000%
+W-Mmid             75           75  0.000%
+W-FZ               60           60  0.000%
+P-UZ       -0.0224497   -0.0224497  0.000%
+P-Mend             75           75  0.000%
+P-Mmid             75           75  0.000%
+P-FZ               20           20  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\F3\F3.EDB; largest difference from the hand calculation 0.000%

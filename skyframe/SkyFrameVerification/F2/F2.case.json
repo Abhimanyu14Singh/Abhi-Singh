@@ -1,0 +1,191 @@
+{
+ "id": "F2",
+ "title": "Simply supported beam, uniform load",
+ "purpose": "Pinned supports, a distributed span load, midspan deflection, end slope, reactions.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "supports": "pin at one end, roller at the other"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "BM",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.03,
+   "I22": 0.002,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.5,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "B1",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    15.0,
+    0.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0
+  },
+  {
+   "id": "B2",
+   "i": [
+    15.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    1,
+    1,
+    1,
+    0,
+    0
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "W"
+  }
+ ],
+ "distLoads": [
+  {
+   "pattern": "W",
+   "frame": "B1",
+   "w": 2.0
+  },
+  {
+   "pattern": "W",
+   "frame": "B2",
+   "w": 2.0
+  }
+ ],
+ "checks": [
+  {
+   "id": "W-UZ",
+   "label": "Midspan deflection",
+   "case": "W",
+   "quantity": "joint",
+   "at": [
+    15.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": -0.16837284482758622,
+   "formula": "-5wL^4 / 384EI",
+   "how": "signed"
+  },
+  {
+   "id": "W-RY",
+   "label": "End slope",
+   "case": "W",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "RY",
+   "hand": 0.017959770114942528,
+   "formula": "wL^3 / 24EI",
+   "how": "signed"
+  },
+  {
+   "id": "W-FZ",
+   "label": "Total vertical reaction",
+   "case": "W",
+   "quantity": "base",
+   "comp": "FZ",
+   "hand": 60.0,
+   "formula": "wL",
+   "how": "signed"
+  },
+  {
+   "id": "W-M3",
+   "label": "Midspan moment",
+   "case": "W",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "j",
+   "comp": "M3",
+   "hand": 225.0,
+   "formula": "wL^2 / 8",
+   "how": "abs"
+  },
+  {
+   "id": "W-V2",
+   "label": "End shear",
+   "case": "W",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "i",
+   "comp": "V2",
+   "hand": 30.0,
+   "formula": "wL / 2",
+   "how": "abs"
+  }
+ ]
+}

@@ -1,0 +1,204 @@
+{
+ "id": "F8",
+ "title": "Stiffness modifiers",
+ "purpose": "Section stiffness modifiers (cracked-section style) scale deflections and leave statically determinate forces unchanged.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "modifiers": "A 0.5, I33 0.35, I22 0.7 on the section"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5,
+   "modifiers": {
+    "A": 0.5,
+    "I33": 0.35,
+    "I22": 0.7,
+    "J": 1.0
+   }
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "PX"
+  },
+  {
+   "name": "PY"
+  },
+  {
+   "name": "PZ"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "PX",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    10.0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "pattern": "PY",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    0,
+    10.0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "pattern": "PZ",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    0,
+    0,
+    -50.0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "checks": [
+  {
+   "id": "PX-UX",
+   "label": "Top along X, I33 x 0.35",
+   "case": "PX",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 0.19704433497536947,
+   "formula": "PL^3 / 3E(0.35 I33)",
+   "how": "signed"
+  },
+  {
+   "id": "PY-UY",
+   "label": "Top along Y, I22 x 0.7",
+   "case": "PY",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UY",
+   "hand": 0.39408866995073893,
+   "formula": "PL^3 / 3E(0.7 I22)",
+   "how": "signed"
+  },
+  {
+   "id": "PZ-UZ",
+   "label": "Top shortens, A x 0.5",
+   "case": "PZ",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": -0.0028735632183908046,
+   "formula": "-NL / E(0.5 A)",
+   "how": "signed"
+  },
+  {
+   "id": "PX-M3",
+   "label": "Base moment unchanged",
+   "case": "PX",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "i",
+   "comp": "M3",
+   "hand": 120.0,
+   "formula": "PL",
+   "how": "abs"
+  }
+ ]
+}

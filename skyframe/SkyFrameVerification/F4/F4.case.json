@@ -1,0 +1,264 @@
+{
+ "id": "F4",
+ "title": "Portal frame, lateral load",
+ "purpose": "Sway of a rigid-jointed frame: column and beam stiffness share the joint rotation. Areas are large (1 ft2) so axial shortening does not disturb the slope-deflection answer.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "supports": "fixed bases"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 1.0,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  },
+  {
+   "name": "BM",
+   "material": "STEEL",
+   "A": 1.0,
+   "I33": 0.03,
+   "I22": 0.002,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.5,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C2",
+   "i": [
+    20.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "B1",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "H"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "H",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    5.0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "pattern": "H",
+   "at": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    5.0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "checks": [
+  {
+   "id": "H-UX",
+   "label": "Sway at the beam",
+   "case": "H",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 0.012661637931034482,
+   "formula": "slope-deflection",
+   "how": "signed"
+  },
+  {
+   "id": "H-RY",
+   "label": "Joint rotation",
+   "case": "H",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "RY",
+   "hand": 0.0006734913793103448,
+   "formula": "slope-deflection",
+   "how": "signed"
+  },
+  {
+   "id": "H-FX",
+   "label": "Base shear",
+   "case": "H",
+   "quantity": "base",
+   "comp": "FX",
+   "hand": -10.0,
+   "formula": "-H",
+   "how": "signed"
+  },
+  {
+   "id": "H-V2",
+   "label": "Column shear",
+   "case": "H",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "i",
+   "comp": "V2",
+   "hand": 5.0,
+   "formula": "H / 2",
+   "how": "abs"
+  },
+  {
+   "id": "H-Mbase",
+   "label": "Column moment at base",
+   "case": "H",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "i",
+   "comp": "M3",
+   "hand": 34.6875,
+   "formula": "slope-deflection",
+   "how": "abs"
+  },
+  {
+   "id": "H-Mtop",
+   "label": "Column moment at top",
+   "case": "H",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "j",
+   "comp": "M3",
+   "hand": 25.3125,
+   "formula": "slope-deflection",
+   "how": "abs"
+  },
+  {
+   "id": "H-Mbeam",
+   "label": "Beam end moment",
+   "case": "H",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "i",
+   "comp": "M3",
+   "hand": 25.312499999999996,
+   "formula": "6EIb t / L",
+   "how": "abs"
+  }
+ ]
+}

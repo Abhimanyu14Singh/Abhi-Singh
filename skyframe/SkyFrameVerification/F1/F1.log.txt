@@ -1,0 +1,24 @@
+== F1: Cantilever column, tip load both ways
+Building the model ...
+  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+Running the analysis ...
+Reading results ...
+check            hand        ETABS  difference
+PX-UX       0.0689655    0.0689655  0.000%
+PX-RY      0.00862069   0.00862069  0.000%
+PX-FX             -10          -10  0.000%
+PX-MY            -120         -120  0.000%
+PX-M3             120          120  0.000%
+PX-V2              10           10  0.000%
+PY-UY        0.275862     0.275862  0.000%
+PY-FY             -10          -10  0.000%
+PY-MX             120          120  0.000%
+PY-M2             120          120  0.000%
+PY-V3              10           10  0.000%
+PZ-UZ     -0.00143678  -0.00143678  0.000%
+PZ-FZ              50           50  0.000%
+PZ-P              -50          -50  0.000%
+TZ-RZ       0.0747126    0.0747126  0.000%
+TZ-MZ              -5           -5  0.000%
+TZ-T                5            5  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\F1\F1.EDB; largest difference from the hand calculation 0.000%

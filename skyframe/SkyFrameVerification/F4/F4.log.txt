@@ -1,0 +1,15 @@
+== F4: Portal frame, lateral load
+Building the model ...
+  section COL: A 1.0, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+  section BM: A 1.0, I22 0.002, I33 0.03, J 0.0005, As2 0.0, As3 0.0 (read back)
+Running the analysis ...
+Reading results ...
+check            hand        ETABS  difference
+H-UX        0.0126616    0.0126653  0.029%
+H-RY      0.000673491  0.000674105  0.091%
+H-FX              -10          -10  0.000%
+H-V2                5            5  0.000%
+H-Mbase       34.6875      34.6918  0.012%
+H-Mtop        25.3125      25.3082  0.017%
+H-Mbeam       25.3125      25.3082  0.017%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\F4\F4.EDB; largest difference from the hand calculation 0.091%

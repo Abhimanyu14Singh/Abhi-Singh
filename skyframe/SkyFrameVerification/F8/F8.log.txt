@@ -1,0 +1,12 @@
+== F8: Stiffness modifiers
+Building the model ...
+  section COL modifiers (read back): [0.5, 1.0, 1.0, 1.0, 0.7, 0.35, 1.0, 1.0]
+  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+Running the analysis ...
+Reading results ...
+check            hand        ETABS  difference
+PX-UX        0.197044     0.197044  0.000%
+PY-UY        0.394089     0.394089  0.000%
+PZ-UZ     -0.00287356  -0.00287356  0.000%
+PX-M3             120          120  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\F8\F8.EDB; largest difference from the hand calculation 0.000%

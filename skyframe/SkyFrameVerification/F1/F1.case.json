@@ -1,0 +1,366 @@
+{
+ "id": "F1",
+ "title": "Cantilever column, tip load both ways",
+ "purpose": "Axial, bending about both local axes and torsion of one column; confirms both programs put local 2 along +X for a column at 0 degrees, so the strong axis (I33) resists load along X.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (column local 2 = +X at angle 0)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "PX"
+  },
+  {
+   "name": "PY"
+  },
+  {
+   "name": "PZ"
+  },
+  {
+   "name": "TZ"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "PX",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    10.0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "pattern": "PY",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    0,
+    10.0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "pattern": "PZ",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    0,
+    0,
+    -50.0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "pattern": "TZ",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    5.0
+   ]
+  }
+ ],
+ "checks": [
+  {
+   "id": "PX-UX",
+   "label": "Top moves along X (strong axis)",
+   "case": "PX",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 0.06896551724137931,
+   "formula": "PL^3 / 3EI33",
+   "how": "signed"
+  },
+  {
+   "id": "PX-RY",
+   "label": "Top rotates about Y",
+   "case": "PX",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "RY",
+   "hand": 0.008620689655172414,
+   "formula": "PL^2 / 2EI33",
+   "how": "signed"
+  },
+  {
+   "id": "PX-FX",
+   "label": "Base shear X",
+   "case": "PX",
+   "quantity": "base",
+   "comp": "FX",
+   "hand": -10.0,
+   "formula": "-P",
+   "how": "signed"
+  },
+  {
+   "id": "PX-MY",
+   "label": "Base moment about Y",
+   "case": "PX",
+   "quantity": "base",
+   "comp": "MY",
+   "hand": -120.0,
+   "formula": "-PL",
+   "how": "signed"
+  },
+  {
+   "id": "PX-M3",
+   "label": "Column moment at base, M3",
+   "case": "PX",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "i",
+   "comp": "M3",
+   "hand": 120.0,
+   "formula": "PL, about local 3",
+   "how": "abs"
+  },
+  {
+   "id": "PX-V2",
+   "label": "Column shear, V2",
+   "case": "PX",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "i",
+   "comp": "V2",
+   "hand": 10.0,
+   "formula": "P, along local 2",
+   "how": "abs"
+  },
+  {
+   "id": "PY-UY",
+   "label": "Top moves along Y (weak axis)",
+   "case": "PY",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UY",
+   "hand": 0.27586206896551724,
+   "formula": "PL^3 / 3EI22",
+   "how": "signed"
+  },
+  {
+   "id": "PY-FY",
+   "label": "Base shear Y",
+   "case": "PY",
+   "quantity": "base",
+   "comp": "FY",
+   "hand": -10.0,
+   "formula": "-P",
+   "how": "signed"
+  },
+  {
+   "id": "PY-MX",
+   "label": "Base moment about X",
+   "case": "PY",
+   "quantity": "base",
+   "comp": "MX",
+   "hand": 120.0,
+   "formula": "PL",
+   "how": "signed"
+  },
+  {
+   "id": "PY-M2",
+   "label": "Column moment at base, M2",
+   "case": "PY",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "i",
+   "comp": "M2",
+   "hand": 120.0,
+   "formula": "PL, about local 2",
+   "how": "abs"
+  },
+  {
+   "id": "PY-V3",
+   "label": "Column shear, V3",
+   "case": "PY",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "i",
+   "comp": "V3",
+   "hand": 10.0,
+   "formula": "P, along local 3",
+   "how": "abs"
+  },
+  {
+   "id": "PZ-UZ",
+   "label": "Top shortens",
+   "case": "PZ",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": -0.0014367816091954023,
+   "formula": "-NL / EA",
+   "how": "signed"
+  },
+  {
+   "id": "PZ-FZ",
+   "label": "Base vertical reaction",
+   "case": "PZ",
+   "quantity": "base",
+   "comp": "FZ",
+   "hand": 50.0,
+   "formula": "N",
+   "how": "signed"
+  },
+  {
+   "id": "PZ-P",
+   "label": "Column axial force (compression negative)",
+   "case": "PZ",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "i",
+   "comp": "P",
+   "hand": -50.0,
+   "formula": "-N",
+   "how": "signed"
+  },
+  {
+   "id": "TZ-RZ",
+   "label": "Top twists",
+   "case": "TZ",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "RZ",
+   "hand": 0.07471264367816093,
+   "formula": "TL / GJ",
+   "how": "signed"
+  },
+  {
+   "id": "TZ-MZ",
+   "label": "Base torque",
+   "case": "TZ",
+   "quantity": "base",
+   "comp": "MZ",
+   "hand": -5.0,
+   "formula": "-T",
+   "how": "signed"
+  },
+  {
+   "id": "TZ-T",
+   "label": "Column torsion",
+   "case": "TZ",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "i",
+   "comp": "T",
+   "hand": 5.0,
+   "formula": "T",
+   "how": "abs"
+  }
+ ]
+}
