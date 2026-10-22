@@ -276,6 +276,9 @@ def build_areas(sm, case: dict) -> dict:
             say(f"  area section {a['name']} modifiers (read back): {list(got[0])}")
         say(f"  area section {a['name']}: {a['kind']}, thickness {got_t}, shell type {got_st} (read back)")
     out = {}
+    labels = sorted({a["pier"] for a in case.get("areas", []) if a.get("pier")})
+    for p in labels:
+        ok(sm.PierLabel.SetPier(p), f"pier label {p}")
     for a in case.get("areas", []):
         n1, n2 = a.get("mesh", [1, 1])
         out[a["id"]] = []
@@ -288,8 +291,13 @@ def build_areas(sm, case: dict) -> dict:
                                           "", a["section"], label, "Global")
                 ok(r, f"area {label}")
                 out[a["id"]].append(r[3])
+                if a.get("pier"):
+                    ok(sm.AreaObj.SetPier(r[3], a["pier"]), f"area {label} pier {a['pier']}")
+                if case.get("edgeConstraints"):
+                    ok(sm.AreaObj.SetEdgeConstraint(r[3], True), f"area {label} edge constraint")
     if out:
-        say(f"  {sum(len(v) for v in out.values())} area objects")
+        say(f"  {sum(len(v) for v in out.values())} area objects" + (f"; pier labels {labels}" if labels else "")
+            + ("; edge constraints on" if case.get("edgeConstraints") else ""))
     return out
 
 

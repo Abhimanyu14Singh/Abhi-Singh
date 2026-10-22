@@ -1,0 +1,404 @@
+{
+ "id": "W4",
+ "title": "C-core under torsion",
+ "purpose": "An open C-section core is weak in torsion and warps. Base torque balances the load exactly; the twist depends on warping restraint at the fixed base and is compared between programs.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "shells": "Shell-Thin, explicit meshes no larger than 4 ft, identical in both programs",
+  "supports": "every base node fixed",
+  "diaphragm": "rigid at the roof"
+ },
+ "materials": [
+  {
+   "name": "CONC",
+   "E": 576000.0,
+   "nu": 0.2,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [],
+ "areaSections": [
+  {
+   "name": "WALL",
+   "material": "CONC",
+   "thickness": 1.0,
+   "kind": "wall",
+   "shell": "thin"
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  },
+  {
+   "name": "Story2",
+   "height": 12.0
+  }
+ ],
+ "frames": [],
+ "areas": [
+  {
+   "id": "WEB",
+   "section": "WALL",
+   "mesh": [
+    4,
+    8
+   ],
+   "corners": [
+    [
+     0,
+     0,
+     0
+    ],
+    [
+     0,
+     12,
+     0
+    ],
+    [
+     0,
+     12,
+     24.0
+    ],
+    [
+     0,
+     0,
+     24.0
+    ]
+   ]
+  },
+  {
+   "id": "FL1",
+   "section": "WALL",
+   "mesh": [
+    2,
+    8
+   ],
+   "corners": [
+    [
+     0,
+     0,
+     0
+    ],
+    [
+     6,
+     0,
+     0
+    ],
+    [
+     6,
+     0,
+     24.0
+    ],
+    [
+     0,
+     0,
+     24.0
+    ]
+   ]
+  },
+  {
+   "id": "FL2",
+   "section": "WALL",
+   "mesh": [
+    2,
+    8
+   ],
+   "corners": [
+    [
+     0,
+     12,
+     0
+    ],
+    [
+     6,
+     12,
+     0
+    ],
+    [
+     6,
+     12,
+     24.0
+    ],
+    [
+     0,
+     12,
+     24.0
+    ]
+   ]
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    3.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    6.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    9.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    12.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    3.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    3.0,
+    12.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    6.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    6.0,
+    12.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "diaphragms": [
+  {
+   "name": "ROOF",
+   "points": [
+    [
+     0.0,
+     0.0,
+     24.0
+    ],
+    [
+     0.0,
+     3.0,
+     24.0
+    ],
+    [
+     0.0,
+     6.0,
+     24.0
+    ],
+    [
+     0.0,
+     9.0,
+     24.0
+    ],
+    [
+     0.0,
+     12.0,
+     24.0
+    ],
+    [
+     3.0,
+     0.0,
+     24.0
+    ],
+    [
+     3.0,
+     12.0,
+     24.0
+    ],
+    [
+     6.0,
+     0.0,
+     24.0
+    ],
+    [
+     6.0,
+     12.0,
+     24.0
+    ]
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "T"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "T",
+   "at": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    500.0
+   ]
+  }
+ ],
+ "checks": [
+  {
+   "id": "T-RZ",
+   "label": "Roof twist",
+   "case": "T",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "comp": "RZ",
+   "hand": null,
+   "formula": "programs compared",
+   "how": "signed"
+  },
+  {
+   "id": "T-UX",
+   "label": "Flange tip moves along X",
+   "case": "T",
+   "quantity": "joint",
+   "at": [
+    6.0,
+    12.0,
+    24.0
+   ],
+   "comp": "UX",
+   "hand": null,
+   "formula": "programs compared",
+   "how": "signed"
+  },
+  {
+   "id": "T-MZ",
+   "label": "Base torque",
+   "case": "T",
+   "quantity": "base",
+   "comp": "MZ",
+   "hand": -500.0,
+   "formula": "-T",
+   "how": "signed"
+  },
+  {
+   "id": "T-FX",
+   "label": "No net base shear",
+   "case": "T",
+   "quantity": "base",
+   "comp": "FX",
+   "hand": 0.0,
+   "formula": "0",
+   "how": "signed",
+   "scale": 41.666666666666664
+  }
+ ]
+}

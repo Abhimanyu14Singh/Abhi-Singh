@@ -5758,13 +5758,41 @@ class OpenSeesEngine:
                             for i in range(len(s_vals))]
                     sbar = (sum(sv * tw for sv, tw in zip(s_vals, trib))
                             / sum(trib))
+                    width = sum(trib)
                 else:
-                    sbar = s_vals[0]
+                    sbar, width = s_vals[0], 0.0
                 cuts.append({"label": label, "story": s.name,
                              "region": region.uid, "hhat": hhat,
                              "n_inplane": n_inplane, "z_line": z_line,
-                             "z_bot": z_bot, "sbar": sbar,
-                             "elems": cut_elems})
+                             "z_bot": z_bot, "sbar": sbar, "width": width,
+                             "shift": 0.0, "elems": cut_elems})
+        # A pier is cut once per story, at its lowest level in that story:
+        # a region of the same pier stacked above another (a wall drawn as
+        # several areas up the story) passes its force down through the
+        # region below, so cutting it too would count that force twice.
+        lowest: Dict[Tuple[str, str], float] = {}
+        for c in cuts:
+            key = (c["label"], c["story"])
+            lowest[key] = min(lowest.get(key, math.inf), c["z_line"])
+        cuts = [c for c in cuts
+                if c["z_line"] <= lowest[(c["label"], c["story"])] + _TOL]
+        # Coplanar regions of one pier (a wall drawn as several areas side by
+        # side) take their moments about the WHOLE pier's centroid: each
+        # region's own moment plus its axial force times the offset of its
+        # centroid, so the couple of opposite axial forces is kept.
+        groups: Dict[Tuple[str, str], List[dict]] = {}
+        for c in cuts:
+            groups.setdefault((c["label"], c["story"]), []).append(c)
+        for grp in groups.values():
+            if len(grp) < 2 or any(float(c["hhat"] @ grp[0]["hhat"]) < 1 - 1e-9
+                                   for c in grp):
+                continue
+            w = sum(c["width"] for c in grp)
+            if w <= 0.0:
+                continue
+            s_all = sum(c["sbar"] * c["width"] for c in grp) / w
+            for c in grp:
+                c["shift"] = c["sbar"] - s_all
         return cuts
 
     @staticmethod
@@ -5800,6 +5828,7 @@ class OpenSeesEngine:
                 M += (s_n - sbar) * F[2]
                 M += float(Mv[0] * n_ip[0] + Mv[1] * n_ip[1]
                            + Mv[2] * n_ip[2])
+        M += P * cut.get("shift", 0.0)
         M += V * (cut["z_line"] - cut["z_bot"])
         return P, V, M
 

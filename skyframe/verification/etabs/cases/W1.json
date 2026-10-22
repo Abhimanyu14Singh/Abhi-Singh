@@ -1,0 +1,770 @@
+{
+ "id": "W1",
+ "title": "Cantilever wall, three meshes",
+ "purpose": "A wall loaded in its plane at the top, meshed at 4, 2 and 1 ft. The displacement converges towards the bending-plus-shear answer; the base reactions are exact at any mesh.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "shells": "Shell-Thin, explicit meshes no larger than 4 ft, identical in both programs",
+  "supports": "every base node fixed",
+  "load": "100 kip at the top, spread evenly along the top edge"
+ },
+ "materials": [
+  {
+   "name": "CONC",
+   "E": 576000.0,
+   "nu": 0.2,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [],
+ "areaSections": [
+  {
+   "name": "WALL",
+   "material": "CONC",
+   "thickness": 1.0,
+   "kind": "wall",
+   "shell": "thin"
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  },
+  {
+   "name": "Story2",
+   "height": 12.0
+  }
+ ],
+ "frames": [],
+ "areas": [
+  {
+   "id": "W2",
+   "section": "WALL",
+   "mesh": [
+    2,
+    6
+   ],
+   "corners": [
+    [
+     0.0,
+     0,
+     0
+    ],
+    [
+     8.0,
+     0,
+     0
+    ],
+    [
+     8.0,
+     0,
+     24.0
+    ],
+    [
+     0.0,
+     0,
+     24.0
+    ]
+   ]
+  },
+  {
+   "id": "W4",
+   "section": "WALL",
+   "mesh": [
+    4,
+    12
+   ],
+   "corners": [
+    [
+     30.0,
+     0,
+     0
+    ],
+    [
+     38.0,
+     0,
+     0
+    ],
+    [
+     38.0,
+     0,
+     24.0
+    ],
+    [
+     30.0,
+     0,
+     24.0
+    ]
+   ]
+  },
+  {
+   "id": "W8",
+   "section": "WALL",
+   "mesh": [
+    8,
+    24
+   ],
+   "corners": [
+    [
+     60.0,
+     0,
+     0
+    ],
+    [
+     68.0,
+     0,
+     0
+    ],
+    [
+     68.0,
+     0,
+     24.0
+    ],
+    [
+     60.0,
+     0,
+     24.0
+    ]
+   ]
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    4.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    8.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    32.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    34.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    36.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    38.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    60.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    61.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    62.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    63.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    64.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    65.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    66.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    67.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    68.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "P2"
+  },
+  {
+   "name": "P4"
+  },
+  {
+   "name": "P8"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "P2",
+   "at": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    25.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "P2",
+   "at": [
+    4.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    50.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "P2",
+   "at": [
+    8.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    25.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "P4",
+   "at": [
+    30.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    12.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "P4",
+   "at": [
+    32.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    25.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "P4",
+   "at": [
+    34.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    25.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "P4",
+   "at": [
+    36.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    25.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "P4",
+   "at": [
+    38.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    12.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "P8",
+   "at": [
+    60.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    6.25,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "P8",
+   "at": [
+    61.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    12.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "P8",
+   "at": [
+    62.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    12.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "P8",
+   "at": [
+    63.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    12.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "P8",
+   "at": [
+    64.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    12.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "P8",
+   "at": [
+    65.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    12.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "P8",
+   "at": [
+    66.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    12.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "P8",
+   "at": [
+    67.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    12.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "P8",
+   "at": [
+    68.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    6.25,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  }
+ ],
+ "checks": [
+  {
+   "id": "P2-UX",
+   "label": "Top displacement, 4 ft mesh",
+   "case": "P2",
+   "quantity": "joint",
+   "at": [
+    8.0,
+    0.0,
+    24.0
+   ],
+   "comp": "UX",
+   "hand": 0.02025,
+   "formula": "PH^3/3EI + PH/(5/6 G A), Timoshenko beam",
+   "how": "signed",
+   "tol": [
+    0.06,
+    0.04
+   ]
+  },
+  {
+   "id": "P2-MY",
+   "label": "Base moment, 4 ft mesh",
+   "case": "P2",
+   "quantity": "base",
+   "comp": "MY",
+   "hand": -2400.0,
+   "formula": "-P H",
+   "how": "signed"
+  },
+  {
+   "id": "P4-UX",
+   "label": "Top displacement, 2 ft mesh",
+   "case": "P4",
+   "quantity": "joint",
+   "at": [
+    38.0,
+    0.0,
+    24.0
+   ],
+   "comp": "UX",
+   "hand": 0.02025,
+   "formula": "PH^3/3EI + PH/(5/6 G A), Timoshenko beam",
+   "how": "signed",
+   "tol": [
+    0.03,
+    0.02
+   ]
+  },
+  {
+   "id": "P4-MY",
+   "label": "Base moment, 2 ft mesh",
+   "case": "P4",
+   "quantity": "base",
+   "comp": "MY",
+   "hand": -2400.0,
+   "formula": "-P H",
+   "how": "signed"
+  },
+  {
+   "id": "P8-UX",
+   "label": "Top displacement, 1 ft mesh",
+   "case": "P8",
+   "quantity": "joint",
+   "at": [
+    68.0,
+    0.0,
+    24.0
+   ],
+   "comp": "UX",
+   "hand": 0.02025,
+   "formula": "PH^3/3EI + PH/(5/6 G A), Timoshenko beam",
+   "how": "signed",
+   "tol": [
+    0.03,
+    0.02
+   ]
+  },
+  {
+   "id": "P8-MY",
+   "label": "Base moment, 1 ft mesh",
+   "case": "P8",
+   "quantity": "base",
+   "comp": "MY",
+   "hand": -2400.0,
+   "formula": "-P H",
+   "how": "signed"
+  }
+ ]
+}

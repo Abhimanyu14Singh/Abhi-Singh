@@ -1,0 +1,376 @@
+{
+ "id": "O2",
+ "title": "Pier forces",
+ "purpose": "Pier shear and moment at the bottom of each story follow from the loads above it: an exact statics check of how each program cuts a wall into story piers.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "shells": "Shell-Thin, explicit meshes no larger than 4 ft, identical in both programs",
+  "supports": "every base node fixed",
+  "piers": "P1, both stories"
+ },
+ "materials": [
+  {
+   "name": "CONC",
+   "E": 576000.0,
+   "nu": 0.2,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [],
+ "areaSections": [
+  {
+   "name": "WALL",
+   "material": "CONC",
+   "thickness": 1.0,
+   "kind": "wall",
+   "shell": "thin"
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  },
+  {
+   "name": "Story2",
+   "height": 12.0
+  }
+ ],
+ "frames": [],
+ "areas": [
+  {
+   "id": "W1",
+   "section": "WALL",
+   "mesh": [
+    3,
+    3
+   ],
+   "pier": "P1",
+   "corners": [
+    [
+     0,
+     0,
+     0.0
+    ],
+    [
+     12.0,
+     0,
+     0.0
+    ],
+    [
+     12.0,
+     0,
+     12.0
+    ],
+    [
+     0,
+     0,
+     12.0
+    ]
+   ]
+  },
+  {
+   "id": "W2",
+   "section": "WALL",
+   "mesh": [
+    3,
+    3
+   ],
+   "pier": "P1",
+   "corners": [
+    [
+     0,
+     0,
+     12.0
+    ],
+    [
+     12.0,
+     0,
+     12.0
+    ],
+    [
+     12.0,
+     0,
+     24.0
+    ],
+    [
+     0,
+     0,
+     24.0
+    ]
+   ]
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    4.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    8.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    12.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "EQ"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "EQ",
+   "at": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    5.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "EQ",
+   "at": [
+    4.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    10.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "EQ",
+   "at": [
+    8.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    10.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "EQ",
+   "at": [
+    12.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    5.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "EQ",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    3.3333333333333335,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "EQ",
+   "at": [
+    4.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    6.666666666666667,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "EQ",
+   "at": [
+    8.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    6.666666666666667,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "EQ",
+   "at": [
+    12.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    3.3333333333333335,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  }
+ ],
+ "checks": [
+  {
+   "id": "EQ-V2",
+   "label": "Story 2 pier shear",
+   "case": "EQ",
+   "quantity": "pier",
+   "story": "Story2",
+   "name": "P1",
+   "location": "bottom",
+   "comp": "V2",
+   "hand": 30.0,
+   "formula": "F2",
+   "how": "abs"
+  },
+  {
+   "id": "EQ-M2",
+   "label": "Story 2 pier moment at its bottom",
+   "case": "EQ",
+   "quantity": "pier",
+   "story": "Story2",
+   "name": "P1",
+   "location": "bottom",
+   "comp": "M3",
+   "hand": 360.0,
+   "formula": "F2 h",
+   "how": "abs"
+  },
+  {
+   "id": "EQ-V1",
+   "label": "Story 1 pier shear",
+   "case": "EQ",
+   "quantity": "pier",
+   "story": "Story1",
+   "name": "P1",
+   "location": "bottom",
+   "comp": "V2",
+   "hand": 50.0,
+   "formula": "F1 + F2",
+   "how": "abs"
+  },
+  {
+   "id": "EQ-M1",
+   "label": "Story 1 pier moment at the base",
+   "case": "EQ",
+   "quantity": "pier",
+   "story": "Story1",
+   "name": "P1",
+   "location": "bottom",
+   "comp": "M3",
+   "hand": 960.0,
+   "formula": "F2 2h + F1 h",
+   "how": "abs"
+  },
+  {
+   "id": "EQ-P1",
+   "label": "No axial force",
+   "case": "EQ",
+   "quantity": "pier",
+   "story": "Story1",
+   "name": "P1",
+   "location": "bottom",
+   "comp": "P",
+   "hand": 0.0,
+   "formula": "0",
+   "how": "abs",
+   "scale": 50.0
+  }
+ ]
+}

@@ -62,7 +62,13 @@ def build(case: dict):
             mem.rigid_i, mem.rigid_j = r.get("i", 0.0) * FT, r.get("j", 0.0) * FT
             mem.rigid_factor = r.get("factor", 1.0)
     for a in case.get("areaSections", []):
-        m.add_shell_section(ShellSection(a["name"], a["material"], a["thickness"] * FT))
+        sec = ShellSection(a["name"], a["material"], a["thickness"] * FT)
+        sec.shell_type = {"thin": "shell_thin", "thick": "shell_thick", "membrane": "shell"}[a["shell"]]
+        md = a.get("modifiers") or {}
+        for k in ("f11", "f22", "f12", "m11", "m22", "m12", "v13", "v23", "mass", "weight"):
+            setattr(sec, k, md.get(k, 1.0))
+        m.add_shell_section(sec)
+    m.edge_constraints = bool(case.get("edgeConstraints"))
     for a in case.get("areas", []):
         corners = [tuple(c * FT for c in p) for p in a["corners"]]
         kind = "slab" if len({round(p[2], 6) for p in corners}) == 1 else "wall"
@@ -74,6 +80,8 @@ def build(case: dict):
             r = m.add_shell(kind, "shell", a["section"], corners, uid=a["id"])
             n1, n2 = a.get("mesh", [1, 1])
             r.mesh_divisions = {"n1": int(n1), "n2": int(n2)}
+        if a.get("pier"):
+            r.pier = a["pier"]
     for s in case["supports"]:
         m.supports.append(PointSupport(tuple(c * FT for c in s["at"]), tuple(int(r) for r in s["restraint"])))
     for p in case["patterns"]:
@@ -157,7 +165,10 @@ def run(case: dict) -> dict:
             frames[uid] = rows
         drifts = [{"story": st, "dir": dr, "drift": v.get("drift_" + dr.lower(), 0.0)}
                   for st, v in (c.get("story") or {}).items() for dr in ("X", "Y")]
-        out[cname] = {"joints": joints, "base": base, "frames": frames, "drifts": drifts}
+        piers = [{"story": st, "name": pn, "location": "bottom", "P": v.get("P", 0.0) / KIP,
+                  "V2": v.get("V", 0.0) / KIP, "M3": v.get("M", 0.0) / KIPFT}
+                 for pn, by_story in ((d.get("piers") or {}).get(cname) or {}).items() for st, v in by_story.items()]
+        out[cname] = {"joints": joints, "base": base, "frames": frames, "drifts": drifts, "piers": piers}
     res = {"program": "SkyFrame", "version": __version__, "units": "kip-ft", "cases": out}
     if case.get("modal"):
         md = d.get("modal") or {}

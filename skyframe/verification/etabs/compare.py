@@ -36,6 +36,10 @@ def pick(res: dict, chk: dict) -> Optional[float]:
     c = res["cases"].get(chk["case"])
     if c is None:
         return None
+    if q == "pier":
+        rows = [r for r in c.get("piers", []) if r["story"] == chk["story"] and r["name"] == chk["name"]
+                and r["location"].lower() == chk["location"]]
+        return rows[0][chk["comp"]] if rows else None
     if q == "drift":
         rows = [r for r in c.get("drifts", []) if r["story"] == chk["story"] and r["dir"] == chk["comp"]]
         return max((abs(r["drift"]) for r in rows), default=None)

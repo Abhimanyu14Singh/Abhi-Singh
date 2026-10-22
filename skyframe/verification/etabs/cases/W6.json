@@ -1,0 +1,304 @@
+{
+ "id": "W6",
+ "title": "Mismatched wall and slab meshes",
+ "purpose": "A slab spans 12 ft from a wall to a line of supports. The wall's top edge has 3 elements and the slab's edge 4, so only the corners coincide; edge constraints carry the load across.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "shells": "Shell-Thin, explicit meshes no larger than 4 ft, identical in both programs",
+  "edgeConstraints": "on in both programs",
+  "supports": "wall base fixed; far slab edge pinned"
+ },
+ "materials": [
+  {
+   "name": "CONC",
+   "E": 576000.0,
+   "nu": 0.2,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [],
+ "areaSections": [
+  {
+   "name": "WALL",
+   "material": "CONC",
+   "thickness": 1.0,
+   "kind": "wall",
+   "shell": "thin"
+  },
+  {
+   "name": "SLAB",
+   "material": "CONC",
+   "thickness": 0.5,
+   "kind": "slab",
+   "shell": "thin"
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [],
+ "areas": [
+  {
+   "id": "WALL",
+   "section": "WALL",
+   "mesh": [
+    3,
+    3
+   ],
+   "corners": [
+    [
+     0,
+     0,
+     0
+    ],
+    [
+     12.0,
+     0,
+     0
+    ],
+    [
+     12.0,
+     0,
+     12.0
+    ],
+    [
+     0,
+     0,
+     12.0
+    ]
+   ]
+  },
+  {
+   "id": "SLAB",
+   "section": "SLAB",
+   "mesh": [
+    4,
+    4
+   ],
+   "corners": [
+    [
+     0,
+     0,
+     12.0
+    ],
+    [
+     12.0,
+     0,
+     12.0
+    ],
+    [
+     12.0,
+     12.0,
+     12.0
+    ],
+    [
+     0,
+     12.0,
+     12.0
+    ]
+   ]
+  }
+ ],
+ "edgeConstraints": true,
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    4.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    8.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    12.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    12.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    3.0,
+    12.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    6.0,
+    12.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    9.0,
+    12.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    12.0,
+    12.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "Q"
+  }
+ ],
+ "areaLoads": [
+  {
+   "pattern": "Q",
+   "area": "SLAB",
+   "q": 0.1
+  }
+ ],
+ "checks": [
+  {
+   "id": "Q-FZ",
+   "label": "Total reaction",
+   "case": "Q",
+   "quantity": "base",
+   "comp": "FZ",
+   "hand": 14.400000000000002,
+   "formula": "q L^2",
+   "how": "signed"
+  },
+  {
+   "id": "Q-UZ",
+   "label": "Slab deflection at mid-span, mid-width",
+   "case": "Q",
+   "quantity": "joint",
+   "at": [
+    6.0,
+    6.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": null,
+   "formula": "programs compared",
+   "how": "signed"
+  },
+  {
+   "id": "Q-UZw",
+   "label": "Wall top settles between the meshes",
+   "case": "Q",
+   "quantity": "joint",
+   "at": [
+    6.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": null,
+   "formula": "programs compared",
+   "how": "signed"
+  }
+ ]
+}
