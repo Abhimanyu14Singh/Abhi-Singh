@@ -164,6 +164,51 @@ KNOWN_ONE_WAY = ("ETABS's one-way (ribbed membrane) slab sends the load within a
                  "SkyFrame follows the textbook one-way rule")
 
 
+def L1S() -> dict:
+    """The L1 bay with the slab as a meshed thin shell connected to the beams at every slab node."""
+    L, q, n, t = 20.0, 0.1, 8, 0.5
+    z = 12.0
+    c = [[0.0, 0.0, z], [L, 0.0, z], [L, L, z], [0.0, L, z]]
+    frames = []
+    for k, (p, r) in enumerate(zip(c, c[1:] + c[:1])):
+        bid = ["BS", "BE", "BN", "BW"][k]
+        pts = [[p[0] + (r[0] - p[0]) * i / n, p[1] + (r[1] - p[1]) * i / n, z] for i in range(n + 1)]
+        for i in range(n):
+            f = {"id": f"{bid}{i + 1}", "i": pts[i], "j": pts[i + 1], "section": "BM", "angle": 0.0}
+            if i == 0:
+                f["releases"] = {"i": {"M2": 0.0, "M3": 0.0}}
+            if i == n - 1:
+                f["releases"] = {"j": {"M2": 0.0, "M3": 0.0, "T": 0.0}}
+            frames.append(f)
+    mid = [L / 2, L / 2, z]
+    return {
+        "id": "L1S", "title": "Two-way slab as a shell on beams",
+        "purpose": ("The L1 bay with the slab modelled as a meshed thin shell (8 x 8, 2.5 ft) sharing every node "
+                    "with its edge beams: slab and beams bend together and share the load by stiffness, as in a "
+                    "real floor. The total is exact; the split between slab and beams is compared."),
+        "units": "kip-ft",
+        "settings": dict(_COMMON, slab="6 in concrete, Shell-Thin, 8 x 8 mesh; beams split at every slab node",
+                         supports="corners; beams simply supported at the corners"),
+        "materials": _mat() + _conc(),
+        "sections": [_beam_section()],
+        "areaSections": [{"name": "SLAB", "material": "CONC", "thickness": t, "kind": "slab", "shell": "thin"}],
+        "stories": [{"name": "Story1", "height": z}],
+        "stationSpacing": 0.5,
+        "frames": frames,
+        "areas": [{"id": "S1", "section": "SLAB", "corners": c, "mesh": [n, n]}],
+        "supports": _pins(c),
+        "patterns": [{"name": "Q"}],
+        "areaLoads": [{"pattern": "Q", "area": "S1", "q": q}],
+        "checks": [
+            _b("Q-FZ", "Total vertical reaction", "Q", "FZ", q * L * L, "q L^2"),
+            _j("Q-UZc", "Slab centre deflection", "Q", mid, "UZ", None, "programs compared"),
+            _j("Q-UZb", "Beam midspan deflection", "Q", [L / 2, 0.0, z], "UZ", None, "programs compared"),
+            _f("Q-V", "Beam end shear", "Q", "BS1", "i", "V2", None, "programs compared"),
+            _f("Q-M", "Beam midspan moment", "Q", "BS4", "j", "M3", None, "programs compared"),
+        ],
+    }
+
+
 def L2() -> dict:
     """One-way slab: a 10 x 30 ft bay spanning 10 ft onto the two long beams."""
     E, I = STEEL_E, 0.03
@@ -308,4 +353,4 @@ def L5() -> dict:
     }
 
 
-CASES = {"F9": F9, "F10": F10, "L1": L1, "L2": L2, "L3": L3, "L4": L4, "L5": L5}
+CASES = {"F9": F9, "F10": F10, "L1": L1, "L1S": L1S, "L2": L2, "L3": L3, "L4": L4, "L5": L5}

@@ -110,47 +110,54 @@ def D1() -> dict:
 
 
 def D3() -> dict:
-    """Two towers on a one-story podium: separate roof diaphragms, one podium diaphragm."""
-    E, h, P = STEEL_E, 12.0, 10.0
+    """A one-story podium carrying two 3-story towers: one diaphragm per tower floor, one for the podium."""
+    E, hp, ht, P = STEEL_E, 15.0, 12.0, 30.0
     I33 = 0.02
-    k = 12 * E * I33 / h**3                                   # floor joints fixed in rotation
-    xs, ys = (0.0, 20.0, 40.0, 60.0), (0.0, 20.0)
-    frames, supports = [], []
-    for x in xs:
+    kp1, kt1 = 12 * E * I33 / hp**3, 12 * E * I33 / ht**3      # floor joints fixed in rotation: 12EI/h^3
+    xs_p, ys = [20.0 * i for i in range(6)], [0.0, 20.0, 40.0]
+    towers = {"A": [0.0, 20.0, 40.0], "B": [60.0, 80.0, 100.0]}
+    frames, supports, dias, loads = [], [], [], []
+    for x in xs_p:
         for y in ys:
-            frames.append({"id": f"P{int(x)}_{int(y)}", "i": [x, y, 0.0], "j": [x, y, h], "section": "COL",
+            frames.append({"id": f"P{int(x)}_{int(y)}", "i": [x, y, 0.0], "j": [x, y, hp], "section": "COL",
                            "angle": 0.0})
             supports.append({"at": [x, y, 0.0], "restraint": [1] * 6})
-            supports.append({"at": [x, y, h], "restraint": [0, 0, 0, 1, 1, 0]})
-    towers = {"A": (0.0, 20.0), "B": (40.0, 60.0)}
-    dias = [{"name": "PODIUM", "points": [[x, y, h] for x in xs for y in ys]}]
-    for t, (x0, x1) in towers.items():
-        pts = [[x, y, 2 * h] for x in (x0, x1) for y in ys]
-        for p in pts:
-            frames.append({"id": f"T{t}{int(p[0])}_{int(p[1])}", "i": [p[0], p[1], h], "j": p, "section": "COL",
-                           "angle": 0.0})
-            supports.append({"at": p, "restraint": [0, 0, 0, 1, 1, 0]})
-        dias.append({"name": f"TOWER{t}", "points": pts})
-    up = P / (8 * k)
+            supports.append({"at": [x, y, hp], "restraint": [0, 0, 0, 1, 1, 0]})
+    dias.append({"name": "PODIUM", "points": [[x, y, hp] for x in xs_p for y in ys]})
+    for t, xs in towers.items():
+        for s in range(3):
+            z0, z1 = hp + s * ht, hp + (s + 1) * ht
+            pts = [[x, y, z1] for x in xs for y in ys]
+            for p in pts:
+                frames.append({"id": f"T{t}{s + 1}_{int(p[0])}_{int(p[1])}", "i": [p[0], p[1], z0], "j": p,
+                               "section": "COL", "angle": 0.0})
+                supports.append({"at": p, "restraint": [0, 0, 0, 1, 1, 0]})
+            dias.append({"name": f"T{t}{s + 1}", "points": pts})
+    roof = hp + 3 * ht
+    loads = [{"pattern": "PA", "at": [x, y, roof], "f": [P / 9, 0, 0, 0, 0, 0]} for x in towers["A"] for y in ys]
+    kp, kt = 18 * kp1, 9 * kt1
+    up = P / kp
     return {
         "id": "D3", "title": "Two towers on a podium",
-        "purpose": ("Each tower roof is its own rigid diaphragm and the podium another. Load on tower A goes "
-                    "down through A into the podium; tower B rides along with no shear of its own."),
+        "purpose": ("A 100 x 40 ft podium story carries two 40 ft square, 3-story towers. Every tower floor is "
+                    "its own rigid diaphragm and the podium another. A load on tower A's roof runs down "
+                    "through A's three stories into the podium; tower B rides on the podium with no shear."),
         "units": "kip-ft",
-        "settings": dict(_COMMON, diaphragm="podium, tower A roof, tower B roof: three rigid diaphragms",
+        "settings": dict(_COMMON, diaphragm="7 rigid diaphragms: the podium and each tower floor",
                          supports="fixed bases; floor joints fixed in rotation (shear building)"),
         "materials": _mat(), "sections": [_col_section()],
-        "stories": [{"name": "Story1", "height": h}, {"name": "Story2", "height": h}],
+        "stories": [{"name": "Story1", "height": hp}] + [{"name": f"Story{s + 2}", "height": ht} for s in range(3)],
         "frames": frames, "supports": supports, "diaphragms": dias,
         "patterns": [{"name": "PA"}],
-        "pointLoads": [{"pattern": "PA", "at": [x, y, 2 * h], "f": [P / 4, 0, 0, 0, 0, 0]}
-                       for x in towers["A"] for y in ys],
+        "pointLoads": loads,
         "checks": [
-            _j("PA-UP", "Podium moves", "PA", [60.0, 0.0, h], "UX", up, "P / 8k, k = 12EI33/h^3"),
-            _j("PA-UA", "Tower A roof", "PA", [0.0, 0.0, 2 * h], "UX", up + P / (4 * k), "P/8k + P/4k"),
-            _j("PA-UB", "Tower B roof rides on the podium", "PA", [60.0, 20.0, 2 * h], "UX", up, "P / 8k"),
-            dict(_f("PA-VB", "No shear in tower B", "PA", "TB60_0", "i", "V2", 0.0, "0"), scale=P / 4),
-            _f("PA-VA", "Shear in a tower A column", "PA", "TA0_0", "i", "V2", P / 4, "P / 4"),
+            _j("PA-UP", "Podium moves", "PA", [100.0, 0.0, hp], "UX", up, "P / k_podium, 18 columns x 12EI/h^3"),
+            _j("PA-UA", "Tower A roof", "PA", [0.0, 0.0, roof], "UX", up + 3 * P / kt,
+               "P/k_podium + 3 P/k_story, 9 columns per story"),
+            _j("PA-UA1", "Tower A first floor", "PA", [0.0, 0.0, hp + ht], "UX", up + P / kt, "P/k_podium + P/k_story"),
+            _j("PA-UB", "Tower B roof rides on the podium", "PA", [100.0, 40.0, roof], "UX", up, "P / k_podium"),
+            dict(_f("PA-VB", "No shear in tower B", "PA", "TB1_80_20", "i", "V2", 0.0, "0"), scale=P / 9),
+            _f("PA-VA", "Shear in a tower A column", "PA", "TA1_20_20", "i", "V2", P / 9, "P / 9"),
             _b("PA-FX", "Base shear", "PA", "FX", -P, "-P"),
         ],
     }
