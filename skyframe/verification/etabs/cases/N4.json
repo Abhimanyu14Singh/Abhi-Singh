@@ -1,0 +1,163 @@
+{
+ "id": "N4",
+ "title": "Linear time history",
+ "purpose": "A single mass on a cantilever (T = 0.5 s, 2% damping) under a sudden, constant 0.2 g ground acceleration: the first peak is a/omega^2 (1 + e^(-pi zeta / sqrt(1 - zeta^2))), almost twice the static sway.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "one joint mass, X only",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "timeHistory": "step of -0.2 g from t = 0, 1.5 s at 0.001 s, 2% damping (ETABS modal; SkyFrame direct Newmark, Rayleigh)"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "masses": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "m": [
+    0.9182232267586861,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "massSource": {
+  "elements": false,
+  "masses": true,
+  "patterns": {}
+ },
+ "modal": {
+  "case": "MODES",
+  "modes": 3
+ },
+ "patterns": [],
+ "thFunctions": [
+  {
+   "name": "STEP",
+   "points": [
+    [
+     0.0,
+     -0.2
+    ],
+    [
+     1.5,
+     -0.2
+    ]
+   ]
+  }
+ ],
+ "thCases": [
+  {
+   "name": "THX",
+   "dir": "X",
+   "function": "STEP",
+   "scale": 32.17404855643044,
+   "damping": 0.02,
+   "dt": 0.001,
+   "steps": 1500
+  }
+ ],
+ "checks": [
+  {
+   "id": "T1",
+   "label": "Period",
+   "case": "MODES",
+   "quantity": "modal",
+   "mode": 1,
+   "comp": "T",
+   "hand": 0.5,
+   "formula": "2 pi sqrt(m / k)",
+   "how": "signed"
+  },
+  {
+   "id": "THX-UX",
+   "label": "Peak sway",
+   "case": "THX",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 0.07901578322616958,
+   "formula": "a/w^2 (1 + exp(-pi z / sqrt(1 - z^2)))",
+   "how": "abs",
+   "tol": [
+    0.002,
+    0.005
+   ]
+  }
+ ]
+}

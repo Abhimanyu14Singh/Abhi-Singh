@@ -147,6 +147,38 @@ def build(case: dict, only=None):
         m.add_case(nc["name"], nc["loads"], geometric=geo[nc["geometry"]])
     for bc in case.get("bucklingCases", []):
         m.add_buckling_case(bc["name"], bc["loads"], num_modes=bc["modes"])
+    for lk in case.get("links", []):
+        if lk["type"] != "gap":
+            raise ValueError(f"link type {lk['type']!r} not mapped")
+        m.add_link(tuple(c * FT for c in lk["i"]), tuple(c * FT for c in lk["j"]), uid=lk["id"],
+                   link_type="gap", params={"k": lk["k"] * KIP / FT, "gap": lk["open"] * FT})
+    fns = {f["name"]: f for f in case.get("thFunctions", [])}
+    for th in case.get("thCases", []):
+        if not keep(th["name"]):
+            continue
+        pts = fns[th["function"]]["points"]
+
+        def at(t):                                # the function, piecewise linear, held at its ends
+            if t <= pts[0][0]:
+                return pts[0][1]
+            for (t0, v0), (t1, v1) in zip(pts, pts[1:]):
+                if t <= t1:
+                    return v0 + (v1 - v0) * (t - t0) / (t1 - t0) if t1 > t0 else v1
+            return pts[-1][1]
+        # ft/s2 -> m/s2; sample k acts at t = k dt
+        accel = [at(k * th["dt"]) * th["scale"] * FT for k in range(th["steps"])]
+        m.add_th_case(th["name"], th["dir"], accel=accel, dt=th["dt"], damping=th["damping"])
+    for po in case.get("pushover", []):
+        if not keep(po["name"]):
+            continue
+        h = max(st["height"] for st in case["stories"]) if len(case["stories"]) == 1 else \
+            sum(st["height"] for st in case["stories"])
+        m.add_pushover_case(po["name"], po["dir"], target_drift=po["target"] / h, steps=po["steps"],
+                            hinges="all_ends", My={f: v * KIPFT for f, v in po["hinges"].items()},
+                            hardening=0.0, control_point=[c * FT for c in po["control"]])
+    for sc in case.get("stagedCases", []):
+        if keep(sc["name"]):
+            m.add_staged_case(sc["name"], sc["pattern"])
     for cb in case.get("combos", []):
         m.add_combo(cb["name"], cb["cases"], "envelope" if cb["type"] == "envelope" else "add")
     return m
@@ -165,12 +197,13 @@ def run(case: dict) -> dict:
         every[cname] = c
         if c.get("min"):
             every[cname + ":min"] = c["min"]
+    every.update(d.get("staged") or {})
     for cname, c in every.items():
         joints = [{"xyz": nodes[t], "u": [u[0] / FT, u[1] / FT, u[2] / FT, u[3], u[4], u[5]]}
                   for t, u in c["node_disp"].items()]
         b = c["base"]
-        base = {k: b[k] / KIP for k in ("FX", "FY", "FZ")}
-        base.update({k: b[k] / KIPFT for k in ("MX", "MY", "MZ")})
+        base = {k: b.get(k, 0.0) / KIP for k in ("FX", "FY", "FZ")}
+        base.update({k: b.get(k, 0.0) / KIPFT for k in ("MX", "MY", "MZ")})
         frames = {}
         for uid, st in c.get("member_stations", {}).items():
             rows = []
@@ -185,6 +218,31 @@ def run(case: dict) -> dict:
                   "V2": v.get("V", 0.0) / KIP, "M3": v.get("M", 0.0) / KIPFT}
                  for pn, by_story in ((d.get("piers") or {}).get(cname) or {}).items() for st, v in by_story.items()]
         out[cname] = {"joints": joints, "base": base, "frames": frames, "drifts": drifts, "piers": piers}
+    elev = {}
+    for t, xyz in nodes.items():
+        elev.setdefault(round(xyz[2], 6), []).append(xyz)
+    story_z, z = {}, 0.0
+    for st in case["stories"]:
+        z += st["height"]
+        story_z[st["name"]] = round(z, 6)
+    for cname, th in (d.get("th_cases") or {}).items():
+        # peak (absolute) story displacements, reported at every joint of that story level
+        joints = []
+        for st, pk in th["peaks"]["story"].items():
+            for xyz in elev.get(story_z.get(st), []):
+                joints.append({"xyz": xyz, "u": [abs(pk.get("ux", 0.0)) / FT, abs(pk.get("uy", 0.0)) / FT,
+                                                 0.0, 0.0, 0.0, 0.0]})
+        pb = th["peaks"].get("base", {})
+        out[cname] = {"joints": joints, "frames": {}, "drifts": [], "piers": [],
+                      "base": {"FX": abs(pb.get("FX", 0.0)) / KIP, "FY": abs(pb.get("FY", 0.0)) / KIP,
+                               "FZ": 0.0, "MX": 0.0, "MY": 0.0, "MZ": 0.0}}
+    for cname, po in (d.get("pushover") or {}).items():
+        # the final step of the push; base reaction opposes the push
+        sgn = -1.0
+        out[cname] = {"joints": [], "frames": {}, "drifts": [], "piers": [],
+                      "base": {"FX": sgn * po["base_shear"][-1] / KIP, "FY": 0.0, "FZ": 0.0, "MX": 0.0, "MY": 0.0,
+                               "MZ": 0.0},
+                      "roof": po["roof_disp"][-1] / FT}
     res = {"program": "SkyFrame", "version": __version__, "units": "kip-ft", "cases": out}
     if case.get("bucklingCases"):
         res["buckling"] = {n: list(b.get("factors", [])) for n, b in (d.get("buckling") or {}).items()}

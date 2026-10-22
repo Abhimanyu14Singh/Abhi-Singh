@@ -238,3 +238,147 @@ def SP1() -> dict:
 
 
 CASES = {"N1": N1, "N2": N2, "N3": N3, "SP1": SP1}
+
+
+# ── nonlinear group II: time history, gap, pushover, staged construction ──────
+G_FT2 = 9.80665 / 0.3048                 # ft/s2
+
+
+def N4() -> dict:
+    """Linear time history: a one-mass cantilever under a step ground acceleration, 2% damping."""
+    E, L, I33 = STEEL_E, 12.0, 0.02
+    k = 3 * E * I33 / L**3
+    T = 0.5
+    w = 2 * math.pi / T
+    mass = k / w**2
+    zeta, a_g = 0.02, 0.2
+    a = a_g * G_FT2
+    peak = a / w**2 * (1 + math.exp(-zeta * math.pi / math.sqrt(1 - zeta * zeta)))
+    top = [0.0, 0.0, L]
+    dt, n = 0.001, 1500
+    return {
+        "id": "N4", "title": "Linear time history",
+        "purpose": ("A single mass on a cantilever (T = 0.5 s, 2% damping) under a sudden, constant 0.2 g ground "
+                    "acceleration: the first peak is a/omega^2 (1 + e^(-pi zeta / sqrt(1 - zeta^2))), almost "
+                    "twice the static sway."),
+        "units": "kip-ft",
+        "settings": dict(_COMMON, mass="one joint mass, X only", timeHistory="step of -0.2 g from t = 0, 1.5 s at "
+                         "0.001 s, 2% damping (ETABS modal; SkyFrame direct Newmark, Rayleigh)"),
+        "materials": _mat(), "sections": [_col_section()],
+        "stories": [{"name": "Story1", "height": L}],
+        "frames": [{"id": "C1", "i": [0.0, 0.0, 0.0], "j": top, "section": "COL", "angle": 0.0}],
+        "supports": [{"at": [0.0, 0.0, 0.0], "restraint": [1] * 6}],
+        "masses": [{"at": top, "m": [mass, 0, 0, 0, 0, 0]}],
+        "massSource": {"elements": False, "masses": True, "patterns": {}},
+        "modal": {"case": "MODES", "modes": 3},
+        "patterns": [],
+        "thFunctions": [{"name": "STEP", "points": [[0.0, -a_g], [dt * n, -a_g]]}],
+        "thCases": [{"name": "THX", "dir": "X", "function": "STEP", "scale": G_FT2, "damping": zeta,
+                     "dt": dt, "steps": n}],
+        "checks": [
+            _modal("T1", "Period", 1, "T", T, "2 pi sqrt(m / k)"),
+            dict(_j("THX-UX", "Peak sway", "THX", top, "UX", peak,
+                    "a/w^2 (1 + exp(-pi z / sqrt(1 - z^2)))", how="abs"), tol=[2e-3, 5e-3]),
+        ],
+    }
+
+
+def N5() -> dict:
+    """A gap (compression-only) support under a cantilever tip: closed under gravity, open under uplift."""
+    E, I, L, w, P, kg = STEEL_E, 0.03, 20.0, 1.0, 10.0, 1.0e5
+    EI = E * I
+    R = (w * L**4 / (8 * EI)) / (L**3 / (3 * EI) + 1 / kg)
+    tip, low = [L, 0.0, 12.0], [L, 0.0, 11.0]
+    from defs import _beam_section
+    return {
+        "id": "N5", "title": "Gap support (uplift)",
+        "purpose": ("A cantilever whose tip rests on a compression-only gap link (k = 1e5 k/ft). Under gravity the "
+                    "gap closes and props the tip; under an uplift load it opens and carries nothing. Nonlinear "
+                    "static cases in both programs."),
+        "units": "kip-ft",
+        "settings": dict(_COMMON, nonlinear="gap link (compression only, zero opening), nonlinear static",
+                         supports="fixed at x = 0; gap link to ground at the tip"),
+        "materials": _mat(), "sections": [_beam_section()],
+        "stories": [{"name": "Story1", "height": 12.0}],
+        "frames": [{"id": "B1", "i": [0.0, 0.0, 12.0], "j": tip, "section": "BM", "angle": 0.0}],
+        "supports": [{"at": [0.0, 0.0, 12.0], "restraint": [1] * 6}, {"at": tip, "restraint": [0, 1, 0, 1, 0, 1]},
+                     {"at": low, "restraint": [1] * 6}],
+        "links": [{"id": "G1", "i": low, "j": tip, "type": "gap", "k": kg, "open": 0.0}],
+        "patterns": [{"name": "D"}, {"name": "U"}],
+        "distLoads": [{"pattern": "D", "frame": "B1", "w": w}],
+        "pointLoads": [{"pattern": "U", "at": tip, "f": [0, 0, P, 0, 0, 0]}],
+        "nlCases": [{"name": "NLD", "loads": {"D": 1.0}, "geometry": "none"},
+                    {"name": "NLU", "loads": {"U": 1.0}, "geometry": "none"}],
+        "checks": [
+            _f("NLD-R", "Gravity: gap force (tip shear)", "NLD", "B1", "j", "V2", R,
+               "(wL^4/8EI) / (L^3/3EI + 1/k)"),
+            _j("NLD-UZ", "Gravity: tip settles into the gap", "NLD", tip, "UZ", -R / kg, "-R / k"),
+            _j("NLU-UZ", "Uplift: gap open, free cantilever", "NLU", tip, "UZ", P * L**3 / (3 * EI), "PL^3 / 3EI"),
+            _f("NLU-R", "Uplift: the tip carries only the load (gap force 0)", "NLU", "B1", "j", "V2", P, "P"),
+            _b("NLU-FZ", "Uplift: base reaction", "NLU", "FZ", -P, "-P"),
+        ],
+    }
+
+
+def N6() -> dict:
+    """Pushover of a fixed-base portal with elastic-perfectly-plastic column hinges: sway mechanism."""
+    h, L, Mp = 12.0, 20.0, 200.0
+    from defs import _beam_section
+    col = _col_section()
+    bm = dict(_beam_section(), A=1.0)
+    tl, tr = [0.0, 0.0, h], [L, 0.0, h]
+    return {
+        "id": "N6", "title": "Pushover, plastic hinges",
+        "purpose": ("A fixed-base portal pushed sideways to 5% drift. Rigid-plastic moment hinges (Mp = 200 k-ft, "
+                    "no hardening) at both ends of each column: the sway mechanism forms and the base shear "
+                    "levels off at 4 Mp / h."),
+        "units": "kip-ft",
+        "settings": dict(_COMMON, nonlinear="M3 hinges at both column ends, elastic-perfectly-plastic; "
+                         "displacement-controlled push at the roof", supports="fixed bases"),
+        "materials": _mat(), "sections": [col, bm],
+        "stories": [{"name": "Story1", "height": h}],
+        "frames": [{"id": "C1", "i": [0.0, 0.0, 0.0], "j": tl, "section": "COL", "angle": 0.0},
+                   {"id": "C2", "i": [L, 0.0, 0.0], "j": tr, "section": "COL", "angle": 0.0},
+                   {"id": "B1", "i": tl, "j": tr, "section": "BM", "angle": 0.0}],
+        "supports": [{"at": [0.0, 0.0, 0.0], "restraint": [1] * 6}, {"at": [L, 0.0, 0.0], "restraint": [1] * 6},
+                     {"at": tl, "restraint": [0, 1, 0, 1, 0, 1]}, {"at": tr, "restraint": [0, 1, 0, 1, 0, 1]}],
+        "patterns": [{"name": "PUSH"}],
+        "pointLoads": [{"pattern": "PUSH", "at": tl, "f": [1.0, 0, 0, 0, 0, 0]}],
+        "pushover": [{"name": "PO", "pattern": "PUSH", "control": tl, "dir": "X", "target": 0.05 * h,
+                      "steps": 100, "hinges": {"C1": Mp, "C2": Mp}}],
+        "checks": [
+            _b("PO-FX", "Base shear at the mechanism", "PO", "FX", -4 * Mp / h, "-4 Mp / h"),
+        ],
+    }
+
+
+def N7() -> dict:
+    """Staged construction: a three-story column built and loaded story by story."""
+    E, A, h, P = STEEL_E, 0.1, 12.0, 100.0
+    u = P * h / (E * A)
+    pts = [[0.0, 0.0, h * k] for k in range(4)]
+    return {
+        "id": "N7", "title": "Staged construction",
+        "purpose": ("A column stack built one story at a time, each story's 100 kip load applied when it is built: "
+                    "a floor only shortens under loads placed after it exists, so the levels move 3, 4 and 3 "
+                    "units of Ph/EA instead of 3, 5 and 6 for the load all at once."),
+        "units": "kip-ft",
+        "settings": dict(_COMMON, staged="three stages, one story each: add the story, load it", supports="fixed base"),
+        "materials": _mat(), "sections": [_col_section()],
+        "stories": [{"name": f"Story{k + 1}", "height": h} for k in range(3)],
+        "frames": [{"id": f"C{k + 1}", "i": pts[k], "j": pts[k + 1], "section": "COL", "angle": 0.0} for k in range(3)],
+        "supports": [{"at": pts[0], "restraint": [1] * 6}],
+        "patterns": [{"name": "DEAD"}],
+        "pointLoads": [{"pattern": "DEAD", "at": pts[k], "f": [0, 0, -P, 0, 0, 0]} for k in (1, 2, 3)],
+        "stagedCases": [{"name": "STG", "pattern": "DEAD"}],
+        "checks": [
+            _j("STG-U1", "Staged: level 1", "STG", pts[1], "UZ", -3 * u, "-3 Ph/EA"),
+            _j("STG-U2", "Staged: level 2", "STG", pts[2], "UZ", -4 * u, "-(2 + 2) Ph/EA"),
+            _j("STG-U3", "Staged: level 3", "STG", pts[3], "UZ", -3 * u, "-(1 + 1 + 1) Ph/EA"),
+            _j("DEAD-U3", "All at once: level 3", "DEAD", pts[3], "UZ", -6 * u, "-(3 + 2 + 1) Ph/EA"),
+            _f("STG-P1", "Staged: bottom column axial", "STG", "C1", "i", "P", -3 * P, "-3P", how="signed"),
+        ],
+    }
+
+
+CASES.update({"N4": N4, "N5": N5, "N6": N6, "N7": N7})

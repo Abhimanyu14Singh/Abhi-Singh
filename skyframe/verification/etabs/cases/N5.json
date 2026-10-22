@@ -1,0 +1,242 @@
+{
+ "id": "N5",
+ "title": "Gap support (uplift)",
+ "purpose": "A cantilever whose tip rests on a compression-only gap link (k = 1e5 k/ft). Under gravity the gap closes and props the tip; under an uplift load it opens and carries nothing. Nonlinear static cases in both programs.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "nonlinear": "gap link (compression only, zero opening), nonlinear static",
+  "supports": "fixed at x = 0; gap link to ground at the tip"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "BM",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.03,
+   "I22": 0.002,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.5,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "B1",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    1,
+    0,
+    1,
+    0,
+    1
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    0.0,
+    11.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "links": [
+  {
+   "id": "G1",
+   "i": [
+    20.0,
+    0.0,
+    11.0
+   ],
+   "j": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "type": "gap",
+   "k": 100000.0,
+   "open": 0.0
+  }
+ ],
+ "patterns": [
+  {
+   "name": "D"
+  },
+  {
+   "name": "U"
+  }
+ ],
+ "distLoads": [
+  {
+   "pattern": "D",
+   "frame": "B1",
+   "w": 1.0
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "U",
+   "at": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    0,
+    0,
+    10.0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "nlCases": [
+  {
+   "name": "NLD",
+   "loads": {
+    "D": 1.0
+   },
+   "geometry": "none"
+  },
+  {
+   "name": "NLU",
+   "loads": {
+    "U": 1.0
+   },
+   "geometry": "none"
+  }
+ ],
+ "checks": [
+  {
+   "id": "NLD-R",
+   "label": "Gravity: gap force (tip shear)",
+   "case": "NLD",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "j",
+   "comp": "V2",
+   "hand": 7.496478154562986,
+   "formula": "(wL^4/8EI) / (L^3/3EI + 1/k)",
+   "how": "abs"
+  },
+  {
+   "id": "NLD-UZ",
+   "label": "Gravity: tip settles into the gap",
+   "case": "NLD",
+   "quantity": "joint",
+   "at": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": -7.496478154562986e-05,
+   "formula": "-R / k",
+   "how": "signed"
+  },
+  {
+   "id": "NLU-UZ",
+   "label": "Uplift: gap open, free cantilever",
+   "case": "NLU",
+   "quantity": "joint",
+   "at": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": 0.21285653469561516,
+   "formula": "PL^3 / 3EI",
+   "how": "signed"
+  },
+  {
+   "id": "NLU-R",
+   "label": "Uplift: the tip carries only the load (gap force 0)",
+   "case": "NLU",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "j",
+   "comp": "V2",
+   "hand": 10.0,
+   "formula": "P",
+   "how": "abs"
+  },
+  {
+   "id": "NLU-FZ",
+   "label": "Uplift: base reaction",
+   "case": "NLU",
+   "quantity": "base",
+   "comp": "FZ",
+   "hand": -10.0,
+   "formula": "-P",
+   "how": "signed"
+  }
+ ]
+}
