@@ -10,6 +10,7 @@
   "mass": "none; modal case not run",
   "pDelta": "off",
   "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
   "supports": "fixed both ends"
  },
  "materials": [

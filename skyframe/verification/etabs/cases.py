@@ -58,6 +58,7 @@ def F1() -> dict:
             "mass": "none; modal case not run",
             "pDelta": "off",
             "rigidZones": "none",
+            "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
         },
         "materials": [{"name": "STEEL", "E": E, "nu": nu, "unitWeight": 0.0}],
         "sections": [{"name": "COL", "material": "STEEL", "A": A, "I33": I33, "I22": I22, "J": J,
@@ -121,6 +122,7 @@ _COMMON = {
     "mass": "none; modal case not run",
     "pDelta": "off",
     "rigidZones": "none",
+    "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
 }
 
 

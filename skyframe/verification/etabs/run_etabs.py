@@ -1,4 +1,4 @@
-"""Build one verification model in ETABS 23 from its definition, run it, and
+r"""Build one verification model in ETABS 23 from its definition, run it, and
 export the results.  Runs on the ETABS machine with Python + comtypes only.
 
     python run_etabs.py F1                    # one case; ETABS stays open to look
@@ -97,6 +97,10 @@ def build(sm, case: dict) -> dict:
         r = sm.FrameObj.AddByCoord(xi, yi, zi, xj, yj, zj, "", f["section"], f["id"], "Global")
         ok(r, f"frame {f['id']}")
         names[f["id"]] = r[0]
+        # ETABS adds end length offsets from connectivity by default: with rigid-zone factor 0 the
+        # stiffness is unchanged, but forces are reported at the joint FACES (a column below a
+        # 1.5 ft beam stops at 10.5 ft). Offsets off, so stations run joint to joint as in SkyFrame.
+        ok(sm.FrameObj.SetEndLengthOffset(r[0], False, 0.0, 0.0, 0.0), f"frame {f['id']} end offsets off")
         if f.get("angle"):
             ok(sm.FrameObj.SetLocalAxes(r[0], f["angle"]), f"frame {f['id']} angle")
 
