@@ -1,0 +1,244 @@
+{
+ "id": "H1",
+ "title": "Nonlinear time history, gap impact",
+ "purpose": "A one-mass cantilever (T = 0.5 s, no damping) under a suddenly applied 5 kip force swings towards a compression-only gap (k = 3 k_column) that closes at the static sway. Solved by nonlinear direct integration in both programs; the peak follows from work = strain energy: 1.5 F0/k instead of 2 F0/k without the gap.",
+ "units": "kip-ft",
+ "ext": "dyn",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "one joint mass, X only",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "nonlinear": "gap link (compression only, opening = F0/k1), nonlinear direct integration",
+  "timeHistory": "load pattern F x step function from t = 0, 0.3 s at 0.001 s, no damping, Newmark average acceleration (ETABS: HHT alpha 0)",
+  "supports": "fixed base; gap to a fixed point 2 ft along +X"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    2.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "masses": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "m": [
+    0.9182232267586861,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "massSource": {
+  "elements": false,
+  "masses": true,
+  "patterns": {}
+ },
+ "links": [
+  {
+   "id": "G1",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    2.0,
+    0.0,
+    12.0
+   ],
+   "type": "gap",
+   "k": 435.0,
+   "open": 0.034482758620689655
+  }
+ ],
+ "patterns": [
+  {
+   "name": "F"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "F",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    5.0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "thFunctions": [
+  {
+   "name": "STEP",
+   "points": [
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.3,
+     1.0
+    ]
+   ]
+  }
+ ],
+ "dynTH": [
+  {
+   "name": "NLTH",
+   "method": "direct",
+   "loads": [
+    {
+     "pattern": "F",
+     "function": "STEP",
+     "scale": 1.0
+    }
+   ],
+   "dt": 0.001,
+   "steps": 300,
+   "damping": {
+    "type": "none"
+   }
+  }
+ ],
+ "extCases": [
+  "NLTH"
+ ],
+ "checks": [
+  {
+   "id": "NLTH-UX",
+   "label": "Peak sway (gap closed)",
+   "case": "NLTH",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 0.05172413793103448,
+   "formula": "F0 u = k1 u^2/2 + k2 (u - d)^2/2  ->  1.5 F0/k1",
+   "how": "abs",
+   "tol": [
+    0.002,
+    0.005
+   ]
+  },
+  {
+   "id": "NLTH-G",
+   "label": "Peak gap force",
+   "case": null,
+   "quantity": "value",
+   "key": "NLTH:peakLinkP:G1",
+   "hand": 7.5,
+   "formula": "k2 (u_max - d) = 1.5 F0",
+   "how": "abs",
+   "tol": [
+    0.003,
+    0.005
+   ]
+  },
+  {
+   "id": "NLTH-V",
+   "label": "Peak base shear (column + gap)",
+   "case": null,
+   "quantity": "value",
+   "key": "NLTH:peakBaseFX",
+   "hand": 15.0,
+   "formula": "k1 u_max + k2 (u_max - d) = 3 F0",
+   "how": "abs",
+   "tol": [
+    0.003,
+    0.005
+   ]
+  }
+ ]
+}

@@ -178,6 +178,9 @@ def _devices(eng, th, model, disp_at):
                                      LinkMember)
     lin = copy.deepcopy(model)
     lin.links = []
+    # supports on joints only a removed device touched are dropped by the
+    # linearized build (opensees_engine._fna_anchor); FNA treats them as ground
+    lin._fna_anchors = [tuple(p) for lk in model.links for p in (lk.pi, lk.pj)]
     recs = []
     for lk in model.links:
         lt = getattr(lk, "link_type", "elastic")

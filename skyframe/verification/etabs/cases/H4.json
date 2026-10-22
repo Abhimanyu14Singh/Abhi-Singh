@@ -1,0 +1,282 @@
+{
+ "id": "H4",
+ "title": "Spectrum: two directions, SRSS and ABS",
+ "purpose": "One spectrum case with loads along X (scale 1.0 g) and Y (0.6 g) on a cantilever turned 30 degrees, so each load excites both principal modes: modal responses combine by CQC (coupled through rho for w_a = 2 w_b) and the two directions by SRSS (ETABS default) or absolute sum (set through the load-case table).",
+ "units": "kip-ft",
+ "ext": "dyn",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "one joint mass, X and Y",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "modal": "eigen, 2 modes",
+  "spectrum": "constant 0.4 g, 5% damping; loads U1 x 1.0 g and U2 x 0.6 g",
+  "combination": "CQC at 5%; directions SRSS (RS2) and absolute, scale 1 (RS2ABS)",
+  "eccentricity": "none",
+  "supports": "fixed base"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 30.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "masses": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "massSource": {
+  "elements": false,
+  "masses": true,
+  "patterns": {}
+ },
+ "modal": {
+  "case": "MODES",
+  "modes": 2
+ },
+ "spectra": [
+  {
+   "name": "FLAT",
+   "points": [
+    [
+     0.0,
+     0.4
+    ],
+    [
+     10.0,
+     0.4
+    ]
+   ],
+   "damping": 0.05
+  }
+ ],
+ "rsMulti": [
+  {
+   "name": "RS2",
+   "function": "FLAT",
+   "combine": "CQC",
+   "damping": 0.05,
+   "dirCombo": "SRSS",
+   "dirSF": 1.0,
+   "loads": [
+    {
+     "dir": "X",
+     "scale": 32.17404855643044
+    },
+    {
+     "dir": "Y",
+     "scale": 19.304429133858264
+    }
+   ]
+  },
+  {
+   "name": "RS2ABS",
+   "function": "FLAT",
+   "combine": "CQC",
+   "damping": 0.05,
+   "dirCombo": "ABS",
+   "dirSF": 1.0,
+   "loads": [
+    {
+     "dir": "X",
+     "scale": 32.17404855643044
+    },
+    {
+     "dir": "Y",
+     "scale": 19.304429133858264
+    }
+   ]
+  }
+ ],
+ "extCases": [
+  "RS2",
+  "RS2ABS"
+ ],
+ "patterns": [],
+ "checks": [
+  {
+   "id": "T1",
+   "label": "Period, weak-axis sway (local 3)",
+   "case": "MODES",
+   "quantity": "modal",
+   "mode": 1,
+   "comp": "T",
+   "hand": 0.7379226910667112,
+   "formula": "2 pi sqrt(m / kb)",
+   "how": "signed"
+  },
+  {
+   "id": "T2",
+   "label": "Period, strong-axis sway (local 2)",
+   "case": "MODES",
+   "quantity": "modal",
+   "mode": 2,
+   "comp": "T",
+   "hand": 0.3689613455333556,
+   "formula": "2 pi sqrt(m / ka)",
+   "how": "signed"
+  },
+  {
+   "id": "RS2-UX",
+   "label": "UX, directions by SRSS",
+   "case": "RS2",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 0.07329422368229091,
+   "formula": "CQC of the two principal modes per load, then SRSS of X and Y",
+   "how": "abs"
+  },
+  {
+   "id": "RS2-UY",
+   "label": "UY, directions by SRSS",
+   "case": "RS2",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UY",
+   "hand": 0.11255097606618715,
+   "formula": "CQC of the two principal modes per load, then SRSS of X and Y",
+   "how": "abs"
+  },
+  {
+   "id": "RS2-FX",
+   "label": "Base shear X, SRSS",
+   "case": "RS2",
+   "quantity": "base",
+   "comp": "FX",
+   "hand": 5.626087559227233,
+   "formula": "CQC of the two principal modes per load, then SRSS of X and Y",
+   "how": "signed"
+  },
+  {
+   "id": "RS2-FY",
+   "label": "Base shear Y, SRSS",
+   "case": "RS2",
+   "quantity": "base",
+   "comp": "FY",
+   "hand": 4.965919266735673,
+   "formula": "CQC of the two principal modes per load, then SRSS of X and Y",
+   "how": "signed"
+  },
+  {
+   "id": "ABS-UX",
+   "label": "UX, directions by absolute sum",
+   "case": "RS2ABS",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 0.10329368051286397,
+   "formula": "CQC of the two principal modes per load, then |X| + |Y|",
+   "how": "abs"
+  },
+  {
+   "id": "ABS-UY",
+   "label": "UY, directions by absolute sum",
+   "case": "RS2ABS",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UY",
+   "hand": 0.15916500692922808,
+   "formula": "CQC of the two principal modes per load, then |X| + |Y|",
+   "how": "abs"
+  },
+  {
+   "id": "ABS-FX",
+   "label": "Base shear X, absolute sum",
+   "case": "RS2ABS",
+   "quantity": "base",
+   "comp": "FX",
+   "hand": 7.45764338256744,
+   "formula": "CQC of the two principal modes per load, then |X| + |Y|",
+   "how": "signed"
+  }
+ ]
+}

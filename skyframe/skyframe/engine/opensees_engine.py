@@ -539,6 +539,13 @@ SpanLoad = tuple
 # --------------------------------------------------------------------------- #
 # small vector helpers
 # --------------------------------------------------------------------------- #
+def _fna_anchor(model, point) -> bool:
+    """True when ``point`` is an end of a device link an FNA driver removed
+    from its linearized ``model`` (recorded as ``_fna_anchors``)."""
+    return any(all(abs(a - b) < _TOL for a, b in zip(p, point))
+               for p in getattr(model, "_fna_anchors", ()))
+
+
 def _unit(v: Vec3) -> Vec3:
     n = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
     return (v[0] / n, v[1] / n, v[2] / n)
@@ -2963,7 +2970,15 @@ class OpenSeesEngine:
 
         if model.supports:
             for sup in model.supports:
-                ntag = self._find_node(asm, sup.point)
+                try:
+                    ntag = self._find_node(asm, sup.point)
+                except ValueError:
+                    # FNA linearized model: a support whose joint only a
+                    # removed device link touched (a damper / gap to
+                    # ground) has no node left; FNA treats it as ground
+                    if _fna_anchor(model, sup.point):
+                        continue
+                    raise
                 restr = _clear_sprung(ntag, _rle.support_restraints(
                     self, asm, sup, ntag, named_specs, spring_cover))
                 ops.fix(ntag, *restr)
@@ -8259,6 +8274,8 @@ class OpenSeesEngine:
         # ---- linearized model + device records ---------------------------
         lin = copy.deepcopy(model)
         lin.links = []
+        lin._fna_anchors = [tuple(p) for lk in model.links
+                            for p in (lk.pi, lk.pj)]   # see _fna_anchor
         devices: List[Tuple[str, tuple, tuple, dict]] = []
         for lk in model.links:
             ltype = getattr(lk, "link_type", "elastic")
