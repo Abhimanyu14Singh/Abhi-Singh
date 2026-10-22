@@ -1,0 +1,180 @@
+{
+ "id": "N1",
+ "title": "Linear buckling",
+ "purpose": "Buckling factors of a cantilever under a 1 kip axial load: Euler's pi^2 EI / 4L^2 about the weak axis first, then the strong axis. Four elements in both programs.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "buckling": "linear buckling case, two modes",
+  "supports": "fixed base"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    3.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C2",
+   "i": [
+    0.0,
+    0.0,
+    3.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    6.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C3",
+   "i": [
+    0.0,
+    0.0,
+    6.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    9.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C4",
+   "i": [
+    0.0,
+    0.0,
+    9.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "P"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "P",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    0,
+    0,
+    -1.0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "bucklingCases": [
+  {
+   "name": "BUCK",
+   "loads": {
+    "P": 1.0
+   },
+   "modes": 2
+  }
+ ],
+ "checks": [
+  {
+   "id": "B1",
+   "label": "First buckling factor (weak axis)",
+   "case": "BUCK",
+   "quantity": "buckling",
+   "mode": 1,
+   "comp": "factor",
+   "hand": 357.7731595394892,
+   "formula": "pi^2 E I22 / 4L^2",
+   "how": "signed"
+  },
+  {
+   "id": "B2",
+   "label": "Second buckling factor (strong axis)",
+   "case": "BUCK",
+   "quantity": "buckling",
+   "mode": 2,
+   "comp": "factor",
+   "hand": 1431.0926381579568,
+   "formula": "pi^2 E I33 / 4L^2",
+   "how": "signed"
+  }
+ ]
+}

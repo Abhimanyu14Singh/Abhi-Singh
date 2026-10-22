@@ -1,0 +1,131 @@
+
+
+ ETABS Ultimate 64-bit 23.2.0 Build 4400 (Analysis Build 10002/64)
+ File: C:\Users\abhimanyu.sing...i-Singh\skyframe\SkyFrameVerification\N3\N3.LOG
+
+
+
+
+ B E G I N   A N A L Y S I S                                2026/10/22  16:44:23
+
+
+ RUNNING ANALYSIS AS A SEPARATE PROCESS
+ USING THE ADVANCED SOLVER (PROVIDES LIMITED INSTABILITY INFORMATION)
+
+ NUMBER OF JOINTS                          =          17
+    WITH RESTRAINTS                        =           1
+ NUMBER OF FRAME/TENDON ELEMENTS           =          16
+ NUMBER OF LOAD PATTERNS                   =           4
+ NUMBER OF ACCELERATION LOADS              =          12
+ NUMBER OF LOAD CASES                      =           3
+ NUMBER OF MASS SOURCES                    =           1
+
+ UNITS (FORCE, LENGTH, TEMPERATURE, TIME)  = lb, in, °F, sec
+ GRAVITATIONAL ACCELERATION                =  386.088583
+
+ ADDRESSABLE PHYSICAL MEMORY (RAM)         =      64.000 GB
+
+ PARALLELIZATION OF ANALYSIS OPERATIONS:
+  (Env. variable SAPFIRE_NUM_THREADS not set)
+ NUMBER OF THREADS: STATE (AUTOMATIC)      =          24
+ NUMBER OF THREADS: STIFFNESS (AUTOMATIC)  =          24
+ NUMBER OF THREADS: EVENT (AUTOMATIC)      =          24
+ NUMBER OF THREADS: MOVE (AUTOMATIC)       =          24
+ NUMBER OF THREADS: RESPONSE (AUTOMATIC)   =          24
+ NUMBER OF THREADS: SOLVE (AUTOMATIC)      =          24
+ NUMBER OF THREADS: FORM (AUTOMATIC)       =          24
+
+
+ E L E M E N T   F O R M A T I O N                                      16:44:23
+
+
+
+ L I N E A R   E Q U A T I O N   S O L U T I O N                        16:44:23
+
+ FORMING STIFFNESS AT ZERO (UNSTRESSED) INITIAL CONDITIONS
+
+ TOTAL NUMBER OF EQUILIBRIUM EQUATIONS     =          96
+ NUMBER OF NON-ZERO STIFFNESS TERMS        =         876
+
+ ---------------------------------
+ BASIC STABILITY CHECK FOR LINEAR LOAD CASES:
+    NUMBER OF NEGATIVE STIFFNESS EIGENVALUES SHOULD BE ZERO FOR STABILITY.
+    (NOTE: FURTHER CHECKS SHOULD BE CONSIDERED AS DEEMED NECESSARY,
+     SUCH AS REVIEWING EIGEN MODES FOR MECHANISMS AND RIGID-BODY MOTION)
+
+    NUMBER OF NEGATIVE EIGENVALUES         =           0,  OK.
+ ---------------------------------
+
+
+ L I N E A R   S T A T I C   C A S E S                                  16:44:24
+
+ USING STIFFNESS AT ZERO (UNSTRESSED) INITIAL CONDITIONS
+
+ TOTAL NUMBER OF CASES TO SOLVE            =           2
+ NUMBER OF CASES TO SOLVE PER BLOCK        =           2
+
+ LINEAR STATIC CASES TO BE SOLVED:
+
+ CASE: H
+ CASE: ~LLRF
+
+
+ N O N L I N E A R   S T A T I C   A N A L Y S I S                      16:44:24
+
+ CASE: LDH
+
+ STARTING FROM ZERO (UNSTRESSED) INITIAL CONDITIONS
+
+ LOAD CONTROL TYPE                         =       FORCE
+ TYPE OF GEOMETRIC NONLINEARITY            = LARGE DISPLACEMENT AND P-DELTA
+ USE EVENT STEPPING                        =         YES
+ USE ITERATION                             =         YES
+ USE LINE SEARCH                           =          NO
+ EVENT LUMPING TOLERANCE                   =    0.010000
+ FORCE CONVERGENCE TOLERANCE (RELATIVE)    =    0.000100
+
+
+ E L E M E N T   F O R M A T I O N                                      16:44:24
+
+
+ Negative iterations are Constant-Stiffness
+ Positive iterations are Newton-Raphson
+
+  Saved    Null   Total  Iteration   Relative  Curr Step   Curr Sum    Max Sum
+  Steps   Steps   Steps  this Step  Unbalance       Size   of Steps   of Steps
+ (    1      50     200     -10/40   1.000000   1.000000   1.000000   1.000000)
+
+      0       0       1         -1   9999.496   1.000000    .000000    .000000
+      0       0       1         -2 3.1331E+11   1.000000    .000000    .000000
+      0       0       1         -3 4.3822E+26   1.000000    .000000    .000000
+      0       0       1         -4 3.8144E+42   1.000000    .000000    .000000
+      0       0       1          1   9999.496   1.000000    .000000    .000000
+      0       0       1          2   7858.557   1.000000    .000000    .000000
+      0       0       1          3  51488.217   1.000000    .000000    .000000
+      0       0       1          4 247.537334   1.000000    .000000    .000000
+      0       0       1          5 132.202538   1.000000    .000000    .000000
+      0       0       1  Conv    6   0.220965   1.000000   1.000000   1.000000
+
+ ----------------------------------------
+ BASIC STABILITY CHECK FOR FORCE-CONTROLLED NONLINEAR STATIC LOAD CASES:
+    NUMBER OF NEGATIVE STIFFNESS EIGENVALUES SHOULD BE ZERO FOR STABILITY.
+    (NOTE: FURTHER CHECKS SHOULD BE CONSIDERED AS DEEMED NECESSARY)
+
+    NUMBER FOUND AT FINAL CONVERGED STATE  =           0,  OK.
+ ----------------------------------------
+
+ NUMBER OF STIFFNESS FORMATIONS/SOLUTIONS  =           7
+
+ TIME FOR INITIALIZING ANALYSIS            =        0.00
+ TIME FOR CONTROLLING ANALYSIS             =        0.00
+ TIME FOR UPDATING LOADS AND STATE         =        0.00
+ TIME FOR FORMING STIFFNESS MATRIX         =        0.00
+ TIME FOR SOLVING STIFFNESS MATRIX         =        0.02
+ TIME FOR CALCULATING DISPLACEMENTS        =        0.02
+ TIME FOR DETERMINING EVENTS               =        0.00
+ TIME FOR SAVING RESULTS                   =        0.00
+                                               ----------
+ TOTAL TIME FOR THIS ANALYSIS              =        0.04
+
+
+ A N A L Y S I S   C O M P L E T E                          2026/10/22  16:44:24

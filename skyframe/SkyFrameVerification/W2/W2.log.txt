@@ -1,4 +1,17 @@
 == W2: Wall with a door
 Building the model ...
   area section WALL: wall, thickness 1.0, shell type 1 (read back)
-STOPPED on W2: ETABS refused: pier label P1 (return code 1)
+  52 area objects; pier labels ['P1', 'P2']
+Running the analysis ...
+  screenshot W2.etabs.png (ETABS 3-D view only)
+Reading results ...
+  ETABS analysed 52 area elements for 52 area objects
+check            hand        ETABS  difference
+H-V1               25           25  0.000%
+H-V2               25           25  0.000%
+H-P1                -      21.4331  compared with SkyFrame only
+H-M1                -      171.402  compared with SkyFrame only
+H-UX                -  0.000394849  compared with SkyFrame only
+H-FX              -50          -50  0.000%
+H-MY             -600         -600  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\W2\W2.EDB; largest difference from the hand calculation 0.000%

@@ -6,7 +6,7 @@
 
 
 
- B E G I N   A N A L Y S I S                                2026/10/22  14:39:58
+ B E G I N   A N A L Y S I S                                2026/10/22  16:39:27
 
 
  RUNNING ANALYSIS AS A SEPARATE PROCESS
@@ -36,11 +36,11 @@
  NUMBER OF THREADS: FORM (AUTOMATIC)       =          24
 
 
- E L E M E N T   F O R M A T I O N                                      14:39:58
+ E L E M E N T   F O R M A T I O N                                      16:39:27
 
 
 
- L I N E A R   E Q U A T I O N   S O L U T I O N                        14:39:58
+ L I N E A R   E Q U A T I O N   S O L U T I O N                        16:39:27
 
  FORMING STIFFNESS AT ZERO (UNSTRESSED) INITIAL CONDITIONS
 
@@ -57,7 +57,7 @@
  ---------------------------------
 
 
- L I N E A R   S T A T I C   C A S E S                                  14:39:58
+ L I N E A R   S T A T I C   C A S E S                                  16:39:27
 
  USING STIFFNESS AT ZERO (UNSTRESSED) INITIAL CONDITIONS
 
@@ -71,7 +71,7 @@
  CASE: ~LLRF
 
 
- N O N L I N E A R   S T A T I C   A N A L Y S I S                      14:39:58
+ N O N L I N E A R   S T A T I C   A N A L Y S I S                      16:39:27
 
  CASE: PDH
 
@@ -86,7 +86,7 @@
  FORCE CONVERGENCE TOLERANCE (RELATIVE)    =    0.000100
 
 
- E L E M E N T   F O R M A T I O N                                      14:39:58
+ E L E M E N T   F O R M A T I O N                                      16:39:27
 
 
  Negative iterations are Constant-Stiffness
@@ -118,9 +118,9 @@
  TIME FOR SOLVING STIFFNESS MATRIX         =        0.00
  TIME FOR CALCULATING DISPLACEMENTS        =        0.00
  TIME FOR DETERMINING EVENTS               =        0.00
- TIME FOR SAVING RESULTS                   =        0.02
+ TIME FOR SAVING RESULTS                   =        0.00
                                                ----------
- TOTAL TIME FOR THIS ANALYSIS              =        0.02
+ TOTAL TIME FOR THIS ANALYSIS              =        0.00
 
 
- A N A L Y S I S   C O M P L E T E                          2026/10/22  14:39:58
+ A N A L Y S I S   C O M P L E T E                          2026/10/22  16:39:27

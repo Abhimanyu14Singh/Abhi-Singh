@@ -283,7 +283,12 @@
    "comp": "UZ",
    "hand": null,
    "formula": "programs compared",
-   "how": "signed"
+   "how": "signed",
+   "tol": [
+    0.001,
+    0.05
+   ],
+   "note": "ETABS re-cuts the slab at the wall's nodes (27 elements for 25 objects), SkyFrame ties the meshes with edge constraints: the meshes differ, so 5% is allowed"
   },
   {
    "id": "Q-UZw",
@@ -298,7 +303,11 @@
    "comp": "UZ",
    "hand": null,
    "formula": "programs compared",
-   "how": "signed"
+   "how": "signed",
+   "tol": [
+    0.001,
+    0.05
+   ]
   }
  ]
 }

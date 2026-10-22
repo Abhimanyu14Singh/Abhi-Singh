@@ -4,11 +4,12 @@ Building the model ...
   64 area objects
   diaphragm ROOF: 9 joints (read back)
 Running the analysis ...
+  screenshot W4.etabs.png (ETABS 3-D view only)
 Reading results ...
   ETABS analysed 64 area elements for 64 area objects
 check            hand        ETABS  difference
 T-RZ                -   0.00137096  compared with SkyFrame only
 T-UX                -  -0.00822576  compared with SkyFrame only
 T-MZ             -500         -500  0.000%
-T-FX                0 -4.74029e-12  0.000%
+T-FX                0 -4.89672e-12  0.000%
 Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\W4\W4.EDB; largest difference from the hand calculation 0.000%

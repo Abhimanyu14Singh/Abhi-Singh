@@ -1,0 +1,118 @@
+
+
+ ETABS Ultimate 64-bit 23.2.0 Build 4400 (Analysis Build 10002/64)              
+ File: C:\Users\abhimanyu.sing...gh\skyframe\SkyFrameVerification\SP1\01\SP1.OUT
+                                                                     
+                                                                       
+
+ D I S P L A C E M E N T   D E G R E E S   O F   F R E E D O M
+
+         (A) = Active DOF, equilibrium equation
+         (-) = Restrained DOF, reaction computed
+         (+) = Constrained DOF
+         (>) = External substructure DOF
+         ( ) = Null DOF
+
+  JOINTS              UX  UY  UZ  RX  RY  RZ
+    1216 TO      40    A   A   A   A   A   A
+      39               -   -   -   -   -   -
+      38               A   A   A   A   A   A
+      37               -   -   -   -   -   -
+      36               A   A   A   A   A   A
+      35               -   -   -   -   -   -
+      34               A   A   A   A   A   A
+      33               -   -   -   -   -   -
+    5103 TO      32    A   A   A   A   A   A
+      31               -   -   -   -   -   -
+      30               A   A   A   A   A   A
+      29               -   -   -   -   -   -
+      28               A   A   A   A   A   A
+      27               -   -   -   -   -   -
+      26               A   A   A   A   A   A
+      25               -   -   -   -   -   -
+    4854 TO      24    A   A   A   A   A   A
+      23               -   -   -   -   -   -
+      22               A   A   A   A   A   A
+      21               -   -   -   -   -   -
+      20               A   A   A   A   A   A
+      19               -   -   -   -   -   -
+      18               A   A   A   A   A   A
+      17               -   -   -   -   -   -
+    4617 TO      16    A   A   A   A   A   A
+      15               -   -   -   -   -   -
+      14               A   A   A   A   A   A
+      13               -   -   -   -   -   -
+      12               A   A   A   A   A   A
+      11               -   -   -   -   -   -
+      10               A   A   A   A   A   A
+       9               -   -   -   -   -   -
+    4374 TO       8    A   A   A   A   A   A
+       7               -   -   -   -   -   -
+       6               A   A   A   A   A   A
+       5               -   -   -   -   -   -
+       4               A   A   A   A   A   A
+       3               -   -   -   -   -   -
+       2               A   A   A   A   A   A
+       1               -   -   -   -   -   -
+
+
+ ETABS Ultimate 64-bit 23.2.0 Build 4400 (Analysis Build 10002/64)              
+ File: C:\Users\abhimanyu.sing...gh\skyframe\SkyFrameVerification\SP1\03\SP1.OUT
+                                                                     
+                                                                       
+
+
+ ETABS Ultimate 64-bit 23.2.0 Build 4400 (Analysis Build 10002/64)              
+ File: C:\Users\abhimanyu.sing...gh\skyframe\SkyFrameVerification\SP1\02\SP1.OUT
+                                                                     
+                                                                       
+
+ D I S P L A C E M E N T   D E G R E E S   O F   F R E E D O M
+
+         (A) = Active DOF, equilibrium equation
+         (-) = Restrained DOF, reaction computed
+         (+) = Constrained DOF
+         (>) = External substructure DOF
+         ( ) = Null DOF
+
+  JOINTS              UX  UY  UZ  RX  RY  RZ
+    1216 TO      40    A   A   A   A   A   A
+      39               -   -   -   -   -   -
+      38               A   A   A   A   A   A
+      37               -   -   -   -   -   -
+      36               A   A   A   A   A   A
+      35               -   -   -   -   -   -
+      34               A   A   A   A   A   A
+      33               -   -   -   -   -   -
+    5103 TO      32    A   A   A   A   A   A
+      31               -   -   -   -   -   -
+      30               A   A   A   A   A   A
+      29               -   -   -   -   -   -
+      28               A   A   A   A   A   A
+      27               -   -   -   -   -   -
+      26               A   A   A   A   A   A
+      25               -   -   -   -   -   -
+    4854 TO      24    A   A   A   A   A   A
+      23               -   -   -   -   -   -
+      22               A   A   A   A   A   A
+      21               -   -   -   -   -   -
+      20               A   A   A   A   A   A
+      19               -   -   -   -   -   -
+      18               A   A   A   A   A   A
+      17               -   -   -   -   -   -
+    4617 TO      16    A   A   A   A   A   A
+      15               -   -   -   -   -   -
+      14               A   A   A   A   A   A
+      13               -   -   -   -   -   -
+      12               A   A   A   A   A   A
+      11               -   -   -   -   -   -
+      10               A   A   A   A   A   A
+       9               -   -   -   -   -   -
+    4374 TO       8    A   A   A   A   A   A
+       7               -   -   -   -   -   -
+       6               A   A   A   A   A   A
+       5               -   -   -   -   -   -
+       4               A   A   A   A   A   A
+       3               -   -   -   -   -   -
+       2               A   A   A   A   A   A
+       1               -   -   -   -   -   -

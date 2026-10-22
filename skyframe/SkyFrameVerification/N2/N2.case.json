@@ -1,0 +1,332 @@
+{
+ "id": "N2",
+ "title": "Tension-only bracing",
+ "purpose": "A pin-jointed bay with two tension-only braces under a lateral load, solved as a nonlinear static case: the brace that would be compressed goes slack, the other carries H / cos(theta), and the bay sways as a statically determinate truss.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "nonlinear": "tension-only braces (compression limit 0), nonlinear static case",
+  "supports": "pinned bases; joints held out of plane"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "CL",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0,
+   "releases": {
+    "i": {
+     "M2": 0.0,
+     "M3": 0.0
+    },
+    "j": {
+     "M2": 0.0,
+     "M3": 0.0
+    }
+   }
+  },
+  {
+   "id": "CR",
+   "i": [
+    20.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0,
+   "releases": {
+    "i": {
+     "M2": 0.0,
+     "M3": 0.0
+    },
+    "j": {
+     "M2": 0.0,
+     "M3": 0.0
+    }
+   }
+  },
+  {
+   "id": "BM",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0,
+   "releases": {
+    "i": {
+     "M2": 0.0,
+     "M3": 0.0
+    },
+    "j": {
+     "M2": 0.0,
+     "M3": 0.0
+    }
+   }
+  },
+  {
+   "id": "BRT",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0,
+   "releases": {
+    "i": {
+     "M2": 0.0,
+     "M3": 0.0
+    },
+    "j": {
+     "M2": 0.0,
+     "M3": 0.0
+    }
+   },
+   "tcLimit": "tension"
+  },
+  {
+   "id": "BRC",
+   "i": [
+    20.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0,
+   "releases": {
+    "i": {
+     "M2": 0.0,
+     "M3": 0.0
+    },
+    "j": {
+     "M2": 0.0,
+     "M3": 0.0
+    }
+   },
+   "tcLimit": "tension"
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    1,
+    0,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    1,
+    0,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "H"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "H",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    10.0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "nlCases": [
+  {
+   "name": "NLH",
+   "loads": {
+    "H": 1.0
+   },
+   "geometry": "none"
+  }
+ ],
+ "checks": [
+  {
+   "id": "NLH-T",
+   "label": "Tension brace force",
+   "case": "NLH",
+   "quantity": "frame",
+   "frame": "BRT",
+   "station": "i",
+   "comp": "P",
+   "hand": 11.661903789690601,
+   "formula": "H / cos(theta)",
+   "how": "signed"
+  },
+  {
+   "id": "NLH-C",
+   "label": "Compression brace is slack",
+   "case": "NLH",
+   "quantity": "frame",
+   "frame": "BRC",
+   "station": "i",
+   "comp": "P",
+   "hand": 0.0,
+   "formula": "0",
+   "how": "abs",
+   "scale": 11.661903789690601
+  },
+  {
+   "id": "NLH-CR",
+   "label": "Right column compression",
+   "case": "NLH",
+   "quantity": "frame",
+   "frame": "CR",
+   "station": "i",
+   "comp": "P",
+   "hand": -6.0,
+   "formula": "-H h / L",
+   "how": "signed"
+  },
+  {
+   "id": "NLH-UX",
+   "label": "Sway",
+   "case": "NLH",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 0.0013419630820871273,
+   "formula": "sum N^2 L / (E A H), truss",
+   "how": "signed"
+  },
+  {
+   "id": "NLH-FX",
+   "label": "Base shear",
+   "case": "NLH",
+   "quantity": "base",
+   "comp": "FX",
+   "hand": -10.0,
+   "formula": "-H",
+   "how": "signed"
+  }
+ ]
+}

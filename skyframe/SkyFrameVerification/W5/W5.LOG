@@ -6,14 +6,14 @@
 
 
 
- B E G I N   A N A L Y S I S                                2026/10/22  14:41:37
+ B E G I N   A N A L Y S I S                                2026/10/22  16:41:44
 
 
  RUNNING ANALYSIS AS A SEPARATE PROCESS
  USING THE ADVANCED SOLVER (PROVIDES LIMITED INSTABILITY INFORMATION)
 
  NUMBER OF JOINTS                          =         242
-    WITH RESTRAINTS                        =         242
+    WITH RESTRAINTS                        =          80
  NUMBER OF SHELL ELEMENTS                  =         200
  NUMBER OF LOAD PATTERNS                   =           5
  NUMBER OF ACCELERATION LOADS              =          12
@@ -36,16 +36,16 @@
  NUMBER OF THREADS: FORM (AUTOMATIC)       =          24
 
 
- E L E M E N T   F O R M A T I O N                                      14:41:37
+ E L E M E N T   F O R M A T I O N                                      16:41:44
 
 
 
- L I N E A R   E Q U A T I O N   S O L U T I O N                        14:41:37
+ L I N E A R   E Q U A T I O N   S O L U T I O N                        16:41:44
 
  FORMING STIFFNESS AT ZERO (UNSTRESSED) INITIAL CONDITIONS
 
- TOTAL NUMBER OF EQUILIBRIUM EQUATIONS     =         606
- NUMBER OF NON-ZERO STIFFNESS TERMS        =        7440
+ TOTAL NUMBER OF EQUILIBRIUM EQUATIONS     =        1092
+ NUMBER OF NON-ZERO STIFFNESS TERMS        =       25494
 
  ---------------------------------
  BASIC STABILITY CHECK FOR LINEAR LOAD CASES:
@@ -57,7 +57,7 @@
  ---------------------------------
 
 
- L I N E A R   S T A T I C   C A S E S                                  14:41:37
+ L I N E A R   S T A T I C   C A S E S                                  16:41:44
 
  USING STIFFNESS AT ZERO (UNSTRESSED) INITIAL CONDITIONS
 
@@ -71,4 +71,4 @@
  CASE: ~LLRF
 
 
- A N A L Y S I S   C O M P L E T E                          2026/10/22  14:41:37
+ A N A L Y S I S   C O M P L E T E                          2026/10/22  16:41:44

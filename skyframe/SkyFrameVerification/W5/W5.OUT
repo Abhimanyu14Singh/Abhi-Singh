@@ -14,39 +14,73 @@
          ( ) = Null DOF
 
   JOINTS              UX  UY  UZ  RX  RY  RZ
-       1 TO     121    -   -   -   A   A   A
+       1 TO       2    -   -   -   A   A   A
+       3               A   A   A   A   A   A
+       4               -   -   -   A   A   A
+       5               A   A   A   A   A   A
+       6               -   -   -   A   A   A
+       7               A   A   A   A   A   A
+       8               -   -   -   A   A   A
+       9               A   A   A   A   A   A
+      10               -   -   -   A   A   A
+      11               A   A   A   A   A   A
+      12               -   -   -   A   A   A
+      13               A   A   A   A   A   A
+      14               -   -   -   A   A   A
+      15               A   A   A   A   A   A
+      16               -   -   -   A   A   A
+      17               A   A   A   A   A   A
+      18               -   -   -   A   A   A
+      19               A   A   A   A   A   A
+      20 TO      23    -   -   -   A   A   A
+      24 TO      32    A   A   A   A   A   A
+      33 TO      34    -   -   -   A   A   A
+      35 TO      43    A   A   A   A   A   A
+      44 TO      45    -   -   -   A   A   A
+      46 TO      54    A   A   A   A   A   A
+      55 TO      56    -   -   -   A   A   A
+      57 TO      65    A   A   A   A   A   A
+      66 TO      67    -   -   -   A   A   A
+      68 TO      76    A   A   A   A   A   A
+      77 TO      78    -   -   -   A   A   A
+      79 TO      87    A   A   A   A   A   A
+      88 TO      89    -   -   -   A   A   A
+      90 TO      98    A   A   A   A   A   A
+      99 TO     100    -   -   -   A   A   A
+     101 TO     109    A   A   A   A   A   A
+     110 TO     121    -   -   -   A   A   A
      122 TO     123    -   -   -   -   -   -
-     124               -   -   -   A   A   A
+     124               A   A   A   A   A   A
      125               -   -   -   -   -   -
-     126               -   -   -   A   A   A
+     126               A   A   A   A   A   A
      127               -   -   -   -   -   -
-     128               -   -   -   A   A   A
+     128               A   A   A   A   A   A
      129               -   -   -   -   -   -
-     130               -   -   -   A   A   A
+     130               A   A   A   A   A   A
      131               -   -   -   -   -   -
-     132               -   -   -   A   A   A
+     132               A   A   A   A   A   A
      133               -   -   -   -   -   -
-     134               -   -   -   A   A   A
+     134               A   A   A   A   A   A
      135               -   -   -   -   -   -
-     136               -   -   -   A   A   A
+     136               A   A   A   A   A   A
      137               -   -   -   -   -   -
-     138               -   -   -   A   A   A
+     138               A   A   A   A   A   A
      139               -   -   -   -   -   -
-     140               -   -   -   A   A   A
+     140               A   A   A   A   A   A
      141 TO     144    -   -   -   -   -   -
-     145 TO     153    -   -   -   A   A   A
+     145 TO     153    A   A   A   A   A   A
      154 TO     155    -   -   -   -   -   -
-     156 TO     164    -   -   -   A   A   A
+     156 TO     164    A   A   A   A   A   A
      165 TO     166    -   -   -   -   -   -
-     167 TO     175    -   -   -   A   A   A
+     167 TO     175    A   A   A   A   A   A
      176 TO     177    -   -   -   -   -   -
-     178 TO     186    -   -   -   A   A   A
+     178 TO     186    A   A   A   A   A   A
      187 TO     188    -   -   -   -   -   -
-     189 TO     197    -   -   -   A   A   A
+     189 TO     197    A   A   A   A   A   A
      198 TO     199    -   -   -   -   -   -
-     200 TO     208    -   -   -   A   A   A
+     200 TO     208    A   A   A   A   A   A
      209 TO     210    -   -   -   -   -   -
-     211 TO     219    -   -   -   A   A   A
+     211 TO     219    A   A   A   A   A   A
      220 TO     221    -   -   -   -   -   -
-     222 TO     230    -   -   -   A   A   A
+     222 TO     230    A   A   A   A   A   A
      231 TO     242    -   -   -   -   -   -

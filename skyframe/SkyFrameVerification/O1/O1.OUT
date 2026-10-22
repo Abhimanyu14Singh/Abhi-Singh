@@ -1,0 +1,83 @@
+
+
+ ETABS Ultimate 64-bit 23.2.0 Build 4400 (Analysis Build 10002/64)              
+ File: C:\Users\abhimanyu.sing...i-Singh\skyframe\SkyFrameVerification\O1\O1.OUT
+                                                                     
+                                                                       
+
+ 3, CONSTR = RIGID, DOF = U1 U2 R3
+
+                     LOCAL COORDINATE SYSTEM FOR CONSTRAINT MASTER
+  GLOBAL          U1          U2          U3          R1          R2          R3
+     X      1.000000     .000000     .000000    1.000000     .000000     .000000
+     Y       .000000    1.000000     .000000     .000000    1.000000     .000000
+     Z       .000000     .000000    1.000000     .000000     .000000    1.000000
+
+                     TRANSLATIONAL MASS AND MASS MOMENTS OF INERTIA
+                  U1          U2          U3          R1          R2          R3
+             .000000     .000000     .000000     .000000     .000000     .000000
+
+                     CENTER OF MASS
+  GLOBAL          U1          U2          U3
+     X    180.000000  180.000000  180.000000
+     Y    144.000000  144.000000  144.000000
+     Z    432.000000  432.000000  432.000000
+
+ 5, CONSTR = RIGID, DOF = U1 U2 R3
+
+                     LOCAL COORDINATE SYSTEM FOR CONSTRAINT MASTER
+  GLOBAL          U1          U2          U3          R1          R2          R3
+     X      1.000000     .000000     .000000    1.000000     .000000     .000000
+     Y       .000000    1.000000     .000000     .000000    1.000000     .000000
+     Z       .000000     .000000    1.000000     .000000     .000000    1.000000
+
+                     TRANSLATIONAL MASS AND MASS MOMENTS OF INERTIA
+                  U1          U2          U3          R1          R2          R3
+             .000000     .000000     .000000     .000000     .000000     .000000
+
+                     CENTER OF MASS
+  GLOBAL          U1          U2          U3
+     X    180.000000  180.000000  180.000000
+     Y    144.000000  144.000000  144.000000
+     Z    288.000000  288.000000  288.000000
+
+ 7, CONSTR = RIGID, DOF = U1 U2 R3
+
+                     LOCAL COORDINATE SYSTEM FOR CONSTRAINT MASTER
+  GLOBAL          U1          U2          U3          R1          R2          R3
+     X      1.000000     .000000     .000000    1.000000     .000000     .000000
+     Y       .000000    1.000000     .000000     .000000    1.000000     .000000
+     Z       .000000     .000000    1.000000     .000000     .000000    1.000000
+
+                     TRANSLATIONAL MASS AND MASS MOMENTS OF INERTIA
+                  U1          U2          U3          R1          R2          R3
+             .000000     .000000     .000000     .000000     .000000     .000000
+
+                     CENTER OF MASS
+  GLOBAL          U1          U2          U3
+     X    180.000000  180.000000  180.000000
+     Y    144.000000  144.000000  144.000000
+     Z    144.000000  144.000000  144.000000
+
+ D I S P L A C E M E N T   D E G R E E S   O F   F R E E D O M
+
+         (A) = Active DOF, equilibrium equation
+         (-) = Restrained DOF, reaction computed
+         (+) = Constrained DOF
+         (>) = External substructure DOF
+         ( ) = Null DOF
+
+  JOINTS              UX  UY  UZ  RX  RY  RZ
+       1               -   -   -   -   -   -
+       2               +   +   A   -   -   +
+       3               -   -   -   -   -   -
+       4               +   +   A   -   -   +
+       5               -   -   -   -   -   -
+       6               +   +   A   -   -   +
+       7               -   -   -   -   -   -
+       8 TO      16    +   +   A   -   -   +
+      17 TO      19    +   +   -   -   -   +
+    NULL                                    
+
+  CONSTRAINTS         U1  U2  U3  R1  R2  R3
+ 3       TO 7          A   A               A
