@@ -354,7 +354,11 @@ def results(sm, case: dict, names: dict) -> dict:
             key = ":min" if str(br[2][i]).lower() == "min" else ""
             parts[key]["base"] = dict(zip(("FX", "FY", "FZ", "MX", "MY", "MZ"), (br[c][i] for c in range(4, 10))))
 
-        for fid, fname in names.items():
+        wanted = names
+        if len(names) > 200:                      # big models: only the frames the checks read
+            used = {c.get("frame") for c in case["checks"]}
+            wanted = {f: n for f, n in names.items() if f in used}
+        for fid, fname in wanted.items():
             ff = sm.Results.FrameForce(fname, OBJECT_ELM, 0, [], [], [], [], [], [], [], [], [], [], [], [], [])
             ok(ff, f"frame forces {fid} {cname}")
             P, V2, V3, T, M2, M3 = ff[8:14]
