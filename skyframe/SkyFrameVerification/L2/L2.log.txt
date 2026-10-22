@@ -1,6 +1,16 @@
 == L2: One-way slab load to beams
 Building the model ...
   section BM: A 0.1, I22 0.002, I33 0.03, J 0.0005, As2 0.0, As3 0.0 (read back)
+  area section DECK: ribbed membrane slab, ribs along local 1 (one-way)
   area section DECK: slab, thickness 0.5, shell type 3 (read back)
   1 area objects
-STOPPED on L2: ETABS refused: area load to frames Q on S1 (return code -100)
+Running the analysis ...
+Reading results ...
+  ETABS analysed 1 area elements for 1 area objects
+check            hand        ETABS  difference
+Q-FZ               30           30  0.000%
+Q-Vlong           7.5      6.24994  16.667%
+Q-Mlong         56.25      54.1657  3.705%
+Q-UZ       -0.0420932   -0.0402426  4.396%
+Q-Vshort            0      1.24996  16.666%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\L2\L2.EDB; largest difference from the hand calculation 16.667%

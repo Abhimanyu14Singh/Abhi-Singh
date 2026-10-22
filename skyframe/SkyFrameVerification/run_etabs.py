@@ -169,22 +169,46 @@ def build(sm, case: dict) -> dict:
     for ld in case.get("areaLoads", []):
         a = next(x for x in case["areas"] if x["id"] == ld["area"])
         for an in areas[ld["area"]]:
-            if a.get("toFrame"):
-                # Dir 10 = gravity; DistType 1 = one-way (along local 1), 2 = two-way
-                ok(sm.AreaObj.SetLoadUniformToFrame(an, ld["pattern"], float(ld["q"]), 10,
-                                                    1 if a["toFrame"] == "one" else 2, True, "Global", 0),
-                   f"area load to frames {ld['pattern']} on {ld['area']}")
-            else:
-                ok(sm.AreaObj.SetLoadUniform(an, ld["pattern"], float(ld["q"]), 10, True, "Global", 0),
-                   f"area load {ld['pattern']} on {ld['area']}")
+            # Dir 10 = gravity.  A membrane slab passes this load to its edge beams: two-way for a plain
+            # slab, one-way along its ribs for a ribbed one (SetLoadUniformToFrame is refused, -100)
+            ok(sm.AreaObj.SetLoadUniform(an, ld["pattern"], float(ld["q"]), 10, True, "Global", 0),
+               f"area load {ld['pattern']} on {ld['area']}")
     build_analysis(sm, case, point)
+    clear_unasked_restraints(sm, case)
     return names
+
+
+def clear_unasked_restraints(sm, case: dict) -> None:
+    """ETABS restrains joints at the Base level by itself; free every joint the definition does not
+    support, so springs and base-level slabs work as defined."""
+    wanted = [s["at"] for s in case["supports"]]
+    r = sm.PointObj.GetNameList(0, [])
+    ok(r, "list points")
+    freed = 0
+    for pn in r[1]:
+        c = sm.PointObj.GetCoordCartesian(pn, 0, 0, 0, "Global")
+        ok(c, f"coordinates of point {pn}")
+        if any(math.dist(c[:3], w) < 1e-6 for w in wanted):
+            continue
+        got = sm.PointObj.GetRestraint(pn, [])
+        ok(got, f"restraint of point {pn}")
+        if any(got[0]):
+            ok(sm.PointObj.SetRestraint(pn, [False] * 6), f"free point {pn}")
+            freed += 1
+    if freed:
+        say(f"  freed {freed} joints ETABS had restrained without being asked")
 
 
 def build_analysis(sm, case: dict, point) -> None:
     """Diaphragms, springs, masses, mass source, modal / response-spectrum / P-Delta cases, combinations."""
     for d in case.get("diaphragms", []):
-        ok(sm.Diaphragm.SetDiaphragm(d["name"], False), f"rigid diaphragm {d['name']}")
+        if sm.Diaphragm.SetDiaphragm(d["name"], False) != 0:
+            # a new model already has a rigid diaphragm D1: use it if it is rigid
+            got = sm.Diaphragm.GetDiaphragm(d["name"], False)
+            ok(got, f"rigid diaphragm {d['name']}")
+            if got[0]:
+                raise Stop(f"diaphragm {d['name']} exists and is semi-rigid")
+            say(f"  diaphragm {d['name']} already defined (rigid), used as is")
         for p in d["points"]:
             pn = point(p)
             ok(sm.PointObj.SetDiaphragm(pn, 3, d["name"]), f"diaphragm {d['name']} at {p}")   # 3 = defined
@@ -253,12 +277,23 @@ def _bilinear(c, u, v):
 def build_areas(sm, case: dict) -> dict:
     """Area sections and objects.  A meshed area is drawn as n1 x n2 separate area objects, so ETABS
     and SkyFrame use the same elements; returns {area id: [ETABS area names]}."""
+    one_way = {a["section"] for a in case.get("areas", []) if a.get("toFrame") == "one"}
     for a in case.get("areaSections", []):
         st = SHELL_TYPE[a["shell"]]
         if a["kind"] == "wall":
             ok(sm.PropArea.SetWall(a["name"], 1, st, a["material"], float(a["thickness"])), f"wall {a['name']}")
             back = sm.PropArea.GetWall(a["name"], 0, 0, "", 0.0, 0, "", "")
             got_t, got_st = back[3], back[1]
+        elif a["name"] in one_way:
+            # one-way load distribution: a ribbed membrane slab, ribs along local 1 (the span)
+            t = float(a["thickness"])
+            ok(sm.PropArea.SetSlab(a["name"], 3, st, a["material"], t), f"ribbed slab {a['name']}")
+            ok(sm.PropArea.SetSlabRibbed(a["name"], t, t / 2, 0.5, 0.5, 2.0, 1), f"ribs of {a['name']}")
+            back = sm.PropArea.GetSlab(a["name"], 0, 0, "", 0.0, 0, "", "")
+            got_t, got_st = t, back[1]
+            if back[0] != 3:
+                raise Stop(f"slab {a['name']}: reads back slab type {back[0]}, set ribbed (3)")
+            say(f"  area section {a['name']}: ribbed membrane slab, ribs along local 1 (one-way)")
         else:
             ok(sm.PropArea.SetSlab(a["name"], 0, st, a["material"], float(a["thickness"])), f"slab {a['name']}")
             back = sm.PropArea.GetSlab(a["name"], 0, 0, "", 0.0, 0, "", "")
@@ -278,7 +313,11 @@ def build_areas(sm, case: dict) -> dict:
     out = {}
     labels = sorted({a["pier"] for a in case.get("areas", []) if a.get("pier")})
     for p in labels:
-        ok(sm.PierLabel.SetPier(p), f"pier label {p}")
+        if sm.PierLabel.SetPier(p) != 0:
+            have = sm.PierLabel.GetNameList(0, [])          # a new model already has pier P1
+            ok(have, "list pier labels")
+            if p not in list(have[1]):
+                raise Stop(f"ETABS refused: pier label {p}")
     for a in case.get("areas", []):
         n1, n2 = a.get("mesh", [1, 1])
         out[a["id"]] = []

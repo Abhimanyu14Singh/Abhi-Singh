@@ -14,5 +14,4 @@
          ( ) = Null DOF
 
   JOINTS              UX  UY  UZ  RX  RY  RZ
-       1               -   -   -   A   A   A
-       2               A   A   A   A   A   A
+       1 TO       2    A   A   A   A   A   A
