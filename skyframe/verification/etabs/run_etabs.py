@@ -1168,10 +1168,31 @@ def push(repo: Path, summaries: list, out_root: Path) -> None:
     say(f"Pushed results for {', '.join(s['id'] for s in summaries)} to GitHub")
 
 
+_TEXT_ONLY = ("title", "purpose", "settings", "checks", "notes")
+
+
+def needs_run(out_root: Path, cid: str) -> bool:
+    """True when a case has no ETABS results here, or its model changed since they were made
+    (descriptions and checks may change without a rerun)."""
+    work = out_root / cid
+    if not (work / f"{cid}.etabs.json").exists() or not (work / f"{cid}.case.json").exists():
+        return True
+    try:
+        ran = json.loads((work / f"{cid}.case.json").read_text(encoding="utf-8"))
+        now = json.loads(fetch(f"cases/{cid}.json"))
+    except Exception:
+        return True
+    if now.get("benchmark") and not (work / f"{cid}.skyframe-speed.json").exists():
+        return True                              # the SkyFrame timing on this PC is still missing
+    model = lambda d: {k: v for k, v in d.items() if k not in _TEXT_ONLY}
+    return model(ran) != model(now)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("cases", nargs="*", help="case ids, e.g. F1 F2; or --all")
-    ap.add_argument("--all", action="store_true", help="every case published so far that has no results here yet")
+    ap.add_argument("--all", action="store_true",
+                    help="every published case that has no results here yet or whose model has changed")
     ap.add_argument("--force", action="store_true", help="with --all: rerun cases that already have results")
     ap.add_argument("--etabs", default=ETABS_EXE, help="full path to ETABS.exe")
     ap.add_argument("--close", action="store_true", help="close ETABS when done (always done after several cases)")
@@ -1192,7 +1213,7 @@ def main(argv=None) -> int:
         ids = list(a.cases)
         if a.all:
             index = json.loads(fetch("cases/index.json"))
-            ids += [c for c in index if a.force or not (out_root / c / f"{c}.etabs.json").exists()]
+            ids += [c for c in index if a.force or needs_run(out_root, c)]
         if not ids:
             say("Nothing to run: every published case already has results here (use --force to rerun).")
             return 0
