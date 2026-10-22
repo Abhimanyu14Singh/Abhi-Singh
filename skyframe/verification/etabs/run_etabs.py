@@ -203,6 +203,31 @@ def clear_unasked_restraints(sm, case: dict) -> None:
         say(f"  freed {freed} joints ETABS had restrained without being asked")
 
 
+def set_mass_source(sm, elements: bool, masses: bool, pats: list) -> str:
+    """The mass source, through whichever API this ETABS accepts (the newer named source first)."""
+    names = [p for p, _ in pats] or [""]                 # never an empty array: COM may refuse it
+    sfs = [float(f) for _, f in pats] or [0.0]
+    tried = []
+    attempts = (
+        ("SourceMass.SetMassSource", lambda: sm.SourceMass.SetMassSource(
+            "VERIF", elements, masses, bool(pats), True, len(pats), names, sfs)),
+        ("PropMaterial.SetMassSource_1", lambda: sm.PropMaterial.SetMassSource_1(
+            elements, masses, bool(pats), len(pats), names, sfs)),
+        ("PropMaterial.SetMassSource", lambda: sm.PropMaterial.SetMassSource(
+            (3 if pats else 1) if (elements or masses) else 2, len(pats), names, sfs)),
+    )
+    for label, call in attempts:
+        try:
+            r = call()
+            code = r[-1] if isinstance(r, (list, tuple)) else r
+            if code == 0:
+                return label
+            tried.append(f"{label} returned {code}")
+        except Exception as exc:
+            tried.append(f"{label}: {exc}")
+    raise Stop("mass source refused: " + "; ".join(tried))
+
+
 def build_analysis(sm, case: dict, point) -> None:
     """Diaphragms, springs, masses, mass source, modal / response-spectrum / P-Delta cases, combinations."""
     for d in case.get("diaphragms", []):
@@ -235,10 +260,8 @@ def build_analysis(sm, case: dict, point) -> None:
     if case.get("massSource"):
         src = case["massSource"]
         pats = list((src.get("patterns") or {}).items())
-        ok(sm.SourceMass.SetMassSource("VERIF", bool(src.get("elements")), bool(src.get("masses")), bool(pats),
-                                       True, len(pats), [p for p, _ in pats], [float(f) for _, f in pats]),
-           "mass source")
-        say(f"  mass source: elements {bool(src.get('elements'))}, joint masses {bool(src.get('masses'))}, "
+        how = set_mass_source(sm, bool(src.get("elements")), bool(src.get("masses")), pats)
+        say(f"  mass source ({how}): elements {bool(src.get('elements'))}, joint masses {bool(src.get('masses'))}, "
             f"patterns {dict(pats)}")
     if case.get("modal"):
         mc = case["modal"]
@@ -632,49 +655,121 @@ def _pillow():
             return None
 
 
+def _etabs_windows():
+    """Top-level windows that belong to an ETABS.exe process (never a browser tab named ETABS)."""
+    import ctypes
+    from ctypes import wintypes as W
+    user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+    found = []
+    proc = ctypes.WINFUNCTYPE(ctypes.c_bool, W.HWND, W.LPARAM)
+
+    def each(h, _):
+        if not user32.IsWindowVisible(h):
+            return True
+        pid = W.DWORD()
+        user32.GetWindowThreadProcessId(h, ctypes.byref(pid))
+        hp = kernel32.OpenProcess(0x1000, False, pid.value)          # query limited information
+        if hp:
+            buf, n = ctypes.create_unicode_buffer(520), W.DWORD(520)
+            if kernel32.QueryFullProcessImageNameW(hp, 0, buf, ctypes.byref(n)) and \
+                    buf.value.lower().endswith("etabs.exe"):
+                found.append(h)
+            kernel32.CloseHandle(hp)
+        return True
+
+    user32.EnumWindows(proc(each), 0)
+    return found
+
+
+def _child_titled(parent, prefix: str):
+    """The first child window whose title starts with ``prefix`` (ETABS's 3-D view pane)."""
+    import ctypes
+    from ctypes import wintypes as W
+    user32 = ctypes.windll.user32
+    hit = []
+    proc = ctypes.WINFUNCTYPE(ctypes.c_bool, W.HWND, W.LPARAM)
+
+    def each(h, _):
+        n = user32.GetWindowTextLengthW(h)
+        buf = ctypes.create_unicode_buffer(n + 1)
+        user32.GetWindowTextW(h, buf, n + 1)
+        if buf.value.startswith(prefix) and user32.IsWindowVisible(h):
+            hit.append(h)
+            return False
+        return True
+
+    user32.EnumChildWindows(parent, proc(each), 0)
+    return hit[0] if hit else None
+
+
+def _print_window(h):
+    """The window's own pixels (PrintWindow, full content): nothing on top of it can appear."""
+    import ctypes
+    from ctypes import wintypes as W
+    from PIL import Image
+    user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
+    r = W.RECT()
+    user32.GetWindowRect(h, ctypes.byref(r))
+    w, ht = r.right - r.left, r.bottom - r.top
+    if w <= 0 or ht <= 0:
+        return None
+    hdc = user32.GetWindowDC(h)
+    mem = gdi32.CreateCompatibleDC(hdc)
+    bmp = gdi32.CreateCompatibleBitmap(hdc, w, ht)
+    gdi32.SelectObject(mem, bmp)
+    ok_ = user32.PrintWindow(h, mem, 2)                                # PW_RENDERFULLCONTENT
+
+    class BIH(ctypes.Structure):
+        _fields_ = [("biSize", W.DWORD), ("biWidth", W.LONG), ("biHeight", W.LONG), ("biPlanes", W.WORD),
+                    ("biBitCount", W.WORD), ("biCompression", W.DWORD), ("biSizeImage", W.DWORD),
+                    ("biXPelsPerMeter", W.LONG), ("biYPelsPerMeter", W.LONG), ("biClrUsed", W.DWORD),
+                    ("biClrImportant", W.DWORD)]
+    bi = BIH(ctypes.sizeof(BIH), w, -ht, 1, 32, 0, 0, 0, 0, 0, 0)
+    buf = ctypes.create_string_buffer(w * ht * 4)
+    gdi32.GetDIBits(mem, bmp, 0, ht, buf, ctypes.byref(bi), 0)
+    gdi32.DeleteObject(bmp)
+    gdi32.DeleteDC(mem)
+    user32.ReleaseDC(h, hdc)
+    if not ok_:
+        return None
+    return Image.frombuffer("RGB", (w, ht), buf, "raw", "BGRX", 0, 1)
+
+
 def screenshot(sm, cid: str, path: Path) -> None:
-    """Save a picture of the ETABS window (the model as ETABS shows it after the run)."""
+    """Save ETABS's 3-D view after the run (its deflected shape).  Only that pane of the ETABS window
+    is captured, from the window's own pixels, so other windows and pop-ups cannot appear."""
     try:
-        import ctypes
-        import time
-        from ctypes import wintypes as W
-        grab = _pillow()
-        if grab is None:
+        if _pillow() is None:
             say("  no screenshot: Pillow could not be installed")
             return
+        from PIL import ImageStat
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
         try:
             sm.View.RefreshView(0, False)
         except Exception:
             pass
-        user32 = ctypes.windll.user32
-        try:
-            ctypes.windll.shcore.SetProcessDpiAwareness(2)
-        except Exception:
-            user32.SetProcessDPIAware()
-        found = []
-        proc = ctypes.WINFUNCTYPE(ctypes.c_bool, W.HWND, W.LPARAM)
-
-        def each(h, _):
-            if user32.IsWindowVisible(h):
-                n = user32.GetWindowTextLengthW(h)
-                buf = ctypes.create_unicode_buffer(n + 1)
-                user32.GetWindowTextW(h, buf, n + 1)
-                if "ETABS" in buf.value:
-                    found.append((cid in buf.value, h))
-            return True
-
-        user32.EnumWindows(proc(each), 0)
-        if not found:
-            say("  no screenshot: ETABS window not found")
+        mains = _etabs_windows()
+        if not mains:
+            say("  no screenshot: no ETABS window found")
             return
-        h = sorted(found, key=lambda t: not t[0])[0][1]
-        user32.ShowWindow(h, 3)                  # maximised
-        user32.SetForegroundWindow(h)
-        time.sleep(2.0)
-        r = W.RECT()
-        user32.GetWindowRect(h, ctypes.byref(r))
-        grab.grab(bbox=(r.left, r.top, r.right, r.bottom), all_screens=True).save(str(path))
-        say(f"  screenshot {path.name}")
+        pane = None
+        for m in mains:
+            pane = _child_titled(m, "3-D View")
+            if pane:
+                break
+        if pane is None:
+            say("  no screenshot: ETABS has no 3-D view open")
+            return
+        img = _print_window(pane)
+        if img is None or max(ImageStat.Stat(img).stddev) < 4:
+            say("  no screenshot: the 3-D view could not be captured")
+            return
+        img.save(str(path))
+        say(f"  screenshot {path.name} (ETABS 3-D view only)")
     except Exception as exc:                     # pictures are a bonus: never stop the run for one
         say(f"  no screenshot: {exc}")
 
@@ -814,6 +909,11 @@ def main(argv=None) -> int:
             except Stop as exc:
                 say(f"STOPPED on {case['id']}: {exc}")
                 summaries.append({"id": case["id"], "ok": False, "error": str(exc)})
+            except Exception as exc:                 # one model's surprise must not end the whole run
+                import traceback
+                say(f"STOPPED on {case['id']}: {type(exc).__name__}: {exc}")
+                say(traceback.format_exc())
+                summaries.append({"id": case["id"], "ok": False, "error": f"{type(exc).__name__}: {exc}"})
             finally:
                 (out_root / case["id"]).mkdir(parents=True, exist_ok=True)
                 (out_root / case["id"] / f"{case['id']}.log.txt").write_text("\n".join(_LOG) + "\n", encoding="utf-8")
