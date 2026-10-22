@@ -1,0 +1,178 @@
+{
+ "id": "C1",
+ "title": "Creep under sustained load",
+ "purpose": "A 1 ft x 1 ft concrete column (E = 3600 ksi, aging off) loaded with 200 kips at 28 days and held for 1000 days in a staged-construction case with time-dependent material: it shortens (sigma/E)(1 + phi) L, phi from ACI 209R-92 (RH 70%, V/S 0.25 ft = 76.2 mm, moist cured, type I cement, t0 = 28 d, t - t0 = 1000 d; shrinkage off). The same load as a linear static case gives the elastic part, so the ratio of the two is 1 + phi.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "supports": "fixed base",
+  "timeDependent": "ACI 209R-92 creep only (shrinkage and aging off); one stage: add at 28 days, load, hold 1000 days; results at the end of the stage"
+ },
+ "materials": [
+  {
+   "name": "CONC",
+   "E": 518400.0,
+   "nu": 0.2,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "CCOL",
+   "material": "CONC",
+   "A": 1.0,
+   "I33": 0.08333333333333333,
+   "I22": 0.08333333333333333,
+   "J": 0.1406,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 1.0
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "CCOL",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "G"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "G",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    0,
+    0,
+    -200.0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "ext": "timedep",
+ "extCases": [
+  "STG"
+ ],
+ "timeDependent": {
+  "material": "CONC",
+  "law": "ACI 209R-92",
+  "rh": 70.0,
+  "vs": 0.25,
+  "cement": "I",
+  "curing": "moist",
+  "shrinkStart": 7.0,
+  "creep": true,
+  "shrinkage": false,
+  "aging": false
+ },
+ "tdStaged": {
+  "name": "STG",
+  "age": 28.0,
+  "duration": 1000.0,
+  "pattern": "G"
+ },
+ "checks": [
+  {
+   "id": "G-UZ",
+   "label": "Elastic shortening (linear static)",
+   "case": "G",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": -0.004629629629629629,
+   "formula": "-PL / EA",
+   "how": "signed"
+  },
+  {
+   "id": "STG-UZ",
+   "label": "Shortening after 1000 days",
+   "case": "STG",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": -0.009803489473041204,
+   "formula": "-(P/A)/E (1 + phi(t, t0)) L",
+   "how": "signed"
+  },
+  {
+   "id": "STG-P",
+   "label": "Column axial force (unchanged by creep)",
+   "case": "STG",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "i",
+   "comp": "P",
+   "hand": -200.0,
+   "formula": "-P",
+   "how": "signed"
+  },
+  {
+   "id": "C1-phi",
+   "label": "Creep coefficient phi(1028 d, 28 d) = UZ(STG)/UZ(G) - 1",
+   "case": null,
+   "quantity": "value",
+   "key": "phi",
+   "hand": 1.1175537261769002,
+   "formula": "(t-t0)^0.6/(10+(t-t0)^0.6) x 2.35 g_la g_rh g_vs",
+   "how": "signed"
+  }
+ ]
+}

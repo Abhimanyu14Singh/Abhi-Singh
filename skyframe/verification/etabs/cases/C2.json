@@ -1,0 +1,150 @@
+{
+ "id": "C2",
+ "title": "Free shrinkage",
+ "purpose": "A 1 ft x 1 ft concrete column fixed at its base only and carrying no load: added at 7 days, when drying starts, and left for 1000 days. Nothing restrains it, so no force arises and it shortens eps_sh(t) L with eps_sh from ACI 209R-92 (RH 70%, V/S 76.2 mm, moist cured, ts = 7 d; creep and aging off).",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "supports": "fixed base",
+  "timeDependent": "ACI 209R-92 shrinkage only (creep and aging off); one stage: add at 7 days, hold 1000 days; results at the end of the stage"
+ },
+ "materials": [
+  {
+   "name": "CONC",
+   "E": 518400.0,
+   "nu": 0.2,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "CCOL",
+   "material": "CONC",
+   "A": 1.0,
+   "I33": 0.08333333333333333,
+   "I22": 0.08333333333333333,
+   "J": 0.1406,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 1.0
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "CCOL",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [],
+ "ext": "timedep",
+ "extCases": [
+  "STG"
+ ],
+ "timeDependent": {
+  "material": "CONC",
+  "law": "ACI 209R-92",
+  "rh": 70.0,
+  "vs": 0.25,
+  "cement": "I",
+  "curing": "moist",
+  "shrinkStart": 7.0,
+  "creep": false,
+  "shrinkage": true,
+  "aging": false
+ },
+ "tdStaged": {
+  "name": "STG",
+  "age": 7.0,
+  "duration": 1000.0,
+  "pattern": null
+ },
+ "checks": [
+  {
+   "id": "STG-UZ",
+   "label": "Top shortening after 1000 days of drying",
+   "case": "STG",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": -0.005219044086830596,
+   "formula": "-eps_sh(t) L",
+   "how": "signed",
+   "tol": [
+    0.001,
+    0.01
+   ]
+  },
+  {
+   "id": "STG-P",
+   "label": "No axial force (free member)",
+   "case": "STG",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "i",
+   "comp": "P",
+   "hand": 0.0,
+   "formula": "0",
+   "how": "signed",
+   "scale": 1.0
+  },
+  {
+   "id": "C2-eps",
+   "label": "Shrinkage strain eps_sh(1007 d) = -UZ / L",
+   "case": null,
+   "quantity": "value",
+   "key": "eps_sh",
+   "hand": 0.0004349203405692163,
+   "formula": "(t-ts)/(35+t-ts) x 780e-6 g_rh g_tc g_vs",
+   "how": "signed",
+   "tol": [
+    0.001,
+    0.01
+   ]
+  }
+ ]
+}
