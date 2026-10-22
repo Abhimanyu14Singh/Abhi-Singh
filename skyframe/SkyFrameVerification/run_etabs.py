@@ -25,6 +25,7 @@ import json
 import math
 import os
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -129,6 +130,9 @@ def build(sm, case: dict) -> dict:
             if back[0] != int(f["cardinal"]) or not back[2]:
                 raise Stop(f"frame {f['id']}: insertion point reads back {back[0]}, transform {back[2]}")
             say(f"  frame {f['id']}: cardinal point {back[0]}, stiffness transformed {back[2]} (read back)")
+        if f.get("tcLimit") == "tension":
+            # no compression (limit 0); limits act in nonlinear cases only
+            ok(sm.FrameObj.SetTCLimits(r[0], True, 0.0, False, 0.0, 0), f"frame {f['id']} tension-only")
         if case.get("stationSpacing"):
             ok(sm.FrameObj.SetOutputStations(r[0], 1, float(case["stationSpacing"]), 2, False, False),
                f"frame {f['id']} output stations")
@@ -260,6 +264,21 @@ def build_analysis(sm, case: dict, point) -> None:
         pats = list(pc["loads"].items())
         ok(sm.LoadCases.StaticNonlinear.SetLoads(nm, len(pats), ["Load"] * len(pats), [p for p, _ in pats],
                                                  [float(f) for _, f in pats]), f"{nm} loads")
+    geo = {"none": 0, "pdelta": 1, "large": 2}            # eGeometricNonlinearity
+    for nc in case.get("nlCases", []):
+        nm = nc["name"]
+        ok(sm.LoadCases.StaticNonlinear.SetCase(nm), f"nonlinear case {nm}")
+        ok(sm.LoadCases.StaticNonlinear.SetGeometricNonlinearity(nm, geo[nc["geometry"]]), f"{nm} geometry")
+        pats = list(nc["loads"].items())
+        ok(sm.LoadCases.StaticNonlinear.SetLoads(nm, len(pats), ["Load"] * len(pats), [p for p, _ in pats],
+                                                 [float(f) for _, f in pats]), f"{nm} loads")
+    for bc in case.get("bucklingCases", []):
+        nm = bc["name"]
+        ok(sm.LoadCases.Buckling.SetCase(nm), f"buckling case {nm}")
+        pats = list(bc["loads"].items())
+        ok(sm.LoadCases.Buckling.SetLoads(nm, len(pats), ["Load"] * len(pats), [p for p, _ in pats],
+                                          [float(f) for _, f in pats]), f"{nm} loads")
+        ok(sm.LoadCases.Buckling.SetParameters(nm, int(bc["modes"]), 1e-9), f"{nm} modes")
     for cb in case.get("combos", []):
         ok(sm.RespCombo.Add(cb["name"], 1 if cb["type"] == "envelope" else 0), f"combination {cb['name']}")
         for cn, f in cb["cases"].items():
@@ -345,6 +364,7 @@ def output_cases(case: dict) -> list:
     """(name, kind) of every case and combination whose results are exported."""
     out = [(p["name"], "case") for p in case["patterns"]]
     out += [(c["name"], "case") for c in case.get("pdeltaCases", [])]
+    out += [(c["name"], "case") for c in case.get("nlCases", [])]
     out += [(c["name"], "case") for c in case.get("rsCases", [])]
     out += [(c["name"], "combo") for c in case.get("combos", [])]
     return out
@@ -428,6 +448,28 @@ def results(sm, case: dict, names: dict) -> dict:
     return out
 
 
+def reversed_frames(sm, case: dict, names: dict) -> list:
+    """Frames ETABS drew from the definition's j end (it orients horizontal members towards +X / +Y):
+    their stations run from that end, and the comparison reads them mirrored."""
+    out = []
+    by_id = {f["id"]: f for f in case["frames"]}
+    for fid, fname in names.items():
+        try:
+            pts = sm.FrameObj.GetPoints(fname, "", "")
+            ok(pts, f"end points of {fid}")
+            c = sm.PointObj.GetCoordCartesian(pts[0], 0, 0, 0, "Global")
+            ok(c, f"coordinates of {fid} end i")
+            if math.dist(c[:3], by_id[fid]["i"]) > 1e-6:
+                out.append(fid)
+        except Stop:
+            raise
+        except Exception:
+            pass
+    if out:
+        say(f"  ETABS reversed {len(out)} frames: {', '.join(out[:12])}{' ...' if len(out) > 12 else ''}")
+    return out
+
+
 def modal_results(sm, case: dict) -> dict:
     mc = case["modal"]["case"]
     ok(sm.Results.Setup.DeselectAllCasesAndCombosForOutput(), "deselect output")
@@ -441,6 +483,9 @@ def modal_results(sm, case: dict) -> dict:
 
 
 def pick(res: dict, chk: dict):
+    if chk["quantity"] == "buckling":
+        f = (res.get("buckling") or {}).get(chk["case"]) or []
+        return f[chk["mode"] - 1] if chk["mode"] <= len(f) else None
     if chk["quantity"] == "modal":
         md = res.get("modal") or {}
         k = chk["mode"] - 1
@@ -459,15 +504,20 @@ def pick(res: dict, chk: dict):
                 and r["name"] == chk["name"] and r["location"].lower() == chk["location"]]
         return rows[0][chk["comp"]] if rows else None
     if chk["quantity"] == "base":
-        return c["base"][chk["comp"]]
+        return c["base"].get(chk["comp"])
     if chk["quantity"] == "joint":
         k = ["UX", "UY", "UZ", "RX", "RY", "RZ"].index(chk["comp"])
+        if not c["joints"]:
+            return None
         best = min(c["joints"], key=lambda j: math.dist(j["xyz"], chk["at"]))
         return best["u"][k] if math.dist(best["xyz"], chk["at"]) < 1e-3 else None
     rows = c["frames"].get(chk["frame"]) or []
     if not rows:
         return None
     st = chk["station"]
+    if chk["frame"] in res.get("reversed", []):        # ETABS drew it from the other end
+        top = max(r["station"] for r in rows)
+        st = {"i": "j", "j": "i"}.get(st, top - st if not isinstance(st, str) else st)
     if st == "i":
         row = min(rows, key=lambda r: r["station"])
     elif st == "j":
@@ -477,6 +527,156 @@ def pick(res: dict, chk: dict):
         if abs(row["station"] - st) > 1e-3:
             return None
     return row[chk["comp"]]
+
+
+def fastest_solver(sm) -> dict:
+    """ETABS's fastest setting: the advanced solver, every core, analysis in a separate process."""
+    cores = os.cpu_count() or 1
+    try:
+        ok(sm.Analyze.SetSolverOption_3(1, 2, 0, 0, cores, ""), "advanced solver, all cores")
+        got = sm.Analyze.GetSolverOption_3(0, 0, 0, 0, 0, "")
+        ok(got, "read back solver options")
+        info = {"solver": {0: "standard", 1: "advanced", 2: "multithreaded"}.get(got[0], got[0]),
+                "process": got[1], "threads": got[4], "cores": cores}
+    except Exception as exc:
+        info = {"solver": f"not set: {exc}", "cores": cores}
+    say(f"  ETABS solver: {info}")
+    return info
+
+
+def benchmark(sm, case: dict) -> dict:
+    """Time the linear and the nonlinear part separately (analysis only: building is excluded)."""
+    import platform
+    out = {"etabs": fastest_solver(sm), "machine": platform.processor() or platform.machine()}
+    for part in ("linear", "nonlinear"):
+        ok(sm.Analyze.SetRunCaseFlag("", False, True), "switch all cases off")
+        for cname in case["benchmark"][part]:
+            ok(sm.Analyze.SetRunCaseFlag(cname, True, False), f"switch case {cname} on")
+        t0 = time.perf_counter()
+        ok(sm.Analyze.RunAnalysis(), f"run the {part} part")
+        out[f"{part}_s"] = time.perf_counter() - t0
+        say(f"  ETABS {part} run: {out[f'{part}_s']:.2f} s ({', '.join(case['benchmark'][part])})")
+        try:
+            ok(sm.SetModelIsLocked(False), "unlock the model")
+        except Exception:
+            pass
+    return out
+
+
+BRANCH = "claude/etabs-opensees-ui-rebuild-kt2zwh"
+
+
+def skyframe_speed(out_root: Path, case: dict) -> None:
+    """Time SkyFrame on this machine on the same benchmark model: the latest SkyFrame code is taken
+    from the GitHub clone (git archive, nothing in the clone changes) and run with Python 3.11/3.12."""
+    import shutil
+    import subprocess
+    import tempfile
+    import zipfile
+    repo = out_root.parents[1]
+    if not (repo / ".git").exists():
+        say(f"SkyFrame speed run skipped: {repo} is not the GitHub clone")
+        return
+    src = Path(tempfile.gettempdir()) / "skyframe_speed_src"
+    shutil.rmtree(src, ignore_errors=True)
+    src.mkdir(parents=True)
+    say("SkyFrame speed run: fetching the latest SkyFrame ...")
+    subprocess.run(["git", "-C", str(repo), "fetch", "--quiet", "origin", BRANCH], check=False)
+    z = src / "src.zip"
+    r = subprocess.run(["git", "-C", str(repo), "archive", "--format=zip", "-o", str(z), f"origin/{BRANCH}",
+                        "skyframe/skyframe", "skyframe/verification/etabs"], capture_output=True, text=True)
+    if r.returncode:
+        say(f"SkyFrame speed run skipped: git archive failed: {r.stderr.strip()}")
+        return
+    zipfile.ZipFile(z).extractall(src)
+    py = None
+    for cand in (["py", "-3.11"], ["py", "-3.12"], ["py", "-3.13"], [sys.executable]):
+        try:
+            if subprocess.run(cand + ["-c", "import sys; print(sys.version)"], capture_output=True).returncode == 0:
+                py = cand
+                break
+        except OSError:
+            continue
+    if py is None:
+        say("SkyFrame speed run skipped: no Python found")
+        return
+    say(f"SkyFrame speed run: installing OpenSeesPy and PARDISO for {' '.join(py)} ...")
+    subprocess.run(py + ["-m", "pip", "install", "--user", "--quiet", "openseespy", "numpy", "scipy", "pypardiso",
+                         "flask"], check=False)
+    work = out_root / case["id"]
+    r = subprocess.run(py + [str(src / "skyframe" / "verification" / "etabs" / "speed_skyframe.py"),
+                             "--case", str(work / f"{case['id']}.case.json"),
+                             "--out", str(work / f"{case['id']}.skyframe-speed.json")],
+                       capture_output=True, text=True)
+    for line in (r.stdout + r.stderr).splitlines()[-12:]:
+        say("  " + line)
+
+
+def _pillow():
+    """PIL.ImageGrab, installing Pillow for this Python on first use; None when it cannot."""
+    try:
+        from PIL import ImageGrab
+        return ImageGrab
+    except ImportError:
+        import subprocess
+        say("Installing Pillow (for the ETABS screenshots) ...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "--user", "--quiet", "pillow"], check=False)
+        try:
+            import site
+            import importlib
+            sys.path.append(site.getusersitepackages())
+            importlib.invalidate_caches()
+            from PIL import ImageGrab
+            return ImageGrab
+        except Exception:
+            return None
+
+
+def screenshot(sm, cid: str, path: Path) -> None:
+    """Save a picture of the ETABS window (the model as ETABS shows it after the run)."""
+    try:
+        import ctypes
+        import time
+        from ctypes import wintypes as W
+        grab = _pillow()
+        if grab is None:
+            say("  no screenshot: Pillow could not be installed")
+            return
+        try:
+            sm.View.RefreshView(0, False)
+        except Exception:
+            pass
+        user32 = ctypes.windll.user32
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            user32.SetProcessDPIAware()
+        found = []
+        proc = ctypes.WINFUNCTYPE(ctypes.c_bool, W.HWND, W.LPARAM)
+
+        def each(h, _):
+            if user32.IsWindowVisible(h):
+                n = user32.GetWindowTextLengthW(h)
+                buf = ctypes.create_unicode_buffer(n + 1)
+                user32.GetWindowTextW(h, buf, n + 1)
+                if "ETABS" in buf.value:
+                    found.append((cid in buf.value, h))
+            return True
+
+        user32.EnumWindows(proc(each), 0)
+        if not found:
+            say("  no screenshot: ETABS window not found")
+            return
+        h = sorted(found, key=lambda t: not t[0])[0][1]
+        user32.ShowWindow(h, 3)                  # maximised
+        user32.SetForegroundWindow(h)
+        time.sleep(2.0)
+        r = W.RECT()
+        user32.GetWindowRect(h, ctypes.byref(r))
+        grab.grab(bbox=(r.left, r.top, r.right, r.bottom), all_screens=True).save(str(path))
+        say(f"  screenshot {path.name}")
+    except Exception as exc:                     # pictures are a bonus: never stop the run for one
+        say(f"  no screenshot: {exc}")
 
 
 def run_case(sm, case: dict, out_root: Path, version: str) -> dict:
@@ -493,15 +693,29 @@ def run_case(sm, case: dict, out_root: Path, version: str) -> dict:
     run = [n for n, kind in output_cases(case) if kind == "case"]
     if case.get("modal"):
         run.append(case["modal"]["case"])
+    run += [b["name"] for b in case.get("bucklingCases", [])]
+    timing = benchmark(sm, case) if case.get("benchmark") else None
+    ok(sm.Analyze.SetRunCaseFlag("", False, True), "switch all cases off")
     for cname in run:
         ok(sm.Analyze.SetRunCaseFlag(cname, True, False), f"switch case {cname} on")
     say("Running the analysis ...")
     ok(sm.Analyze.RunAnalysis(), "run analysis")
+    screenshot(sm, case["id"], work / f"{case['id']}.etabs.png")
     say("Reading results ...")
     res = {"program": "ETABS", "version": version, "units": "kip-ft", "case": case["id"],
-           "cases": results(sm, case, names)}
+           "cases": results(sm, case, names), "reversed": reversed_frames(sm, case, names)}
     if case.get("modal"):
         res["modal"] = modal_results(sm, case)
+    if case.get("bucklingCases"):
+        res["buckling"] = {}
+        for bc in case["bucklingCases"]:
+            ok(sm.Results.Setup.DeselectAllCasesAndCombosForOutput(), "deselect output")
+            ok(sm.Results.Setup.SetCaseSelectedForOutput(bc["name"]), f"select {bc['name']}")
+            bf = sm.Results.BucklingFactor(0, [], [], [], [])
+            ok(bf, f"buckling factors {bc['name']}")
+            res["buckling"][bc["name"]] = list(bf[4][:bf[0]])
+    if timing:
+        res["timing"] = timing
     if case.get("areas"):
         try:
             n_elm, n_obj = sm.AreaElm.Count(), sm.AreaObj.Count()
@@ -603,6 +817,15 @@ def main(argv=None) -> int:
             finally:
                 (out_root / case["id"]).mkdir(parents=True, exist_ok=True)
                 (out_root / case["id"] / f"{case['id']}.log.txt").write_text("\n".join(_LOG) + "\n", encoding="utf-8")
+        for case in todo:
+            if case.get("benchmark") and any(x["id"] == case["id"] and x["ok"] for x in summaries):
+                _LOG.clear()
+                try:
+                    skyframe_speed(out_root, case)
+                except Exception as exc:
+                    say(f"SkyFrame speed run failed: {exc}")
+                (out_root / case["id"] / f"{case['id']}.skyframe-speed.log.txt").write_text(
+                    "\n".join(_LOG) + "\n", encoding="utf-8")
         if a.push:
             push(Path(a.push), summaries, out_root)
     except Stop as exc:

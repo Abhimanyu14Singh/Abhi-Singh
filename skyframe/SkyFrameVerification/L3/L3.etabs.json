@@ -733,5 +733,9 @@
    "piers": [],
    "spandrels": []
   }
- }
+ },
+ "reversed": [
+  "B3",
+  "B4"
+ ]
 }
