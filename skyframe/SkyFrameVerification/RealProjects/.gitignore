@@ -1,0 +1,6 @@
+# Real project models for case R1: put the ETABS models (.EDB) here on the ETABS PC.
+# They stay on that PC: run_all.bat adds the whole SkyFrameVerification folder to git, and project
+# models can be confidential and larger than GitHub accepts (100 MB per file).  R1 pushes what the
+# comparison needs instead: each model's text export R1/<model>.$et and the results R1/R1.etabs.json.
+*
+!.gitignore

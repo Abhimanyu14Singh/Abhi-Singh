@@ -162,14 +162,18 @@ def N3() -> dict:
 
 
 # ── speed benchmark ─────────────────────────────────────────────────────────
-def SP1() -> dict:
-    """A 4-story RC frame, 4 x 3 bays of 25 ft, shell slabs meshed at 2.5 ft in both programs."""
+def rc_frame(cid: str, title: str, purpose: str, ns: int, nm: int, nx: int = 4, ny: int = 3, Fk: float = 40.0,
+             col: float = 2.0) -> dict:
+    """An RC frame, nx x ny bays of 25 ft, ns stories of 13 ft, 8 in shell slabs; each bay's slab is drawn as
+    nm x nm separate area objects (in both programs, so the meshes are identical), beams split at every slab
+    node.  Columns col x col ft; lateral load EQX Fk x level number (kips) per level, shared by its joints.
+    SP1 is (ns 4, nm 10); cases_x_speed.py makes the taller benchmarks from the same generator."""
     from cases_walls import CONC_E, CONC_NU
-    W, h, bay, nm = 0.150, 13.0, 25.0, 10                 # nm elements per bay side (2.5 ft)
-    nx, ny, ns = 4, 3, 4
+    W, h, bay = 0.150, 13.0, 25.0                         # nm elements per bay side (bay / nm ft)
     xs = [bay * i for i in range(nx + 1)]
     ys = [bay * j for j in range(ny + 1)]
     sub = lambda a, b: [a + (b - a) * k / nm for k in range(nm + 1)]
+    nj = len(xs) * len(ys)                               # column lines
     frames, areas, supports, loads = [], [], [], []
     for s in range(ns):
         z0, z1 = s * h, (s + 1) * h
@@ -191,30 +195,28 @@ def SP1() -> dict:
             for c, d in zip(ys, ys[1:]):
                 areas.append({"id": f"S{int(a)}_{int(c)}_{s + 1}", "section": "SLAB", "mesh": [nm, nm],
                               "corners": [[a, c, z1], [b, c, z1], [b, d, z1], [a, d, z1]]})
-        F = 40.0 * (s + 1)
-        loads += [{"pattern": "EQX", "at": [x, y, z1], "f": [F / 20, 0, 0, 0, 0, 0]} for x in xs for y in ys]
+        F = Fk * (s + 1)
+        loads += [{"pattern": "EQX", "at": [x, y, z1], "f": [F / nj, 0, 0, 0, 0, 0]} for x in xs for y in ys]
     supports = [{"at": [x, y, 0.0], "restraint": [1] * 6} for x in xs for y in ys]
-    col = {"name": "COL", "material": "CONC", "A": 4.0, "I33": 4 / 3, "I22": 4 / 3, "J": 2.25,
-           "As2": 0.0, "As3": 0.0, "depth": 2.0, "width": 2.0}
+    colsec = {"name": "COL", "material": "CONC", "A": col * col, "I33": col**4 / 12, "I22": col**4 / 12,
+              "J": 2.25 * (col / 2) ** 4, "As2": 0.0, "As3": 0.0, "depth": col, "width": col}
     bm = {"name": "BM", "material": "CONC", "A": 3.0, "I33": 1.5 * 8 / 12, "I22": 2 * 1.5**3 / 12, "J": 0.95,
           "As2": 0.0, "As3": 0.0, "depth": 2.0, "width": 1.5}
-    Wt = W * (len(xs) * len(ys) * ns * h * 4.0
+    Wt = W * (len(xs) * len(ys) * ns * h * col * col
               + ns * (len(ys) * nx + len(xs) * ny) * bay * 3.0
               + ns * nx * ny * bay * bay * (8 / 12))
-    V = sum(40.0 * (s + 1) for s in range(ns))
+    V = sum(Fk * (s + 1) for s in range(ns))
+    mesh = bay / nm
     return {
-        "id": "SP1", "title": "Speed benchmark: 4-story RC frame",
-        "purpose": ("Run time of a real-size model in both programs on the same machine: a 4-story concrete "
-                    "frame, 4 x 3 bays of 25 ft, 8 in slabs as thin shells meshed at 2.5 ft (4,800 shell "
-                    "elements, beams split at every slab node, about 30,000 equations). Timed twice: linear "
-                    "(self-weight, superimposed load, lateral load and 12 modes) and nonlinear (P-Delta static "
-                    "under all three together). ETABS uses its advanced solver on all cores."),
+        "id": cid, "title": title,
+        "purpose": purpose,
         "units": "kip-ft",
-        "settings": dict(_COMMON, selfWeight="0.150 kcf on frames and slabs", shells="Shell-Thin, 2.5 ft, identical",
+        "settings": dict(_COMMON, selfWeight="0.150 kcf on frames and slabs",
+                         shells=f"Shell-Thin, {mesh:g} ft, identical",
                          diaphragm="none: slabs in-plane stiff by their own shells", mass="element self-mass",
                          solver="ETABS advanced solver, all cores; SkyFrame default (PARDISO when installed)"),
         "materials": [{"name": "CONC", "E": CONC_E, "nu": CONC_NU, "unitWeight": W}],
-        "sections": [col, bm],
+        "sections": [colsec, bm],
         "areaSections": [{"name": "SLAB", "material": "CONC", "thickness": 8 / 12, "kind": "slab", "shell": "thin"}],
         "stories": [{"name": f"Story{s + 1}", "height": h} for s in range(ns)],
         "frames": frames, "areas": areas, "supports": supports,
@@ -227,7 +229,8 @@ def SP1() -> dict:
         "benchmark": {"linear": ["SW", "SDL", "EQX", "MODES"], "nonlinear": ["PDALL"]},
         "checks": [
             _b("SW-FZ", "Self-weight", "SW", "FZ", Wt, "0.15 x (columns + beams + slabs)"),
-            _b("SDL-FZ", "Superimposed load", "SDL", "FZ", 0.025 * 100 * 75 * ns, "0.025 ksf x floor area"),
+            _b("SDL-FZ", "Superimposed load", "SDL", "FZ", 0.025 * (nx * bay) * (ny * bay) * ns,
+               "0.025 ksf x floor area"),
             _b("EQX-FX", "Base shear", "EQX", "FX", -V, "-sum F"),
             _j("EQX-UX", "Roof sway, linear", "EQX", [0.0, 0.0, ns * h], "UX", None, "programs compared"),
             _j("PDALL-UX", "Roof sway, P-Delta", "PDALL", [0.0, 0.0, ns * h], "UX", None, "programs compared"),
@@ -235,6 +238,18 @@ def SP1() -> dict:
             _modal("T2", "Mode 2 period", 2, "T", None, "programs compared"),
         ],
     }
+
+
+def SP1() -> dict:
+    """A 4-story RC frame, 4 x 3 bays of 25 ft, shell slabs meshed at 2.5 ft in both programs."""
+    return rc_frame(
+        "SP1", "Speed benchmark: 4-story RC frame",
+        ("Run time of a real-size model in both programs on the same machine: a 4-story concrete "
+         "frame, 4 x 3 bays of 25 ft, 8 in slabs as thin shells meshed at 2.5 ft (4,800 shell "
+         "elements, beams split at every slab node, about 30,000 equations). Timed twice: linear "
+         "(self-weight, superimposed load, lateral load and 12 modes) and nonlinear (P-Delta static "
+         "under all three together). ETABS uses its advanced solver on all cores."),
+        ns=4, nm=10)
 
 
 CASES = {"N1": N1, "N2": N2, "N3": N3, "SP1": SP1}

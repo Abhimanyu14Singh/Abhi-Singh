@@ -1,0 +1,22 @@
+{
+ "id": "R1",
+ "title": "Real projects: the user's ETABS models",
+ "purpose": "Every ETABS model dropped into the RealProjects folder is run in ETABS as its author set it up, exported to text (.$et), imported into SkyFrame and run there. Base reactions, periods and mass ratios, story drifts and the largest joint displacements are compared program against program (python compare_real.py); there is no hand calculation.",
+ "units": "kip-ft",
+ "ext": "real",
+ "slow": true,
+ "folder": "RealProjects",
+ "settings": {
+  "model": "as the project's author built it (the EDB is opened unchanged; a copy is analysed)",
+  "analysis": "the cases the model has set to run; all of its cases when none is set",
+  "solver": "ETABS advanced solver, all cores; SkyFrame default",
+  "transfer": "ETABS text export (.$et) read by SkyFrame's e2k importer"
+ },
+ "materials": [],
+ "sections": [],
+ "stories": [],
+ "frames": [],
+ "supports": [],
+ "patterns": [],
+ "checks": []
+}

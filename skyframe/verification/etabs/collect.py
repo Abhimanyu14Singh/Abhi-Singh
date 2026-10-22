@@ -122,6 +122,10 @@ def main() -> int:
             print(f"{cid}: results stored, but there is no definition for it here")
             continue
         case = C.get(cid)
+        if not case["checks"]:                   # R1 (real projects): nothing to check here, and a slow run
+            print(f"\n{cid}: {case['title']}: results stored"
+                  + ("; compare them with python compare_real.py" if case.get("ext") == "real" else ""))
+            continue
         rows = CMP.compare(case, S.run(case), json.loads((DEST / f"{cid}.etabs.json").read_text()))
         print(f"\n{cid}: {case['title']}")
         for r in rows:
