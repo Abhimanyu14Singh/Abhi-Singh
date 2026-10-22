@@ -1,0 +1,313 @@
+{
+ "id": "D1",
+ "title": "Rigid diaphragm, eccentric load",
+ "purpose": "A rigid floor on four cantilever columns, loaded along X at a corner 10 ft off the centre of rigidity: the floor translates and twists, and each column takes its share by stiffness.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "diaphragm": "rigid, assigned to the four top joints",
+  "supports": "fixed bases"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1S1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C2S1",
+   "i": [
+    30.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C3S1",
+   "i": [
+    30.0,
+    20.0,
+    0.0
+   ],
+   "j": [
+    30.0,
+    20.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C4S1",
+   "i": [
+    0.0,
+    20.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    20.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    20.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    20.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "diaphragms": [
+  {
+   "name": "D1",
+   "points": [
+    [
+     0.0,
+     0.0,
+     12.0
+    ],
+    [
+     30.0,
+     0.0,
+     12.0
+    ],
+    [
+     30.0,
+     20.0,
+     12.0
+    ],
+    [
+     0.0,
+     20.0,
+     12.0
+    ]
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "PX"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "PX",
+   "at": [
+    0.0,
+    20.0,
+    12.0
+   ],
+   "f": [
+    10.0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "checks": [
+  {
+   "id": "PX-UX1",
+   "label": "Loaded corner moves along X",
+   "case": "PX",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    20.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 0.028243363899103337,
+   "formula": "P/4kx + theta e, kx = 3EI33/h^3",
+   "how": "signed"
+  },
+  {
+   "id": "PX-UX2",
+   "label": "Opposite corner moves less",
+   "case": "PX",
+   "quantity": "joint",
+   "at": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 0.006239394721586317,
+   "formula": "P/4kx - theta e",
+   "how": "signed"
+  },
+  {
+   "id": "PX-UY",
+   "label": "Twist moves a corner along Y",
+   "case": "PX",
+   "quantity": "joint",
+   "at": [
+    30.0,
+    20.0,
+    12.0
+   ],
+   "comp": "UY",
+   "hand": -0.016502976883137767,
+   "formula": "theta (x - xc), theta = P e / K_theta",
+   "how": "signed"
+  },
+  {
+   "id": "PX-RZ",
+   "label": "Floor rotation",
+   "case": "PX",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    20.0,
+    12.0
+   ],
+   "comp": "RZ",
+   "hand": -0.001100198458875851,
+   "formula": "-P e / [4 (kx yc^2 + ky xc^2) + 4 GJ/h]",
+   "how": "signed"
+  },
+  {
+   "id": "PX-V",
+   "label": "Shear in the loaded corner column",
+   "case": "PX",
+   "quantity": "frame",
+   "frame": "C4S1",
+   "station": "i",
+   "comp": "V2",
+   "hand": 4.095287765369984,
+   "formula": "kx ux",
+   "how": "abs"
+  },
+  {
+   "id": "PX-FX",
+   "label": "Base shear",
+   "case": "PX",
+   "quantity": "base",
+   "comp": "FX",
+   "hand": -10.0,
+   "formula": "-P",
+   "how": "signed"
+  },
+  {
+   "id": "PX-MZ",
+   "label": "Base torque about the origin",
+   "case": "PX",
+   "quantity": "base",
+   "comp": "MZ",
+   "hand": 200.0,
+   "formula": "P y",
+   "how": "signed"
+  }
+ ]
+}

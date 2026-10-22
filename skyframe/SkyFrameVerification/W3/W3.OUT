@@ -1,0 +1,32 @@
+
+
+ ETABS Ultimate 64-bit 23.2.0 Build 4400 (Analysis Build 10002/64)              
+ File: C:\Users\abhimanyu.sing...i-Singh\skyframe\SkyFrameVerification\W3\W3.OUT
+                                                                     
+                                                                       
+
+ D I S P L A C E M E N T   D E G R E E S   O F   F R E E D O M
+
+         (A) = Active DOF, equilibrium equation
+         (-) = Restrained DOF, reaction computed
+         (+) = Constrained DOF
+         (>) = External substructure DOF
+         ( ) = Null DOF
+
+  JOINTS              UX  UY  UZ  RX  RY  RZ
+       1 TO       2    -   -   -   -   -   -
+       3 TO      50    A   A   A   A   A   A
+      51               -   -   -   -   -   -
+      52 TO      75    A   A   A   A   A   A
+      76               -   -   -   -   -   -
+      77 TO     100    A   A   A   A   A   A
+     101               -   -   -   -   -   -
+     102 TO     143    A   A   A   A   A   A
+     144 TO     145    -   -   -   -   -   -
+     146 TO     184    A   A   A   A   A   A
+     185               -   -   -   -   -   -
+     186 TO     209    A   A   A   A   A   A
+     210               -   -   -   -   -   -
+     211 TO     234    A   A   A   A   A   A
+     235               -   -   -   -   -   -
+     236 TO     259    A   A   A   A   A   A

@@ -1,0 +1,7 @@
+== B1: 20-story core and frame
+Building the model ...
+  section COL: A 4.0, I22 1.3333333333333333, I33 1.3333333333333333, J 2.2533333333333334, As2 0.0, As3 0.0 (read back)
+  section BM: A 3.75, I22 0.703125, I33 1.953125, J 1.7608567499999996, As2 0.0, As3 0.0 (read back)
+  area section WALL: wall, thickness 1.0, shell type 1 (read back)
+  1440 area objects; pier labels ['CE', 'CN', 'CS', 'CW']
+STOPPED on B1: ETABS refused: rigid diaphragm D1 (return code 1)

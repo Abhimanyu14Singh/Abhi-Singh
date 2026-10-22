@@ -1,0 +1,52 @@
+
+
+ ETABS Ultimate 64-bit 23.2.0 Build 4400 (Analysis Build 10002/64)              
+ File: C:\Users\abhimanyu.sing...i-Singh\skyframe\SkyFrameVerification\W5\W5.OUT
+                                                                     
+                                                                       
+
+ D I S P L A C E M E N T   D E G R E E S   O F   F R E E D O M
+
+         (A) = Active DOF, equilibrium equation
+         (-) = Restrained DOF, reaction computed
+         (+) = Constrained DOF
+         (>) = External substructure DOF
+         ( ) = Null DOF
+
+  JOINTS              UX  UY  UZ  RX  RY  RZ
+       1 TO     121    -   -   -   A   A   A
+     122 TO     123    -   -   -   -   -   -
+     124               -   -   -   A   A   A
+     125               -   -   -   -   -   -
+     126               -   -   -   A   A   A
+     127               -   -   -   -   -   -
+     128               -   -   -   A   A   A
+     129               -   -   -   -   -   -
+     130               -   -   -   A   A   A
+     131               -   -   -   -   -   -
+     132               -   -   -   A   A   A
+     133               -   -   -   -   -   -
+     134               -   -   -   A   A   A
+     135               -   -   -   -   -   -
+     136               -   -   -   A   A   A
+     137               -   -   -   -   -   -
+     138               -   -   -   A   A   A
+     139               -   -   -   -   -   -
+     140               -   -   -   A   A   A
+     141 TO     144    -   -   -   -   -   -
+     145 TO     153    -   -   -   A   A   A
+     154 TO     155    -   -   -   -   -   -
+     156 TO     164    -   -   -   A   A   A
+     165 TO     166    -   -   -   -   -   -
+     167 TO     175    -   -   -   A   A   A
+     176 TO     177    -   -   -   -   -   -
+     178 TO     186    -   -   -   A   A   A
+     187 TO     188    -   -   -   -   -   -
+     189 TO     197    -   -   -   A   A   A
+     198 TO     199    -   -   -   -   -   -
+     200 TO     208    -   -   -   A   A   A
+     209 TO     210    -   -   -   -   -   -
+     211 TO     219    -   -   -   A   A   A
+     220 TO     221    -   -   -   -   -   -
+     222 TO     230    -   -   -   A   A   A
+     231 TO     242    -   -   -   -   -   -

@@ -1,0 +1,4 @@
+== D1: Rigid diaphragm, eccentric load
+Building the model ...
+  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+STOPPED on D1: ETABS refused: rigid diaphragm D1 (return code 1)

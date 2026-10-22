@@ -1,0 +1,395 @@
+{
+ "id": "L1",
+ "title": "Two-way slab load to beams",
+ "purpose": "A membrane slab on a square bay passes its load to the four edge beams by 45-degree tributary areas: each beam carries a triangle peaking at qL/2.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "slab": "membrane, load to frames two-way",
+  "supports": "corners; beams simply supported"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "BM",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.03,
+   "I22": 0.002,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.5,
+   "width": 0.5
+  }
+ ],
+ "areaSections": [
+  {
+   "name": "DECK",
+   "material": "STEEL",
+   "thickness": 0.5,
+   "kind": "slab",
+   "shell": "membrane"
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "stationSpacing": 0.5,
+ "frames": [
+  {
+   "id": "BS1",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    10.0,
+    0.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0,
+   "releases": {
+    "i": {
+     "M2": 0.0,
+     "M3": 0.0
+    }
+   }
+  },
+  {
+   "id": "BS2",
+   "i": [
+    10.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0,
+   "releases": {
+    "j": {
+     "M2": 0.0,
+     "M3": 0.0,
+     "T": 0.0
+    }
+   }
+  },
+  {
+   "id": "BE1",
+   "i": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    20.0,
+    10.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0,
+   "releases": {
+    "i": {
+     "M2": 0.0,
+     "M3": 0.0
+    }
+   }
+  },
+  {
+   "id": "BE2",
+   "i": [
+    20.0,
+    10.0,
+    12.0
+   ],
+   "j": [
+    20.0,
+    20.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0,
+   "releases": {
+    "j": {
+     "M2": 0.0,
+     "M3": 0.0,
+     "T": 0.0
+    }
+   }
+  },
+  {
+   "id": "BN1",
+   "i": [
+    20.0,
+    20.0,
+    12.0
+   ],
+   "j": [
+    10.0,
+    20.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0,
+   "releases": {
+    "i": {
+     "M2": 0.0,
+     "M3": 0.0
+    }
+   }
+  },
+  {
+   "id": "BN2",
+   "i": [
+    10.0,
+    20.0,
+    12.0
+   ],
+   "j": [
+    0.0,
+    20.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0,
+   "releases": {
+    "j": {
+     "M2": 0.0,
+     "M3": 0.0,
+     "T": 0.0
+    }
+   }
+  },
+  {
+   "id": "BW1",
+   "i": [
+    0.0,
+    20.0,
+    12.0
+   ],
+   "j": [
+    0.0,
+    10.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0,
+   "releases": {
+    "i": {
+     "M2": 0.0,
+     "M3": 0.0
+    }
+   }
+  },
+  {
+   "id": "BW2",
+   "i": [
+    0.0,
+    10.0,
+    12.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0,
+   "releases": {
+    "j": {
+     "M2": 0.0,
+     "M3": 0.0,
+     "T": 0.0
+    }
+   }
+  }
+ ],
+ "areas": [
+  {
+   "id": "S1",
+   "section": "DECK",
+   "corners": [
+    [
+     0.0,
+     0.0,
+     12.0
+    ],
+    [
+     20.0,
+     0.0,
+     12.0
+    ],
+    [
+     20.0,
+     20.0,
+     12.0
+    ],
+    [
+     0.0,
+     20.0,
+     12.0
+    ]
+   ],
+   "toFrame": "two"
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    20.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    20.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "Q"
+  }
+ ],
+ "areaLoads": [
+  {
+   "pattern": "Q",
+   "area": "S1",
+   "q": 0.1
+  }
+ ],
+ "checks": [
+  {
+   "id": "Q-FZ",
+   "label": "Total vertical reaction",
+   "case": "Q",
+   "quantity": "base",
+   "comp": "FZ",
+   "hand": 40.0,
+   "formula": "q L^2",
+   "how": "signed"
+  },
+  {
+   "id": "Q-V",
+   "label": "Beam end shear",
+   "case": "Q",
+   "quantity": "frame",
+   "frame": "BS1",
+   "station": "i",
+   "comp": "V2",
+   "hand": 5.0,
+   "formula": "q L^2 / 8",
+   "how": "abs"
+  },
+  {
+   "id": "Q-Vw",
+   "label": "Beam end shear, perpendicular beam",
+   "case": "Q",
+   "quantity": "frame",
+   "frame": "BW1",
+   "station": "i",
+   "comp": "V2",
+   "hand": 5.0,
+   "formula": "q L^2 / 8",
+   "how": "abs"
+  },
+  {
+   "id": "Q-M",
+   "label": "Beam midspan moment",
+   "case": "Q",
+   "quantity": "frame",
+   "frame": "BS1",
+   "station": "j",
+   "comp": "M3",
+   "hand": 33.333333333333336,
+   "formula": "w0 L^2 / 12 = q L^3 / 24",
+   "how": "abs"
+  },
+  {
+   "id": "Q-UZ",
+   "label": "Beam midspan deflection",
+   "case": "Q",
+   "quantity": "joint",
+   "at": [
+    10.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": -0.010642826734780758,
+   "formula": "-w0 L^4 / 120EI",
+   "how": "signed"
+  }
+ ]
+}

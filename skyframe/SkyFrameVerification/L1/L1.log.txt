@@ -1,0 +1,6 @@
+== L1: Two-way slab load to beams
+Building the model ...
+  section BM: A 0.1, I22 0.002, I33 0.03, J 0.0005, As2 0.0, As3 0.0 (read back)
+  area section DECK: slab, thickness 0.5, shell type 3 (read back)
+  1 area objects
+STOPPED on L1: ETABS refused: area load to frames Q on S1 (return code -100)

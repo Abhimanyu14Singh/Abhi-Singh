@@ -1,0 +1,46 @@
+== B3: Strength and service stiffness sets
+Building the model ...
+  section COLS modifiers (read back): [1.0, 1.0, 1.0, 1.0, 0.7, 0.7, 1.0, 1.0]
+  section COLS: A 4.0, I22 1.3333333333333333, I33 1.3333333333333333, J 2.2533333333333334, As2 0.0, As3 0.0 (read back)
+  section BMS modifiers (read back): [1.0, 1.0, 1.0, 1.0, 0.35, 0.35, 1.0, 1.0]
+  section BMS: A 3.75, I22 0.703125, I33 1.953125, J 1.7608567499999996, As2 0.0, As3 0.0 (read back)
+  section COLV modifiers (read back): [1.0, 1.0, 1.0, 1.0, 0.9799999999999999, 0.9799999999999999, 1.0, 1.0]
+  section COLV: A 4.0, I22 1.3333333333333333, I33 1.3333333333333333, J 2.2533333333333334, As2 0.0, As3 0.0 (read back)
+  section BMV modifiers (read back): [1.0, 1.0, 1.0, 1.0, 0.48999999999999994, 0.48999999999999994, 1.0, 1.0]
+  section BMV: A 3.75, I22 0.703125, I33 1.953125, J 1.7608567499999996, As2 0.0, As3 0.0 (read back)
+  area section WALLS modifiers (read back): [0.35, 0.35, 0.35, 0.35, 0.35, 0.35, 1.0, 1.0, 1.0, 1.0]
+  area section WALLS: wall, thickness 1.0, shell type 1 (read back)
+  area section WALLV modifiers (read back): [0.48999999999999994, 0.48999999999999994, 0.48999999999999994, 0.48999999999999994, 0.48999999999999994, 0.48999999999999994, 1.0, 1.0, 1.0, 1.0]
+  area section WALLV: wall, thickness 1.0, shell type 1 (read back)
+  1440 area objects; pier labels ['CES', 'CEV', 'CNS', 'CNV', 'CSS', 'CSV', 'CWS', 'CWV']
+  diaphragm DS1: 40 joints (read back)
+  diaphragm DS2: 40 joints (read back)
+  diaphragm DS3: 40 joints (read back)
+  diaphragm DS4: 40 joints (read back)
+  diaphragm DS5: 40 joints (read back)
+  diaphragm DS6: 40 joints (read back)
+  diaphragm DS7: 40 joints (read back)
+  diaphragm DS8: 40 joints (read back)
+  diaphragm DS9: 40 joints (read back)
+  diaphragm DS10: 40 joints (read back)
+  diaphragm DV1: 40 joints (read back)
+  diaphragm DV2: 40 joints (read back)
+  diaphragm DV3: 40 joints (read back)
+  diaphragm DV4: 40 joints (read back)
+  diaphragm DV5: 40 joints (read back)
+  diaphragm DV6: 40 joints (read back)
+  diaphragm DV7: 40 joints (read back)
+  diaphragm DV8: 40 joints (read back)
+  diaphragm DV9: 40 joints (read back)
+  diaphragm DV10: 40 joints (read back)
+Running the analysis ...
+Reading results ...
+  ETABS analysed 1440 area elements for 1440 area objects
+check            hand        ETABS  difference
+EQS-FX           -200         -200  0.000%
+EQV-FX           -200         -200  0.000%
+EQS-UX              -    0.0289599  compared with SkyFrame only
+EQV-UX              -    0.0207332  compared with SkyFrame only
+EQS-VS              -      86.1242  compared with SkyFrame only
+EQV-VS              -      86.1334  compared with SkyFrame only
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\B3\B3.EDB; largest difference from the hand calculation 0.000%

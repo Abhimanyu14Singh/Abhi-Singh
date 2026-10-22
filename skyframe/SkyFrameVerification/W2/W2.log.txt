@@ -1,0 +1,4 @@
+== W2: Wall with a door
+Building the model ...
+  area section WALL: wall, thickness 1.0, shell type 1 (read back)
+STOPPED on W2: ETABS refused: pier label P1 (return code 1)

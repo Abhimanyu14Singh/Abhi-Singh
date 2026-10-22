@@ -1,0 +1,319 @@
+{
+ "id": "L3",
+ "title": "Self-weight",
+ "purpose": "Self-weight from the material unit weight (150 pcf) on columns, beams and a slab: the total and, by symmetry, each column's share are exact.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "on: unit weight 0.150 kcf, multiplier 1",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "slab": "membrane, two-way",
+  "supports": "fixed bases"
+ },
+ "materials": [
+  {
+   "name": "CONC",
+   "E": 576000.0,
+   "nu": 0.2,
+   "unitWeight": 0.15
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "CONC",
+   "A": 1.0,
+   "I33": 0.08333333333333333,
+   "I22": 0.08333333333333333,
+   "J": 0.1406,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 1.0
+  },
+  {
+   "name": "BM",
+   "material": "CONC",
+   "A": 2.0,
+   "I33": 0.6666666666666666,
+   "I22": 0.16666666666666666,
+   "J": 0.458,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 2.0,
+   "width": 1.0
+  }
+ ],
+ "areaSections": [
+  {
+   "name": "SLAB",
+   "material": "CONC",
+   "thickness": 0.5,
+   "kind": "slab",
+   "shell": "membrane"
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C2",
+   "i": [
+    20.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C3",
+   "i": [
+    20.0,
+    20.0,
+    0.0
+   ],
+   "j": [
+    20.0,
+    20.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C4",
+   "i": [
+    0.0,
+    20.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    20.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "B1",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0
+  },
+  {
+   "id": "B2",
+   "i": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    20.0,
+    20.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0
+  },
+  {
+   "id": "B3",
+   "i": [
+    20.0,
+    20.0,
+    12.0
+   ],
+   "j": [
+    0.0,
+    20.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0
+  },
+  {
+   "id": "B4",
+   "i": [
+    0.0,
+    20.0,
+    12.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0
+  }
+ ],
+ "areas": [
+  {
+   "id": "S1",
+   "section": "SLAB",
+   "corners": [
+    [
+     0.0,
+     0.0,
+     12.0
+    ],
+    [
+     20.0,
+     0.0,
+     12.0
+    ],
+    [
+     20.0,
+     20.0,
+     12.0
+    ],
+    [
+     0.0,
+     20.0,
+     12.0
+    ]
+   ],
+   "toFrame": "two"
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    20.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    20.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "SW",
+   "selfWeight": 1.0
+  }
+ ],
+ "checks": [
+  {
+   "id": "SW-FZ",
+   "label": "Total weight",
+   "case": "SW",
+   "quantity": "base",
+   "comp": "FZ",
+   "hand": 61.2,
+   "formula": "0.15 (4 x 1 x 12 + 4 x 2 x 20 + 20 x 20 x 0.5) = 61.2 kip",
+   "how": "signed"
+  },
+  {
+   "id": "SW-P",
+   "label": "Column axial at the base, a quarter by symmetry",
+   "case": "SW",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "i",
+   "comp": "P",
+   "hand": -15.3,
+   "formula": "-W / 4",
+   "how": "signed"
+  },
+  {
+   "id": "SW-MX",
+   "label": "Moment about X at the origin (load centred)",
+   "case": "SW",
+   "quantity": "base",
+   "comp": "MX",
+   "hand": 612.0,
+   "formula": "W L / 2",
+   "how": "signed"
+  }
+ ]
+}

@@ -1,0 +1,63 @@
+
+
+ ETABS Ultimate 64-bit 23.2.0 Build 4400 (Analysis Build 10002/64)              
+ File: C:\Users\abhimanyu.sing...i-Singh\skyframe\SkyFrameVerification\W4\W4.OUT
+                                                                     
+                                                                       
+
+ 2, CONSTR = RIGID, DOF = U1 U2 R3
+
+                     LOCAL COORDINATE SYSTEM FOR CONSTRAINT MASTER
+  GLOBAL          U1          U2          U3          R1          R2          R3
+     X      1.000000     .000000     .000000    1.000000     .000000     .000000
+     Y       .000000    1.000000     .000000     .000000    1.000000     .000000
+     Z       .000000     .000000    1.000000     .000000     .000000    1.000000
+
+                     TRANSLATIONAL MASS AND MASS MOMENTS OF INERTIA
+                  U1          U2          U3          R1          R2          R3
+             .000000     .000000     .000000     .000000     .000000     .000000
+
+                     CENTER OF MASS
+  GLOBAL          U1          U2          U3
+     X     24.000000   24.000000   24.000000
+     Y     72.000000   72.000000   72.000000
+     Z    288.000000  288.000000  288.000000
+
+ D I S P L A C E M E N T   D E G R E E S   O F   F R E E D O M
+
+         (A) = Active DOF, equilibrium equation
+         (-) = Restrained DOF, reaction computed
+         (+) = Constrained DOF
+         (>) = External substructure DOF
+         ( ) = Null DOF
+
+  JOINTS              UX  UY  UZ  RX  RY  RZ
+       1 TO       2    -   -   -   -   -   -
+       3 TO      16    A   A   A   A   A   A
+      17 TO      18    +   +   A   A   A   +
+      19               -   -   -   -   -   -
+      20 TO      26    A   A   A   A   A   A
+      27               +   +   A   A   A   +
+      28               -   -   -   -   -   -
+      29 TO      35    A   A   A   A   A   A
+      36               +   +   A   A   A   +
+      37               -   -   -   -   -   -
+      38 TO      44    A   A   A   A   A   A
+      45               +   +   A   A   A   +
+      46               -   -   -   -   -   -
+      47 TO      53    A   A   A   A   A   A
+      54               +   +   A   A   A   +
+      55               -   -   -   -   -   -
+      56 TO      62    A   A   A   A   A   A
+      63               +   +   A   A   A   +
+      64               -   -   -   -   -   -
+      65 TO      71    A   A   A   A   A   A
+      72               +   +   A   A   A   +
+      73               -   -   -   -   -   -
+      74 TO      80    A   A   A   A   A   A
+      81               +   +   A   A   A   +
+      82               +   +   -   -   -   +
+    NULL                                    
+
+  CONSTRAINTS         U1  U2  U3  R1  R2  R3
+ 2                     A   A               A

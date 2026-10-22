@@ -162,7 +162,7 @@
   },
   {
    "id": "W-Mjoint",
-   "label": "Moment at the joint",
+   "label": "Moment at the joint (inside the rigid zone)",
    "case": "W",
    "quantity": "frame",
    "frame": "B1",
@@ -170,7 +170,9 @@
    "comp": "M3",
    "hand": 164.25,
    "formula": "face moment + V a + w a^2 / 2",
-   "how": "abs"
+   "how": "abs",
+   "etabs": false,
+   "note": "ETABS reports no stations inside a rigid zone; its first station is the face"
   },
   {
    "id": "W-Mmid",

@@ -1,0 +1,11 @@
+== F10: Shear deformation in a deep beam
+Building the model ...
+  section DEEP: A 3.0, I22 0.25, I33 2.25, J 0.789, As2 2.5, As3 2.5 (read back)
+Running the analysis ...
+Reading results ...
+check            hand        ETABS  difference
+P-UZ      -0.00655556  -0.00655556  0.000%
+P-RY       0.00138889   0.00138889  0.000%
+P-M3              600          600  0.000%
+P-V2              100          100  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\F10\F10.EDB; largest difference from the hand calculation 0.000%

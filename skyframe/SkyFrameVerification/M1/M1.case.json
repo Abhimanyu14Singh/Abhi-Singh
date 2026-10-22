@@ -1,0 +1,880 @@
+{
+ "id": "M1",
+ "title": "Shear building periods",
+ "purpose": "Three equal stories, rigid floors, columns bent in double curvature, mass at the four corners: X, Y and torsion uncouple, and each has the closed-form periods of a uniform shear building. Nine modes, in period order.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "joint masses only (material mass 0); lateral mass, lumped at stories",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "diaphragm": "rigid, each floor",
+  "supports": "fixed bases; floor joints fixed in rotation"
+ },
+ "patterns": [],
+ "modal": {
+  "case": "MODES",
+  "modes": 9
+ },
+ "checks": [
+  {
+   "id": "T1",
+   "label": "Mode 1 period (Y)",
+   "case": "MODES",
+   "quantity": "modal",
+   "mode": 1,
+   "comp": "T",
+   "hand": 0.829048617973603,
+   "formula": "2 pi / omega, omega^2 = (k/m) 4 sin^2((2j-1) pi / 14)",
+   "how": "signed"
+  },
+  {
+   "id": "T2",
+   "label": "Mode 2 period (RZ)",
+   "case": "MODES",
+   "quantity": "modal",
+   "mode": 2,
+   "comp": "T",
+   "hand": 0.5625379677319878,
+   "formula": "2 pi / omega, omega^2 = (k/m) 4 sin^2((2j-1) pi / 14)",
+   "how": "signed"
+  },
+  {
+   "id": "T3",
+   "label": "Mode 3 period (X)",
+   "case": "MODES",
+   "quantity": "modal",
+   "mode": 3,
+   "comp": "T",
+   "hand": 0.4145243089868015,
+   "formula": "2 pi / omega, omega^2 = (k/m) 4 sin^2((2j-1) pi / 14)",
+   "how": "signed"
+  },
+  {
+   "id": "T4",
+   "label": "Mode 4 period (Y)",
+   "case": "MODES",
+   "quantity": "modal",
+   "mode": 4,
+   "comp": "T",
+   "hand": 0.2958840260365258,
+   "formula": "2 pi / omega, omega^2 = (k/m) 4 sin^2((2j-1) pi / 14)",
+   "how": "signed"
+  },
+  {
+   "id": "T5",
+   "label": "Mode 5 period (Y)",
+   "case": "MODES",
+   "quantity": "modal",
+   "mode": 5,
+   "comp": "T",
+   "hand": 0.2047580991296342,
+   "formula": "2 pi / omega, omega^2 = (k/m) 4 sin^2((2j-1) pi / 14)",
+   "how": "signed"
+  },
+  {
+   "id": "T6",
+   "label": "Mode 6 period (RZ)",
+   "case": "MODES",
+   "quantity": "modal",
+   "mode": 6,
+   "comp": "T",
+   "hand": 0.20076747621602756,
+   "formula": "2 pi / omega, omega^2 = (k/m) 4 sin^2((2j-1) pi / 14)",
+   "how": "signed"
+  },
+  {
+   "id": "T7",
+   "label": "Mode 7 period (X)",
+   "case": "MODES",
+   "quantity": "modal",
+   "mode": 7,
+   "comp": "T",
+   "hand": 0.1479420130182629,
+   "formula": "2 pi / omega, omega^2 = (k/m) 4 sin^2((2j-1) pi / 14)",
+   "how": "signed"
+  },
+  {
+   "id": "T8",
+   "label": "Mode 8 period (RZ)",
+   "case": "MODES",
+   "quantity": "modal",
+   "mode": 8,
+   "comp": "T",
+   "hand": 0.13893540434647564,
+   "formula": "2 pi / omega, omega^2 = (k/m) 4 sin^2((2j-1) pi / 14)",
+   "how": "signed"
+  },
+  {
+   "id": "T9",
+   "label": "Mode 9 period (X)",
+   "case": "MODES",
+   "quantity": "modal",
+   "mode": 9,
+   "comp": "T",
+   "hand": 0.1023790495648171,
+   "formula": "2 pi / omega, omega^2 = (k/m) 4 sin^2((2j-1) pi / 14)",
+   "how": "signed"
+  },
+  {
+   "id": "M1Y",
+   "label": "Mode 1 mass ratio UY",
+   "case": "MODES",
+   "quantity": "modal",
+   "mode": 1,
+   "comp": "UY",
+   "hand": 0.9140794932423437,
+   "formula": "(sum phi)^2 / (n sum phi^2)",
+   "how": "signed"
+  },
+  {
+   "id": "M3X",
+   "label": "Mode 3 mass ratio UX",
+   "case": "MODES",
+   "quantity": "modal",
+   "mode": 3,
+   "comp": "UX",
+   "hand": 0.9140794932423437,
+   "formula": "(sum phi)^2 / (n sum phi^2)",
+   "how": "signed"
+  },
+  {
+   "id": "M4Y",
+   "label": "Mode 4 mass ratio UY",
+   "case": "MODES",
+   "quantity": "modal",
+   "mode": 4,
+   "comp": "UY",
+   "hand": 0.0748769775443411,
+   "formula": "(sum phi)^2 / (n sum phi^2)",
+   "how": "signed"
+  }
+ ],
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  },
+  {
+   "name": "Story2",
+   "height": 12.0
+  },
+  {
+   "name": "Story3",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1S1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C2S1",
+   "i": [
+    30.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C3S1",
+   "i": [
+    30.0,
+    24.0,
+    0.0
+   ],
+   "j": [
+    30.0,
+    24.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C4S1",
+   "i": [
+    0.0,
+    24.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    24.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C1S2",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C2S2",
+   "i": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    30.0,
+    0.0,
+    24.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C3S2",
+   "i": [
+    30.0,
+    24.0,
+    12.0
+   ],
+   "j": [
+    30.0,
+    24.0,
+    24.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C4S2",
+   "i": [
+    0.0,
+    24.0,
+    12.0
+   ],
+   "j": [
+    0.0,
+    24.0,
+    24.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C1S3",
+   "i": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    36.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C2S3",
+   "i": [
+    30.0,
+    0.0,
+    24.0
+   ],
+   "j": [
+    30.0,
+    0.0,
+    36.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C3S3",
+   "i": [
+    30.0,
+    24.0,
+    24.0
+   ],
+   "j": [
+    30.0,
+    24.0,
+    36.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C4S3",
+   "i": [
+    0.0,
+    24.0,
+    24.0
+   ],
+   "j": [
+    0.0,
+    24.0,
+    36.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    24.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    24.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    24.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    24.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    24.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    24.0,
+    24.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    24.0,
+    24.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    0.0,
+    36.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    36.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    24.0,
+    36.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    24.0,
+    36.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  }
+ ],
+ "diaphragms": [
+  {
+   "name": "D1",
+   "points": [
+    [
+     0.0,
+     0.0,
+     12.0
+    ],
+    [
+     30.0,
+     0.0,
+     12.0
+    ],
+    [
+     30.0,
+     24.0,
+     12.0
+    ],
+    [
+     0.0,
+     24.0,
+     12.0
+    ]
+   ]
+  },
+  {
+   "name": "D2",
+   "points": [
+    [
+     0.0,
+     0.0,
+     24.0
+    ],
+    [
+     30.0,
+     0.0,
+     24.0
+    ],
+    [
+     30.0,
+     24.0,
+     24.0
+    ],
+    [
+     0.0,
+     24.0,
+     24.0
+    ]
+   ]
+  },
+  {
+   "name": "D3",
+   "points": [
+    [
+     0.0,
+     0.0,
+     36.0
+    ],
+    [
+     30.0,
+     0.0,
+     36.0
+    ],
+    [
+     30.0,
+     24.0,
+     36.0
+    ],
+    [
+     0.0,
+     24.0,
+     36.0
+    ]
+   ]
+  }
+ ],
+ "masses": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    24.0,
+    12.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    24.0,
+    12.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    24.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    24.0,
+    24.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    24.0,
+    24.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    0.0,
+    36.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    36.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    24.0,
+    36.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    24.0,
+    36.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "massSource": {
+  "elements": false,
+  "masses": true,
+  "patterns": {}
+ }
+}

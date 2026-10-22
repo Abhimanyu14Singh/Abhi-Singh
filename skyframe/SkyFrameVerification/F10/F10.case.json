@@ -1,0 +1,157 @@
+{
+ "id": "F10",
+ "title": "Shear deformation in a deep beam",
+ "purpose": "A 6 ft cantilever 3 ft deep, shear areas on: the shear term PL/GAs is 18% of the tip deflection, so a program ignoring As2 is far off.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "on (As2 = As3 = 5/6 A)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "supports": "fixed at x = 0"
+ },
+ "materials": [
+  {
+   "name": "CONC",
+   "E": 576000.0,
+   "nu": 0.2,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "DEEP",
+   "material": "CONC",
+   "A": 3.0,
+   "I33": 2.25,
+   "I22": 0.25,
+   "J": 0.789,
+   "As2": 2.5,
+   "As3": 2.5,
+   "depth": 3.0,
+   "width": 1.0
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "B1",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    6.0,
+    0.0,
+    12.0
+   ],
+   "section": "DEEP",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "P"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "P",
+   "at": [
+    6.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    0,
+    0,
+    -100.0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "checks": [
+  {
+   "id": "P-UZ",
+   "label": "Tip deflection, bending plus shear",
+   "case": "P",
+   "quantity": "joint",
+   "at": [
+    6.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": -0.006555555555555556,
+   "formula": "-(PL^3/3EI + PL/G As2)",
+   "how": "signed"
+  },
+  {
+   "id": "P-RY",
+   "label": "Tip rotation (bending only)",
+   "case": "P",
+   "quantity": "joint",
+   "at": [
+    6.0,
+    0.0,
+    12.0
+   ],
+   "comp": "RY",
+   "hand": 0.001388888888888889,
+   "formula": "PL^2 / 2EI",
+   "how": "abs"
+  },
+  {
+   "id": "P-M3",
+   "label": "Moment at the support",
+   "case": "P",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "i",
+   "comp": "M3",
+   "hand": 600.0,
+   "formula": "PL",
+   "how": "abs"
+  },
+  {
+   "id": "P-V2",
+   "label": "Shear",
+   "case": "P",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "i",
+   "comp": "V2",
+   "hand": 100.0,
+   "formula": "P",
+   "how": "abs"
+  }
+ ]
+}

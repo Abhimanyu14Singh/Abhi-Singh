@@ -1,0 +1,631 @@
+{
+ "id": "D2",
+ "title": "Semi-rigid floor",
+ "purpose": "A 60 x 20 ft floor with no diaphragm constraint, held at its short edges and loaded along its long edge: the floor bends and shears in its plane like a deep beam.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "shells": "Shell-Thin, explicit meshes no larger than 4 ft, identical in both programs",
+  "diaphragm": "none: the shell membrane stiffness only (semi-rigid)",
+  "supports": "short edges held across the span"
+ },
+ "materials": [
+  {
+   "name": "CONC",
+   "E": 576000.0,
+   "nu": 0.2,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [],
+ "areaSections": [
+  {
+   "name": "FLOOR",
+   "material": "CONC",
+   "thickness": 0.5,
+   "kind": "slab",
+   "shell": "thin"
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [],
+ "areas": [
+  {
+   "id": "FL",
+   "section": "FLOOR",
+   "mesh": [
+    20,
+    5
+   ],
+   "corners": [
+    [
+     0,
+     0,
+     0
+    ],
+    [
+     60.0,
+     0,
+     0
+    ],
+    [
+     60.0,
+     20.0,
+     0
+    ],
+    [
+     0,
+     20.0,
+     0
+    ]
+   ]
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    4.0,
+    0.0
+   ],
+   "restraint": [
+    0,
+    1,
+    1,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    8.0,
+    0.0
+   ],
+   "restraint": [
+    0,
+    1,
+    1,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    12.0,
+    0.0
+   ],
+   "restraint": [
+    0,
+    1,
+    1,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    16.0,
+    0.0
+   ],
+   "restraint": [
+    0,
+    1,
+    1,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    20.0,
+    0.0
+   ],
+   "restraint": [
+    0,
+    1,
+    1,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    60.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    0,
+    1,
+    1,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    60.0,
+    4.0,
+    0.0
+   ],
+   "restraint": [
+    0,
+    1,
+    1,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    60.0,
+    8.0,
+    0.0
+   ],
+   "restraint": [
+    0,
+    1,
+    1,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    60.0,
+    12.0,
+    0.0
+   ],
+   "restraint": [
+    0,
+    1,
+    1,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    60.0,
+    16.0,
+    0.0
+   ],
+   "restraint": [
+    0,
+    1,
+    1,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    60.0,
+    20.0,
+    0.0
+   ],
+   "restraint": [
+    0,
+    1,
+    1,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "WY"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "WY",
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    1.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    3.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    6.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    9.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    12.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    15.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    18.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    21.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    24.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    27.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    30.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    33.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    36.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    39.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    42.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    45.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    48.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    51.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    54.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    57.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    3.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "WY",
+   "at": [
+    60.0,
+    0.0,
+    0.0
+   ],
+   "f": [
+    0.0,
+    1.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  }
+ ],
+ "checks": [
+  {
+   "id": "WY-UY",
+   "label": "Midspan in-plane deflection, far edge",
+   "case": "WY",
+   "quantity": "joint",
+   "at": [
+    30.0,
+    20.0,
+    0.0
+   ],
+   "comp": "UY",
+   "hand": 0.00110390625,
+   "formula": "5wL^4/384EI + wL^2/(8 5/6 G A), deep-beam theory (approximate)",
+   "how": "signed",
+   "tol": [
+    0.05,
+    0.02
+   ]
+  },
+  {
+   "id": "WY-FY",
+   "label": "Total reaction",
+   "case": "WY",
+   "quantity": "base",
+   "comp": "FY",
+   "hand": -60.0,
+   "formula": "-w L",
+   "how": "signed"
+  }
+ ]
+}

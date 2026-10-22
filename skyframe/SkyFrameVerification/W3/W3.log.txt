@@ -1,0 +1,21 @@
+== W3: Coupled walls
+Building the model ...
+  area section WALL: wall, thickness 1.0, shell type 1 (read back)
+  204 area objects; pier labels ['PL', 'PR']
+Running the analysis ...
+Reading results ...
+  ETABS analysed 204 area elements for 204 area objects
+check            hand        ETABS  difference
+EQ-VL1             30           30  0.000%
+EQ-PL1              -      125.533  compared with SkyFrame only
+EQ-ML1              -      275.099  compared with SkyFrame only
+EQ-VL2             25           25  0.000%
+EQ-PL2              -      72.0896  compared with SkyFrame only
+EQ-ML2              -      155.597  compared with SkyFrame only
+EQ-VL3             15           15  0.000%
+EQ-PL3              -       23.974  compared with SkyFrame only
+EQ-ML3              -       72.117  compared with SkyFrame only
+EQ-UX               -   0.00611122  compared with SkyFrame only
+EQ-FX             -60          -60  0.000%
+EQ-MY           -1680        -1680  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\W3\W3.EDB; largest difference from the hand calculation 0.000%

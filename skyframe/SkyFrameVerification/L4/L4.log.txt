@@ -1,0 +1,15 @@
+== L4: Point, triangular and partial loads on a beam
+Building the model ...
+  section BM: A 0.1, I22 0.002, I33 0.03, J 0.0005, As2 0.0, As3 0.0 (read back)
+Running the analysis ...
+Reading results ...
+check            hand        ETABS  difference
+PT-V          6.66667      6.66667  0.000%
+PT-M          66.6667      66.6667  0.000%
+PT-RY      0.00443451   0.00443451  0.000%
+TRI-Vi             15           15  0.000%
+TRI-Vj             30           30  0.000%
+TRI-M          168.75       168.75  0.000%
+PART-M         168.75       168.75  0.000%
+PART-FZ            30           30  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\L4\L4.EDB; largest difference from the hand calculation 0.000%

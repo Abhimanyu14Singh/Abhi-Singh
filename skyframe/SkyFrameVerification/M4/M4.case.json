@@ -1,0 +1,226 @@
+{
+ "id": "M4",
+ "title": "P-Delta",
+ "purpose": "A 300 kip axial load (a fifth of the buckling load) amplifies the sway of a cantilever by a quarter. The exact answer comes from the beam-column equation; the column is four frame objects in both programs so the curvature along it is captured.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "nonlinear static case with P-Delta, zero initial state",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "supports": "fixed base"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    3.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C2",
+   "i": [
+    0.0,
+    0.0,
+    3.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    6.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C3",
+   "i": [
+    0.0,
+    0.0,
+    6.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    9.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C4",
+   "i": [
+    0.0,
+    0.0,
+    9.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "P"
+  },
+  {
+   "name": "H"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "P",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    0,
+    0,
+    -300.0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "pattern": "H",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    10.0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "pdeltaCases": [
+  {
+   "name": "PDH",
+   "loads": {
+    "P": 1.0,
+    "H": 1.0
+   }
+  }
+ ],
+ "checks": [
+  {
+   "id": "H-UX",
+   "label": "Sway without axial load",
+   "case": "H",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 0.06896551724137931,
+   "formula": "HL^3 / 3EI",
+   "how": "signed"
+  },
+  {
+   "id": "PDH-UX",
+   "label": "Sway with P-Delta",
+   "case": "PDH",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 0.08701374924622769,
+   "formula": "H (tan kL - kL) / (P k), k = sqrt(P/EI)",
+   "how": "signed",
+   "tol": [
+    0.002,
+    0.005
+   ]
+  },
+  {
+   "id": "PDH-M",
+   "label": "Base moment with P-Delta",
+   "case": "PDH",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "i",
+   "comp": "M3",
+   "hand": 146.1041247738683,
+   "formula": "H L + P delta",
+   "how": "abs",
+   "tol": [
+    0.002,
+    0.005
+   ]
+  }
+ ]
+}

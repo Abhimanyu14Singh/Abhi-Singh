@@ -1,0 +1,903 @@
+{
+ "id": "D3",
+ "title": "Two towers on a podium",
+ "purpose": "Each tower roof is its own rigid diaphragm and the podium another. Load on tower A goes down through A into the podium; tower B rides along with no shear of its own.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "diaphragm": "podium, tower A roof, tower B roof: three rigid diaphragms",
+  "supports": "fixed bases; floor joints fixed in rotation (shear building)"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  },
+  {
+   "name": "Story2",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "P0_0",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "P0_20",
+   "i": [
+    0.0,
+    20.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    20.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "P20_0",
+   "i": [
+    20.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "P20_20",
+   "i": [
+    20.0,
+    20.0,
+    0.0
+   ],
+   "j": [
+    20.0,
+    20.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "P40_0",
+   "i": [
+    40.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    40.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "P40_20",
+   "i": [
+    40.0,
+    20.0,
+    0.0
+   ],
+   "j": [
+    40.0,
+    20.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "P60_0",
+   "i": [
+    60.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    60.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "P60_20",
+   "i": [
+    60.0,
+    20.0,
+    0.0
+   ],
+   "j": [
+    60.0,
+    20.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "TA0_0",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "TA0_20",
+   "i": [
+    0.0,
+    20.0,
+    12.0
+   ],
+   "j": [
+    0.0,
+    20.0,
+    24.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "TA20_0",
+   "i": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    20.0,
+    0.0,
+    24.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "TA20_20",
+   "i": [
+    20.0,
+    20.0,
+    12.0
+   ],
+   "j": [
+    20.0,
+    20.0,
+    24.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "TB40_0",
+   "i": [
+    40.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    40.0,
+    0.0,
+    24.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "TB40_20",
+   "i": [
+    40.0,
+    20.0,
+    12.0
+   ],
+   "j": [
+    40.0,
+    20.0,
+    24.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "TB60_0",
+   "i": [
+    60.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    60.0,
+    0.0,
+    24.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "TB60_20",
+   "i": [
+    60.0,
+    20.0,
+    12.0
+   ],
+   "j": [
+    60.0,
+    20.0,
+    24.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    20.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    20.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    20.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    20.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    40.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    40.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    40.0,
+    20.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    40.0,
+    20.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    60.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    60.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    60.0,
+    20.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    60.0,
+    20.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    20.0,
+    24.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    0.0,
+    24.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    20.0,
+    24.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    40.0,
+    0.0,
+    24.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    40.0,
+    20.0,
+    24.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    60.0,
+    0.0,
+    24.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    60.0,
+    20.0,
+    24.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  }
+ ],
+ "diaphragms": [
+  {
+   "name": "PODIUM",
+   "points": [
+    [
+     0.0,
+     0.0,
+     12.0
+    ],
+    [
+     0.0,
+     20.0,
+     12.0
+    ],
+    [
+     20.0,
+     0.0,
+     12.0
+    ],
+    [
+     20.0,
+     20.0,
+     12.0
+    ],
+    [
+     40.0,
+     0.0,
+     12.0
+    ],
+    [
+     40.0,
+     20.0,
+     12.0
+    ],
+    [
+     60.0,
+     0.0,
+     12.0
+    ],
+    [
+     60.0,
+     20.0,
+     12.0
+    ]
+   ]
+  },
+  {
+   "name": "TOWERA",
+   "points": [
+    [
+     0.0,
+     0.0,
+     24.0
+    ],
+    [
+     0.0,
+     20.0,
+     24.0
+    ],
+    [
+     20.0,
+     0.0,
+     24.0
+    ],
+    [
+     20.0,
+     20.0,
+     24.0
+    ]
+   ]
+  },
+  {
+   "name": "TOWERB",
+   "points": [
+    [
+     40.0,
+     0.0,
+     24.0
+    ],
+    [
+     40.0,
+     20.0,
+     24.0
+    ],
+    [
+     60.0,
+     0.0,
+     24.0
+    ],
+    [
+     60.0,
+     20.0,
+     24.0
+    ]
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "PA"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "PA",
+   "at": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    2.5,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "pattern": "PA",
+   "at": [
+    0.0,
+    20.0,
+    24.0
+   ],
+   "f": [
+    2.5,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "pattern": "PA",
+   "at": [
+    20.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    2.5,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "pattern": "PA",
+   "at": [
+    20.0,
+    20.0,
+    24.0
+   ],
+   "f": [
+    2.5,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "checks": [
+  {
+   "id": "PA-UP",
+   "label": "Podium moves",
+   "case": "PA",
+   "quantity": "joint",
+   "at": [
+    60.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 0.0021551724137931034,
+   "formula": "P / 8k, k = 12EI33/h^3",
+   "how": "signed"
+  },
+  {
+   "id": "PA-UA",
+   "label": "Tower A roof",
+   "case": "PA",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "comp": "UX",
+   "hand": 0.00646551724137931,
+   "formula": "P/8k + P/4k",
+   "how": "signed"
+  },
+  {
+   "id": "PA-UB",
+   "label": "Tower B roof rides on the podium",
+   "case": "PA",
+   "quantity": "joint",
+   "at": [
+    60.0,
+    20.0,
+    24.0
+   ],
+   "comp": "UX",
+   "hand": 0.0021551724137931034,
+   "formula": "P / 8k",
+   "how": "signed"
+  },
+  {
+   "id": "PA-VB",
+   "label": "No shear in tower B",
+   "case": "PA",
+   "quantity": "frame",
+   "frame": "TB60_0",
+   "station": "i",
+   "comp": "V2",
+   "hand": 0.0,
+   "formula": "0",
+   "how": "abs",
+   "scale": 2.5
+  },
+  {
+   "id": "PA-VA",
+   "label": "Shear in a tower A column",
+   "case": "PA",
+   "quantity": "frame",
+   "frame": "TA0_0",
+   "station": "i",
+   "comp": "V2",
+   "hand": 2.5,
+   "formula": "P / 4",
+   "how": "abs"
+  },
+  {
+   "id": "PA-FX",
+   "label": "Base shear",
+   "case": "PA",
+   "quantity": "base",
+   "comp": "FX",
+   "hand": -10.0,
+   "formula": "-P",
+   "how": "signed"
+  }
+ ]
+}
