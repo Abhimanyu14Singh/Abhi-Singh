@@ -1,0 +1,462 @@
+{
+ "id": "K4",
+ "title": "Nonlinear layered wall",
+ "purpose": "A 4 ft wide, 16 ft tall cantilever wall built as a nonlinear layered shell: a 0.6 in steel layer, elastic-perfectly-plastic at 50 ksi, carries the vertical stress; a second layer carries the horizontal and shear stress elastically. Pushed at the top to 2.5% drift (about 5 times the first-yield sway) the base section turns fully plastic and the base shear levels off at Mp / H = fy t b^2 / 4H = 90 kips.",
+ "units": "kip-ft",
+ "ext": "links",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "shells": "nonlinear layered shell, 8 elements across, rows of 1.5 in at the base growing to 1 ft; identical meshes",
+  "nonlinear": "layer 1: steel, vertical (local 2) stress only, EPP fy = 50 ksi; layer 2: the same steel, horizontal (local 1) and shear stress, linear",
+  "pushover": "displacement-controlled push at the top corner, no geometric nonlinearity",
+  "supports": "every base node fixed"
+ },
+ "materials": [
+  {
+   "name": "WSTEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [],
+ "areaSections": [
+  {
+   "name": "WNL",
+   "material": "WSTEEL",
+   "thickness": 0.05,
+   "kind": "wall",
+   "shell": "thin"
+  }
+ ],
+ "layeredWalls": {
+  "WNL": {
+   "fy": 7200.0,
+   "steel_t": 0.05
+  }
+ },
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 16.0
+  }
+ ],
+ "frames": [],
+ "areas": [
+  {
+   "id": "W0",
+   "section": "WNL",
+   "mesh": [
+    8,
+    4
+   ],
+   "corners": [
+    [
+     0,
+     0,
+     0
+    ],
+    [
+     4.0,
+     0,
+     0
+    ],
+    [
+     4.0,
+     0,
+     0.5
+    ],
+    [
+     0,
+     0,
+     0.5
+    ]
+   ]
+  },
+  {
+   "id": "W1",
+   "section": "WNL",
+   "mesh": [
+    8,
+    3
+   ],
+   "corners": [
+    [
+     0,
+     0,
+     0.5
+    ],
+    [
+     4.0,
+     0,
+     0.5
+    ],
+    [
+     4.0,
+     0,
+     2
+    ],
+    [
+     0,
+     0,
+     2
+    ]
+   ]
+  },
+  {
+   "id": "W2",
+   "section": "WNL",
+   "mesh": [
+    8,
+    14
+   ],
+   "corners": [
+    [
+     0,
+     0,
+     2
+    ],
+    [
+     4.0,
+     0,
+     2
+    ],
+    [
+     4.0,
+     0,
+     16.0
+    ],
+    [
+     0,
+     0,
+     16.0
+    ]
+   ]
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.5,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    1.5,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    2.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    2.5,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    3.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    3.5,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    4.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "PUSH"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "PUSH",
+   "at": [
+    0.0,
+    0.0,
+    16.0
+   ],
+   "f": [
+    0.0625,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "PUSH",
+   "at": [
+    0.5,
+    0.0,
+    16.0
+   ],
+   "f": [
+    0.125,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "PUSH",
+   "at": [
+    1.0,
+    0.0,
+    16.0
+   ],
+   "f": [
+    0.125,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "PUSH",
+   "at": [
+    1.5,
+    0.0,
+    16.0
+   ],
+   "f": [
+    0.125,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "PUSH",
+   "at": [
+    2.0,
+    0.0,
+    16.0
+   ],
+   "f": [
+    0.125,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "PUSH",
+   "at": [
+    2.5,
+    0.0,
+    16.0
+   ],
+   "f": [
+    0.125,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "PUSH",
+   "at": [
+    3.0,
+    0.0,
+    16.0
+   ],
+   "f": [
+    0.125,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "PUSH",
+   "at": [
+    3.5,
+    0.0,
+    16.0
+   ],
+   "f": [
+    0.125,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "PUSH",
+   "at": [
+    4.0,
+    0.0,
+    16.0
+   ],
+   "f": [
+    0.0625,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  }
+ ],
+ "pushover": [
+  {
+   "name": "PO",
+   "pattern": "PUSH",
+   "control": [
+    4.0,
+    0.0,
+    16.0
+   ],
+   "dir": "X",
+   "target": 0.4,
+   "steps": 50
+  }
+ ],
+ "checks": [
+  {
+   "id": "PO-FX",
+   "label": "Base shear at the plastic moment",
+   "case": "PO",
+   "quantity": "base",
+   "comp": "FX",
+   "hand": -90.0,
+   "formula": "-fy t b^2 / 4H",
+   "how": "signed",
+   "tol": [
+    0.01,
+    0.02
+   ],
+   "note": "first yield at 0.074 ft of sway; the base row of elements yields at its integration points (a little above the base), so the finite-element plateau sits up to about 1% above Mp / H"
+  }
+ ]
+}
