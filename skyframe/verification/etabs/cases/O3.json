@@ -1,0 +1,245 @@
+{
+ "id": "O3",
+ "title": "Combinations and envelopes",
+ "purpose": "1.2D + 1.6L adds the cases; an envelope of D and L keeps the largest and smallest of each value, reported here as its maximum and minimum.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "supports": "pin and roller"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "BM",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.03,
+   "I22": 0.002,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.5,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "B1",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    15.0,
+    0.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0
+  },
+  {
+   "id": "B2",
+   "i": [
+    15.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    1,
+    1,
+    1,
+    0,
+    0
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "D"
+  },
+  {
+   "name": "L"
+  }
+ ],
+ "distLoads": [
+  {
+   "pattern": "D",
+   "frame": "B1",
+   "w": 1.0
+  },
+  {
+   "pattern": "D",
+   "frame": "B2",
+   "w": 1.0
+  },
+  {
+   "pattern": "L",
+   "frame": "B1",
+   "w": 0.5
+  },
+  {
+   "pattern": "L",
+   "frame": "B2",
+   "w": 0.5
+  }
+ ],
+ "combos": [
+  {
+   "name": "C1",
+   "type": "linear",
+   "cases": {
+    "D": 1.2,
+    "L": 1.6
+   }
+  },
+  {
+   "name": "ENV",
+   "type": "envelope",
+   "cases": {
+    "D": 1.0,
+    "L": 1.0
+   }
+  }
+ ],
+ "checks": [
+  {
+   "id": "C1-UZ",
+   "label": "1.2D + 1.6L: midspan deflection",
+   "case": "C1",
+   "quantity": "joint",
+   "at": [
+    15.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": -0.16837284482758622,
+   "formula": "-(1.2 dD + 1.6 dL)",
+   "how": "signed"
+  },
+  {
+   "id": "C1-M",
+   "label": "1.2D + 1.6L: midspan moment",
+   "case": "C1",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "j",
+   "comp": "M3",
+   "hand": 225.0,
+   "formula": "(1.2 wD + 1.6 wL) L^2 / 8",
+   "how": "abs"
+  },
+  {
+   "id": "C1-FZ",
+   "label": "1.2D + 1.6L: total reaction",
+   "case": "C1",
+   "quantity": "base",
+   "comp": "FZ",
+   "hand": 60.0,
+   "formula": "(1.2 wD + 1.6 wL) L",
+   "how": "signed"
+  },
+  {
+   "id": "ENV-UZmax",
+   "label": "Envelope maximum of UZ (the smaller sag, L)",
+   "case": "ENV",
+   "quantity": "joint",
+   "at": [
+    15.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": -0.042093211206896554,
+   "formula": "-dL",
+   "how": "signed"
+  },
+  {
+   "id": "ENV-UZmin",
+   "label": "Envelope minimum of UZ (the larger sag, D)",
+   "case": "ENV:min",
+   "quantity": "joint",
+   "at": [
+    15.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": -0.08418642241379311,
+   "formula": "-dD",
+   "how": "signed"
+  },
+  {
+   "id": "ENV-FZmax",
+   "label": "Envelope maximum of the reaction",
+   "case": "ENV",
+   "quantity": "base",
+   "comp": "FZ",
+   "hand": 30.0,
+   "formula": "wD L",
+   "how": "signed"
+  },
+  {
+   "id": "ENV-FZmin",
+   "label": "Envelope minimum of the reaction",
+   "case": "ENV:min",
+   "quantity": "base",
+   "comp": "FZ",
+   "hand": 15.0,
+   "formula": "wL L",
+   "how": "signed"
+  }
+ ]
+}

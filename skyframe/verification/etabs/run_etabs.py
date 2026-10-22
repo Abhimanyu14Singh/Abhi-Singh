@@ -177,7 +177,69 @@ def build(sm, case: dict) -> dict:
             else:
                 ok(sm.AreaObj.SetLoadUniform(an, ld["pattern"], float(ld["q"]), 10, True, "Global", 0),
                    f"area load {ld['pattern']} on {ld['area']}")
+    build_analysis(sm, case, point)
     return names
+
+
+def build_analysis(sm, case: dict, point) -> None:
+    """Diaphragms, springs, masses, mass source, modal / response-spectrum / P-Delta cases, combinations."""
+    for d in case.get("diaphragms", []):
+        ok(sm.Diaphragm.SetDiaphragm(d["name"], False), f"rigid diaphragm {d['name']}")
+        for p in d["points"]:
+            pn = point(p)
+            ok(sm.PointObj.SetDiaphragm(pn, 3, d["name"]), f"diaphragm {d['name']} at {p}")   # 3 = defined
+            back = sm.PointObj.GetDiaphragm(pn, 0, "")
+            ok(back, f"read back diaphragm at {p}")
+            if back[1] != d["name"]:
+                raise Stop(f"point {p}: diaphragm reads back {back[1]!r}, set {d['name']!r}")
+        say(f"  diaphragm {d['name']}: {len(d['points'])} joints (read back)")
+    for sp in case.get("springs", []):
+        pn = point(sp["at"])
+        ok(sm.PointObj.SetSpring(pn, [float(v) for v in sp["k"]], 0, False, True), f"spring at {sp['at']}")
+        back = sm.PointObj.GetSpring(pn, [])
+        ok(back, f"read back spring at {sp['at']}")
+        if any(abs(a - b) > 1e-6 * max(1.0, abs(b)) for a, b in zip(back[0], sp["k"])):
+            raise Stop(f"spring at {sp['at']}: reads back {list(back[0])}, set {sp['k']}")
+        say(f"  spring at {sp['at']}: {list(back[0])} (read back)")
+    for ms in case.get("masses", []):
+        ok(sm.PointObj.SetMass(point(ms["at"]), [float(v) for v in ms["m"]], 0, False, True),
+           f"mass at {ms['at']}")
+    if case.get("massSource"):
+        src = case["massSource"]
+        pats = list((src.get("patterns") or {}).items())
+        ok(sm.SourceMass.SetMassSource("VERIF", bool(src.get("elements")), bool(src.get("masses")), bool(pats),
+                                       True, len(pats), [p for p, _ in pats], [float(f) for _, f in pats]),
+           "mass source")
+        say(f"  mass source: elements {bool(src.get('elements'))}, joint masses {bool(src.get('masses'))}, "
+            f"patterns {dict(pats)}")
+    if case.get("modal"):
+        mc = case["modal"]
+        ok(sm.LoadCases.ModalEigen.SetCase(mc["case"]), f"modal case {mc['case']}")
+        ok(sm.LoadCases.ModalEigen.SetNumberModes(mc["case"], int(mc["modes"]), 1), f"{mc['case']} modes")
+    for fn in case.get("spectra", []):
+        T, Sa = [p[0] for p in fn["points"]], [p[1] for p in fn["points"]]
+        ok(sm.Func.FuncRS.SetUser(fn["name"], len(T), T, Sa, float(fn["damping"])), f"spectrum {fn['name']}")
+    for rs in case.get("rsCases", []):
+        nm = rs["name"]
+        ok(sm.LoadCases.ResponseSpectrum.SetCase(nm), f"response spectrum case {nm}")
+        ok(sm.LoadCases.ResponseSpectrum.SetModalCase(nm, case["modal"]["case"]), f"{nm} modal case")
+        ok(sm.LoadCases.ResponseSpectrum.SetLoads(nm, 1, ["U1" if rs["dir"] == "X" else "U2"], [rs["function"]],
+                                                  [float(rs["scale"])], ["Global"], [0.0]), f"{nm} loads")
+        comb = {"CQC": 1, "SRSS": 2}[rs["combine"]]
+        ok(sm.LoadCases.ResponseSpectrum.SetModalComb_1(nm, comb, 1.0, 0.0, 1, 0.0), f"{nm} modal combination")
+        ok(sm.LoadCases.ResponseSpectrum.SetDampConstant(nm, float(rs["damping"])), f"{nm} damping")
+        ok(sm.LoadCases.ResponseSpectrum.SetEccentricity(nm, 0.0), f"{nm} eccentricity")
+    for pc in case.get("pdeltaCases", []):
+        nm = pc["name"]
+        ok(sm.LoadCases.StaticNonlinear.SetCase(nm), f"nonlinear case {nm}")
+        ok(sm.LoadCases.StaticNonlinear.SetGeometricNonlinearity(nm, 1), f"{nm} P-Delta")
+        pats = list(pc["loads"].items())
+        ok(sm.LoadCases.StaticNonlinear.SetLoads(nm, len(pats), ["Load"] * len(pats), [p for p, _ in pats],
+                                                 [float(f) for _, f in pats]), f"{nm} loads")
+    for cb in case.get("combos", []):
+        ok(sm.RespCombo.Add(cb["name"], 1 if cb["type"] == "envelope" else 0), f"combination {cb['name']}")
+        for cn, f in cb["cases"].items():
+            ok(sm.RespCombo.SetCaseList(cb["name"], 0, cn, float(f)), f"combination {cb['name']}: {cn}")
 
 
 SHELL_TYPE = {"thin": 1, "thick": 2, "membrane": 3}     # eShellType
@@ -232,6 +294,23 @@ def build_areas(sm, case: dict) -> dict:
 
 
 # ── results ─────────────────────────────────────────────────────────────────
+def output_cases(case: dict) -> list:
+    """(name, kind) of every case and combination whose results are exported."""
+    out = [(p["name"], "case") for p in case["patterns"]]
+    out += [(c["name"], "case") for c in case.get("pdeltaCases", [])]
+    out += [(c["name"], "case") for c in case.get("rsCases", [])]
+    out += [(c["name"], "combo") for c in case.get("combos", [])]
+    return out
+
+
+def _split(rows: list, step_of) -> dict:
+    """Rows of one case -> {"": rows} or, for an envelope, {"": the maxima, ":min": the minima}."""
+    out = {"": [], ":min": []}
+    for r in rows:
+        out[":min" if str(step_of(r)).lower() == "min" else ""].append(r)
+    return out
+
+
 def results(sm, case: dict, names: dict) -> dict:
     out = {}
     coords = {}
@@ -241,35 +320,93 @@ def results(sm, case: dict, names: dict) -> dict:
         c = sm.PointObj.GetCoordCartesian(pn, 0, 0, 0, "Global")
         ok(c, f"coordinates of point {pn}")
         coords[pn] = [c[0], c[1], c[2]]
-    for p in case["patterns"]:
-        cname = p["name"]
+    ok(sm.Results.Setup.SetOptionNLStatic(3), "nonlinear static results: last step")
+    for cname, kind in output_cases(case):
         ok(sm.Results.Setup.DeselectAllCasesAndCombosForOutput(), "deselect output")
-        ok(sm.Results.Setup.SetCaseSelectedForOutput(cname), f"select {cname}")
+        if kind == "combo":
+            ok(sm.Results.Setup.SetComboSelectedForOutput(cname), f"select combination {cname}")
+        else:
+            ok(sm.Results.Setup.SetCaseSelectedForOutput(cname), f"select {cname}")
+        parts = {"": {"joints": [], "base": {}, "frames": {}, "drifts": [], "piers": [], "spandrels": []}}
+        parts[":min"] = {"joints": [], "base": {}, "frames": {}, "drifts": [], "piers": [], "spandrels": []}
+
         jd = sm.Results.JointDispl("All", GROUP_ELM, 0, [], [], [], [], [], [], [], [], [], [], [])
         ok(jd, f"joint displacements {cname}")
-        n, obj = jd[0], jd[1]
+        n, obj, step = jd[0], jd[1], jd[4]
         u = jd[6:12]
-        joints = [{"xyz": coords.get(obj[k], [math.nan] * 3), "name": obj[k],
-                   "u": [u[0][k], u[1][k], u[2][k], u[3][k], u[4][k], u[5][k]]} for k in range(n)]
+        rows = [{"xyz": coords[obj[k]], "name": obj[k], "step": step[k],
+                 "u": [u[0][k], u[1][k], u[2][k], u[3][k], u[4][k], u[5][k]]}
+                for k in range(n) if obj[k] in coords]          # diaphragm centre points have no object
+        for key, rr in _split(rows, lambda x: x["step"]).items():
+            parts[key]["joints"] = rr
+
         br = sm.Results.BaseReact(0, [], [], [], [], [], [], [], [], [], 0, 0, 0)
         ok(br, f"base reactions {cname}")
-        base = dict(zip(("FX", "FY", "FZ", "MX", "MY", "MZ"), (br[i][0] for i in range(4, 10))))
-        frames = {}
+        for i in range(br[0]):
+            key = ":min" if str(br[2][i]).lower() == "min" else ""
+            parts[key]["base"] = dict(zip(("FX", "FY", "FZ", "MX", "MY", "MZ"), (br[c][i] for c in range(4, 10))))
+
         for fid, fname in names.items():
             ff = sm.Results.FrameForce(fname, OBJECT_ELM, 0, [], [], [], [], [], [], [], [], [], [], [], [], [])
             ok(ff, f"frame forces {fid} {cname}")
-            nn, sta = ff[0], ff[2]
             P, V2, V3, T, M2, M3 = ff[8:14]
-            frames[fid] = [{"station": sta[k], "P": P[k], "V2": V2[k], "V3": V3[k], "T": T[k],
-                            "M2": M2[k], "M3": M3[k]} for k in range(nn)]
-        out[cname] = {"joints": joints, "base": base, "frames": frames}
+            rows = [{"station": ff[2][k], "step": ff[6][k], "P": P[k], "V2": V2[k], "V3": V3[k], "T": T[k],
+                     "M2": M2[k], "M3": M3[k]} for k in range(ff[0])]
+            for key, rr in _split(rows, lambda x: x["step"]).items():
+                parts[key]["frames"][fid] = rr
+
+        if any(c["quantity"] == "drift" for c in case["checks"]):
+            sd = sm.Results.StoryDrifts(0, [], [], [], [], [], [], [], [], [], [])
+            ok(sd, f"story drifts {cname}")
+            rows = [{"story": sd[1][k], "dir": sd[5][k], "drift": sd[6][k], "step": sd[3][k]} for k in range(sd[0])]
+            for key, rr in _split(rows, lambda x: x["step"]).items():
+                parts[key]["drifts"] = rr
+
+        for what, fn in (("piers", "PierForce"), ("spandrels", "SpandrelForce")):
+            if not any(c["quantity"] == what[:-1] for c in case["checks"]):
+                continue
+            pf = getattr(sm.Results, fn)(0, [], [], [], [], [], [], [], [], [], [])
+            ok(pf, f"{what} {cname}")
+            parts[""][what] = [{"story": pf[1][k], "name": pf[2][k], "location": pf[4][k],
+                                **dict(zip(("P", "V2", "V3", "T", "M2", "M3"), (pf[c][k] for c in range(5, 11))))}
+                               for k in range(pf[0])]
+
+        out[cname] = parts[""]
+        if parts[":min"]["joints"] or parts[":min"]["base"]:
+            out[cname + ":min"] = parts[":min"]
     return out
 
 
+def modal_results(sm, case: dict) -> dict:
+    mc = case["modal"]["case"]
+    ok(sm.Results.Setup.DeselectAllCasesAndCombosForOutput(), "deselect output")
+    ok(sm.Results.Setup.SetCaseSelectedForOutput(mc), f"select {mc}")
+    mp = sm.Results.ModalPeriod(0, [], [], [], [], [], [], [])
+    ok(mp, "modal periods")
+    mr = sm.Results.ModalParticipatingMassRatios(0, [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [])
+    ok(mr, "modal mass ratios")
+    return {"periods": list(mp[4][:mp[0]]),
+            "ratios": [{"UX": mr[5][k], "UY": mr[6][k], "UZ": mr[7][k], "RZ": mr[13][k]} for k in range(mr[0])]}
+
+
 def pick(res: dict, chk: dict):
+    if chk["quantity"] == "modal":
+        md = res.get("modal") or {}
+        k = chk["mode"] - 1
+        rows = md.get("periods" if chk["comp"] == "T" else "ratios", [])
+        if k >= len(rows):
+            return None
+        return rows[k] if chk["comp"] == "T" else rows[k][chk["comp"]]
     c = res["cases"].get(chk["case"])
     if c is None:
         return None
+    if chk["quantity"] == "drift":
+        rows = [r for r in c.get("drifts", []) if r["story"] == chk["story"] and r["dir"] == chk["comp"]]
+        return max((abs(r["drift"]) for r in rows), default=None)
+    if chk["quantity"] in ("pier", "spandrel"):
+        rows = [r for r in c.get(chk["quantity"] + "s", []) if r["story"] == chk["story"]
+                and r["name"] == chk["name"] and r["location"].lower() == chk["location"]]
+        return rows[0][chk["comp"]] if rows else None
     if chk["quantity"] == "base":
         return c["base"][chk["comp"]]
     if chk["quantity"] == "joint":
@@ -302,13 +439,25 @@ def run_case(sm, case: dict, out_root: Path, version: str) -> dict:
     edb = str(work / f"{case['id']}.EDB")
     ok(sm.File.Save(edb), f"save {edb}")
     ok(sm.Analyze.SetRunCaseFlag("", False, True), "switch all cases off")
-    for p in case["patterns"]:
-        ok(sm.Analyze.SetRunCaseFlag(p["name"], True, False), f"switch case {p['name']} on")
+    run = [n for n, kind in output_cases(case) if kind == "case"]
+    if case.get("modal"):
+        run.append(case["modal"]["case"])
+    for cname in run:
+        ok(sm.Analyze.SetRunCaseFlag(cname, True, False), f"switch case {cname} on")
     say("Running the analysis ...")
     ok(sm.Analyze.RunAnalysis(), "run analysis")
     say("Reading results ...")
     res = {"program": "ETABS", "version": version, "units": "kip-ft", "case": case["id"],
            "cases": results(sm, case, names)}
+    if case.get("modal"):
+        res["modal"] = modal_results(sm, case)
+    if case.get("areas"):
+        try:
+            n_elm, n_obj = sm.AreaElm.Count(), sm.AreaObj.Count()
+            say(f"  ETABS analysed {n_elm} area elements for {n_obj} area objects"
+                + ("" if n_elm == n_obj else "  (it meshed the objects further: meshes differ from SkyFrame)"))
+        except Exception as exc:                         # informative only
+            say(f"  could not count area elements: {exc}")
     (work / f"{case['id']}.etabs.json").write_text(json.dumps(res, indent=1), encoding="utf-8")
     say(f"{'check':8} {'hand':>12} {'ETABS':>12}  difference")
     worst = 0.0

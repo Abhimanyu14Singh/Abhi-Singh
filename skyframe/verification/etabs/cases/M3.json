@@ -1,0 +1,812 @@
+{
+ "id": "M3",
+ "title": "Response spectrum, SRSS",
+ "purpose": "A flat 0.4 g spectrum along X on the M1 building, modes combined by SRSS: base shear and roof displacement from the closed-form modes.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "joint masses only (material mass 0); lateral mass, lumped at stories",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "spectrum": "constant 0.4 g, 5% damping",
+  "combination": "SRSS, one direction",
+  "eccentricity": "none"
+ },
+ "patterns": [],
+ "modal": {
+  "case": "MODES",
+  "modes": 9
+ },
+ "spectra": [
+  {
+   "name": "FLAT",
+   "points": [
+    [
+     0.0,
+     0.4
+    ],
+    [
+     10.0,
+     0.4
+    ]
+   ],
+   "damping": 0.05
+  }
+ ],
+ "rsCases": [
+  {
+   "name": "RSX",
+   "dir": "X",
+   "function": "FLAT",
+   "scale": 32.17404855643044,
+   "combine": "SRSS",
+   "damping": 0.05
+  }
+ ],
+ "checks": [
+  {
+   "id": "RSX-FX",
+   "label": "Base shear",
+   "case": "RSX",
+   "quantity": "base",
+   "comp": "FX",
+   "hand": 70.82467897698571,
+   "formula": "SRSS of Sa M_eff,j",
+   "how": "signed"
+  },
+  {
+   "id": "RSX-UX",
+   "label": "Roof displacement",
+   "case": "RSX",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    36.0
+   ],
+   "comp": "UX",
+   "hand": 0.06839108808740126,
+   "formula": "SRSS of Gamma_j phi_roof,j Sa / omega_j^2",
+   "how": "signed"
+  },
+  {
+   "id": "RSX-V3",
+   "label": "Top-story column shear",
+   "case": "RSX",
+   "quantity": "frame",
+   "frame": "C1S3",
+   "station": "i",
+   "comp": "V2",
+   "hand": 8.06646086516863,
+   "formula": "SRSS of the roof inertia force, a quarter per column",
+   "how": "abs"
+  }
+ ],
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  },
+  {
+   "name": "Story2",
+   "height": 12.0
+  },
+  {
+   "name": "Story3",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1S1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C2S1",
+   "i": [
+    30.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C3S1",
+   "i": [
+    30.0,
+    24.0,
+    0.0
+   ],
+   "j": [
+    30.0,
+    24.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C4S1",
+   "i": [
+    0.0,
+    24.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    24.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C1S2",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C2S2",
+   "i": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    30.0,
+    0.0,
+    24.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C3S2",
+   "i": [
+    30.0,
+    24.0,
+    12.0
+   ],
+   "j": [
+    30.0,
+    24.0,
+    24.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C4S2",
+   "i": [
+    0.0,
+    24.0,
+    12.0
+   ],
+   "j": [
+    0.0,
+    24.0,
+    24.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C1S3",
+   "i": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    36.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C2S3",
+   "i": [
+    30.0,
+    0.0,
+    24.0
+   ],
+   "j": [
+    30.0,
+    0.0,
+    36.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C3S3",
+   "i": [
+    30.0,
+    24.0,
+    24.0
+   ],
+   "j": [
+    30.0,
+    24.0,
+    36.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C4S3",
+   "i": [
+    0.0,
+    24.0,
+    24.0
+   ],
+   "j": [
+    0.0,
+    24.0,
+    36.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    24.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    24.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    24.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    24.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    24.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    24.0,
+    24.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    24.0,
+    24.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    0.0,
+    36.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    36.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    24.0,
+    36.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    24.0,
+    36.0
+   ],
+   "restraint": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    0
+   ]
+  }
+ ],
+ "diaphragms": [
+  {
+   "name": "D1",
+   "points": [
+    [
+     0.0,
+     0.0,
+     12.0
+    ],
+    [
+     30.0,
+     0.0,
+     12.0
+    ],
+    [
+     30.0,
+     24.0,
+     12.0
+    ],
+    [
+     0.0,
+     24.0,
+     12.0
+    ]
+   ]
+  },
+  {
+   "name": "D2",
+   "points": [
+    [
+     0.0,
+     0.0,
+     24.0
+    ],
+    [
+     30.0,
+     0.0,
+     24.0
+    ],
+    [
+     30.0,
+     24.0,
+     24.0
+    ],
+    [
+     0.0,
+     24.0,
+     24.0
+    ]
+   ]
+  },
+  {
+   "name": "D3",
+   "points": [
+    [
+     0.0,
+     0.0,
+     36.0
+    ],
+    [
+     30.0,
+     0.0,
+     36.0
+    ],
+    [
+     30.0,
+     24.0,
+     36.0
+    ],
+    [
+     0.0,
+     24.0,
+     36.0
+    ]
+   ]
+  }
+ ],
+ "masses": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    24.0,
+    12.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    24.0,
+    12.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    24.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    24.0,
+    24.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    24.0,
+    24.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    0.0,
+    36.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    36.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    24.0,
+    36.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    24.0,
+    36.0
+   ],
+   "m": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "massSource": {
+  "elements": false,
+  "masses": true,
+  "patterns": {}
+ }
+}

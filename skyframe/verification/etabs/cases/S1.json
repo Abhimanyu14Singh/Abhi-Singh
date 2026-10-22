@@ -1,0 +1,241 @@
+{
+ "id": "S1",
+ "title": "Point springs at a column base",
+ "purpose": "Springs instead of fixity: the top moves by the column's own bending plus the base slip and the base rotation carried up the height. Spring forces are the reactions.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "supports": "six point springs at the base, no restraint"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  }
+ ],
+ "supports": [],
+ "springs": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "k": [
+    500.0,
+    400.0,
+    5000.0,
+    30000.0,
+    20000.0,
+    1000.0
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "PX"
+  },
+  {
+   "name": "PY"
+  },
+  {
+   "name": "PZ"
+  },
+  {
+   "name": "TZ"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "PX",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    10.0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "pattern": "PY",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    0,
+    10.0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "pattern": "PZ",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    0,
+    0,
+    -50.0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "pattern": "TZ",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    10.0
+   ]
+  }
+ ],
+ "checks": [
+  {
+   "id": "PX-UX",
+   "label": "Top along X",
+   "case": "PX",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 0.1609655172413793,
+   "formula": "PL^3/3EI33 + P/kx + P L^2 / kry",
+   "how": "signed"
+  },
+  {
+   "id": "PY-UY",
+   "label": "Top along Y",
+   "case": "PY",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UY",
+   "hand": 0.34886206896551725,
+   "formula": "PL^3/3EI22 + P/ky + P L^2 / krx",
+   "how": "signed"
+  },
+  {
+   "id": "PZ-UZ",
+   "label": "Top settles",
+   "case": "PZ",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": -0.011436781609195402,
+   "formula": "-N (L/EA + 1/kz)",
+   "how": "signed"
+  },
+  {
+   "id": "TZ-RZ",
+   "label": "Top twists",
+   "case": "TZ",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "RZ",
+   "hand": 0.15942528735632183,
+   "formula": "T (L/GJ + 1/krz)",
+   "how": "signed"
+  },
+  {
+   "id": "PX-FX",
+   "label": "Spring force is the reaction",
+   "case": "PX",
+   "quantity": "base",
+   "comp": "FX",
+   "hand": -10.0,
+   "formula": "-P",
+   "how": "signed"
+  },
+  {
+   "id": "PX-MY",
+   "label": "Base moment",
+   "case": "PX",
+   "quantity": "base",
+   "comp": "MY",
+   "hand": -120.0,
+   "formula": "-PL",
+   "how": "signed"
+  }
+ ]
+}

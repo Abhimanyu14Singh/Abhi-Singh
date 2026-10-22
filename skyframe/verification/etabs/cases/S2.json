@@ -1,0 +1,286 @@
+{
+ "id": "S2",
+ "title": "Pinned bases on vertical springs",
+ "purpose": "Pinned bases: zero base moment, top moments H h / 2. The vertical springs take the overturning couple and let the whole frame rock, adding to the sway.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "supports": "pins in the XZ plane on vertical springs 2000 k/ft"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 1.0,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  },
+  {
+   "name": "BM",
+   "material": "STEEL",
+   "A": 1.0,
+   "I33": 0.03,
+   "I22": 0.002,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.5,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C2",
+   "i": [
+    20.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "B1",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    0,
+    1,
+    0,
+    1
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    0,
+    1,
+    0,
+    1
+   ]
+  }
+ ],
+ "springs": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "k": [
+    0,
+    0,
+    2000.0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    0.0,
+    0.0
+   ],
+   "k": [
+    0,
+    0,
+    2000.0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "H"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "H",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    5.0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "pattern": "H",
+   "at": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    5.0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "checks": [
+  {
+   "id": "H-UX",
+   "label": "Sway",
+   "case": "H",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 0.057260536398467426,
+   "formula": "H h^2 L/12EIb + H h^3/6EIc + rocking 2R(1/kz + h/EA) h/L",
+   "how": "signed"
+  },
+  {
+   "id": "H-UZ",
+   "label": "Right base settles",
+   "case": "H",
+   "quantity": "joint",
+   "at": [
+    20.0,
+    0.0,
+    0.0
+   ],
+   "comp": "UZ",
+   "hand": -0.003,
+   "formula": "-R / kz, R = H h / L",
+   "how": "signed"
+  },
+  {
+   "id": "H-Mbase",
+   "label": "No moment at the pinned base",
+   "case": "H",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "i",
+   "comp": "M3",
+   "hand": 0.0,
+   "formula": "0",
+   "how": "abs",
+   "scale": 60.0
+  },
+  {
+   "id": "H-Mtop",
+   "label": "Column top moment",
+   "case": "H",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "j",
+   "comp": "M3",
+   "hand": 60.0,
+   "formula": "H h / 2",
+   "how": "abs"
+  },
+  {
+   "id": "H-P",
+   "label": "Right column compression",
+   "case": "H",
+   "quantity": "frame",
+   "frame": "C2",
+   "station": "i",
+   "comp": "P",
+   "hand": -6.0,
+   "formula": "-H h / L",
+   "how": "signed"
+  },
+  {
+   "id": "H-FZ",
+   "label": "Vertical reactions cancel",
+   "case": "H",
+   "quantity": "base",
+   "comp": "FZ",
+   "hand": 0.0,
+   "formula": "0",
+   "how": "signed",
+   "scale": 6.0
+  }
+ ]
+}

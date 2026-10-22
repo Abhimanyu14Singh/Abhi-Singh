@@ -17,16 +17,18 @@ FT = 0.3048                     # m
 KIP = 4.4482216152605           # kN
 KSF = KIP / FT**2               # kPa
 KIPFT = KIP * FT                # kN m
+KIPS2FT = KIP / FT              # tonne per kip-s2/ft
+G_FT = 9.80665 / FT             # ft/s2
 
 
 def build(case: dict):
     from skyframe.core.model import (AreaLoad, BuildingModel, FrameSection, Material, MemberLoad, NodalLoad,
-                                     PointSupport, ShellSection, ThermalLoad)
+                                     NodalMass, PointSupport, ShellSection, SpringSupport, ThermalLoad)
 
     m = BuildingModel(name=case["id"])
     m.frame_axis_convention = "etabs"           # ETABS default local axes (cases.py settings)
     m.rigid_diaphragms = False
-    m.num_modes = 0
+    m.num_modes = case.get("modal", {}).get("modes", 0)
     for mt in case["materials"]:
         # alpha is per deg F and temperatures are deg F: the product alpha dT is unit-free
         m.add_material(Material(mt["name"], E=mt["E"] * KSF, nu=mt["nu"],
@@ -96,6 +98,33 @@ def build(case: dict):
         m.pattern(ld["pattern"], "other").thermal_loads.append(ThermalLoad(ld["frame"], dT=ld["dT"]))
     for ld in case.get("areaLoads", []):
         m.pattern(ld["pattern"], "other").area_loads.append(AreaLoad(ld["area"], ld["q"] * KSF))
+
+    for d in case.get("diaphragms", []):
+        m.diaphragms[d["name"]] = {"type": "rigid"}
+        m.joint_diaphragms += [{"point": [c * FT for c in p], "diaphragm": d["name"]} for p in d["points"]]
+    tr, rot = KIP / FT, KIPFT                                # spring kip/ft, kip-ft/rad
+    for sp in case.get("springs", []):
+        k = sp["k"]
+        m.spring_supports.append(SpringSupport(tuple(c * FT for c in sp["at"]),
+                                               [k[0] * tr, k[1] * tr, k[2] * tr, k[3] * rot, k[4] * rot, k[5] * rot]))
+    for ms in case.get("masses", []):
+        q = ms["m"]
+        m.nodal_masses.append(NodalMass(tuple(c * FT for c in ms["at"]), q[0] * KIPS2FT, q[1] * KIPS2FT,
+                                        q[2] * KIPS2FT, q[3] * KIPFT, q[4] * KIPFT, q[5] * KIPFT))
+    if case.get("massSource"):
+        src = case["massSource"]
+        m.mass_options = dict(m.mass_options, self_mass=bool(src.get("elements")), patterns=bool(src.get("patterns")))
+        m.mass_source = dict(src.get("patterns") or {})
+    spectra = {f["name"]: f for f in case.get("spectra", [])}
+    for rs in case.get("rsCases", []):
+        fn = spectra[rs["function"]]
+        # SkyFrame takes Sa in g; the definition's scale turns g into ft/s2
+        m.add_rs_case(rs["name"], rs["dir"], fn["points"], combo_method=rs["combine"], damping=rs["damping"],
+                      scale=rs["scale"] / G_FT)
+    for pc in case.get("pdeltaCases", []):
+        m.add_case(pc["name"], pc["loads"], geometric="pdelta")
+    for cb in case.get("combos", []):
+        m.add_combo(cb["name"], cb["cases"], "envelope" if cb["type"] == "envelope" else "add")
     return m
 
 
@@ -106,7 +135,13 @@ def run(case: dict) -> dict:
     d = OpenSeesEngine(build(case)).run().to_dict()
     nodes = {t: [c / FT for c in xyz] for t, xyz in d["nodes"].items()}
     out: Dict[str, dict] = {}
-    for cname, c in d["cases"].items():
+    every = dict(d["cases"])
+    every.update(d.get("rs_cases") or {})
+    for cname, c in (d.get("combos") or {}).items():
+        every[cname] = c
+        if c.get("min"):
+            every[cname + ":min"] = c["min"]
+    for cname, c in every.items():
         joints = [{"xyz": nodes[t], "u": [u[0] / FT, u[1] / FT, u[2] / FT, u[3], u[4], u[5]]}
                   for t, u in c["node_disp"].items()]
         b = c["base"]
@@ -120,5 +155,13 @@ def run(case: dict) -> dict:
                              "V3": st["V3"][k] / KIP, "T": st["T"][k] / KIPFT,
                              "M2": st["M2"][k] / KIPFT, "M3": st["M3"][k] / KIPFT})
             frames[uid] = rows
-        out[cname] = {"joints": joints, "base": base, "frames": frames}
-    return {"program": "SkyFrame", "version": __version__, "units": "kip-ft", "cases": out}
+        drifts = [{"story": st, "dir": dr, "drift": v.get("drift_" + dr.lower(), 0.0)}
+                  for st, v in (c.get("story") or {}).items() for dr in ("X", "Y")]
+        out[cname] = {"joints": joints, "base": base, "frames": frames, "drifts": drifts}
+    res = {"program": "SkyFrame", "version": __version__, "units": "kip-ft", "cases": out}
+    if case.get("modal"):
+        md = d.get("modal") or {}
+        res["modal"] = {"periods": list(md.get("periods", [])),
+                        "ratios": [{"UX": p.get("ux", 0.0), "UY": p.get("uy", 0.0), "RZ": p.get("rz", 0.0)}
+                                   for p in md.get("participation", [])]}
+    return res

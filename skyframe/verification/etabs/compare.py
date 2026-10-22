@@ -21,14 +21,24 @@ ROOT = HERE.parents[1]                     # the skyframe project (import skyfra
 ETABS_DIR = HERE / "results" / "etabs-23"
 
 # relative tolerances (the doc "Acceptance tolerances"): vs hand, vs ETABS
-TOL = {"joint": (1e-3, 5e-3), "base": (1e-3, 1e-3), "frame": (1e-3, 5e-3)}
+TOL = {"joint": (1e-3, 5e-3), "base": (1e-3, 1e-3), "frame": (1e-3, 5e-3), "modal": (1e-3, 5e-3),
+       "drift": (1e-3, 5e-3), "pier": (1e-3, 5e-3)}
 
 
 def pick(res: dict, chk: dict) -> Optional[float]:
+    q = chk["quantity"]
+    if q == "modal":
+        md = res.get("modal") or {}
+        k = chk["mode"] - 1
+        if chk["comp"] == "T":
+            return md["periods"][k] if k < len(md.get("periods", [])) else None
+        return md["ratios"][k][chk["comp"]] if k < len(md.get("ratios", [])) else None
     c = res["cases"].get(chk["case"])
     if c is None:
         return None
-    q = chk["quantity"]
+    if q == "drift":
+        rows = [r for r in c.get("drifts", []) if r["story"] == chk["story"] and r["dir"] == chk["comp"]]
+        return max((abs(r["drift"]) for r in rows), default=None)
     if q == "base":
         return c["base"][chk["comp"]]
     if q == "joint":

@@ -352,9 +352,11 @@ def F8() -> dict:
 
 CASES = {"F1": F1, "F2": F2, "F3": F3, "F4": F4, "F5": F5, "F6": F6, "F7": F7, "F8": F8}
 
-import cases_loads  # noqa: E402  (the groups build on the helpers above)
+import cases_dyn  # noqa: E402
+import cases_loads  # noqa: E402
 
 CASES.update(cases_loads.CASES)
+CASES.update(cases_dyn.CASES)
 
 
 def get(cid: str) -> dict:
