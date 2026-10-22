@@ -174,7 +174,7 @@ def context_from_results(model, results: dict) -> dict:
             t = masters[s.name]
             add(t, 1, m)
             add(t, 2, m)
-            add(t, 6, m * (lx * lx + ly * ly) / 12.0)
+            add(t, 6, _story_inertia(model, s, nodes[t], m, lx, ly))
         else:
             sn = [t for t in story_nodes[s.name] if t in struct]
             for t in sn:
@@ -188,6 +188,20 @@ def context_from_results(model, results: dict) -> dict:
             add(t, 3, nm.mz)
     ctx["mass"] = [[t, d, v] for (t, d), v in sorted(mass.items()) if v > 0]
     return ctx
+
+
+def _story_inertia(model, s, master_xyz, m: float, lx: float, ly: float) -> float:
+    """The engine's rigid-story rotational inertia (OpenSeesEngine._story_inertia):
+    sum m r^2 of the derived mass where it arises, else the uniform-plan value."""
+    from skyframe.core import story_mass as _smass
+    from skyframe.core.model import G_ACCEL
+    uniform = m * (lx * lx + ly * ly) / 12.0
+    if s.name in getattr(model, "story_masses", {}):
+        return uniform
+    tot, j = _smass.inertia(_smass.story_points(model, s.name), master_xyz[0], master_xyz[1])
+    if abs(tot / G_ACCEL - m) > 1e-6 * max(m, 1e-9):
+        return uniform
+    return j / G_ACCEL
 
 
 def _find_tag(nodes, pt, prefer=()) -> Optional[int]:

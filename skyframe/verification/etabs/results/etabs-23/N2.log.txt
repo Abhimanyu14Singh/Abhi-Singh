@@ -1,0 +1,13 @@
+== N2: Tension-only bracing
+Building the model ...
+  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+Running the analysis ...
+  screenshot N2.etabs.png (ETABS 3-D view only)
+Reading results ...
+check            hand        ETABS  difference
+NLH-T         11.6619      11.6842  0.192%
+NLH-C               0  1.24562e-05  0.000%
+NLH-CR             -6     -5.98159  0.307%
+NLH-UX     0.00134196   0.00134092  0.077%
+NLH-FX            -10          -10  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\N2\N2.EDB; largest difference from the hand calculation 0.307%

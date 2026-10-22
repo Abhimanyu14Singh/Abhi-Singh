@@ -1,0 +1,25 @@
+== M1: Shear building periods
+Building the model ...
+  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+  diaphragm D1 already defined (rigid), used as is
+  diaphragm D1: 4 joints (read back)
+  diaphragm D2: 4 joints (read back)
+  diaphragm D3: 4 joints (read back)
+  mass source (PropMaterial.SetMassSource_1): elements False, joint masses True, patterns {}
+Running the analysis ...
+  screenshot M1.etabs.png (ETABS 3-D view only)
+Reading results ...
+check            hand        ETABS  difference
+T1           0.829049     0.829049  0.000%
+T2           0.562538     0.562538  0.000%
+T3           0.414524     0.414524  0.000%
+T4           0.295884     0.295884  0.000%
+T5           0.204758     0.204758  0.000%
+T6           0.200767     0.200767  0.000%
+T7           0.147942     0.147942  0.000%
+T8           0.138935     0.138935  0.000%
+T9           0.102379     0.102379  0.000%
+M1Y          0.914079     0.914079  0.000%
+M3X          0.914079     0.914079  0.000%
+M4Y          0.074877     0.074877  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\M1\M1.EDB; largest difference from the hand calculation 0.000%

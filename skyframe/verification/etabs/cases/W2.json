@@ -1843,7 +1843,8 @@
    "comp": "UX",
    "hand": null,
    "formula": "programs compared",
-   "how": "signed"
+   "how": "signed",
+   "knownDifference": "at this 2 ft mesh both programs are stiffer than the converged answer (about 4.33e-4 ft, refining SkyFrame to 0.5 ft): SkyFrame 6% short, ETABS 9%, the door corners need a finer mesh; pier forces agree"
   },
   {
    "id": "H-FX",

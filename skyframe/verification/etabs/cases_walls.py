@@ -130,7 +130,10 @@ def W2() -> dict:
             _pier("H-P1", "Left pier axial (equal and opposite to the right)", "H", "Story1", "P1", "P", None,
                   "programs compared"),
             _pier("H-M1", "Left pier moment at its base", "H", "Story1", "P1", "M3", None, "programs compared"),
-            _j("H-UX", "Top corner displacement", "H", [20.0, 0.0, 12.0], "UX", None, "programs compared"),
+            dict(_j("H-UX", "Top corner displacement", "H", [20.0, 0.0, 12.0], "UX", None, "programs compared"),
+                 knownDifference=("at this 2 ft mesh both programs are stiffer than the converged answer "
+                                  "(about 4.33e-4 ft, refining SkyFrame to 0.5 ft): SkyFrame 6% short, ETABS 9%, "
+                                  "the door corners need a finer mesh; pier forces agree")),
             _b("H-FX", "Base shear", "H", "FX", -P, "-V"),
             _b("H-MY", "Base moment", "H", "MY", -P * 12.0, "-V h"),
         ],

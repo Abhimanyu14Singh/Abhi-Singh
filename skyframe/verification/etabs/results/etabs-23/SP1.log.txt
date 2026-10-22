@@ -1,0 +1,23 @@
+== SP1: Speed benchmark: 4-story RC frame
+Building the model ...
+  section COL: A 4.0, I22 1.3333333333333333, I33 1.3333333333333333, J 2.25, As2 0.0, As3 0.0 (read back)
+  section BM: A 3.0, I22 0.5625, I33 1.0, J 0.95, As2 0.0, As3 0.0 (read back)
+  area section SLAB: slab, thickness 0.6666666666666666, shell type 1 (read back)
+  4800 area objects
+  mass source (PropMaterial.SetMassSource_1): elements True, joint masses False, patterns {}
+  ETABS solver: {'solver': 'advanced', 'process': 2, 'threads': 24, 'cores': 24}
+  ETABS linear run: 85.59 s (SW, SDL, EQX, MODES)
+  ETABS nonlinear run: 84.74 s (PDALL)
+Running the analysis ...
+  screenshot SP1.etabs.png (ETABS 3-D view only)
+Reading results ...
+  ETABS analysed 4800 area elements for 4800 area objects
+check            hand        ETABS  difference
+SW-FZ            5019         5019  0.000%
+SDL-FZ            750          750  0.000%
+EQX-FX           -400         -400  0.000%
+EQX-UX              -    0.0417595  compared with SkyFrame only
+PDALL-UX            -    0.0422681  compared with SkyFrame only
+T1                  -     0.650006  compared with SkyFrame only
+T2                  -     0.639954  compared with SkyFrame only
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\SP1\SP1.EDB; largest difference from the hand calculation 0.000%

@@ -1,0 +1,15 @@
+== O2: Pier forces
+Building the model ...
+  area section WALL: wall, thickness 1.0, shell type 1 (read back)
+  18 area objects; pier labels ['P1']
+Running the analysis ...
+  screenshot O2.etabs.png (ETABS 3-D view only)
+Reading results ...
+  ETABS analysed 18 area elements for 18 area objects
+check            hand        ETABS  difference
+EQ-V2              30           30  0.000%
+EQ-M2             360          360  0.000%
+EQ-V1              50           50  0.000%
+EQ-M1             960          960  0.000%
+EQ-P1               0  2.98314e-13  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\O2\O2.EDB; largest difference from the hand calculation 0.000%

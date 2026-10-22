@@ -1,0 +1,44 @@
+== B1: 20-story core and frame
+Building the model ...
+  section COL: A 4.0, I22 1.3333333333333333, I33 1.3333333333333333, J 2.2533333333333334, As2 0.0, As3 0.0 (read back)
+  section BM: A 3.75, I22 0.703125, I33 1.953125, J 1.7608567499999996, As2 0.0, As3 0.0 (read back)
+  area section WALL: wall, thickness 1.0, shell type 1 (read back)
+  1440 area objects; pier labels ['CE', 'CN', 'CS', 'CW']
+  diaphragm D1 already defined (rigid), used as is
+  diaphragm D1: 40 joints (read back)
+  diaphragm D2: 40 joints (read back)
+  diaphragm D3: 40 joints (read back)
+  diaphragm D4: 40 joints (read back)
+  diaphragm D5: 40 joints (read back)
+  diaphragm D6: 40 joints (read back)
+  diaphragm D7: 40 joints (read back)
+  diaphragm D8: 40 joints (read back)
+  diaphragm D9: 40 joints (read back)
+  diaphragm D10: 40 joints (read back)
+  diaphragm D11: 40 joints (read back)
+  diaphragm D12: 40 joints (read back)
+  diaphragm D13: 40 joints (read back)
+  diaphragm D14: 40 joints (read back)
+  diaphragm D15: 40 joints (read back)
+  diaphragm D16: 40 joints (read back)
+  diaphragm D17: 40 joints (read back)
+  diaphragm D18: 40 joints (read back)
+  diaphragm D19: 40 joints (read back)
+  diaphragm D20: 40 joints (read back)
+  mass source (PropMaterial.SetMassSource_1): elements False, joint masses True, patterns {}
+Running the analysis ...
+  screenshot B1.etabs.png (ETABS 3-D view only)
+Reading results ...
+  ETABS analysed 1440 area elements for 1440 area objects
+check            hand        ETABS  difference
+SW-FZ           13860        13860  0.000%
+EQX-FX           -400         -400  0.000%
+EQX-MY         -65600       -65600  0.000%
+EQX-UX              -    0.0972756  compared with SkyFrame only
+EQX-D10             -  0.000477271  compared with SkyFrame only
+EQX-VS              -      176.993  compared with SkyFrame only
+EQX-MS              -      5522.02  compared with SkyFrame only
+T1                  -      1.87187  compared with SkyFrame only
+T2                  -      1.87187  compared with SkyFrame only
+T3                  -      1.28722  compared with SkyFrame only
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\B1\B1.EDB; largest difference from the hand calculation 0.000%

@@ -418,7 +418,8 @@ def lump_story(eng, asm, add, story, m: float, explicit: bool) -> bool:
                  for t in nodes) / md
         cy = sum(trib.get(t, 0.0) * asm.struct_coords[t][1]
                  for t in nodes) / md
-        _put_group(asm, add, g, md, (cx, cy))
+        _put_group(asm, add, g, md, (cx, cy),
+                   inertia=_group_inertia(eng, asm, story, g, groups, md))
     for t in asm.story_nodes.get(story.name, ()):
         if t not in grouped:
             v = trib.get(t, 0.0)
@@ -427,7 +428,36 @@ def lump_story(eng, asm, add, story, m: float, explicit: bool) -> bool:
     return True
 
 
-def _put_group(asm, add, g: dict, md: float, centroid) -> None:
+def _group_inertia(eng, asm, story, g: dict, groups: list, md: float):
+    """Rotational inertia of one diaphragm's derived mass about its master,
+    from where the mass arises (skyframe.core.story_mass): point loads at
+    their points, line and area loads over their extents (ETABS parity).
+    None (uniform-plan fallback) when those points do not reproduce ``md``."""
+    from skyframe.core import story_mass as _smass
+    from skyframe.core.model import G_ACCEL
+    pts = _smass.story_points(eng.model, story.name)
+
+    def owner(p):
+        best, dist = None, None
+        for gg in groups:
+            x0, x1, y0, y1 = gg["bbox"]
+            d = (max(x0 - p[0], 0.0, p[0] - x1) ** 2
+                 + max(y0 - p[1], 0.0, p[1] - y1) ** 2)
+            if dist is None or d < dist - 1e-12:
+                best, dist = gg, d
+        return best
+
+    mine = [p for p in pts if owner(p) is g]
+    mt = g["master"]
+    mx, my = asm.node_coords[mt][0], asm.node_coords[mt][1]
+    tot, j = _smass.inertia(mine, mx, my)
+    if abs(tot / G_ACCEL - md) > 1e-6 * max(md, 1e-9):
+        return None
+    return j / G_ACCEL
+
+
+def _put_group(asm, add, g: dict, md: float, centroid,
+               inertia: float = None) -> None:
     if md <= 0.0:
         return
     x0, x1, y0, y1 = g["bbox"]
@@ -445,7 +475,10 @@ def _put_group(asm, add, g: dict, md: float, centroid) -> None:
     d2 = (centroid[0] - mx) ** 2 + (centroid[1] - my) ** 2
     add(mt, 1, md)
     add(mt, 2, md)
-    add(mt, 6, md * ((a * a + b * b) / 12.0 + d2))
+    if inertia is not None:
+        add(mt, 6, inertia)
+    else:            # explicit story mass: no location, spread over the plan
+        add(mt, 6, md * ((a * a + b * b) / 12.0 + d2))
 
 
 def add_extra_mass(eng, asm, add, opts: dict) -> None:

@@ -1,0 +1,14 @@
+== W5: Plates under uniform load
+Building the model ...
+  area section PLATE: slab, thickness 0.5, shell type 1 (read back)
+  200 area objects
+Running the analysis ...
+  screenshot W5.etabs.png (ETABS 3-D view only)
+Reading results ...
+  ETABS analysed 200 area elements for 200 area objects
+check            hand        ETABS  difference
+QSS-UZ     -0.0207992    -0.020788  0.054%
+QSS-FZ             80           80  0.000%
+QCL-UZ    -0.00647844  -0.00665536  2.731%
+QCL-FZ             80           80  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\W5\W5.EDB; largest difference from the hand calculation 2.731%

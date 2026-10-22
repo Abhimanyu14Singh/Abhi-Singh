@@ -1,7 +1,7 @@
 {
  "id": "M2",
  "title": "Mass from a load pattern",
- "purpose": "The mass source converts a 64 kip superimposed dead load to mass W/g; nothing else has mass. The sway periods follow from the column stiffness.",
+ "purpose": "The mass source converts a 64 kip superimposed dead load to mass W/g, placed where the load acts (the four corners); nothing else has mass. The sway periods follow from the column stiffness, the torsion period from the corner masses' inertia.",
  "units": "kip-ft",
  "settings": {
   "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
@@ -300,10 +300,21 @@
   },
   {
    "id": "T2",
-   "label": "Period, X sway",
+   "label": "Period, torsion (mass at the four corners)",
    "case": "MODES",
    "quantity": "modal",
    "mode": 2,
+   "comp": "T",
+   "hand": 0.49891896792013996,
+   "formula": "2 pi sqrt(sum m r^2 / K_theta)",
+   "how": "signed"
+  },
+  {
+   "id": "T3",
+   "label": "Period, X sway",
+   "case": "MODES",
+   "quantity": "modal",
+   "mode": 3,
    "comp": "T",
    "hand": 0.36796202658851773,
    "formula": "2 pi sqrt(W/g / kx)",

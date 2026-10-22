@@ -1,0 +1,14 @@
+SkyFrame speed run: fetching the latest SkyFrame ...
+SkyFrame speed run: installing OpenSeesPy and PARDISO for py -3.11 ...
+      import skyframe
+    File "C:\Users\abhimanyu.singh\AppData\Local\Temp\skyframe_speed_src\skyframe\skyframe\__init__.py", line 24, in <module>
+      from .engine.opensees_engine import OpenSeesEngine  # noqa: F401
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "C:\Users\abhimanyu.singh\AppData\Local\Temp\skyframe_speed_src\skyframe\skyframe\engine\__init__.py", line 1, in <module>
+      from .opensees_engine import OpenSeesEngine  # noqa: F401
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "C:\Users\abhimanyu.singh\AppData\Local\Temp\skyframe_speed_src\skyframe\skyframe\engine\opensees_engine.py", line 162, in <module>
+      import openseespy.opensees as ops
+    File "C:\Users\abhimanyu.singh\AppData\Roaming\Python\Python311\site-packages\openseespy\opensees\__init__.py", line 22, in <module>
+      raise RuntimeError('Failed to import openseespy on Windows.')
+  RuntimeError: Failed to import openseespy on Windows.

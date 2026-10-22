@@ -1,0 +1,15 @@
+== M2: Mass from a load pattern
+Building the model ...
+  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+  diaphragm D1 already defined (rigid), used as is
+  diaphragm D1: 4 joints (read back)
+  mass source (PropMaterial.SetMassSource_1): elements False, joint masses False, patterns {'SDL': 1.0}
+Running the analysis ...
+  screenshot M2.etabs.png (ETABS 3-D view only)
+Reading results ...
+check            hand        ETABS  difference
+T1           0.735924     0.735924  0.000%
+M1Y                 1            1  0.000%
+T2           0.367962     0.498919  35.590%
+SDL-FZ             64           64  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\M2\M2.EDB; largest difference from the hand calculation 35.590%

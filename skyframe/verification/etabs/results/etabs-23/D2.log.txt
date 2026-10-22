@@ -1,0 +1,12 @@
+== D2: Semi-rigid floor
+Building the model ...
+  area section FLOOR: slab, thickness 0.5, shell type 1 (read back)
+  100 area objects
+Running the analysis ...
+  screenshot D2.etabs.png (ETABS 3-D view only)
+Reading results ...
+  ETABS analysed 100 area elements for 100 area objects
+check            hand        ETABS  difference
+WY-UY      0.00110391   0.00104613  5.233%
+WY-FY             -60          -60  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\D2\D2.EDB; largest difference from the hand calculation 5.233%

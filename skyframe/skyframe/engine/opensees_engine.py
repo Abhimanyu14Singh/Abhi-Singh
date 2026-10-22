@@ -4174,8 +4174,8 @@ class OpenSeesEngine:
                         master = asm.masters[s.name]
                         add(master, 1, m)
                         add(master, 2, m)
-                        sx, sy = _tw.story_extents(self, s.name, lx, ly)  # C9
-                        add(master, 6, m * (sx * sx + sy * sy) / 12.0)
+                        add(master, 6, self._story_inertia(
+                            asm, s, master, m, explicit, lx, ly))
                     else:
                         nodes = asm.story_nodes[s.name]
                         if not nodes:
@@ -4214,6 +4214,27 @@ class OpenSeesEngine:
             for dof in range(1, 7):
                 if mv[dof - 1] > 0.0:
                     asm.mass_map[(t, dof)] = mv[dof - 1]
+
+    def _story_inertia(self, asm: _Assembly, s, master: int, m: float,
+                       explicit: bool, lx: float, ly: float) -> float:
+        """Rotational mass inertia of a rigid story about its master node.
+
+        Derived story mass is placed where it arises -- point loads at their
+        points, line loads along members, area loads and slab self-weight
+        over their areas (skyframe.core.story_mass) -- and its inertia is
+        sum m r^2 (ETABS parity).  An explicit story mass has no location,
+        so it keeps the uniform-plan value m (a^2 + b^2) / 12, as does any
+        story whose mass the points do not reproduce."""
+        from skyframe.core import story_mass as _smass
+        sx, sy = _tw.story_extents(self, s.name, lx, ly)  # C9
+        uniform = m * (sx * sx + sy * sy) / 12.0
+        if explicit:
+            return uniform
+        mx, my = asm.node_coords[master][0], asm.node_coords[master][1]
+        tot, j = _smass.inertia(_smass.story_points(self.model, s.name), mx, my)
+        if abs(tot / G_ACCEL - m) > 1e-6 * max(m, 1e-9):
+            return uniform
+        return j / G_ACCEL
 
     # ------------------------------------------------ v1.13 tributary mass
     def _tributary_masses(self, asm: _Assembly) -> Dict[int, float]:

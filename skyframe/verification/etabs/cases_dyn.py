@@ -290,11 +290,14 @@ def M2() -> dict:
     frames, supports, dias, _ = _frame_bldg(1, h, bx, by, fix_rot=False)
     kx, ky = 4 * 3 * E * I33 / h**3, 4 * 3 * E * I22 / h**3
     m = W / G_FT
+    G, J = E / (2 * (1 + STEEL_NU)), 0.0005
+    kt = kx * (by / 2)**2 + ky * (bx / 2)**2 + 4 * G * J / h      # torsion: columns' sway and own twist
     tops = [[x, y, h] for x, y in ((0.0, 0.0), (bx, 0.0), (bx, by), (0.0, by))]
     return {
         "id": "M2", "title": "Mass from a load pattern",
-        "purpose": ("The mass source converts a 64 kip superimposed dead load to mass W/g; nothing else has "
-                    "mass. The sway periods follow from the column stiffness."),
+        "purpose": ("The mass source converts a 64 kip superimposed dead load to mass W/g, placed where the "
+                    "load acts (the four corners); nothing else has mass. The sway periods follow from the "
+                    "column stiffness, the torsion period from the corner masses' inertia."),
         "units": "kip-ft",
         "settings": dict(_COMMON, mass="from load pattern SDL x 1.0 only; lateral, lumped at stories",
                          diaphragm="rigid", supports="fixed bases"),
@@ -308,7 +311,10 @@ def M2() -> dict:
         "checks": [
             _modal("T1", "Period, Y sway", 1, "T", 2 * math.pi * math.sqrt(m / ky), "2 pi sqrt(W/g / ky)"),
             _modal("M1Y", "Mode 1 takes all the Y mass", 1, "UY", 1.0, "1"),
-            _modal("T2", "Period, X sway", 2, "T", 2 * math.pi * math.sqrt(m / kx), "2 pi sqrt(W/g / kx)"),
+            _modal("T2", "Period, torsion (mass at the four corners)", 2, "T",
+                   2 * math.pi * math.sqrt(m * ((bx / 2)**2 + (by / 2)**2) / kt),
+                   "2 pi sqrt(sum m r^2 / K_theta)"),
+            _modal("T3", "Period, X sway", 3, "T", 2 * math.pi * math.sqrt(m / kx), "2 pi sqrt(W/g / kx)"),
             _b("SDL-FZ", "The load itself", "SDL", "FZ", W, "W"),
         ],
     }

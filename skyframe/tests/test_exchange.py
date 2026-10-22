@@ -398,7 +398,7 @@ def test_unused_feature_byte_identical():
     m = quick_building()
     assert _sha(m.to_dict())[:16] == "95a41577bb25e727"
     assert _sha(OpenSeesEngine(m).run().to_dict())[:16] == \
-        "4b9bdc714c4a23e0"
+        "506a5d7ddadd0c39"  # v1.28.3: story rotational inertia from where the mass is
 
 
 # ------------------------------------------------------------------ API

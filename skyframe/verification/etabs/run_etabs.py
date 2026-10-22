@@ -203,6 +203,76 @@ def clear_unasked_restraints(sm, case: dict) -> None:
         say(f"  freed {freed} joints ETABS had restrained without being asked")
 
 
+def _methods(obj) -> str:
+    try:
+        return ", ".join(n for n in dir(obj) if not n.startswith("_"))[:1500]
+    except Exception as exc:
+        return f"(could not list: {exc})"
+
+
+def _edit_table(sm, key: str, rows: list) -> str:
+    """Add records to an ETABS database table: ``rows`` are {field (lower case): value}; fields the
+    table has but a row does not name are left blank.  Returns what ETABS reported."""
+    dt = sm.DatabaseTables
+    got = dt.GetTableForEditingArray(key, "", 0, [], 0, [])
+    ok(got, f"open table {key}")
+    version, fields, n, data = got[0], list(got[1]), got[2], list(got[3])
+    for row in rows:
+        for f in fields:
+            fl = f.lower()
+            v = next((val for k, val in row.items() if fl == k or fl.startswith(k)), "")
+            data.append(str(v))
+    n += len(rows)
+    ok(dt.SetTableForEditingArray(key, version, fields, n, data), f"edit table {key}")
+    r = dt.ApplyEditedTables(True, 0, 0, 0, 0, "")
+    ok(r, f"apply table {key}")
+    if r[1] or r[3]:                                        # fatal errors, errors
+        raise Stop(f"table {key}: {r[1]} fatal errors, {r[3]} errors: {str(r[4])[:400]}")
+    return f"database table ({', '.join(fields)})"
+
+
+def set_spectrum(sm, fn: dict) -> str:
+    """A user response-spectrum function: the API call where ETABS has it, else its database table."""
+    T, Sa = [float(p[0]) for p in fn["points"]], [float(p[1]) for p in fn["points"]]
+    tried = []
+    try:
+        ok(sm.Func.FuncRS.SetUser(fn["name"], len(T), T, Sa, float(fn["damping"])), "spectrum")
+        return "Func.FuncRS.SetUser"
+    except Exception as exc:
+        tried.append(f"FuncRS.SetUser: {exc}")
+    try:
+        return _edit_table(sm, "Functions - Response Spectrum - User Defined",
+                           [{"name": fn["name"], "period": t, "value": a, "damp": float(fn["damping"])}
+                            for t, a in zip(T, Sa)])
+    except Exception as exc:
+        tried.append(f"table: {exc}")
+    raise Stop("response-spectrum function refused: " + "; ".join(tried)
+               + f" | Func.FuncRS offers: {_methods(sm.Func.FuncRS)}")
+
+
+def set_buckling(sm, bc: dict) -> str:
+    """A linear buckling case: the API where ETABS has it, else its database table."""
+    nm, pats = bc["name"], list(bc["loads"].items())
+    tried = []
+    try:
+        lb = sm.LoadCases.Buckling
+        ok(lb.SetCase(nm), "buckling case")
+        ok(lb.SetLoads(nm, len(pats), ["Load"] * len(pats), [p for p, _ in pats], [float(f) for _, f in pats]),
+           "buckling loads")
+        ok(lb.SetParameters(nm, int(bc["modes"]), 1e-9), "buckling modes")
+        return "LoadCases.Buckling"
+    except Exception as exc:
+        tried.append(f"LoadCases.Buckling: {exc}")
+    try:
+        return _edit_table(sm, "Load Case Definitions - Buckling",
+                           [{"name": nm, "nummodes": int(bc["modes"]), "loadtype": "Load Pattern", "loadname": p,
+                             "loadsf": float(f), "mass": "", "initial": "Zero"} for p, f in pats])
+    except Exception as exc:
+        tried.append(f"table: {exc}")
+    raise Stop("buckling case refused: " + "; ".join(tried)
+               + f" | LoadCases offers: {_methods(sm.LoadCases)} | Buckling offers: {_methods(sm.LoadCases.Buckling)}")
+
+
 def set_mass_source(sm, elements: bool, masses: bool, pats: list) -> str:
     """The mass source, through whichever API this ETABS accepts (the newer named source first)."""
     names = [p for p, _ in pats] or [""]                 # never an empty array: COM may refuse it
@@ -268,8 +338,7 @@ def build_analysis(sm, case: dict, point) -> None:
         ok(sm.LoadCases.ModalEigen.SetCase(mc["case"]), f"modal case {mc['case']}")
         ok(sm.LoadCases.ModalEigen.SetNumberModes(mc["case"], int(mc["modes"]), 1), f"{mc['case']} modes")
     for fn in case.get("spectra", []):
-        T, Sa = [p[0] for p in fn["points"]], [p[1] for p in fn["points"]]
-        ok(sm.Func.FuncRS.SetUser(fn["name"], len(T), T, Sa, float(fn["damping"])), f"spectrum {fn['name']}")
+        say(f"  spectrum {fn['name']}: {set_spectrum(sm, fn)}")
     for rs in case.get("rsCases", []):
         nm = rs["name"]
         ok(sm.LoadCases.ResponseSpectrum.SetCase(nm), f"response spectrum case {nm}")
@@ -296,12 +365,7 @@ def build_analysis(sm, case: dict, point) -> None:
         ok(sm.LoadCases.StaticNonlinear.SetLoads(nm, len(pats), ["Load"] * len(pats), [p for p, _ in pats],
                                                  [float(f) for _, f in pats]), f"{nm} loads")
     for bc in case.get("bucklingCases", []):
-        nm = bc["name"]
-        ok(sm.LoadCases.Buckling.SetCase(nm), f"buckling case {nm}")
-        pats = list(bc["loads"].items())
-        ok(sm.LoadCases.Buckling.SetLoads(nm, len(pats), ["Load"] * len(pats), [p for p, _ in pats],
-                                          [float(f) for _, f in pats]), f"{nm} loads")
-        ok(sm.LoadCases.Buckling.SetParameters(nm, int(bc["modes"]), 1e-9), f"{nm} modes")
+        say(f"  buckling case {bc['name']}: {set_buckling(sm, bc)}")
     for cb in case.get("combos", []):
         ok(sm.RespCombo.Add(cb["name"], 1 if cb["type"] == "envelope" else 0), f"combination {cb['name']}")
         for cn, f in cb["cases"].items():
@@ -613,25 +677,32 @@ def skyframe_speed(out_root: Path, case: dict) -> None:
         return
     zipfile.ZipFile(z).extractall(src)
     py = None
-    for cand in (["py", "-3.11"], ["py", "-3.12"], ["py", "-3.13"], [sys.executable]):
+    for cand in (["py", "-3.11"], ["py", "-3.12"], ["py", "-3.10"], ["py", "-3.13"], [sys.executable]):
         try:
-            if subprocess.run(cand + ["-c", "import sys; print(sys.version)"], capture_output=True).returncode == 0:
-                py = cand
-                break
+            if subprocess.run(cand + ["-c", "import sys"], capture_output=True).returncode != 0:
+                continue
         except OSError:
             continue
+        say(f"SkyFrame speed run: installing OpenSeesPy and PARDISO for {' '.join(cand)} ...")
+        subprocess.run(cand + ["-m", "pip", "install", "--user", "--quiet", "--upgrade", "openseespy",
+                               "openseespywin", "numpy", "scipy", "pypardiso", "flask"], check=False)
+        t = subprocess.run(cand + ["-c", "import openseespy.opensees as o; o.wipe(); print('ok')"],
+                           capture_output=True, text=True)
+        if t.returncode == 0:
+            py = cand
+            break
+        say(f"  OpenSeesPy does not import under {' '.join(cand)}:")
+        for line in (t.stdout + t.stderr).splitlines()[-8:]:
+            say("    " + line)
     if py is None:
-        say("SkyFrame speed run skipped: no Python found")
+        say("SkyFrame speed run skipped: OpenSeesPy imports under none of the Pythons found")
         return
-    say(f"SkyFrame speed run: installing OpenSeesPy and PARDISO for {' '.join(py)} ...")
-    subprocess.run(py + ["-m", "pip", "install", "--user", "--quiet", "openseespy", "numpy", "scipy", "pypardiso",
-                         "flask"], check=False)
     work = out_root / case["id"]
     r = subprocess.run(py + [str(src / "skyframe" / "verification" / "etabs" / "speed_skyframe.py"),
                              "--case", str(work / f"{case['id']}.case.json"),
                              "--out", str(work / f"{case['id']}.skyframe-speed.json")],
                        capture_output=True, text=True)
-    for line in (r.stdout + r.stderr).splitlines()[-12:]:
+    for line in (r.stdout + r.stderr).splitlines()[-30:]:
         say("  " + line)
 
 
