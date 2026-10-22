@@ -1,0 +1,198 @@
+{
+ "id": "F7",
+ "title": "Rigid end zones",
+ "purpose": "End length offsets of 1.5 ft at both supports, rigid-zone factor 1: the beam behaves as a fixed-fixed beam of the 27 ft clear span; forces are read at the faces.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "1.5 ft at each support, factor 1",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "supports": "fixed both ends"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "BM",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.03,
+   "I22": 0.002,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.5,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "B1",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    15.0,
+    0.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0,
+   "rigid": {
+    "i": 1.5,
+    "j": 0.0,
+    "factor": 1.0
+   }
+  },
+  {
+   "id": "B2",
+   "i": [
+    15.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0,
+   "rigid": {
+    "i": 0.0,
+    "j": 1.5,
+    "factor": 1.0
+   }
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "W"
+  }
+ ],
+ "distLoads": [
+  {
+   "pattern": "W",
+   "frame": "B1",
+   "w": 2.0
+  },
+  {
+   "pattern": "W",
+   "frame": "B2",
+   "w": 2.0
+  }
+ ],
+ "checks": [
+  {
+   "id": "W-UZ",
+   "label": "Midspan deflection",
+   "case": "W",
+   "quantity": "joint",
+   "at": [
+    15.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": -0.022093884698275862,
+   "formula": "-w Lc^4 / 384EI, Lc = 27 ft",
+   "how": "signed"
+  },
+  {
+   "id": "W-Mface",
+   "label": "Moment at the support face (1.5 ft from the joint)",
+   "case": "W",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": 1.5,
+   "comp": "M3",
+   "hand": 121.5,
+   "formula": "w Lc^2 / 12",
+   "how": "abs"
+  },
+  {
+   "id": "W-Mjoint",
+   "label": "Moment at the joint",
+   "case": "W",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "i",
+   "comp": "M3",
+   "hand": 164.25,
+   "formula": "face moment + V a + w a^2 / 2",
+   "how": "abs"
+  },
+  {
+   "id": "W-Mmid",
+   "label": "Midspan moment",
+   "case": "W",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "j",
+   "comp": "M3",
+   "hand": 60.75,
+   "formula": "w Lc^2 / 24",
+   "how": "abs"
+  },
+  {
+   "id": "W-FZ",
+   "label": "Total vertical reaction",
+   "case": "W",
+   "quantity": "base",
+   "comp": "FZ",
+   "hand": 60.0,
+   "formula": "wL",
+   "how": "signed"
+  }
+ ]
+}

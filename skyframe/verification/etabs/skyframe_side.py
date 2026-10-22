@@ -34,12 +34,25 @@ def build(case: dict):
                            I22=s["I22"] * FT**4, J=s["J"] * FT**4)
         if s.get("As2") or s.get("As3"):
             sec.As2, sec.As3 = s["As2"] * FT**2, s["As3"] * FT**2
+        md = s.get("modifiers") or {}
+        sec.mod_A, sec.mod_I33 = md.get("A", 1.0), md.get("I33", 1.0)
+        sec.mod_I22, sec.mod_J = md.get("I22", 1.0), md.get("J", 1.0)
         m.add_section(sec)
     m.set_stories([st["height"] * FT for st in case["stories"]])
     for f in case["frames"]:
         kind = "column" if f["i"][:2] == f["j"][:2] else "beam"
-        m.add_member(kind, f["section"], tuple(c * FT for c in f["i"]), tuple(c * FT for c in f["j"]),
-                     uid=f["id"], angle=f.get("angle", 0.0))
+        mem = m.add_member(kind, f["section"], tuple(c * FT for c in f["i"]), tuple(c * FT for c in f["j"]),
+                           uid=f["id"], angle=f.get("angle", 0.0))
+        mem = mem if mem is not None else next(x for x in m.members if x.uid == f["id"])
+        if f.get("releases"):
+            # springs: translational kip/ft -> kN/m, rotational kip-ft/rad -> kN m/rad
+            conv = {"P": KIP / FT, "V2": KIP / FT, "V3": KIP / FT, "T": KIPFT, "M2": KIPFT, "M3": KIPFT}
+            mem.end_releases = {end: {d: v * conv[d] for d, v in dofs.items()}
+                                for end, dofs in f["releases"].items()}
+        if f.get("rigid"):
+            r = f["rigid"]
+            mem.rigid_i, mem.rigid_j = r.get("i", 0.0) * FT, r.get("j", 0.0) * FT
+            mem.rigid_factor = r.get("factor", 1.0)
     for s in case["supports"]:
         m.supports.append(PointSupport(tuple(c * FT for c in s["at"]), tuple(int(r) for r in s["restraint"])))
     for p in case["patterns"]:

@@ -1,0 +1,267 @@
+{
+ "id": "F5",
+ "title": "Rotated column and sloped cantilever",
+ "purpose": "Local axes away from the defaults: a column turned 30 degrees about its axis, so a load along X bends both principal axes, and a member inclined in the XZ plane.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "supports": "fixed bases"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  },
+  {
+   "name": "BM",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.03,
+   "I22": 0.002,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.5,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 30.0
+  },
+  {
+   "id": "S1",
+   "i": [
+    30.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    38.0,
+    0.0,
+    6.0
+   ],
+   "section": "BM",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "PX"
+  },
+  {
+   "name": "PS"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "PX",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    10.0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "pattern": "PS",
+   "at": [
+    38.0,
+    0.0,
+    6.0
+   ],
+   "f": [
+    0,
+    0,
+    -10.0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "checks": [
+  {
+   "id": "PX-UX",
+   "label": "Top moves along X",
+   "case": "PX",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 0.12068965517241378,
+   "formula": "PL^3/3E (cos^2/I33 + sin^2/I22)",
+   "how": "signed"
+  },
+  {
+   "id": "PX-UY",
+   "label": "Top moves across the load",
+   "case": "PX",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UY",
+   "hand": 0.08958883487425225,
+   "formula": "PL^3/3E cos sin |1/I33 - 1/I22|",
+   "how": "abs"
+  },
+  {
+   "id": "PX-M3",
+   "label": "Base moment about local 3",
+   "case": "PX",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "i",
+   "comp": "M3",
+   "hand": 103.92304845413264,
+   "formula": "P cos30 L",
+   "how": "abs"
+  },
+  {
+   "id": "PX-M2",
+   "label": "Base moment about local 2",
+   "case": "PX",
+   "quantity": "frame",
+   "frame": "C1",
+   "station": "i",
+   "comp": "M2",
+   "hand": 59.999999999999986,
+   "formula": "P sin30 L",
+   "how": "abs"
+  },
+  {
+   "id": "PS-UZ",
+   "label": "Sloped tip drops",
+   "case": "PS",
+   "quantity": "joint",
+   "at": [
+    38.0,
+    0.0,
+    6.0
+   ],
+   "comp": "UZ",
+   "hand": -0.017114729672200936,
+   "formula": "-(Q cos^2 L^3/3EI + Q sin^2 L/EA)",
+   "how": "signed"
+  },
+  {
+   "id": "PS-M3",
+   "label": "Sloped member moment at base",
+   "case": "PS",
+   "quantity": "frame",
+   "frame": "S1",
+   "station": "i",
+   "comp": "M3",
+   "hand": 80.0,
+   "formula": "Q x horizontal reach",
+   "how": "abs"
+  },
+  {
+   "id": "PS-P",
+   "label": "Sloped member axial (compression)",
+   "case": "PS",
+   "quantity": "frame",
+   "frame": "S1",
+   "station": "i",
+   "comp": "P",
+   "hand": -6.0,
+   "formula": "-Q sin(slope)",
+   "how": "signed"
+  },
+  {
+   "id": "PS-FZ",
+   "label": "Vertical reaction",
+   "case": "PS",
+   "quantity": "base",
+   "comp": "FZ",
+   "hand": 10.0,
+   "formula": "Q",
+   "how": "signed"
+  }
+ ]
+}

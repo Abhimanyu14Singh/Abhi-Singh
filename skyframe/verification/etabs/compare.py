@@ -40,7 +40,15 @@ def pick(res: dict, chk: dict) -> Optional[float]:
     rows = c["frames"].get(chk["frame"]) or []
     if not rows:
         return None
-    row = min(rows, key=lambda r: r["station"]) if chk["station"] == "i" else max(rows, key=lambda r: r["station"])
+    st = chk["station"]
+    if st == "i":
+        row = min(rows, key=lambda r: r["station"])
+    elif st == "j":
+        row = max(rows, key=lambda r: r["station"])
+    else:                                   # a distance from end i, ft (e.g. a support face)
+        row = min(rows, key=lambda r: abs(r["station"] - st))
+        if abs(row["station"] - st) > 1e-3:
+            return None
     return row[chk["comp"]]
 
 

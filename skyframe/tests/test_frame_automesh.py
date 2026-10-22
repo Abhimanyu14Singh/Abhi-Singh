@@ -393,8 +393,10 @@ def test_virtual_work_with_variable_stations():
 def test_rigid_offsets_kept_on_auto_split_member():
     """Rigid end offsets stay on the END segments of an auto-meshed member
     (no warning, no error).  End forces equal the unsplit member's; the
-    midspan moment is the exact statics value of the offset model (UDL on
-    the clear span only -- the v0.9 convention): M = R_i*3 - w*(3-0.3)^2/2.
+    midspan moment is the exact statics value: the UDL acts along the WHOLE
+    member, the rigid zones carrying theirs to the joints (ETABS; the
+    v0.9 clear-span-only convention lost that load -- found by ETABS
+    verification F7): R_i = wL/2, face shear R_i - w*0.3, M = R_i*3 - w*3^2/2.
     """
     def mk(auto):
         m = _base("ofs")
@@ -417,10 +419,10 @@ def test_rigid_offsets_kept_on_auto_split_member():
     assert len(eng._mesh.segments["M"]) == 6
     for a, b in zip(r0.member_forces["M"], r1.member_forces["M"]):
         assert b == pytest.approx(a, rel=1e-6, abs=1e-6)
-    Ri = 5.0 * 5.3 * (0.4 + 5.3 / 2) / 6.0       # clear-span UDL statics
-    assert r1.member_forces["M"][1] == pytest.approx(Ri, rel=1e-6)
+    Ri = 5.0 * 6.0 / 2.0                          # full-length UDL statics
+    assert r1.member_forces["M"][1] == pytest.approx(Ri - 5.0 * 0.3, rel=1e-6)  # at the face
     assert r1.member_stations["M"]["M3"][5] == pytest.approx(
-        Ri * 3.0 - 5.0 * 2.7 ** 2 / 2.0, rel=1e-6)
+        Ri * 3.0 - 5.0 * 3.0 ** 2 / 2.0, rel=1e-6)
 
 
 def test_offset_inside_cut_segment_still_rejected():

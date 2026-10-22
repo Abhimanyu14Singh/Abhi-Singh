@@ -1,0 +1,259 @@
+{
+ "id": "F6",
+ "title": "Partial fixity and a torsion release",
+ "purpose": "End releases other than full pins: a rotational spring k = 3EI/L at one end of a propped beam, and a member whose torsion is released at one end, so a torque has one path.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "supports": "fixed or pinned as noted"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "BM",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.03,
+   "I22": 0.002,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.5,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "B1",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0,
+   "releases": {
+    "i": {
+     "M3": 12528.0
+    }
+   }
+  },
+  {
+   "id": "T1",
+   "i": [
+    0.0,
+    10.0,
+    12.0
+   ],
+   "j": [
+    15.0,
+    10.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0
+  },
+  {
+   "id": "T2",
+   "i": [
+    15.0,
+    10.0,
+    12.0
+   ],
+   "j": [
+    30.0,
+    10.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0,
+   "releases": {
+    "j": {
+     "T": 0.0
+    }
+   }
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    1,
+    1,
+    1,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    10.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    10.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "W"
+  },
+  {
+   "name": "TQ"
+  }
+ ],
+ "distLoads": [
+  {
+   "pattern": "W",
+   "frame": "B1",
+   "w": 2.0
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "TQ",
+   "at": [
+    15.0,
+    10.0,
+    12.0
+   ],
+   "f": [
+    0,
+    0,
+    0,
+    10.0,
+    0,
+    0
+   ]
+  }
+ ],
+ "checks": [
+  {
+   "id": "W-MA",
+   "label": "Moment at the spring end",
+   "case": "W",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "i",
+   "comp": "M3",
+   "hand": 112.49999999999999,
+   "formula": "wL^3/24EI / (1/k + L/3EI) = wL^2/16",
+   "how": "abs"
+  },
+  {
+   "id": "W-VB",
+   "label": "Shear at the pinned end",
+   "case": "W",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "j",
+   "comp": "V2",
+   "hand": 26.25,
+   "formula": "wL/2 - MA/L",
+   "how": "abs"
+  },
+  {
+   "id": "W-FZ",
+   "label": "Total vertical reaction",
+   "case": "W",
+   "quantity": "base",
+   "comp": "FZ",
+   "hand": 60.0,
+   "formula": "wL",
+   "how": "signed"
+  },
+  {
+   "id": "TQ-T1",
+   "label": "Torque in the restrained half",
+   "case": "TQ",
+   "quantity": "frame",
+   "frame": "T1",
+   "station": "i",
+   "comp": "T",
+   "hand": 10.0,
+   "formula": "all of T",
+   "how": "abs"
+  },
+  {
+   "id": "TQ-RX",
+   "label": "Twist at midspan",
+   "case": "TQ",
+   "quantity": "joint",
+   "at": [
+    15.0,
+    10.0,
+    12.0
+   ],
+   "comp": "RX",
+   "hand": 0.18678160919540232,
+   "formula": "T L1 / GJ",
+   "how": "abs"
+  }
+ ]
+}

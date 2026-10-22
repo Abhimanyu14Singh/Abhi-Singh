@@ -89,6 +89,14 @@ def build(sm, case: dict) -> dict:
                                   ("I22", s["I22"], i22), ("I33", s["I33"], i33)):
             if abs(have - want) > 1e-9 * max(1.0, abs(want)):
                 raise Stop(f"section {s['name']}: {label} reads back {have}, set {want}")
+        if s.get("modifiers"):
+            md = s["modifiers"]   # ETABS order: A, As2, As3, J, I22, I33, mass, weight
+            ok(sm.PropFrame.SetModifiers(s["name"], [md.get("A", 1.0), 1.0, 1.0, md.get("J", 1.0),
+                                                     md.get("I22", 1.0), md.get("I33", 1.0), 1.0, 1.0]),
+               f"section {s['name']} modifiers")
+            back = sm.PropFrame.GetModifiers(s["name"], [])
+            ok(back, f"read back modifiers {s['name']}")
+            say(f"  section {s['name']} modifiers (read back): {list(back[0])}")
         say(f"  section {s['name']}: A {area}, I22 {i22}, I33 {i33}, J {tors}, As2 {as2}, As3 {as3} (read back)")
 
     names = {}
@@ -100,7 +108,15 @@ def build(sm, case: dict) -> dict:
         # ETABS adds end length offsets from connectivity by default: with rigid-zone factor 0 the
         # stiffness is unchanged, but forces are reported at the joint FACES (a column below a
         # 1.5 ft beam stops at 10.5 ft). Offsets off, so stations run joint to joint as in SkyFrame.
-        ok(sm.FrameObj.SetEndLengthOffset(r[0], False, 0.0, 0.0, 0.0), f"frame {f['id']} end offsets off")
+        rz = f.get("rigid") or {}
+        ok(sm.FrameObj.SetEndLengthOffset(r[0], False, float(rz.get("i", 0.0)), float(rz.get("j", 0.0)),
+                                          float(rz.get("factor", 0.0))), f"frame {f['id']} end offsets")
+        if f.get("releases"):
+            dofs = ("P", "V2", "V3", "T", "M2", "M3")
+            ri, rj = f["releases"].get("i", {}), f["releases"].get("j", {})
+            ok(sm.FrameObj.SetReleases(r[0], [d in ri for d in dofs], [d in rj for d in dofs],
+                                       [float(ri.get(d, 0.0)) for d in dofs], [float(rj.get(d, 0.0)) for d in dofs]),
+               f"frame {f['id']} releases")
         if f.get("angle"):
             ok(sm.FrameObj.SetLocalAxes(r[0], f["angle"]), f"frame {f['id']} angle")
 
@@ -172,7 +188,15 @@ def pick(res: dict, chk: dict):
     rows = c["frames"].get(chk["frame"]) or []
     if not rows:
         return None
-    row = min(rows, key=lambda r: r["station"]) if chk["station"] == "i" else max(rows, key=lambda r: r["station"])
+    st = chk["station"]
+    if st == "i":
+        row = min(rows, key=lambda r: r["station"])
+    elif st == "j":
+        row = max(rows, key=lambda r: r["station"])
+    else:                                   # a distance from end i, ft (e.g. a support face)
+        row = min(rows, key=lambda r: abs(r["station"] - st))
+        if abs(row["station"] - st) > 1e-3:
+            return None
     return row[chk["comp"]]
 
 

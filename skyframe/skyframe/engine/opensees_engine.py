@@ -952,6 +952,21 @@ def _bending_moment(V_i: float, M_i: float, records: Sequence[SpanLoad],
     return val
 
 
+def _zone_forces(face, recs, x_face: float, x: float):
+    """Section forces at ``x`` inside a rigid end zone, from the forces at
+    its face (``x_face`` in zone coordinates) and the zone's own span loads:
+    the zone's start-end forces are the ones whose section forces equal the
+    face values at the face (``_section_forces`` is affine in them)."""
+    base = np.asarray(_section_forces([0.0] * 6, recs, x_face), float)
+    A = np.empty((6, 6))
+    for k in range(6):
+        e = [0.0] * 6
+        e[k] = 1.0
+        A[:, k] = np.asarray(_section_forces(e, (), x_face), float)
+    f0 = np.linalg.solve(A, np.asarray(face, float) - base)
+    return _section_forces(list(f0), recs, x)
+
+
 def _section_forces(fi: Sequence[float], records: Sequence[SpanLoad],
                     x: float) -> Tuple[float, float, float, float, float, float]:
     """Internal forces (N, V2, V3, T, M2, M3) at distance ``x`` from end i.
@@ -1221,6 +1236,12 @@ class _Assembly:
     struct_coords: Dict[int, Vec3] = field(default_factory=dict)  # excl. masters
     support_tags: List[int] = field(default_factory=list)
     seg_ele: Dict[Tuple[str, int], int] = field(default_factory=dict)
+    rigid_arms: Dict[Tuple[str, int], List[Tuple[str, int, float]]] = field(
+        default_factory=dict)
+    #   rigid end zones: (uid, seg index) -> [(end "i"|"j", arm element tag,
+    #   arm length)]; span loads are applied to the arms too (load on a rigid
+    #   zone reaches the joint) and stations inside a zone are recovered
+    #   from its arm
     ele_nodes: Dict[str, Tuple[int, int]] = field(default_factory=dict)
     truss_uids: set = field(default_factory=set)   # v0.12 axial-only members
     shell_quads: List[dict] = field(default_factory=list)
@@ -1825,6 +1846,7 @@ class OpenSeesEngine:
         self._mesh: Optional[MeshedModel] = None
         # per-case span-load bookkeeping, keyed by (parent uid, segment index)
         self._seg_span_loads: Dict[Tuple[str, int], List[SpanLoad]] = {}
+        self._arm_span_loads: Dict[Tuple[str, int, str], List[SpanLoad]] = {}
         self._seg_fef: Dict[Tuple[str, int], np.ndarray] = {}
         # v0.17 panel_zones == "rigid": effective per-member rigid offsets
         # (computed lazily; the user's model is never mutated)
@@ -2524,6 +2546,7 @@ class OpenSeesEngine:
 
         asm = self._elastic_domain()
         self._seg_span_loads = {}
+        self._arm_span_loads = {}
         self._seg_fef = {}
         ops.timeSeries("Linear", 1)
         ops.pattern("Plain", 1, 1)
@@ -3234,6 +3257,8 @@ class OpenSeesEngine:
                                 mat.E * RIGID_LINK_FACTOR,
                                 mat.G * RIGID_LINK_FACTOR, J_eff, I22_eff,
                                 I33_eff, etag)
+                    asm.rigid_arms.setdefault((m.uid, seg.index), []).append(
+                        ("i", etag, off_i))
                     ni_tag = tag
                 if has_offset and off_j > _TOL and seg.index == last:
                     pJ = mesh.points[seg.nj]
@@ -3253,6 +3278,8 @@ class OpenSeesEngine:
                                 mat.E * RIGID_LINK_FACTOR,
                                 mat.G * RIGID_LINK_FACTOR, J_eff, I22_eff,
                                 I33_eff, etag)
+                    asm.rigid_arms.setdefault((m.uid, seg.index), []).append(
+                        ("j", etag, off_j))
                     nj_tag = tag
                 if rplan:            # per-DOF releases / partial fixity
                     ni_tag, nj_tag, tag, etag, mtag = _rle.spring_ends(
@@ -5056,16 +5083,30 @@ class OpenSeesEngine:
 
         if kind == "udl" and a <= _TOL and b >= 1.0 - _TOL:
             # full-span uniform: exact through OpenSees internal load
+            wv = (comps[0] * w, comps[1] * w, comps[2] * w)
             for seg in segs:
                 etag = asm.seg_ele[(member.uid, seg.index)]
                 ops.eleLoad("-ele", etag, "-type", "-beamUniform",
                             comps[1] * w, comps[2] * w, comps[0] * w)
+                arms = asm.rigid_arms.get((member.uid, seg.index), ())
+                clear = seg.length - sum(ln for _, _, ln in arms)
                 self._record(member.uid, seg.index,
-                             ("trap",
-                              (comps[0] * w, comps[1] * w, comps[2] * w),
-                              (comps[0] * w, comps[1] * w, comps[2] * w),
-                              0.0, seg.length))
+                             ("trap", wv, wv, 0.0, clear))
+                # rigid end zones: the load on each zone rides its arm to
+                # the joint (ETABS: loads on rigid zones go to the joint)
+                for end, arm_tag, ln in arms:
+                    ops.eleLoad("-ele", arm_tag, "-type", "-beamUniform",
+                                comps[1] * w, comps[2] * w, comps[0] * w)
+                    self._arm_span_loads.setdefault(
+                        (member.uid, seg.index, end), []).append(
+                        ("trap", wv, wv, 0.0, ln))
             return
+        if any(asm.rigid_arms.get((member.uid, sg.index)) for sg in segs):
+            warnings.warn(f"Member {member.uid!r}: a partial-span or point "
+                          "load on a member with rigid end zones is applied "
+                          "along the clear span only (positions from the "
+                          "zone face); load placed inside a zone is not "
+                          "transferred to the joint")
 
         # partial UDL / trapezoid: exact condensed fixed-end forces
         xa_p, xb_p = a * L, b * L
@@ -5409,7 +5450,30 @@ class OpenSeesEngine:
                         seg = segs[-1]
                 xi = min(max(x - seg.x0, 0.0), seg.length)
                 recs = self._seg_span_loads.get((m.uid, seg.index), ())
-                vals = _section_forces(corrected[seg.index][:6], recs, xi)
+                arms = asm.rigid_arms.get((m.uid, seg.index))
+                if arms:
+                    # rigid end zones: arm i | clear span | arm j, each from
+                    # its own element (stations measured from the joint)
+                    a_i = next((ln for e_, _, ln in arms if e_ == "i"), 0.0)
+                    a_j = next((ln for e_, _, ln in arms if e_ == "j"), 0.0)
+                    if xi < a_i - 1e-9 or xi > seg.length - a_j + 1e-9:
+                        # inside a zone: statics from the face (continuity
+                        # with the clear span + the zone's own load) -- the
+                        # stiff arm's k*u would carry round-off
+                        end = "i" if xi < a_i - 1e-9 else "j"
+                        clear = seg.length - a_i - a_j
+                        face = _section_forces(corrected[seg.index][:6], recs,
+                                               0.0 if end == "i" else clear)
+                        vals = _zone_forces(
+                            face, self._arm_span_loads.get(
+                                (m.uid, seg.index, end), ()),
+                            a_i if end == "i" else 0.0,
+                            xi if end == "i" else xi - (seg.length - a_j))
+                    else:
+                        vals = _section_forces(corrected[seg.index][:6],
+                                               recs, xi - a_i)
+                else:
+                    vals = _section_forces(corrected[seg.index][:6], recs, xi)
                 for key, v in zip(("N", "V2", "V3", "T", "M2", "M3"), vals):
                     cols[key].append(float(v))
             member_stations[m.uid] = {"x": xs, **cols}
@@ -6227,6 +6291,7 @@ class OpenSeesEngine:
         asm = self._elastic_domain()        # v0.26: no rebuild per unit load
         mtag = asm.masters[story]
         self._seg_span_loads = {}
+        self._arm_span_loads = {}
         self._seg_fef = {}
         ops.timeSeries("Linear", 1)
         ops.pattern("Plain", 1, 1)
@@ -6572,6 +6637,7 @@ class OpenSeesEngine:
         label = ("Corotational" if geometric == "corotational"
                  else "P-Delta")
         self._seg_span_loads = {}
+        self._arm_span_loads = {}
         self._seg_fef = {}
 
         snap_disp: Dict[int, List[float]] = {}
@@ -6608,6 +6674,7 @@ class OpenSeesEngine:
             # stage-1 span-load bookkeeping must not leak into the case's
             # reported member forces/stations (they belong to gravity)
             self._seg_span_loads = {}
+            self._arm_span_loads = {}
             self._seg_fef = {}
 
         ops.timeSeries("Linear", 2)
@@ -6732,6 +6799,7 @@ class OpenSeesEngine:
         plan = _pod.plan_push(self, case)
         asm = self._build(hinge_case=case, transf=po_transf)
         self._seg_span_loads = {}
+        self._arm_span_loads = {}
         self._seg_fef = {}
         dof = 1 if case.direction == "X" else 2
         top = model.stories[-1]
@@ -7498,6 +7566,7 @@ class OpenSeesEngine:
         finally:
             _lrl.end(self)
         self._seg_span_loads = {}
+        self._arm_span_loads = {}
         self._seg_fef = {}
         # multi-component / load-pattern components (None -> legacy)
         from skyframe.engine import thmulti as _thm
@@ -8421,6 +8490,7 @@ class OpenSeesEngine:
         """
         asm = self._elastic_domain()
         self._seg_span_loads = {}
+        self._arm_span_loads = {}
         self._seg_fef = {}
         ops.timeSeries("Linear", 1)
         ops.pattern("Plain", 1, 1)

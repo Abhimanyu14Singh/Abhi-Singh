@@ -14,7 +14,11 @@ Definition keys (all lengths ft, forces kip, E/G ksf, A ft2, I/J ft4):
     sections     [{name, material, A, I33, I22, J, As2, As3, depth, width}]
                  As2 = As3 = 0: no shear deformation in either program
     stories      [{name, height}] bottom up
-    frames       [{id, i, j, section, angle}]
+    frames       [{id, i, j, section, angle, releases?, rigid?}]
+                 releases {"i": {"M3": k, "T": 0}, "j": {...}}: released local DOFs, value =
+                          partial-fixity spring (kip/ft or kip-ft/rad), 0 = fully released
+                 rigid    {"i": ft, "j": ft, "factor": 0..1}: rigid end zones (end length offsets)
+    sections[].modifiers {"A", "I33", "I22", "J"}: stiffness multipliers on the section
     supports     [{at, restraint[6]}]
     patterns     [{name}]                each also a linear static case
     pointLoads   [{pattern, at, f[6]}]   global FX FY FZ MX MY MZ
@@ -95,9 +99,9 @@ def F1() -> dict:
     }
 
 
-def _j(cid, label, case, at, comp, hand, formula):
+def _j(cid, label, case, at, comp, hand, formula, how="signed"):
     return {"id": cid, "label": label, "case": case, "quantity": "joint", "at": at, "comp": comp,
-            "hand": hand, "formula": formula, "how": "signed"}
+            "hand": hand, "formula": formula, "how": how}
 
 
 def _b(cid, label, case, comp, hand, formula):
@@ -232,7 +236,159 @@ def F4() -> dict:
     }
 
 
-CASES = {"F1": F1, "F2": F2, "F3": F3, "F4": F4}
+def _mat():
+    return [{"name": "STEEL", "E": STEEL_E, "nu": STEEL_NU, "unitWeight": 0.0}]
+
+
+def _col_section(**over):
+    return dict({"name": "COL", "material": "STEEL", "A": 0.1, "I33": 0.02, "I22": 0.005, "J": 0.0005,
+                 "As2": 0.0, "As3": 0.0, "depth": 1.0, "width": 0.5}, **over)
+
+
+def F5() -> dict:
+    """A column rotated 30 degrees about its axis, and a sloped cantilever."""
+    E = STEEL_E
+    L, P, ang = 12.0, 10.0, math.radians(30.0)
+    Ic3, Ic2 = 0.02, 0.005
+    c, s_ = math.cos(ang), math.sin(ang)
+    top = [0.0, 0.0, L]
+    # sloped cantilever: base (30,0,0) to tip (38,0,6): length 10, horizontal 0.8, vertical 0.6
+    base, tip = [30.0, 0.0, 0.0], [38.0, 0.0, 6.0]
+    Ls, ch, sv, Q = 10.0, 0.8, 0.6, 10.0
+    Ib, Ab = 0.03, 0.1
+    k = P * L**3 / (3 * E)
+    return {
+        "id": "F5", "title": "Rotated column and sloped cantilever",
+        "purpose": ("Local axes away from the defaults: a column turned 30 degrees about its axis, so a load "
+                    "along X bends both principal axes, and a member inclined in the XZ plane."),
+        "units": "kip-ft", "settings": dict(_COMMON, supports="fixed bases"),
+        "materials": _mat(),
+        "sections": [_col_section(), _beam_section()],
+        "stories": [{"name": "Story1", "height": L}],
+        "frames": [{"id": "C1", "i": [0.0, 0.0, 0.0], "j": top, "section": "COL", "angle": 30.0},
+                   {"id": "S1", "i": base, "j": tip, "section": "BM", "angle": 0.0}],
+        "supports": [{"at": [0.0, 0.0, 0.0], "restraint": [1] * 6}, {"at": base, "restraint": [1] * 6}],
+        "patterns": [{"name": "PX"}, {"name": "PS"}],
+        "pointLoads": [{"pattern": "PX", "at": top, "f": [P, 0, 0, 0, 0, 0]},
+                       {"pattern": "PS", "at": tip, "f": [0, 0, -Q, 0, 0, 0]}],
+        "checks": [
+            _j("PX-UX", "Top moves along X", "PX", top, "UX", k * (c * c / Ic3 + s_ * s_ / Ic2),
+               "PL^3/3E (cos^2/I33 + sin^2/I22)"),
+            _j("PX-UY", "Top moves across the load", "PX", top, "UY", k * c * s_ * abs(1 / Ic3 - 1 / Ic2),
+               "PL^3/3E cos sin |1/I33 - 1/I22|", how="abs"),
+            _f("PX-M3", "Base moment about local 3", "PX", "C1", "i", "M3", P * c * L, "P cos30 L"),
+            _f("PX-M2", "Base moment about local 2", "PX", "C1", "i", "M2", P * s_ * L, "P sin30 L"),
+            _j("PS-UZ", "Sloped tip drops", "PS", tip, "UZ",
+               -(Q * ch * ch * Ls**3 / (3 * E * Ib) + Q * sv * sv * Ls / (E * Ab)),
+               "-(Q cos^2 L^3/3EI + Q sin^2 L/EA)"),
+            _f("PS-M3", "Sloped member moment at base", "PS", "S1", "i", "M3", Q * Ls * ch, "Q x horizontal reach"),
+            _f("PS-P", "Sloped member axial (compression)", "PS", "S1", "i", "P", -Q * sv, "-Q sin(slope)", how="signed"),
+            _b("PS-FZ", "Vertical reaction", "PS", "FZ", Q, "Q"),
+        ],
+    }
+
+
+def F6() -> dict:
+    """Partial fixity: a beam with a rotational spring at one end; torsion released at one end."""
+    E, I, G, J = STEEL_E, 0.03, STEEL_E / (2 * (1 + STEEL_NU)), 0.0005
+    L, w, T = 30.0, 2.0, 10.0
+    k = 3 * E * I / L                                   # spring = 3EI/L: halves the fixed-end moment
+    MA = (w * L**3 / (24 * E * I)) / (1 / k + L / (3 * E * I))
+    mid2 = [15.0, 10.0, 12.0]
+    return {
+        "id": "F6", "title": "Partial fixity and a torsion release",
+        "purpose": ("End releases other than full pins: a rotational spring k = 3EI/L at one end of a propped "
+                    "beam, and a member whose torsion is released at one end, so a torque has one path."),
+        "units": "kip-ft", "settings": dict(_COMMON, supports="fixed or pinned as noted"),
+        "materials": _mat(),
+        "sections": [_beam_section()],
+        "stories": [{"name": "Story1", "height": 12.0}],
+        "frames": [
+            {"id": "B1", "i": [0.0, 0.0, 12.0], "j": [L, 0.0, 12.0], "section": "BM", "angle": 0.0,
+             "releases": {"i": {"M3": k}}},
+            {"id": "T1", "i": [0.0, 10.0, 12.0], "j": mid2, "section": "BM", "angle": 0.0},
+            {"id": "T2", "i": mid2, "j": [L, 10.0, 12.0], "section": "BM", "angle": 0.0,
+             "releases": {"j": {"T": 0.0}}},
+        ],
+        "supports": [{"at": [0.0, 0.0, 12.0], "restraint": [1] * 6},
+                     {"at": [L, 0.0, 12.0], "restraint": [0, 1, 1, 1, 0, 0]},
+                     {"at": [0.0, 10.0, 12.0], "restraint": [1] * 6},
+                     {"at": [L, 10.0, 12.0], "restraint": [1] * 6}],
+        "patterns": [{"name": "W"}, {"name": "TQ"}],
+        "distLoads": [{"pattern": "W", "frame": "B1", "w": w}],
+        "pointLoads": [{"pattern": "TQ", "at": mid2, "f": [0, 0, 0, T, 0, 0]}],
+        "checks": [
+            _f("W-MA", "Moment at the spring end", "W", "B1", "i", "M3", MA, "wL^3/24EI / (1/k + L/3EI) = wL^2/16"),
+            _f("W-VB", "Shear at the pinned end", "W", "B1", "j", "V2", w * L / 2 - MA / L, "wL/2 - MA/L"),
+            _b("W-FZ", "Total vertical reaction", "W", "FZ", w * L, "wL"),
+            _f("TQ-T1", "Torque in the restrained half", "TQ", "T1", "i", "T", T, "all of T"),
+            _j("TQ-RX", "Twist at midspan", "TQ", mid2, "RX", T * 15.0 / (G * J), "T L1 / GJ", how="abs"),
+        ],
+    }
+
+
+def F7() -> dict:
+    """Fixed-fixed beam with rigid end zones 1.5 ft at each support (factor 1)."""
+    E, I = STEEL_E, 0.03
+    L, w, a = 30.0, 2.0, 1.5
+    Lc = L - 2 * a
+    mid = [15.0, 0.0, 12.0]
+    return {
+        "id": "F7", "title": "Rigid end zones",
+        "purpose": ("End length offsets of 1.5 ft at both supports, rigid-zone factor 1: the beam behaves as a "
+                    "fixed-fixed beam of the 27 ft clear span; forces are read at the faces."),
+        "units": "kip-ft", "settings": dict(_COMMON, rigidZones="1.5 ft at each support, factor 1", supports="fixed both ends"),
+        "materials": _mat(),
+        "sections": [_beam_section()],
+        "stories": [{"name": "Story1", "height": 12.0}],
+        "frames": [{"id": "B1", "i": [0.0, 0.0, 12.0], "j": mid, "section": "BM", "angle": 0.0,
+                    "rigid": {"i": a, "j": 0.0, "factor": 1.0}},
+                   {"id": "B2", "i": mid, "j": [L, 0.0, 12.0], "section": "BM", "angle": 0.0,
+                    "rigid": {"i": 0.0, "j": a, "factor": 1.0}}],
+        "supports": [{"at": [0.0, 0.0, 12.0], "restraint": [1] * 6}, {"at": [L, 0.0, 12.0], "restraint": [1] * 6}],
+        "patterns": [{"name": "W"}],
+        "distLoads": [{"pattern": "W", "frame": "B1", "w": w}, {"pattern": "W", "frame": "B2", "w": w}],
+        "checks": [
+            _j("W-UZ", "Midspan deflection", "W", mid, "UZ", -w * Lc**4 / (384 * E * I), "-w Lc^4 / 384EI, Lc = 27 ft"),
+            _f("W-Mface", "Moment at the support face (1.5 ft from the joint)", "W", "B1", a, "M3", w * Lc**2 / 12, "w Lc^2 / 12"),
+            _f("W-Mjoint", "Moment at the joint", "W", "B1", "i", "M3", w * Lc**2 / 12 + w * Lc / 2 * a + w * a * a / 2,
+               "face moment + V a + w a^2 / 2"),
+            _f("W-Mmid", "Midspan moment", "W", "B1", "j", "M3", w * Lc**2 / 24, "w Lc^2 / 24"),
+            _b("W-FZ", "Total vertical reaction", "W", "FZ", w * L, "wL"),
+        ],
+    }
+
+
+def F8() -> dict:
+    """The F1 column with stiffness modifiers A 0.5, I33 0.35, I22 0.7 on its section."""
+    E = STEEL_E
+    L, P, N = 12.0, 10.0, 50.0
+    A, I33, I22 = 0.1, 0.02, 0.005
+    mA, m33, m22 = 0.5, 0.35, 0.7
+    top = [0.0, 0.0, L]
+    return {
+        "id": "F8", "title": "Stiffness modifiers",
+        "purpose": "Section stiffness modifiers (cracked-section style) scale deflections and leave statically determinate forces unchanged.",
+        "units": "kip-ft", "settings": dict(_COMMON, modifiers="A 0.5, I33 0.35, I22 0.7 on the section"),
+        "materials": _mat(),
+        "sections": [_col_section(modifiers={"A": mA, "I33": m33, "I22": m22, "J": 1.0})],
+        "stories": [{"name": "Story1", "height": L}],
+        "frames": [{"id": "C1", "i": [0.0, 0.0, 0.0], "j": top, "section": "COL", "angle": 0.0}],
+        "supports": [{"at": [0.0, 0.0, 0.0], "restraint": [1] * 6}],
+        "patterns": [{"name": "PX"}, {"name": "PY"}, {"name": "PZ"}],
+        "pointLoads": [{"pattern": "PX", "at": top, "f": [P, 0, 0, 0, 0, 0]},
+                       {"pattern": "PY", "at": top, "f": [0, P, 0, 0, 0, 0]},
+                       {"pattern": "PZ", "at": top, "f": [0, 0, -N, 0, 0, 0]}],
+        "checks": [
+            _j("PX-UX", "Top along X, I33 x 0.35", "PX", top, "UX", P * L**3 / (3 * E * m33 * I33), "PL^3 / 3E(0.35 I33)"),
+            _j("PY-UY", "Top along Y, I22 x 0.7", "PY", top, "UY", P * L**3 / (3 * E * m22 * I22), "PL^3 / 3E(0.7 I22)"),
+            _j("PZ-UZ", "Top shortens, A x 0.5", "PZ", top, "UZ", -N * L / (E * mA * A), "-NL / E(0.5 A)"),
+            _f("PX-M3", "Base moment unchanged", "PX", "C1", "i", "M3", P * L, "PL"),
+        ],
+    }
+
+
+CASES = {"F1": F1, "F2": F2, "F3": F3, "F4": F4, "F5": F5, "F6": F6, "F7": F7, "F8": F8}
 
 
 def get(cid: str) -> dict:
