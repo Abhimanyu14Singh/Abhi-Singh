@@ -56,7 +56,7 @@ def status(got: Optional[float], want: float, rel: float, scale: float) -> str:
     if got is None:
         return "missing"
     err = abs(got - want)
-    lim = max(rel * abs(want), rel * scale * 1e-3)
+    lim = rel * max(abs(want), scale)
     if err <= lim:
         return "exact"
     if err <= 2 * lim:
@@ -74,14 +74,17 @@ def compare(case: dict, sky: dict, etabs: Optional[dict]) -> list:
         s = None if s is None else norm(s)
         e = None if e is None else norm(e)
         h = chk["hand"]
-        t_hand, t_etabs = TOL[chk["quantity"]]
+        t_hand, t_etabs = chk.get("tol", TOL[chk["quantity"]])
+        # scale: the size a zero (or tiny) answer is judged against, e.g. the load that would be there
+        sc = chk.get("scale", abs(h) if h is not None else 0.0)
+        vs_hand = (lambda v: "no hand value" if h is None else status(v, h, t_hand, max(abs(h), sc)))
         rows.append({
             "id": chk["id"], "label": chk["label"], "formula": chk["formula"], "hand": h,
             "skyframe": s, "etabs": e,
-            "sky_vs_hand": status(s, h, t_hand, abs(h)),
-            "etabs_vs_hand": (status(e, h, t_hand, abs(h)) if in_etabs else "not reported") if etabs else "not run",
-            "sky_vs_etabs": ((status(s, e, t_etabs, abs(e)) if e is not None else "missing") if in_etabs
-                             else "not reported") if etabs else "not run",
+            "sky_vs_hand": vs_hand(s),
+            "etabs_vs_hand": (vs_hand(e) if in_etabs else "not reported") if etabs else "not run",
+            "sky_vs_etabs": ((status(s, e, t_etabs, max(abs(e), sc)) if e is not None else "missing")
+                             if in_etabs else "not reported") if etabs else "not run",
         })
     return rows
 

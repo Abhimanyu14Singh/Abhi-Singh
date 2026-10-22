@@ -20,18 +20,20 @@ KIPFT = KIP * FT                # kN m
 
 
 def build(case: dict):
-    from skyframe.core.model import BuildingModel, FrameSection, Material, MemberLoad, NodalLoad, PointSupport
+    from skyframe.core.model import (AreaLoad, BuildingModel, FrameSection, Material, MemberLoad, NodalLoad,
+                                     PointSupport, ShellSection, ThermalLoad)
 
     m = BuildingModel(name=case["id"])
     m.frame_axis_convention = "etabs"           # ETABS default local axes (cases.py settings)
     m.rigid_diaphragms = False
     m.num_modes = 0
     for mt in case["materials"]:
+        # alpha is per deg F and temperatures are deg F: the product alpha dT is unit-free
         m.add_material(Material(mt["name"], E=mt["E"] * KSF, nu=mt["nu"],
-                                unit_weight=mt.get("unitWeight", 0.0) * KIP / FT**3))
+                                unit_weight=mt.get("unitWeight", 0.0) * KIP / FT**3, alpha=mt.get("alpha")))
     for s in case["sections"]:
         sec = FrameSection(s["name"], s["material"], A=s["A"] * FT**2, I33=s["I33"] * FT**4,
-                           I22=s["I22"] * FT**4, J=s["J"] * FT**4)
+                           I22=s["I22"] * FT**4, J=s["J"] * FT**4, b=s["width"] * FT, h=s["depth"] * FT)
         if s.get("As2") or s.get("As3"):
             sec.As2, sec.As3 = s["As2"] * FT**2, s["As3"] * FT**2
         md = s.get("modifiers") or {}
@@ -44,6 +46,10 @@ def build(case: dict):
         mem = m.add_member(kind, f["section"], tuple(c * FT for c in f["i"]), tuple(c * FT for c in f["j"]),
                            uid=f["id"], angle=f.get("angle", 0.0))
         mem = mem if mem is not None else next(x for x in m.members if x.uid == f["id"])
+        if f.get("cardinal", 10) != 10:
+            mem.cardinal_point = int(f["cardinal"])
+        if case.get("stationSpacing"):
+            mem.output_stations = {"max_spacing": case["stationSpacing"] * FT}
         if f.get("releases"):
             # springs: translational kip/ft -> kN/m, rotational kip-ft/rad -> kN m/rad
             conv = {"P": KIP / FT, "V2": KIP / FT, "V3": KIP / FT, "T": KIPFT, "M2": KIPFT, "M3": KIPFT}
@@ -53,10 +59,23 @@ def build(case: dict):
             r = f["rigid"]
             mem.rigid_i, mem.rigid_j = r.get("i", 0.0) * FT, r.get("j", 0.0) * FT
             mem.rigid_factor = r.get("factor", 1.0)
+    for a in case.get("areaSections", []):
+        m.add_shell_section(ShellSection(a["name"], a["material"], a["thickness"] * FT))
+    for a in case.get("areas", []):
+        corners = [tuple(c * FT for c in p) for p in a["corners"]]
+        kind = "slab" if len({round(p[2], 6) for p in corners}) == 1 else "wall"
+        if a.get("toFrame"):
+            r = m.add_shell(kind, "membrane", a["section"], corners, uid=a["id"])
+            r.distribution = "one_way" if a["toFrame"] == "one" else "two_way"
+            r.one_way_dir = 1
+        else:
+            r = m.add_shell(kind, "shell", a["section"], corners, uid=a["id"])
+            n1, n2 = a.get("mesh", [1, 1])
+            r.mesh_divisions = {"n1": int(n1), "n2": int(n2)}
     for s in case["supports"]:
         m.supports.append(PointSupport(tuple(c * FT for c in s["at"]), tuple(int(r) for r in s["restraint"])))
     for p in case["patterns"]:
-        m.pattern(p["name"], "other")
+        m.pattern(p["name"], "other").self_weight_factor = p.get("selfWeight", 0.0)
         m.add_case(p["name"], {p["name"]: 1.0})
     for ld in case.get("pointLoads", []):
         f = ld["f"]
@@ -66,6 +85,17 @@ def build(case: dict):
     for ld in case.get("distLoads", []):
         m.pattern(ld["pattern"], "other").member_loads.append(
             MemberLoad(ld["frame"], "udl", ld["w"] * KIP / FT, direction="gravity"))
+    for ld in case.get("frameLoads", []):
+        pat = m.pattern(ld["pattern"], "other")
+        if ld["type"] == "point":
+            pat.member_loads.append(MemberLoad(ld["frame"], "point", ld["P"] * KIP, a=ld["a"], direction="gravity"))
+        else:
+            pat.member_loads.append(MemberLoad(ld["frame"], "trapezoid", ld["w1"] * KIP / FT, ld["w2"] * KIP / FT,
+                                               a=ld["a"], b=ld["b"], direction="gravity"))
+    for ld in case.get("tempLoads", []):
+        m.pattern(ld["pattern"], "other").thermal_loads.append(ThermalLoad(ld["frame"], dT=ld["dT"]))
+    for ld in case.get("areaLoads", []):
+        m.pattern(ld["pattern"], "other").area_loads.append(AreaLoad(ld["area"], ld["q"] * KSF))
     return m
 
 

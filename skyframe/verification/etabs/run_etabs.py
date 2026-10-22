@@ -74,7 +74,8 @@ def build(sm, case: dict) -> dict:
 
     for mt in case["materials"]:
         ok(sm.PropMaterial.SetMaterial(mt["name"], MAT_NODESIGN), f"material {mt['name']}")
-        ok(sm.PropMaterial.SetMPIsotropic(mt["name"], mt["E"], mt["nu"], 0.0), f"material {mt['name']} E, nu")
+        ok(sm.PropMaterial.SetMPIsotropic(mt["name"], mt["E"], mt["nu"], float(mt.get("alpha", 0.0))),
+           f"material {mt['name']} E, nu, alpha")
         ok(sm.PropMaterial.SetWeightAndMass(mt["name"], 1, mt.get("unitWeight", 0.0)), f"material {mt['name']} weight")
 
     for s in case["sections"]:
@@ -119,16 +120,31 @@ def build(sm, case: dict) -> dict:
                f"frame {f['id']} releases")
         if f.get("angle"):
             ok(sm.FrameObj.SetLocalAxes(r[0], f["angle"]), f"frame {f['id']} angle")
+        if f.get("cardinal", 10) != 10:
+            # stiffness transformed for the offset from the centroid (the definition's assumption)
+            ok(sm.FrameObj.SetInsertionPoint(r[0], int(f["cardinal"]), False, True, [0.0] * 3, [0.0] * 3, "Local"),
+               f"frame {f['id']} insertion point")
+            back = sm.FrameObj.GetInsertionPoint(r[0], 0, False, False, [], [], "")
+            ok(back, f"read back insertion point {f['id']}")
+            if back[0] != int(f["cardinal"]) or not back[2]:
+                raise Stop(f"frame {f['id']}: insertion point reads back {back[0]}, transform {back[2]}")
+            say(f"  frame {f['id']}: cardinal point {back[0]}, stiffness transformed {back[2]} (read back)")
+        if case.get("stationSpacing"):
+            ok(sm.FrameObj.SetOutputStations(r[0], 1, float(case["stationSpacing"]), 2, False, False),
+               f"frame {f['id']} output stations")
 
     def point(at):
         r = sm.PointObj.AddCartesian(at[0], at[1], at[2], "", "", "Global", False, 0)
         ok(r, f"point at {at}")
         return r[0]
 
+    areas = build_areas(sm, case)
+
     for s in case["supports"]:
         ok(sm.PointObj.SetRestraint(point(s["at"]), [bool(v) for v in s["restraint"]]), f"support at {s['at']}")
     for p in case["patterns"]:
-        ok(sm.LoadPatterns.Add(p["name"], PATTERN_OTHER, 0.0, True), f"load pattern {p['name']}")
+        ok(sm.LoadPatterns.Add(p["name"], PATTERN_OTHER, float(p.get("selfWeight", 0.0)), True),
+           f"load pattern {p['name']}")
     for ld in case.get("pointLoads", []):
         ok(sm.PointObj.SetLoadForce(point(ld["at"]), ld["pattern"], [float(v) for v in ld["f"]],
                                     False, "Global", 0), f"load {ld['pattern']} at {ld['at']}")
@@ -137,7 +153,82 @@ def build(sm, case: dict) -> dict:
         ok(sm.FrameObj.SetLoadDistributed(names[ld["frame"]], ld["pattern"], 1, 10, 0.0, 1.0,
                                           float(ld["w"]), float(ld["w"]), "Global", True, True, 0),
            f"uniform load {ld['pattern']} on {ld['frame']}")
+    for ld in case.get("frameLoads", []):
+        if ld["type"] == "point":
+            # MyType 1 = force; Dir 10 = gravity; relative distance; add to what is there
+            ok(sm.FrameObj.SetLoadPoint(names[ld["frame"]], ld["pattern"], 1, 10, float(ld["a"]), float(ld["P"]),
+                                        "Global", True, False, 0), f"point load {ld['pattern']} on {ld['frame']}")
+        else:
+            ok(sm.FrameObj.SetLoadDistributed(names[ld["frame"]], ld["pattern"], 1, 10, float(ld["a"]),
+                                              float(ld["b"]), float(ld["w1"]), float(ld["w2"]), "Global", True,
+                                              False, 0), f"distributed load {ld['pattern']} on {ld['frame']}")
+    for ld in case.get("tempLoads", []):
+        # MyType 1 = uniform temperature change (deg F in kip-ft-F units)
+        ok(sm.FrameObj.SetLoadTemperature(names[ld["frame"]], ld["pattern"], 1, float(ld["dT"]), "", False, 0),
+           f"temperature {ld['pattern']} on {ld['frame']}")
+    for ld in case.get("areaLoads", []):
+        a = next(x for x in case["areas"] if x["id"] == ld["area"])
+        for an in areas[ld["area"]]:
+            if a.get("toFrame"):
+                # Dir 10 = gravity; DistType 1 = one-way (along local 1), 2 = two-way
+                ok(sm.AreaObj.SetLoadUniformToFrame(an, ld["pattern"], float(ld["q"]), 10,
+                                                    1 if a["toFrame"] == "one" else 2, True, "Global", 0),
+                   f"area load to frames {ld['pattern']} on {ld['area']}")
+            else:
+                ok(sm.AreaObj.SetLoadUniform(an, ld["pattern"], float(ld["q"]), 10, True, "Global", 0),
+                   f"area load {ld['pattern']} on {ld['area']}")
     return names
+
+
+SHELL_TYPE = {"thin": 1, "thick": 2, "membrane": 3}     # eShellType
+
+
+def _bilinear(c, u, v):
+    return [(1 - u) * (1 - v) * c[0][k] + u * (1 - v) * c[1][k] + u * v * c[2][k] + (1 - u) * v * c[3][k]
+            for k in range(3)]
+
+
+def build_areas(sm, case: dict) -> dict:
+    """Area sections and objects.  A meshed area is drawn as n1 x n2 separate area objects, so ETABS
+    and SkyFrame use the same elements; returns {area id: [ETABS area names]}."""
+    for a in case.get("areaSections", []):
+        st = SHELL_TYPE[a["shell"]]
+        if a["kind"] == "wall":
+            ok(sm.PropArea.SetWall(a["name"], 1, st, a["material"], float(a["thickness"])), f"wall {a['name']}")
+            back = sm.PropArea.GetWall(a["name"], 0, 0, "", 0.0, 0, "", "")
+            got_t, got_st = back[3], back[1]
+        else:
+            ok(sm.PropArea.SetSlab(a["name"], 0, st, a["material"], float(a["thickness"])), f"slab {a['name']}")
+            back = sm.PropArea.GetSlab(a["name"], 0, 0, "", 0.0, 0, "", "")
+            got_t, got_st = back[3], back[1]
+        ok(back, f"read back area section {a['name']}")
+        if abs(got_t - a["thickness"]) > 1e-9 or got_st != st:
+            raise Stop(f"area section {a['name']}: reads back thickness {got_t}, shell type {got_st}")
+        if a.get("modifiers"):
+            md = a["modifiers"]
+            keys = ("f11", "f22", "f12", "m11", "m22", "m12", "v13", "v23", "mass", "weight")
+            ok(sm.PropArea.SetModifiers(a["name"], [float(md.get(k, 1.0)) for k in keys]),
+               f"area section {a['name']} modifiers")
+            got = sm.PropArea.GetModifiers(a["name"], [])
+            ok(got, f"read back modifiers {a['name']}")
+            say(f"  area section {a['name']} modifiers (read back): {list(got[0])}")
+        say(f"  area section {a['name']}: {a['kind']}, thickness {got_t}, shell type {got_st} (read back)")
+    out = {}
+    for a in case.get("areas", []):
+        n1, n2 = a.get("mesh", [1, 1])
+        out[a["id"]] = []
+        for i in range(n1):
+            for j in range(n2):
+                pts = [_bilinear(a["corners"], u, v) for u, v in
+                       ((i / n1, j / n2), ((i + 1) / n1, j / n2), ((i + 1) / n1, (j + 1) / n2), (i / n1, (j + 1) / n2))]
+                label = a["id"] if n1 * n2 == 1 else f"{a['id']}_{i + 1}_{j + 1}"
+                r = sm.AreaObj.AddByCoord(4, [p[0] for p in pts], [p[1] for p in pts], [p[2] for p in pts],
+                                          "", a["section"], label, "Global")
+                ok(r, f"area {label}")
+                out[a["id"]].append(r[3])
+    if out:
+        say(f"  {sum(len(v) for v in out.values())} area objects")
+    return out
 
 
 # ── results ─────────────────────────────────────────────────────────────────
@@ -225,7 +316,10 @@ def run_case(sm, case: dict, out_root: Path, version: str) -> dict:
         v = pick(res, chk)
         if v is not None and chk["how"] == "abs":
             v = abs(v)
-        d = None if v is None else abs(v - chk["hand"]) / max(abs(chk["hand"]), 1e-12)
+        if chk["hand"] is None:
+            say(f"{chk['id']:8} {'-':>12} {('-' if v is None else f'{v:12.6g}'):>12}  compared with SkyFrame only")
+            continue
+        d = None if v is None else abs(v - chk["hand"]) / max(abs(chk["hand"]), chk.get("scale", 1e-12))
         worst = max(worst, d or 0.0)
         say(f"{chk['id']:8} {chk['hand']:12.6g} {('-' if v is None else f'{v:12.6g}'):>12}  "
             f"{'missing' if d is None else f'{100 * d:.3f}%'}")

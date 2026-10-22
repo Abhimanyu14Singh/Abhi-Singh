@@ -1,0 +1,231 @@
+{
+ "id": "L4",
+ "title": "Point, triangular and partial loads on a beam",
+ "purpose": "Frame loads other than a full uniform load: a point load at a third point, a triangle rising to 3 k/ft and a uniform load over the middle half.",
+ "units": "kip-ft",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "supports": "pin and roller"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "BM",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.03,
+   "I22": 0.002,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.5,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "stationSpacing": 0.5,
+ "frames": [
+  {
+   "id": "B1",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    30.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    1,
+    1,
+    1,
+    0,
+    0
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "PT"
+  },
+  {
+   "name": "TRI"
+  },
+  {
+   "name": "PART"
+  }
+ ],
+ "frameLoads": [
+  {
+   "pattern": "PT",
+   "frame": "B1",
+   "type": "point",
+   "a": 0.3333333333333333,
+   "P": 10.0
+  },
+  {
+   "pattern": "TRI",
+   "frame": "B1",
+   "type": "trap",
+   "a": 0.0,
+   "b": 1.0,
+   "w1": 0.0,
+   "w2": 3.0
+  },
+  {
+   "pattern": "PART",
+   "frame": "B1",
+   "type": "trap",
+   "a": 0.25,
+   "b": 0.75,
+   "w1": 2.0,
+   "w2": 2.0
+  }
+ ],
+ "checks": [
+  {
+   "id": "PT-V",
+   "label": "Point load: shear at the near support",
+   "case": "PT",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "i",
+   "comp": "V2",
+   "hand": 6.666666666666667,
+   "formula": "P b / L",
+   "how": "abs"
+  },
+  {
+   "id": "PT-M",
+   "label": "Point load: moment under the load",
+   "case": "PT",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": 10.0,
+   "comp": "M3",
+   "hand": 66.66666666666667,
+   "formula": "P a b / L",
+   "how": "abs"
+  },
+  {
+   "id": "PT-RY",
+   "label": "Point load: slope at the near support",
+   "case": "PT",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "RY",
+   "hand": 0.0044345111394919826,
+   "formula": "P a b (L + b) / 6EIL",
+   "how": "abs"
+  },
+  {
+   "id": "TRI-Vi",
+   "label": "Triangle: shear at the low end",
+   "case": "TRI",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "i",
+   "comp": "V2",
+   "hand": 15.0,
+   "formula": "w0 L / 6",
+   "how": "abs"
+  },
+  {
+   "id": "TRI-Vj",
+   "label": "Triangle: shear at the high end",
+   "case": "TRI",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "j",
+   "comp": "V2",
+   "hand": 30.0,
+   "formula": "w0 L / 3",
+   "how": "abs"
+  },
+  {
+   "id": "TRI-M",
+   "label": "Triangle: moment at midspan",
+   "case": "TRI",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": 15.0,
+   "comp": "M3",
+   "hand": 168.75,
+   "formula": "R x - w0 x^3 / 6L",
+   "how": "abs"
+  },
+  {
+   "id": "PART-M",
+   "label": "Middle-half load: moment at midspan",
+   "case": "PART",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": 15.0,
+   "comp": "M3",
+   "hand": 168.75,
+   "formula": "R L/2 - w (L/4)^2 / 2",
+   "how": "abs"
+  },
+  {
+   "id": "PART-FZ",
+   "label": "Middle-half load: total reaction",
+   "case": "PART",
+   "quantity": "base",
+   "comp": "FZ",
+   "hand": 30.0,
+   "formula": "w L / 2",
+   "how": "signed"
+  }
+ ]
+}
