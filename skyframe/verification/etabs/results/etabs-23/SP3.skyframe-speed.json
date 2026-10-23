@@ -6,6 +6,15 @@
  "cores": 24,
  "machine": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
  "solver": "PARDISO (pypardiso) where SkyFrame uses it, OpenSees otherwise",
- "linear_s": 7.896705999970436,
- "nonlinear_s": 13.441372900037095
+ "linear_s": 6.885031499899924,
+ "nonlinear_s": 13.267949299886823,
+ "values": {
+  "SW-FZ": 57990.000000017884,
+  "SDL-FZ": 7500.000000002312,
+  "EQX-FX": -1230.000000616401,
+  "EQX-UX": 1.3062293604231114,
+  "PDALL-UX": 1.4717780540498928,
+  "T1": 6.916526048938332,
+  "T2": 6.543221686057099
+ }
 }
