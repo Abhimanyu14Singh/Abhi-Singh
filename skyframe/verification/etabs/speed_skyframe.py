@@ -87,7 +87,9 @@ def main(argv=None) -> int:
            "python": sys.version.split()[0], "cores": os.cpu_count(),
            "machine": platform.processor() or platform.machine(), "solver": solver}
     for part in ("linear", "nonlinear"):
-        names = case["benchmark"][part]
+        names = case["benchmark"].get(part) or []
+        if not names:
+            continue                            # linear-only benchmarks (SP4, SP5)
         runs, full, solve = [], [], []
         for _ in range(max(1, a.repeat)):
             m = S.build(case, only=set(names))
