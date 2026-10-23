@@ -30,7 +30,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--case", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--repeat", type=int, default=2)
+    ap.add_argument("--repeat", type=int, default=3)
     a = ap.parse_args(argv)
     case = json.loads(Path(a.case).read_text(encoding="utf-8"))
     import skyframe
@@ -46,15 +46,22 @@ def main(argv=None) -> int:
            "machine": platform.processor() or platform.machine(), "solver": solver}
     for part in ("linear", "nonlinear"):
         names = case["benchmark"][part]
-        best = None
+        runs, full = [], []
         for _ in range(max(1, a.repeat)):
             m = S.build(case, only=set(names))
             t0 = time.perf_counter()
-            OpenSeesEngine(m).run()
-            dt = time.perf_counter() - t0
-            best = dt if best is None else min(best, dt)
-        out[f"{part}_s"] = best
-        print(f"SkyFrame {part} run: {best:.2f} s ({', '.join(names)})", flush=True)
+            r = OpenSeesEngine(m).run()
+            t1 = time.perf_counter()
+            r.to_dict()                         # every result written out, as ETABS saves its results
+            t2 = time.perf_counter()
+            runs.append(t1 - t0)
+            full.append(t2 - t0)
+        out[f"{part}_s"] = min(runs)
+        out[f"{part}_runs_s"] = runs
+        out[f"{part}_with_results_s"] = min(full)
+        out[f"{part}_with_results_runs_s"] = full
+        print(f"SkyFrame {part} run: best {min(runs):.2f} s of {', '.join(f'{t:.2f}' for t in runs)}; "
+              f"with every result written out {min(full):.2f} s ({', '.join(names)})", flush=True)
     # the same model solved once more, untimed, for its answers: a fast run must also be a right one
     import compare as CMP
     res = S.run(case)

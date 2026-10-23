@@ -1169,22 +1169,30 @@ def benchmark(sm, case: dict) -> dict:
     """Time the linear and the nonlinear part separately (analysis only: building is excluded)."""
     import platform
     out = {"etabs": fastest_solver(sm), "machine": platform.processor() or platform.machine()}
+    repeat = int(case["benchmark"].get("repeat", BENCH_REPEAT))
+    out["repeat"] = repeat
     for part in ("linear", "nonlinear"):
-        ok(sm.Analyze.SetRunCaseFlag("", False, True), "switch all cases off")
-        for cname in case["benchmark"][part]:
-            ok(sm.Analyze.SetRunCaseFlag(cname, True, False), f"switch case {cname} on")
-        t0 = time.perf_counter()
-        ok(sm.Analyze.RunAnalysis(), f"run the {part} part")
-        out[f"{part}_s"] = time.perf_counter() - t0
-        say(f"  ETABS {part} run: {out[f'{part}_s']:.2f} s ({', '.join(case['benchmark'][part])})")
-        try:
-            ok(sm.SetModelIsLocked(False), "unlock the model")
-        except Exception:
-            pass
+        runs = []
+        for _ in range(repeat):                 # best of several, as SkyFrame is timed: runs vary by a few %
+            ok(sm.Analyze.SetRunCaseFlag("", False, True), "switch all cases off")
+            for cname in case["benchmark"][part]:
+                ok(sm.Analyze.SetRunCaseFlag(cname, True, False), f"switch case {cname} on")
+            t0 = time.perf_counter()
+            ok(sm.Analyze.RunAnalysis(), f"run the {part} part")
+            runs.append(time.perf_counter() - t0)
+            try:
+                ok(sm.SetModelIsLocked(False), "unlock the model")
+            except Exception:
+                pass
+        out[f"{part}_s"] = min(runs)
+        out[f"{part}_runs_s"] = runs
+        say(f"  ETABS {part} run: best {min(runs):.2f} s of {', '.join(f'{t:.2f}' for t in runs)} "
+            f"({', '.join(case['benchmark'][part])})")
     return out
 
 
 BRANCH = "claude/etabs-opensees-ui-rebuild-kt2zwh"
+BENCH_REPEAT = 3               # timed runs per part, both programs; the best is reported, every run kept
 
 
 PY312_NUGET = "https://www.nuget.org/api/v2/package/python/3.12.10"
@@ -1266,7 +1274,7 @@ def skyframe_speed(out_root: Path, case: dict) -> None:
     work = out_root / case["id"]
     r = subprocess.run(py + [str(src / "skyframe" / "verification" / "etabs" / "speed_skyframe.py"),
                              "--case", str(work / f"{case['id']}.case.json"),
-                             "--out", str(work / f"{case['id']}.skyframe-speed.json")],
+                             "--out", str(work / f"{case['id']}.skyframe-speed.json"), "--repeat", str(BENCH_REPEAT)],
                        capture_output=True, text=True)
     for line in (r.stdout + r.stderr).splitlines()[-30:]:
         say("  " + line)
@@ -1518,13 +1526,14 @@ def push(repo: Path, summaries: list, out_root: Path) -> None:
 
 
 _TEXT_ONLY = ("title", "purpose", "settings", "checks", "notes")
-RUNNER = 5
+RUNNER = 6
 # cases whose ETABS model this script built wrongly before the given runner version, so they rerun:
 # 2 = releases on members ETABS draws from the definition's j end went on the wrong end
 # 3 = H3's Ritz results were read across every modal case at once; K4's steel curve call had a wrong argument
 # 4 = N4's time history was read at its last step instead of its peak; K4's layered wall was unstable in ETABS
 # 5 = N4 and H2 time histories still read as their last step; C1-C3 time dependence and hinges not yet right
-RERUN_BEFORE = {"L1": 2, "L1S": 2, "L2": 2, "H3": 3, "K4": 4, "N4": 5, "H2": 5, "C1": 5, "C2": 5, "C3": 5}
+# 6 = SP1-SP3 timed once in ETABS: now best of three in both programs, every run kept
+RERUN_BEFORE = {"L1": 2, "L1S": 2, "L2": 2, "H3": 3, "K4": 4, "N4": 5, "H2": 5, "C1": 5, "C2": 5, "C3": 5, "SP1": 6, "SP2": 6, "SP3": 6}
 
 
 def needs_run(out_root: Path, cid: str) -> bool:
