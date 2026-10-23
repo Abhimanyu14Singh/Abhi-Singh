@@ -1,0 +1,96 @@
+{
+ "program": "ETABS",
+ "version": "23.2.0",
+ "units": "kip-ft",
+ "case": "C2",
+ "runner": 4,
+ "cases": {
+  "STG": {
+   "joints": [
+    {
+     "xyz": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "name": "1",
+     "step": "Single Value",
+     "u": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "xyz": [
+      0.0,
+      0.0,
+      12.0
+     ],
+     "name": "2",
+     "step": "Single Value",
+     "u": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   ],
+   "base": {
+    "FX": 0.0,
+    "FY": 0.0,
+    "FZ": 0.0,
+    "MX": 0.0,
+    "MY": 0.0,
+    "MZ": 0.0
+   },
+   "frames": {
+    "C1": [
+     {
+      "station": 0.0,
+      "step": "Single Value",
+      "P": 0.0,
+      "V2": 0.0,
+      "V3": 0.0,
+      "T": 0.0,
+      "M2": 0.0,
+      "M3": 0.0
+     },
+     {
+      "station": 6.0,
+      "step": "Single Value",
+      "P": 0.0,
+      "V2": 0.0,
+      "V3": 0.0,
+      "T": 0.0,
+      "M2": 0.0,
+      "M3": 0.0
+     },
+     {
+      "station": 12.0,
+      "step": "Single Value",
+      "P": 0.0,
+      "V2": 0.0,
+      "V3": 0.0,
+      "T": 0.0,
+      "M2": 0.0,
+      "M3": 0.0
+     }
+    ]
+   },
+   "drifts": [],
+   "piers": [],
+   "spandrels": []
+  }
+ },
+ "reversed": [],
+ "values": {
+  "eps_sh": -0.0
+ }
+}
