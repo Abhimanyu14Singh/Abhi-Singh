@@ -1176,7 +1176,7 @@ def benchmark(sm, case: dict) -> dict:
     repeat = int(case["benchmark"].get("repeat", BENCH_REPEAT))
     out["repeat"] = repeat
     for part in ("linear", "nonlinear"):
-        runs = []
+        runs, logs = [], []
         for _ in range(repeat):                 # best of several, as SkyFrame is timed: runs vary by a few %
             ok(sm.Analyze.SetRunCaseFlag("", False, True), "switch all cases off")
             for cname in case["benchmark"][part]:
@@ -1196,12 +1196,14 @@ def benchmark(sm, case: dict) -> dict:
                 t0 = time.perf_counter()
                 ok(sm.Analyze.RunAnalysis(), f"run the {part} part (retry)")
             runs.append(time.perf_counter() - t0)
+            logs.append(analysis_log_text(sm))   # ETABS's own phase-by-phase log of this run
             try:
                 ok(sm.SetModelIsLocked(False), "unlock the model")
             except Exception:
                 pass
         out[f"{part}_s"] = min(runs)
         out[f"{part}_runs_s"] = runs
+        out[f"{part}_logs"] = logs              # split into phases (solve vs the rest) from these
         say(f"  ETABS {part} run: best {min(runs):.2f} s of {', '.join(f'{t:.2f}' for t in runs)} "
             f"({', '.join(case['benchmark'][part])})")
     return out
@@ -1542,14 +1544,15 @@ def push(repo: Path, summaries: list, out_root: Path) -> None:
 
 
 _TEXT_ONLY = ("title", "purpose", "settings", "checks", "notes")
-RUNNER = 6
+RUNNER = 7
 # cases whose ETABS model this script built wrongly before the given runner version, so they rerun:
 # 2 = releases on members ETABS draws from the definition's j end went on the wrong end
 # 3 = H3's Ritz results were read across every modal case at once; K4's steel curve call had a wrong argument
 # 4 = N4's time history was read at its last step instead of its peak; K4's layered wall was unstable in ETABS
 # 5 = N4 and H2 time histories still read as their last step; C1-C3 time dependence and hinges not yet right
 # 6 = SP1-SP3 timed once in ETABS: now best of three in both programs, every run kept
-RERUN_BEFORE = {"L1": 2, "L1S": 2, "L2": 2, "H3": 3, "K4": 4, "N4": 5, "H2": 5, "C1": 5, "C2": 5, "C3": 5, "SP1": 6, "SP2": 6, "SP3": 6}
+# 7 = SP1-SP3 with ETABS's analysis log of each timed run and SkyFrame's time inside its solvers
+RERUN_BEFORE = {"L1": 2, "L1S": 2, "L2": 2, "H3": 3, "K4": 4, "N4": 5, "H2": 5, "C1": 5, "C2": 5, "C3": 5, "SP1": 7, "SP2": 7, "SP3": 7}
 
 
 def needs_run(out_root: Path, cid: str) -> bool:
@@ -1579,6 +1582,16 @@ def etabs_gone(exc: Exception) -> bool:
     text = f"{type(exc).__name__} {exc}".lower()
     return any(w in text for w in ("invalid pointer", "rpc server", "not set to an instance", "disconnected",
                                    "-2147467261", "-2147023174", "-2147417848"))
+
+
+def analysis_log_text(sm, limit: int = 200_000) -> str:
+    """ETABS's analysis log (<model>.LOG) as it stands after a run: it stamps each phase with the
+    clock time, which splits the run into equation solution and the rest."""
+    try:
+        log = Path(str(sm.GetModelFilename(True))).with_suffix(".LOG")
+        return log.read_text(encoding="utf-8", errors="replace")[-limit:] if log.exists() else f"(no {log})"
+    except Exception as exc:
+        return f"(analysis log not read: {exc})"
 
 
 def analysis_log_tail(sm, lines: int = 25) -> str:
