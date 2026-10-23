@@ -1,0 +1,16 @@
+# Only what the comparison reads goes to GitHub. ETABS's own model and analysis files (.EDB, .K_*,
+# .Y*, .msh, ...) stay on the PC: one run of the large models is over a gigabyte, too much to push.
+*
+!*/
+!.gitignore
+!*.etabs.json
+!*.case.json
+!*.log.txt
+!*.etabs.png
+!*.skyframe-speed.json
+!*.skyframe-speed.log.txt
+!_api_probe.txt
+!*.py
+!*.bat
+# real projects (R1): each model's text export, which SkyFrame imports
+!R1/*.$et

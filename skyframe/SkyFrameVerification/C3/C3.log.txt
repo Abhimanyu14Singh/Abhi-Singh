@@ -1,0 +1,8 @@
+== C3: Pushover, plastic hinges (hinges by table)
+Building the model ...
+  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+  section BM: A 1.0, I22 0.002, I33 0.03, J 0.0005, As2 0.0, As3 0.0 (read back)
+  hinge API: {'FrameObj': ['GetHingeAssigns', 'GetHingeAssigns_1'], 'PropHinge': False, 'PropFrame': []}
+  hinge tables (1):
+    [Analysis Options - Analysis Model for Nonlinear Hinges] import type 2; fields (* importable): ModelOpt*, PropDampOpt*, DampingFraction*
+STOPPED on C3: frame hinges: no hinge assignment table. Tried:  || API: {'FrameObj': ['GetHingeAssigns', 'GetHingeAssigns_1'], 'PropHinge': False, 'PropFrame': []} || hinge tables (import type: 0 not importable, 1 not interactively, 2 unlocked, 3 always): [Analysis Options - Analysis Model for Nonlinear Hinges] import type 2; fields (* importable): ModelOpt*, PropDampOpt*, DampingFraction*

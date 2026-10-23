@@ -4,14 +4,14 @@ Building the model ...
   area section DECK: slab, thickness 0.5, shell type 3 (read back)
   1 area objects
 Running the analysis ...
-  screenshot L1.etabs.png (ETABS 3-D view only)
+  no screenshot: the 3-D view could not be captured
 Reading results ...
   ETABS reversed 4 frames: BN1, BN2, BW1, BW2
   ETABS analysed 1 area elements for 1 area objects
 check            hand        ETABS  difference
 Q-FZ               40           40  0.000%
 Q-V                 5      4.99989  0.002%
-Q-Vw                5      4.99992  0.002%
+Q-Vw                5      4.99989  0.002%
 Q-M           33.3333      33.3322  0.003%
 Q-UZ       -0.0106428   -0.0106425  0.003%
 Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\L1\L1.EDB; largest difference from the hand calculation 0.003%

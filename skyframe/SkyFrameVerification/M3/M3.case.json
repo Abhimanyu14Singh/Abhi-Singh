@@ -1,7 +1,7 @@
 {
  "id": "M3",
- "title": "Response spectrum, SRSS",
- "purpose": "A flat 0.4 g spectrum along X on the M1 building, modes combined by SRSS: base shear and roof displacement from the closed-form modes.",
+ "title": "Response spectrum, CQC",
+ "purpose": "A flat 0.4 g spectrum along X on the M1 building, modes combined by CQC at 5% damping: base shear and roof displacement from the closed-form modes. (ETABS 23's API cannot change a spectrum case's combination or damping, so the test uses its defaults, CQC and 5%.)",
  "units": "kip-ft",
  "settings": {
   "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
@@ -12,7 +12,7 @@
   "rigidZones": "none",
   "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
   "spectrum": "constant 0.4 g, 5% damping",
-  "combination": "SRSS, one direction",
+  "combination": "CQC, one direction",
   "eccentricity": "none"
  },
  "patterns": [],
@@ -42,7 +42,7 @@
    "dir": "X",
    "function": "FLAT",
    "scale": 32.17404855643044,
-   "combine": "SRSS",
+   "combine": "CQC",
    "damping": 0.05
   }
  ],
@@ -53,8 +53,8 @@
    "case": "RSX",
    "quantity": "base",
    "comp": "FX",
-   "hand": 70.82467897698571,
-   "formula": "SRSS of Sa M_eff,j",
+   "hand": 70.87566225386712,
+   "formula": "CQC of Sa M_eff,j",
    "how": "signed"
   },
   {
@@ -68,8 +68,8 @@
     36.0
    ],
    "comp": "UX",
-   "hand": 0.06839108808740126,
-   "formula": "SRSS of Gamma_j phi_roof,j Sa / omega_j^2",
+   "hand": 0.06837634289995272,
+   "formula": "CQC of Gamma_j phi_roof,j Sa / omega_j^2",
    "how": "signed"
   },
   {
@@ -80,8 +80,8 @@
    "frame": "C1S3",
    "station": "i",
    "comp": "V2",
-   "hand": 8.06646086516863,
-   "formula": "SRSS of the roof inertia force, a quarter per column",
+   "hand": 8.04877506620105,
+   "formula": "CQC of the roof inertia force, a quarter per column",
    "how": "abs"
   }
  ],

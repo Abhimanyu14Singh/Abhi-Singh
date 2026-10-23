@@ -1,0 +1,3 @@
+== R1: Real projects: the user's ETABS models
+R1: no ETABS models (.EDB) in C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\RealProjects: put the project models there and run R1 again (python run_etabs.py R1 --out "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification")
+Saved the results of R1

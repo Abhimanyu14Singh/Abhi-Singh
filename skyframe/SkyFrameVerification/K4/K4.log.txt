@@ -1,0 +1,13 @@
+== K4: Nonlinear layered wall
+Building the model ...
+  area section WNL: wall, thickness 0.05, shell type 1 (read back)
+  168 area objects
+  pushover PO: no frame hinges (links only); push to 0.4 ft at 198
+  layered wall section WNL: material WSTEEL_EPP: steel, parametric simple curve: Fy plateau to a strain of 2 (SetOSteel_1); SetSSCurve ids [-2, -1, 0, 1, 2]: call takes exactly 7 arguments (8 given); SetSSCurve ids [0, 0, 0, 0, 0]: call takes exactly 7 arguments (8 given); one shell layer t 0.05, S22 nonlinear, S11 and S12 linear; read back: 1 layer, t 0.05, S11/S22/S12 types 0/1/0
+Running the analysis ...
+  screenshot K4.etabs.png (ETABS 3-D view only)
+Reading results ...
+  ETABS analysed 168 area elements for 168 area objects
+check            hand        ETABS  difference
+PO-FX             -90 -7.07635e-05  100.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\K4\K4.EDB; largest difference from the hand calculation 100.000%

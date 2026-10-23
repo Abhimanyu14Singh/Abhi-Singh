@@ -15,29 +15,18 @@ Building the model ...
   diaphragm D10: 20 joints (read back)
   mass source (PropMaterial.SetMassSource_1): elements False, joint masses True, patterns {}
   spectrum DESIGN: database table (Name, Period, Value, DampRatio, GUID)
-STOPPED on B2: AttributeError: SetModalComb_1
-Traceback (most recent call last):
-  File "C:\Users\abhimanyu.singh\AppData\Roaming\Python\Python314\site-packages\comtypes\_post_coinit\_cominterface_meta_patcher.py", line 16, in __getattr__
-    fixed_name = self.__map_case__[name.lower()]
-                 ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
-KeyError: 'setmodalcomb_1'
-
-During handling of the above exception, another exception occurred:
-
-Traceback (most recent call last):
-  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 1220, in main
-    summaries.append(run_case(sm, case, out_root, version))
-                     ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 1092, in run_case
-    names = build(sm, case)
-  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 182, in build
-    build_analysis(sm, case, point)
-    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
-  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 568, in build_analysis
-    ok(sm.LoadCases.ResponseSpectrum.SetModalComb_1(nm, comb, 1.0, 0.0, 1, 0.0), f"{nm} modal combination")
-       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\abhimanyu.singh\AppData\Roaming\Python\Python314\site-packages\comtypes\_post_coinit\_cominterface_meta_patcher.py", line 18, in __getattr__
-    raise AttributeError(name)  # Should we use exception-chaining?
-    ^^^^^^^^^^^^^^^^^^^^^^^^^^
-AttributeError: SetModalComb_1. Did you mean: 'GetModalComb_1'?
-
+  spectrum case RSX: CQC (ETABS default, read back), damping 0.05 (ETABS default, read back)
+Running the analysis ...
+  screenshot B2.etabs.png (ETABS 3-D view only)
+Reading results ...
+check            hand        ETABS  difference
+ELF-FX           -300         -300  0.000%
+ELF-MY         -27300       -27300  0.000%
+ELF-UX              -     0.264297  compared with SkyFrame only
+ELF-D3              -   0.00280647  compared with SkyFrame only
+T1                  -      2.74231  compared with SkyFrame only
+T2                  -      2.47021  compared with SkyFrame only
+T3                  -      2.45213  compared with SkyFrame only
+RSX-FX              -         2125  compared with SkyFrame only
+RSX-UX              -      1.69198  compared with SkyFrame only
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\B2\B2.EDB; largest difference from the hand calculation 0.000%

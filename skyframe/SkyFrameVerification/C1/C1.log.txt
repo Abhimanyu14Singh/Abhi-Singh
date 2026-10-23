@@ -1,0 +1,6 @@
+== C1: Creep under sustained load
+Building the model ...
+  section CCOL: A 1.0, I22 0.08333333333333333, I33 0.08333333333333333, J 0.1406, As2 0.0, As3 0.0 (read back)
+  material CONC: concrete, E 518400.0, nu 0.2 (read back)
+  PropMaterial time-dependent methods: ['TimeDep']
+STOPPED on C1: time-dependent material: ETABS 23's API has no setter (PropMaterial offers ['TimeDep']) and no material table mentions time, creep or shrinkage; material tables offered: Material List by Object Type; Material List by Section Property; Material List by Story; Material Properties - Acceptance Criteria; Material Properties - Basic Mechanical Properties; Material Properties - Concrete Data; Material Properties - Damping Parameters; Material Properties - General; Material Properties - Hysteresis Parameters - Concrete; Material Properties - Rebar Data; Material Properties - Steel Data; Material Properties - Tendon Data

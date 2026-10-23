@@ -1,0 +1,309 @@
+{
+ "id": "K1",
+ "title": "Hook link (tie-down)",
+ "purpose": "A cantilever whose tip is held down by a tension-only hook link (k = 1e5 k/ft) with 0.05 ft of slack, the mirror of N5's gap. Under gravity the hook goes slack and the cantilever is free; under a small uplift the tip rises less than the slack and the hook stays slack; under a larger uplift the slack is taken up and the hook carries (PL^3/3EI - slack) / (L^3/3EI + 1/k). Nonlinear static cases in both programs.",
+ "units": "kip-ft",
+ "ext": "links",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "nonlinear": "hook link (tension only, opening 0.05 ft), nonlinear static",
+  "supports": "fixed at x = 0; hook link to ground below the tip"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "BM",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.03,
+   "I22": 0.002,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.5,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "B1",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "section": "BM",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    1,
+    0,
+    1,
+    0,
+    1
+   ]
+  },
+  {
+   "at": [
+    20.0,
+    0.0,
+    11.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "hookLinks": [
+  {
+   "id": "H1",
+   "i": [
+    20.0,
+    0.0,
+    11.0
+   ],
+   "j": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "k": 100000.0,
+   "slack": 0.05
+  }
+ ],
+ "patterns": [
+  {
+   "name": "D"
+  },
+  {
+   "name": "S"
+  },
+  {
+   "name": "U"
+  }
+ ],
+ "distLoads": [
+  {
+   "pattern": "D",
+   "frame": "B1",
+   "w": 1.0
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "S",
+   "at": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    0,
+    0,
+    2.0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "pattern": "U",
+   "at": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    0,
+    0,
+    10.0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "nlCases": [
+  {
+   "name": "NLD",
+   "loads": {
+    "D": 1.0
+   },
+   "geometry": "none"
+  },
+  {
+   "name": "NLS",
+   "loads": {
+    "S": 1.0
+   },
+   "geometry": "none"
+  },
+  {
+   "name": "NLU",
+   "loads": {
+    "U": 1.0
+   },
+   "geometry": "none"
+  }
+ ],
+ "checks": [
+  {
+   "id": "NLD-UZ",
+   "label": "Gravity: hook slack, free cantilever",
+   "case": "NLD",
+   "quantity": "joint",
+   "at": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": -0.15964240102171137,
+   "formula": "-wL^4 / 8EI",
+   "how": "signed"
+  },
+  {
+   "id": "NLD-V",
+   "label": "Gravity: no hook force (tip shear 0)",
+   "case": "NLD",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "j",
+   "comp": "V2",
+   "hand": 0.0,
+   "formula": "0",
+   "how": "abs",
+   "scale": 20.0
+  },
+  {
+   "id": "NLS-UZ",
+   "label": "Small uplift: rises less than the slack, hook slack",
+   "case": "NLS",
+   "quantity": "joint",
+   "at": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": 0.04257130693912303,
+   "formula": "Ps L^3 / 3EI (< slack)",
+   "how": "signed"
+  },
+  {
+   "id": "NLS-V",
+   "label": "Small uplift: tip shear is the load alone",
+   "case": "NLS",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "j",
+   "comp": "V2",
+   "hand": 2.0,
+   "formula": "Ps",
+   "how": "abs",
+   "scale": 2.0
+  },
+  {
+   "id": "NLU-UZ",
+   "label": "Uplift: slack taken up, hook stretched",
+   "case": "NLU",
+   "quantity": "joint",
+   "at": [
+    20.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UZ",
+   "hand": 0.05007647407248075,
+   "formula": "slack + R / k",
+   "how": "signed"
+  },
+  {
+   "id": "NLU-V",
+   "label": "Uplift: tip shear P - R (hook force R)",
+   "case": "NLU",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "j",
+   "comp": "V2",
+   "hand": 2.352592751925145,
+   "formula": "P - (PL^3/3EI - slack) / (L^3/3EI + 1/k)",
+   "how": "abs"
+  },
+  {
+   "id": "NLU-M",
+   "label": "Uplift: fixed-end moment (P - R) L",
+   "case": "NLU",
+   "quantity": "frame",
+   "frame": "B1",
+   "station": "i",
+   "comp": "M3",
+   "hand": 47.05185503850289,
+   "formula": "(P - R) L",
+   "how": "abs"
+  },
+  {
+   "id": "NLU-FZ",
+   "label": "Uplift: total reaction",
+   "case": "NLU",
+   "quantity": "base",
+   "comp": "FZ",
+   "hand": -10.0,
+   "formula": "-P",
+   "how": "signed"
+  }
+ ]
+}

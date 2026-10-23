@@ -1,0 +1,17 @@
+== K1: Hook link (tie-down)
+Building the model ...
+  section BM: A 0.1, I22 0.002, I33 0.03, J 0.0005, As2 0.0, As3 0.0 (read back)
+  hook link H1: hook k 100000.0, opening 0.05 (read back), link H1 from [20.0, 0.0, 11.0] to [20.0, 0.0, 12.0]
+Running the analysis ...
+  screenshot K1.etabs.png (ETABS 3-D view only)
+Reading results ...
+check            hand        ETABS  difference
+NLD-UZ      -0.159642    -0.159642  0.000%
+NLD-V               0  4.77485e-15  0.000%
+NLS-UZ      0.0425713    0.0425713  0.000%
+NLS-V               2            2  0.000%
+NLU-UZ      0.0500765    0.0500765  0.000%
+NLU-V         2.35259      2.35259  0.000%
+NLU-M         47.0519      47.0519  0.000%
+NLU-FZ            -10          -10  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\K1\K1.EDB; largest difference from the hand calculation 0.000%

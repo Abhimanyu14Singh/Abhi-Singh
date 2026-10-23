@@ -116,12 +116,12 @@
  ],
  "patterns": [
   {
-   "name": "DEAD"
+   "name": "G"
   }
  ],
  "pointLoads": [
   {
-   "pattern": "DEAD",
+   "pattern": "G",
    "at": [
     0.0,
     0.0,
@@ -137,7 +137,7 @@
    ]
   },
   {
-   "pattern": "DEAD",
+   "pattern": "G",
    "at": [
     0.0,
     0.0,
@@ -153,7 +153,7 @@
    ]
   },
   {
-   "pattern": "DEAD",
+   "pattern": "G",
    "at": [
     0.0,
     0.0,
@@ -172,7 +172,7 @@
  "stagedCases": [
   {
    "name": "STG",
-   "pattern": "DEAD"
+   "pattern": "G"
   }
  ],
  "checks": [
@@ -222,9 +222,9 @@
    "how": "signed"
   },
   {
-   "id": "DEAD-U3",
+   "id": "G-U3",
    "label": "All at once: level 3",
-   "case": "DEAD",
+   "case": "G",
    "quantity": "joint",
    "at": [
     0.0,

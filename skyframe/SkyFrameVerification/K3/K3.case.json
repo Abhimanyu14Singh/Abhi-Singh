@@ -1,0 +1,507 @@
+{
+ "id": "K3",
+ "title": "Section cut through a wall",
+ "purpose": "A 12 ft wide, 24 ft tall cantilever wall cut horizontally at 9 ft, between floors (stories of 9 and 15 ft so the cut is also SkyFrame's pier line). Above the cut: 40 kips lateral at the top, 20 kips at 15 ft and 120 kips of gravity at the top. The cut must carry V = 60 kips, P = 120 kips and M = 40 x 15 + 20 x 6 = 720 kip-ft about the wall centre: statics, exact at any mesh. ETABS reads it from a section cut (a group of the elements above the line and the line's joints); SkyFrame from the same free body of the shell nodal forces (its pier kernel).",
+ "units": "kip-ft",
+ "ext": "links",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "none; modal case not run",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "shells": "Shell-Thin, explicit meshes no larger than 4 ft, identical in both programs",
+  "supports": "every base node fixed",
+  "sectionCut": "horizontal, z = 9 ft, through the whole wall, moments about (6, 0, 9)",
+  "signs": "magnitudes compared (the programs report the cut from opposite sides)"
+ },
+ "materials": [
+  {
+   "name": "CONC",
+   "E": 576000.0,
+   "nu": 0.2,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [],
+ "areaSections": [
+  {
+   "name": "WALL",
+   "material": "CONC",
+   "thickness": 1.0,
+   "kind": "wall",
+   "shell": "thin"
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 9.0
+  },
+  {
+   "name": "Story2",
+   "height": 15.0
+  }
+ ],
+ "frames": [],
+ "areas": [
+  {
+   "id": "WL",
+   "section": "WALL",
+   "mesh": [
+    4,
+    3
+   ],
+   "pier": "P1",
+   "corners": [
+    [
+     0,
+     0,
+     0
+    ],
+    [
+     12.0,
+     0,
+     0
+    ],
+    [
+     12.0,
+     0,
+     9.0
+    ],
+    [
+     0,
+     0,
+     9.0
+    ]
+   ]
+  },
+  {
+   "id": "WU",
+   "section": "WALL",
+   "mesh": [
+    4,
+    5
+   ],
+   "pier": "P1",
+   "corners": [
+    [
+     0,
+     0,
+     9.0
+    ],
+    [
+     12.0,
+     0,
+     9.0
+    ],
+    [
+     12.0,
+     0,
+     24.0
+    ],
+    [
+     0,
+     0,
+     24.0
+    ]
+   ]
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    3.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    6.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    9.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    12.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "name": "H"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "H",
+   "at": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    5.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "H",
+   "at": [
+    3.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    10.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "H",
+   "at": [
+    6.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    10.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "H",
+   "at": [
+    9.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    10.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "H",
+   "at": [
+    12.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    5.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "H",
+   "at": [
+    0.0,
+    0.0,
+    15.0
+   ],
+   "f": [
+    2.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "H",
+   "at": [
+    3.0,
+    0.0,
+    15.0
+   ],
+   "f": [
+    5.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "H",
+   "at": [
+    6.0,
+    0.0,
+    15.0
+   ],
+   "f": [
+    5.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "H",
+   "at": [
+    9.0,
+    0.0,
+    15.0
+   ],
+   "f": [
+    5.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "H",
+   "at": [
+    12.0,
+    0.0,
+    15.0
+   ],
+   "f": [
+    2.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "H",
+   "at": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    0.0,
+    0.0,
+    -15.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "H",
+   "at": [
+    3.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    0.0,
+    0.0,
+    -30.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "H",
+   "at": [
+    6.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    0.0,
+    0.0,
+    -30.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "H",
+   "at": [
+    9.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    0.0,
+    0.0,
+    -30.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "pattern": "H",
+   "at": [
+    12.0,
+    0.0,
+    24.0
+   ],
+   "f": [
+    0.0,
+    0.0,
+    -15.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  }
+ ],
+ "sectionCuts": [
+  {
+   "name": "CUT9",
+   "area": "WU",
+   "z": 9.0,
+   "at": [
+    6.0,
+    0.0,
+    9.0
+   ],
+   "case": "H",
+   "keys": {
+    "V": "K3-V",
+    "P": "K3-P",
+    "M": "K3-M"
+   }
+  }
+ ],
+ "checks": [
+  {
+   "id": "H-V",
+   "label": "Cut shear",
+   "case": null,
+   "quantity": "value",
+   "key": "K3-V",
+   "hand": 60.0,
+   "formula": "H1 + H2",
+   "how": "abs"
+  },
+  {
+   "id": "H-P",
+   "label": "Cut axial force (compression)",
+   "case": null,
+   "quantity": "value",
+   "key": "K3-P",
+   "hand": 120.0,
+   "formula": "N",
+   "how": "abs"
+  },
+  {
+   "id": "H-M",
+   "label": "Cut moment about the wall centre",
+   "case": null,
+   "quantity": "value",
+   "key": "K3-M",
+   "hand": 720.0,
+   "formula": "H1 (24 - 9) + H2 (15 - 9)",
+   "how": "abs"
+  },
+  {
+   "id": "H-FX",
+   "label": "Base shear",
+   "case": "H",
+   "quantity": "base",
+   "comp": "FX",
+   "hand": -60.0,
+   "formula": "-(H1 + H2)",
+   "how": "signed"
+  },
+  {
+   "id": "H-MY",
+   "label": "Base moment about the origin",
+   "case": "H",
+   "quantity": "base",
+   "comp": "MY",
+   "hand": -1980.0,
+   "formula": "-(H1 24 + H2 15) - N b / 2",
+   "how": "signed"
+  }
+ ]
+}

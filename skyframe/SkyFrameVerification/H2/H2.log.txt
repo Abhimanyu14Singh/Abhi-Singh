@@ -1,0 +1,7 @@
+== H2: FNA with a viscous damper
+Building the model ...
+  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+  mass source (PropMaterial.SetMassSource_1): elements False, joint masses True, patterns {}
+  time-history function STEP: database table (Name, Time, Value, GUID)
+  damper D1: damper c 1.8462 kip-s/ft, series k 100000 k/ft (read back k 100000.0, c 1.8461973398659859, exponent 1.0, Ke 0.0), link D1
+STOPPED on H2: FNA case FNA (ModHistNonlinear offers: AddRef, GetIDsOfNames, GetLoads, GetTypeInfo, GetTypeInfoCount, Invoke, QueryInterface, Release, from_param, value): no load-case table found; load-case tables offered: Load Case Definitions - Linear Static, Load Case Definitions - Summary, Modal Case Definitions - Eigen

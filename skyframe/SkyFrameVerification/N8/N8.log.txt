@@ -1,0 +1,12 @@
+== N8: Pushover, yielding brace
+Building the model ...
+  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+  section BM: A 1.0, I22 0.002, I33 0.03, J 0.0005, As2 0.0, As3 0.0 (read back)
+  link BR: Plastic (Wen) k 2000.0, yield 50.0, ratio 0.0, exponent 2.0, link BR
+  pushover PO: no frame hinges (links only); push to 0.6000000000000001 ft at 2
+Running the analysis ...
+  screenshot N8.etabs.png (ETABS 3-D view only)
+Reading results ...
+check            hand        ETABS  difference
+PO-FX        -42.8746     -42.8746  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\N8\N8.EDB; largest difference from the hand calculation 0.000%

@@ -1,0 +1,250 @@
+{
+ "id": "H3",
+ "title": "Ritz vectors",
+ "purpose": "A two-story shear building analysed with Ritz vectors started from the X ground acceleration. One vector is the static deflection under the floor inertia forces: its period is the Rayleigh quotient (just below the first eigen period) and it carries 25/26 of the mass. Two vectors span the whole space and reproduce the eigen solution exactly.",
+ "units": "kip-ft",
+ "ext": "dyn",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "joint masses at both floors, X only",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "modal": "eigen (2 modes) and Ritz from acceleration UX (1 and 2 vectors)",
+  "supports": "fixed base; floor joints held in Y, Z and rotation (shear building)"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  },
+  {
+   "name": "Story2",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  },
+  {
+   "id": "C2",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    0,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "restraint": [
+    0,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "masses": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "m": [
+    0.5,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": [
+    0.0,
+    0.0,
+    24.0
+   ],
+   "m": [
+    0.5,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "massSource": {
+  "elements": false,
+  "masses": true,
+  "patterns": {}
+ },
+ "modal": {
+  "case": "MODES",
+  "modes": 2
+ },
+ "ritzCases": [
+  {
+   "name": "RITZ1",
+   "modes": 1,
+   "starts": [
+    "UX"
+   ]
+  },
+  {
+   "name": "RITZ2",
+   "modes": 2,
+   "starts": [
+    "UX"
+   ]
+  }
+ ],
+ "patterns": [],
+ "checks": [
+  {
+   "id": "T1",
+   "label": "Eigen mode 1 period",
+   "case": "MODES",
+   "quantity": "modal",
+   "mode": 1,
+   "comp": "T",
+   "hand": 0.2984959988039318,
+   "formula": "2 pi / w1, w1^2 = (3 - sqrt 5)/2 k/m",
+   "how": "signed"
+  },
+  {
+   "id": "R1-T1",
+   "label": "One Ritz vector: period (Rayleigh quotient)",
+   "case": null,
+   "quantity": "value",
+   "key": "RITZ1:T1",
+   "hand": 0.29746614668489546,
+   "formula": "2 pi sqrt(13 m / 5 k)",
+   "how": "signed"
+  },
+  {
+   "id": "R1-UX",
+   "label": "One Ritz vector: UX mass ratio",
+   "case": null,
+   "quantity": "value",
+   "key": "RITZ1:UX1",
+   "hand": 0.9615384615384616,
+   "formula": "(x1' M r)^2 / (x1' M x1 r' M r) = 25/26",
+   "how": "signed"
+  },
+  {
+   "id": "R2-T1",
+   "label": "Two Ritz vectors: period 1 = eigen",
+   "case": null,
+   "quantity": "value",
+   "key": "RITZ2:T1",
+   "hand": 0.2984959988039318,
+   "formula": "2 pi / w1",
+   "how": "signed"
+  },
+  {
+   "id": "R2-T2",
+   "label": "Two Ritz vectors: period 2 = eigen",
+   "case": null,
+   "quantity": "value",
+   "key": "RITZ2:T2",
+   "hand": 0.11401532603725399,
+   "formula": "2 pi / w2, w2^2 = (3 + sqrt 5)/2 k/m",
+   "how": "signed"
+  },
+  {
+   "id": "R2-UX1",
+   "label": "Two Ritz vectors: mode 1 UX mass ratio = eigen",
+   "case": null,
+   "quantity": "value",
+   "key": "RITZ2:UX1",
+   "hand": 0.947213595499958,
+   "formula": "(1 + phi)^2 / 2(1 + phi^2), phi = (1 + sqrt 5)/2",
+   "how": "signed"
+  }
+ ]
+}

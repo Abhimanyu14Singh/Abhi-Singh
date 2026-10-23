@@ -16,4 +16,76 @@
 [PropHinge] not available: PropHinge
 [GroupDef] AddRef, Count, Delete, GetAssignments, GetGroup, GetGroup_1, GetIDsOfNames, GetNameList, GetTypeInfo, GetTypeInfoCount, Invoke, QueryInterface, Release, SetGroup, SetGroup_1, from_param, value
 [FrameObj hinge methods] GetHingeAssigns, GetHingeAssigns_1, _cFrameObj__com_GetHingeAssigns, _cFrameObj__com_GetHingeAssigns_1
-[tables] 0 available
+[tables] 68 available
+  Analysis Options - Active Degrees of Freedom
+  Analysis Options - Analysis Model for Nonlinear Hinges
+  Analysis Options - Automatic Mesh Settings for Floors
+  Analysis Options - Automatic Rectangular Mesh Options for Walls
+  Analysis Options - Cracking Analysis Options
+  Analysis Options - Design and Response Recovery Options
+  Analysis Options - SAPFire Options
+  Area Section Property Definitions - Summary
+  Composite Beam Design Preferences - AISC 360-16
+  Composite Column Design Preferences - AISC 360-16
+  Concrete Frame Design Preferences - ACI 318-19
+  Concrete Shell Preferences - Eurocode 2-2004
+  Concrete Slab Design Preferences - ACI 318-19
+  Deck Property Definitions
+  Diaphragm Definitions
+  Dimension Line Object Geometry
+  Frame Section Property Definitions - Auto Select List
+  Frame Section Property Definitions - Concrete Beam Reinforcing
+  Frame Section Property Definitions - Concrete Column Reinforcing
+  Frame Section Property Definitions - Concrete Rectangular
+  Frame Section Property Definitions - Steel I/Wide Flange
+  Frame Section Property Definitions - Summary
+  Functions - Power Spectral Density - User Defined
+  Functions - Response Spectrum - User Defined
+  Functions - Steady State - User Defined
+  Functions - Time History - User Defined
+  Grid Definitions - General
+  Grid Definitions - Grid Lines
+  Group Definitions
+  Link Property Definitions - Linear
+  Link Property Definitions - Summary
+  Load Case Definitions - Damping - Modal
+  Load Case Definitions - Linear Static
+  Load Case Definitions - Summary
+  Load Case Definitions - Time History - Linear Modal
+  Load Pattern Definitions
+  Mass Source Definition
+  Material Properties - Acceptance Criteria
+  Material Properties - Basic Mechanical Properties
+  Material Properties - Concrete Data
+  Material Properties - Damping Parameters
+  Material Properties - General
+  Material Properties - Hysteresis Parameters - Concrete
+  Material Properties - Rebar Data
+  Material Properties - Steel Data
+  Material Properties - Tendon Data
+  Miscellaneous Options
+  Modal Case Definitions - Eigen
+  Options - Colors - Display
+  Options - Colors - Output
+  Panel Zone Property Definitions
+  Pier Label Definitions
+  Preferences - Graphics
+  Preferences - Tolerance
+  Program Control
+  Project Information
+  Reinforcing Bar Sizes
+  Shear Wall Design Preferences - ACI 318-19
+  Shear Wall Design Preferences - ACI 530-11 Masonry
+  Shear Wall Design Preferences - AISC 360-22 Composite
+  Slab Property Definitions
+  Spandrel Label Definitions
+  Steel Frame Design Preferences - AISC 360-16
+  Steel Joist Design Preferences - SJI-2010
+  Story Definitions
+  Tendon Section Properties
+  Tower and Base Story Definitions
+  Wall Property Definitions - Specified
+[fields] Analysis Options - Analysis Model for Nonlinear Hinges: ModelOpt, PropDampOpt, DampingFraction
+[fields] Functions - Response Spectrum - User Defined: Name, Period, Value, DampRatio, GUID
+[fields] Functions - Time History - User Defined: Name, Time, Value, GUID
+[fields] Load Case Definitions - Time History - Linear Modal: Name, MassSource, LoadType, LoadName, Function, LoadSF, TransAccSF, RotAccSF, TimeFactor, ArrivalTime, Angle, ModalCase, MotionType, NumSteps, StepSize, DesignType, UserDesType, GUID, Notes

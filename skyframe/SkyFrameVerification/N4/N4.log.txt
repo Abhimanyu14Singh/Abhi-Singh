@@ -3,4 +3,4 @@ Building the model ...
   section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
   mass source (PropMaterial.SetMassSource_1): elements False, joint masses True, patterns {}
   time-history function STEP: database table (Name, Time, Value, GUID)
-STOPPED on N4: modal time-history case refused: ModHistLinear.SetModalCase: SetModalCase | ModHistLinear offers: AddRef, GetIDsOfNames, GetLoads, GetTypeInfo, GetTypeInfoCount, Invoke, QueryInterface, Release, SetCase, SetLoads, from_param, value
+STOPPED on N4: table Load Case Definitions - Time History - Linear Modal: no field like 'constdamp|dampconst|constantdamping' (fields Name, LoadType, LoadName, Function, LoadSF, TransAccSF, RotAccSF, TimeFactor, ArrivalTime, Angle, ModalCase, MotionType, NumSteps, StepSize, DesignType, UserDesType, GUID, Notes)

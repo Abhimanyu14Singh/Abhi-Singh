@@ -1,0 +1,247 @@
+{
+ "id": "H2",
+ "title": "FNA with a viscous damper",
+ "purpose": "A one-mass cantilever (T = 0.5 s, 2% modal damping) with a linear viscous damper to ground adding 8% of critical, under a suddenly applied 5 kip force, solved by fast nonlinear analysis (FNA) on its one mode. The damper is a nonlinear link, so its force enters the modal equations as a pseudo-force: the response must be the 10%-damped closed form.",
+ "units": "kip-ft",
+ "ext": "dyn",
+ "settings": {
+  "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
+  "shearDeformation": "off (As2 = As3 = 0)",
+  "selfWeight": "none (unit weight 0)",
+  "mass": "one joint mass, X only",
+  "pDelta": "off",
+  "rigidZones": "none",
+  "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
+  "modal": "eigen, 1 mode",
+  "nonlinear": "viscous damper link (c, exponent 1, series spring 1e5 k/ft, no linear effective stiffness or damping), FNA",
+  "timeHistory": "load pattern F x step function from t = 0, 0.4 s at 0.001 s, constant modal damping 0.02",
+  "supports": "fixed base; damper to a fixed point 2 ft along +X"
+ },
+ "materials": [
+  {
+   "name": "STEEL",
+   "E": 4176000.0,
+   "nu": 0.3,
+   "unitWeight": 0.0
+  }
+ ],
+ "sections": [
+  {
+   "name": "COL",
+   "material": "STEEL",
+   "A": 0.1,
+   "I33": 0.02,
+   "I22": 0.005,
+   "J": 0.0005,
+   "As2": 0.0,
+   "As3": 0.0,
+   "depth": 1.0,
+   "width": 0.5
+  }
+ ],
+ "stories": [
+  {
+   "name": "Story1",
+   "height": 12.0
+  }
+ ],
+ "frames": [
+  {
+   "id": "C1",
+   "i": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "j": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "section": "COL",
+   "angle": 0.0
+  }
+ ],
+ "supports": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "at": [
+    2.0,
+    0.0,
+    12.0
+   ],
+   "restraint": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ]
+  }
+ ],
+ "masses": [
+  {
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "m": [
+    0.9182232267586861,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "massSource": {
+  "elements": false,
+  "masses": true,
+  "patterns": {}
+ },
+ "modal": {
+  "case": "MODES",
+  "modes": 1
+ },
+ "dampers": [
+  {
+   "id": "D1",
+   "i": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "j": [
+    2.0,
+    0.0,
+    12.0
+   ],
+   "c": 1.8461973398659859,
+   "k": 100000.0
+  }
+ ],
+ "patterns": [
+  {
+   "name": "F"
+  }
+ ],
+ "pointLoads": [
+  {
+   "pattern": "F",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "f": [
+    5.0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "thFunctions": [
+  {
+   "name": "STEP",
+   "points": [
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.4,
+     1.0
+    ]
+   ]
+  }
+ ],
+ "dynTH": [
+  {
+   "name": "FNA",
+   "method": "fna",
+   "modalCase": "MODES",
+   "loads": [
+    {
+     "pattern": "F",
+     "function": "STEP",
+     "scale": 1.0
+    }
+   ],
+   "dt": 0.001,
+   "steps": 400,
+   "damping": {
+    "type": "modal",
+    "zeta": 0.02
+   }
+  }
+ ],
+ "extCases": [
+  "FNA"
+ ],
+ "checks": [
+  {
+   "id": "T1",
+   "label": "Period",
+   "case": "MODES",
+   "quantity": "modal",
+   "mode": 1,
+   "comp": "T",
+   "hand": 0.5,
+   "formula": "2 pi sqrt(m / k)",
+   "how": "signed"
+  },
+  {
+   "id": "FNA-UX",
+   "label": "Peak sway, 10% damping",
+   "case": "FNA",
+   "quantity": "joint",
+   "at": [
+    0.0,
+    0.0,
+    12.0
+   ],
+   "comp": "UX",
+   "hand": 0.0596292280788852,
+   "formula": "F0/k (1 + exp(-pi z / sqrt(1 - z^2))), z = 0.02 + c / 2mw",
+   "how": "abs",
+   "tol": [
+    0.002,
+    0.005
+   ]
+  },
+  {
+   "id": "FNA-V",
+   "label": "Peak velocity (damper force / c)",
+   "case": null,
+   "quantity": "value",
+   "key": "FNA:peakVX",
+   "hand": 0.3737846874867509,
+   "formula": "(F0/k) w exp(-z w t*), tan(wd t*) = sqrt(1 - z^2) / z",
+   "how": "abs",
+   "tol": [
+    0.002,
+    0.005
+   ]
+  }
+ ]
+}
