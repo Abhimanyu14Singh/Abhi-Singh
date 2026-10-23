@@ -7,13 +7,13 @@ Building the model ...
 Running the analysis ...
   screenshot H3.etabs.png (ETABS 3-D view only)
 Reading results ...
-  RITZ1: periods [0.29849599880393174, 0.11401532603725398, 0.2974661466848954, 0.2984959988039317, 0.11401532603725398], UX ratios [0.9472135954999579, 0.05278640450004209, 0.9615384615384619, 0.9472135954999575, 0.052786404500042135]
-  RITZ2: periods [0.29849599880393174, 0.11401532603725398, 0.2974661466848954, 0.2984959988039317, 0.11401532603725398], UX ratios [0.9472135954999579, 0.05278640450004209, 0.9615384615384619, 0.9472135954999575, 0.052786404500042135]
+  RITZ1: periods [0.2974661466848954], UX ratios [0.9615384615384619]
+  RITZ2: periods [0.2984959988039317, 0.11401532603725398], UX ratios [0.9472135954999575, 0.052786404500042135]
 check            hand        ETABS  difference
 T1           0.298496     0.298496  0.000%
-R1-T1        0.297466     0.298496  0.346%
-R1-UX        0.961538     0.947214  1.490%
+R1-T1        0.297466     0.297466  0.000%
+R1-UX        0.961538     0.961538  0.000%
 R2-T1        0.298496     0.298496  0.000%
 R2-T2        0.114015     0.114015  0.000%
 R2-UX1       0.947214     0.947214  0.000%
-Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\H3\H3.EDB; largest difference from the hand calculation 1.490%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\H3\H3.EDB; largest difference from the hand calculation 0.000%

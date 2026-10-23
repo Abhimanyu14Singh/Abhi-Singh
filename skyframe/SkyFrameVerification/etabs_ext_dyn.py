@@ -444,8 +444,11 @@ def results(sm, case: dict, R, names: dict, res: dict) -> None:
         R.ok(mp, f"periods {rc['name']}")
         mr = sm.Results.ModalParticipatingMassRatios(0, [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [])
         R.ok(mr, f"mass ratios {rc['name']}")
-        for k in range(mp[0]):
-            vals[f"{rc['name']}:T{k + 1}"] = mp[4][k]
-        for k in range(mr[0]):
-            vals[f"{rc['name']}:UX{k + 1}"] = mr[5][k]
-        R.say(f"  {rc['name']}: periods {list(mp[4][:mp[0]])}, UX ratios {list(mr[5][:mr[0]])}")
+        # ETABS lists every modal case's modes whatever is selected: keep this case's rows
+        T = [mp[4][k] for k in range(mp[0]) if str(mp[1][k]).lower() == rc["name"].lower()]
+        UX = [mr[5][k] for k in range(mr[0]) if str(mr[1][k]).lower() == rc["name"].lower()]
+        for k, t in enumerate(T):
+            vals[f"{rc['name']}:T{k + 1}"] = t
+        for k, u in enumerate(UX):
+            vals[f"{rc['name']}:UX{k + 1}"] = u
+        R.say(f"  {rc['name']}: periods {T}, UX ratios {UX}")

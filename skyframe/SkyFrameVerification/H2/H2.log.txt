@@ -4,4 +4,4 @@ Building the model ...
   mass source (PropMaterial.SetMassSource_1): elements False, joint masses True, patterns {}
   time-history function STEP: database table (Name, Time, Value, GUID)
   damper D1: damper c 1.8462 kip-s/ft, series k 100000 k/ft (read back k 100000.0, c 1.8461973398659859, exponent 1.0, Ke 0.0), link D1
-STOPPED on H2: FNA case FNA (ModHistNonlinear offers: AddRef, GetIDsOfNames, GetLoads, GetTypeInfo, GetTypeInfoCount, Invoke, QueryInterface, Release, from_param, value): no load-case table found; load-case tables offered: Load Case Definitions - Linear Static, Load Case Definitions - Summary, Modal Case Definitions - Eigen
+STOPPED on H2: table Load Case Definitions - Time History - Nonlinear Modal: no field like ['constdamp|dampconst|constantdamping|dampconstant|constdampratio|constantdamp'] (fields: Name, InitialCond, NonlinCase, LoadType, LoadName, Function, LoadSF, TransAccSF, RotAccSF, TimeFactor, ArrivalTime, Angle, ModalCase, MotionType, NumSteps, StepSize, StatPeriod, MaxSubstep, MinSubstep, ForceTol, EnergyTol, MaxIter, MinIter, ConvFactor, DesignType, UserDesType, GUID, Notes)

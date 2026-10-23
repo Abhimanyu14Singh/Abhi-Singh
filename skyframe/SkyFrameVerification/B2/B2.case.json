@@ -15467,5 +15467,7 @@
    "how": "signed"
   }
  ],
+ "exportAllFrames": true,
+ "diagnose": true,
  "notes": "Total seismic weight 9000 kip."
 }

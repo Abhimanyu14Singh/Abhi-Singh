@@ -2,5 +2,26 @@
 Building the model ...
   section CCOL: A 1.0, I22 0.08333333333333333, I33 0.08333333333333333, J 0.1406, As2 0.0, As3 0.0 (read back)
   material CONC: concrete, E 518400.0, nu 0.2 (read back)
-  PropMaterial time-dependent methods: ['TimeDep']
-STOPPED on C1: time-dependent material: ETABS 23's API has no setter (PropMaterial offers ['TimeDep']) and no material table mentions time, creep or shrinkage; material tables offered: Material List by Object Type; Material List by Section Property; Material List by Story; Material Properties - Acceptance Criteria; Material Properties - Basic Mechanical Properties; Material Properties - Concrete Data; Material Properties - Damping Parameters; Material Properties - General; Material Properties - Hysteresis Parameters - Concrete; Material Properties - Rebar Data; Material Properties - Steel Data; Material Properties - Tendon Data
+STOPPED on C1: TypeError: 'NoneType' object is not iterable
+Traceback (most recent call last):
+  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 1544, in main
+    summaries.append(run_case(sm, case, out_root, version))
+                     ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 1377, in run_case
+    names = build(sm, case)
+  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 223, in build
+    ext.build(sm, case, sys.modules[__name__], point, names)   # features the stock keys do not cover
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\etabs_ext_timedep.py", line 628, in build
+    R.say(f"  time-dependent material {td['material']}: {set_time_dependent(sm, R, td)}")
+                                                         ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\etabs_ext_timedep.py", line 224, in set_time_dependent
+    return set_time_dependent_api(sm, R, td)
+  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\etabs_ext_timedep.py", line 313, in set_time_dependent_api
+    sigs = {m: com_params(tdo, m) for m in methods}
+               ~~~~~~~~~~^^^^^^^^
+  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\etabs_ext_timedep.py", line 252, in com_params
+    for at, pf in zip(argtypes, pflags):
+                  ~~~^^^^^^^^^^^^^^^^^^
+TypeError: 'NoneType' object is not iterable
+

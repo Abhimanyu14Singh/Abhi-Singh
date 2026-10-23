@@ -3,10 +3,30 @@ Building the model ...
   area section WNL: wall, thickness 0.05, shell type 1 (read back)
   168 area objects
   pushover PO: no frame hinges (links only); push to 0.4 ft at 198
-  layered wall section WNL: material WSTEEL_EPP: steel, parametric simple curve: Fy plateau to a strain of 2 (SetOSteel_1); SetSSCurve ids [-2, -1, 0, 1, 2]: call takes exactly 7 arguments (8 given); SetSSCurve ids [0, 0, 0, 0, 0]: call takes exactly 7 arguments (8 given); one shell layer t 0.05, S22 nonlinear, S11 and S12 linear; read back: 1 layer, t 0.05, S11/S22/S12 types 0/1/0
+  layered wall section WNL: material WSTEEL_EPP: steel, user stress-strain [(-2.0, -7200.0), (-0.0017241379310344827, -7200.0), (0.0, 0.0), (0.0017241379310344827, 7200.0), (2.0, 7200.0)] (SetOSteel_1 + SetSSCurve); one shell layer t 0.05, S22 nonlinear, S11 and S12 linear; read back: 1 layer, t 0.05, type 1, 2 integration points, material WSTEEL_EPP, S11/S22/S12 types 0/1/0; GetWall: wall type 1, shell type 6 (6 = layered), material , t 0.0
+    area objects by section (read back): {WNL: 168}
+    control joint 198 at [4.0, 0.0, 16.0]: 1 objects: type 5 W2_8_14
+    push pattern PUSH: 9 loaded joints, all connected to the wall; FX read back: 100: object of type 'int' has no len(), 99: object of type 'int' has no len(), 114: object of type 'int' has no len(), 128: object of type 'int' has no len(), 142: object of type 'int' has no len(), 156: object of type 'int' has no len(), 170: object of type 'int' has no len(), 184: object of type 'int' has no len(), 198: object of type 'int' has no len()
+  pushover PO solution control: 1000 steps, 200 failed substeps, 40 Newton iterations, no event stepping; multiple states saved (50 to 100); read back [1000, 200, 10, 40, 0.0001, False, 0.01, 20, 0.1, 1.618]
 Running the analysis ...
   screenshot K4.etabs.png (ETABS 3-D view only)
 Reading results ...
+  linear PUSH (1 kip): top UX 5652.63 ft (elastic wall by hand 0.00128582), base FX -1
+  case PO status: PO finished
+  pushover PO: 51 saved steps; step, U1, base FX: 0 0 0; 1 0.008 -1.4153e-06; 2 0.016 -2.8305e-06; 3 0.024 -4.2458e-06; 4 0.032 -5.6611e-06; 5 0.04 -7.0763e-06; 6 0.048 -8.4916e-06; 7 0.056 -9.9069e-06; 8 0.064 -1.1322e-05; 9 0.072 -1.2737e-05; 10 0.08 -1.4153e-05; 11 0.088 -1.5568e-05; 12 0.096 -1.6983e-05; 13 0.104 -1.8399e-05; 14 0.112 -1.9814e-05; 15 0.12 -2.1229e-05; 16 0.128 -2.2644e-05; 17 0.136 -2.406e-05; 18 0.144 -2.5475e-05; 19 0.152 -2.689e-05; 20 0.16 -2.8305e-05; 21 0.168 -2.9721e-05; 22 0.176 -3.1136e-05; 23 0.184 -3.2551e-05; 24 0.192 -3.3966e-05; 25 0.2 -3.5382e-05; 26 0.208 -3.6797e-05; 27 0.216 -3.8212e-05; 28 0.224 -3.9628e-05; 29 0.232 -4.1043e-05; 30 0.24 -4.2458e-05; 31 0.248 -4.3873e-05; 32 0.256 -4.5289e-05; 33 0.264 -4.6704e-05; 34 0.272 -4.8119e-05; 35 0.28 -4.9534e-05; 36 0.288 -5.095e-05; 37 0.296 -5.2365e-05; 38 0.304 -5.378e-05; 39 0.312 -5.5196e-05; 40 0.32 -5.6611e-05; 41 0.328 -5.8026e-05; 42 0.336 -5.9441e-05; 43 0.344 -6.0857e-05; 44 0.352 -6.2272e-05; 45 0.36 -6.3687e-05; 46 0.368 -6.5102e-05; 47 0.376 -6.6518e-05; 48 0.384 -6.7933e-05; 49 0.392 -6.9348e-05; 50 0.4 -7.0763e-05
+  pushover PO: NO RESPONSE (51 steps, peak |FX| 7.08e-05): ETABS's analysis log follows
+    LOG NUMBER OF THREADS: RESPONSE (AUTOMATIC)   =          24
+    LOG THE STRUCTURE IS UNSTABLE OR ILL-CONDITIONED !!
+    LOG - INADEQUATE SUPPORT CONDITIONS, OR
+    LOG THE STRUCTURE IS UNSTABLE OR ILL-CONDITIONED !!
+    LOG - INADEQUATE SUPPORT CONDITIONS, OR
+    LOG CASE: PO
+    LOG SAVE POSITIVE INCREMENTS ONLY             =         YES
+    LOG USE EVENT STEPPING                        =          NO
+    LOG FORCE CONVERGENCE TOLERANCE (RELATIVE)    =    0.000100
+    LOG Positive iterations are Newton-Raphson
+    LOG Saved    Null   Total  Iteration   Relative  Curr Step   Curr Sum    Max Sum
+    LOG Steps   Steps   Steps  this Step  Unbalance       Size   of Steps   of Steps
   ETABS analysed 168 area elements for 168 area objects
 check            hand        ETABS  difference
 PO-FX             -90 -7.07635e-05  100.000%

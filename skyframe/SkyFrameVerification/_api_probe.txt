@@ -16,7 +16,8 @@
 [PropHinge] not available: PropHinge
 [GroupDef] AddRef, Count, Delete, GetAssignments, GetGroup, GetGroup_1, GetIDsOfNames, GetNameList, GetTypeInfo, GetTypeInfoCount, Invoke, QueryInterface, Release, SetGroup, SetGroup_1, from_param, value
 [FrameObj hinge methods] GetHingeAssigns, GetHingeAssigns_1, _cFrameObj__com_GetHingeAssigns, _cFrameObj__com_GetHingeAssigns_1
-[tables] 68 available
+[tables] 1007 available
+  Analysis Messages
   Analysis Options - Active Degrees of Freedom
   Analysis Options - Analysis Model for Nonlinear Hinges
   Analysis Options - Automatic Mesh Settings for Floors
@@ -24,68 +25,1159 @@
   Analysis Options - Cracking Analysis Options
   Analysis Options - Design and Response Recovery Options
   Analysis Options - SAPFire Options
+  Area Assignments - Additional Mass
+  Area Assignments - Area Springs
+  Area Assignments - Auto Edge Constraints
+  Area Assignments - Diaphragms
+  Area Assignments - Edge Releases
+  Area Assignments - Floor Auto Mesh Options
+  Area Assignments - Floor Cracking
+  Area Assignments - Insertion Point
+  Area Assignments - Local Axes
+  Area Assignments - Material Overwrites
+  Area Assignments - Pier Labels
+  Area Assignments - Section Properties
+  Area Assignments - Slab Line Releases
+  Area Assignments - Slab Rib Locations
+  Area Assignments - Spandrel Labels
+  Area Assignments - Stiffness Modifiers
+  Area Assignments - Summary
+  Area Assignments - Thickness Overwrites
+  Area Assignments - Wall Auto Mesh Options
+  Area Assignments - Wall Hinge - Auto Fiber PM3
+  Area Assignments - Wall Hinge Reinforcement
+  Area Assignments - Wall Hinges
+  Area Assignments - Wall Rebar Ratio for Creep Analysis
+  Area Load Assignments - Non-uniform
+  Area Load Assignments - Temperature
+  Area Load Assignments - Uniform
+  Area Load Assignments - Uniform Load Sets
+  Area Load Assignments - Wind Pressure Coefficients
+  Area Original Revit Unique Ids
   Area Section Property Definitions - Summary
+  Assembled Joint Masses
+  Auto Construction Sequence Definition
+  Base Reactions
+  Beam Bays
+  Beam Energy Virtual Work
+  Beam Object Connectivity
+  Beam Object Curve Data
+  Brace Bays
+  Brace Energy Virtual Work
+  Brace Object Connectivity
+  Buckling Factors
+  Centers Of Mass And Rigidity
+  Column Bays
+  Column Energy Virtual Work
+  Column Object Connectivity
+  Composite Beam Additional Sections With Studs
+  Composite Beam Construction Bracing - Point
+  Composite Beam Construction Bracing - Uniform
+  Composite Beam Design Envelope
+  Composite Beam Design Envelope - AISC 360-16
+  Composite Beam Design Envelope - AISC 360-16 Castellatd/Cellular
+  Composite Beam Design Overwrites - AISC 360-05
+  Composite Beam Design Overwrites - AISC 360-10
+  Composite Beam Design Overwrites - AISC 360-16
+  Composite Beam Design Overwrites - AISC 360-22
+  Composite Beam Design Overwrites - BS 5950-1990
+  Composite Beam Design Overwrites - Chinese 2010
+  Composite Beam Design Overwrites - Chinese 2018
+  Composite Beam Design Overwrites - CSA S16-09
+  Composite Beam Design Overwrites - CSA S16-14
+  Composite Beam Design Overwrites - CSA S16-19
+  Composite Beam Design Overwrites - Eurocode 4-2004
+  Composite Beam Design Overwrites - IS 11384_2022
+  Composite Beam Design Overwrites - KDS 143180-2022
+  Composite Beam Design Preferences - AISC 360-05
+  Composite Beam Design Preferences - AISC 360-10
   Composite Beam Design Preferences - AISC 360-16
+  Composite Beam Design Preferences - AISC 360-22
+  Composite Beam Design Preferences - BS 5950-90
+  Composite Beam Design Preferences - Chinese 2010
+  Composite Beam Design Preferences - Chinese 2018
+  Composite Beam Design Preferences - CSA S16-09
+  Composite Beam Design Preferences - CSA S16-14
+  Composite Beam Design Preferences - CSA S16-19
+  Composite Beam Design Preferences - CSA S16-24
+  Composite Beam Design Preferences - Eurocode 4-2004
+  Composite Beam Design Preferences - IS 11384_2022
+  Composite Beam Design Preferences - KDS 143180-2022
+  Composite Beam Design Summary - AISC 360-16
+  Composite Beam Design Summary - AISC 360-16 Castellatd/Cellular
+  Composite Beam Design Web Openings - AISC 360-16
+  Composite Beam Strength Bracing - Point
+  Composite Beam Strength Bracing - Uniform
+  Composite Column Design - Decision Parameters - AISC 360-16
+  Composite Column Design Overwrites - AISC 360-10
+  Composite Column Design Overwrites - AISC 360-16
+  Composite Column Design Overwrites - AISC 360-22
+  Composite Column Design Overwrites - Chinese 2010
+  Composite Column Design Overwrites - CSA S16-19
+  Composite Column Design Overwrites - CSA S16-24
+  Composite Column Design Overwrites - Eurocode 4-2004
+  Composite Column Design Overwrites - IS 11384:2022
+  Composite Column Design Overwrites - KDS 14 31 00 : 2022
+  Composite Column Design Preferences - AISC 360-10
   Composite Column Design Preferences - AISC 360-16
+  Composite Column Design Preferences - AISC 360-22
+  Composite Column Design Preferences - Chinese 2010
+  Composite Column Design Preferences - CSA S16-19
+  Composite Column Design Preferences - CSA S16-24
+  Composite Column Design Preferences - Eurocode 4-2004
+  Composite Column Design Preferences - IS 11384:2022
+  Composite Column Design Preferences - KDS 14 31 00 : 2022
+  Composite Column Encased Summary - AISC 360-16
+  Composite Column Filled Summary - AISC 360-16
+  Concrete Beam Design - Flexural Stress Check - Long Term
+  Concrete Beam Design - Flexural Stress Check - Normal
+  Concrete Beam Design - Flexural Stress Check - Transfer
+  Concrete Beam Design Summary - ACI 318-19
+  Concrete Beam Flexure Envelope - ACI 318-19
+  Concrete Beam Overwrites - ACI 318-08
+  Concrete Beam Overwrites - ACI 318-11
+  Concrete Beam Overwrites - ACI 318-14
+  Concrete Beam Overwrites - ACI 318-19
+  Concrete Beam Overwrites - ACI 318-25
+  Concrete Beam Overwrites - AS 3600-09
+  Concrete Beam Overwrites - AS 3600-2018
+  Concrete Beam Overwrites - BS 8110-97
+  Concrete Beam Overwrites - Chinese 2010
+  Concrete Beam Overwrites - CSA A233-14
+  Concrete Beam Overwrites - CSA A233-19
+  Concrete Beam Overwrites - CSA A233-24
+  Concrete Beam Overwrites - EN 1992-1-1-2023
+  Concrete Beam Overwrites - Eurocode 2-2004
+  Concrete Beam Overwrites - Hong Kong CP 2013
+  Concrete Beam Overwrites - IS 456-2000
+  Concrete Beam Overwrites - Italian NTC 2008
+  Concrete Beam Overwrites - KBC 2009
+  Concrete Beam Overwrites - KBC 2016
+  Concrete Beam Overwrites - KDS 14 20 00:2022
+  Concrete Beam Overwrites - Mexican RCDF 2004
+  Concrete Beam Overwrites - Mexican RCDF 2017
+  Concrete Beam Overwrites - NZS 3101-2006
+  Concrete Beam Overwrites - Singapore CP 65-99
+  Concrete Beam Overwrites - SP 63-13330-2012
+  Concrete Beam Overwrites - TCVN 5574-2012
+  Concrete Beam Overwrites - TCVN 5574-2018
+  Concrete Beam Overwrites - TS 500-2000
+  Concrete Beam Overwrites - TS 500-2000(R2018)
+  Concrete Beam Shear Envelope - ACI 318-19
+  Concrete Column Design Summary - ACI 318-19
+  Concrete Column Overwrites - ACI 318-08
+  Concrete Column Overwrites - ACI 318-11
+  Concrete Column Overwrites - ACI 318-14
+  Concrete Column Overwrites - ACI 318-19
+  Concrete Column Overwrites - ACI 318-25
+  Concrete Column Overwrites - AS 3600-09
+  Concrete Column Overwrites - AS 3600-2018
+  Concrete Column Overwrites - BS 8110-97
+  Concrete Column Overwrites - Chinese 2010
+  Concrete Column Overwrites - CSA A233-14
+  Concrete Column Overwrites - CSA A233-19
+  Concrete Column Overwrites - CSA A233-24
+  Concrete Column Overwrites - EN 1992-1-1-2023
+  Concrete Column Overwrites - Eurocode 2-2004
+  Concrete Column Overwrites - Hong Kong CP 2013
+  Concrete Column Overwrites - IS 456-2000
+  Concrete Column Overwrites - Italian NTC 2008
+  Concrete Column Overwrites - KBC 2009
+  Concrete Column Overwrites - KBC 2016
+  Concrete Column Overwrites - KDS 14 20 00:2022
+  Concrete Column Overwrites - Mexican RCDF 2004
+  Concrete Column Overwrites - Mexican RCDF 2017
+  Concrete Column Overwrites - NZS 3101-2006
+  Concrete Column Overwrites - Singapore CP 65-99
+  Concrete Column Overwrites - SP 63-13330-2012
+  Concrete Column Overwrites - TCVN 5574-2012
+  Concrete Column Overwrites - TCVN 5574-2018
+  Concrete Column Overwrites - TS 500-2000
+  Concrete Column Overwrites - TS 500-2000(R2018)
+  Concrete Column PMM Envelope - ACI 318-19
+  Concrete Column Shear Envelope - ACI 318-19
+  Concrete Frame Design Load Combination Data
+  Concrete Frame Design Preferences - ACI 318-08
+  Concrete Frame Design Preferences - ACI 318-11
+  Concrete Frame Design Preferences - ACI 318-14
   Concrete Frame Design Preferences - ACI 318-19
+  Concrete Frame Design Preferences - ACI 318-25
+  Concrete Frame Design Preferences - AS 3600-09
+  Concrete Frame Design Preferences - AS 3600-2018
+  Concrete Frame Design Preferences - BS 8110-97
+  Concrete Frame Design Preferences - Chinese 2010
+  Concrete Frame Design Preferences - CSA A233-14
+  Concrete Frame Design Preferences - CSA A233-19
+  Concrete Frame Design Preferences - CSA A233-24
+  Concrete Frame Design Preferences - EN 1992-1-1-2023
+  Concrete Frame Design Preferences - Eurocode 2-2004
+  Concrete Frame Design Preferences - Hong Kong CP 2013
+  Concrete Frame Design Preferences - IS 456-2000
+  Concrete Frame Design Preferences - Italian NTC 2008
+  Concrete Frame Design Preferences - KBC 2009
+  Concrete Frame Design Preferences - KBC 2016
+  Concrete Frame Design Preferences - KDS 14 20 00:2022
+  Concrete Frame Design Preferences - Mexican RCDF 2004
+  Concrete Frame Design Preferences - Mexican RCDF 2017
+  Concrete Frame Design Preferences - NZS 3101-2006
+  Concrete Frame Design Preferences - Singapore CP 65-99
+  Concrete Frame Design Preferences - SP 63-13330-2012
+  Concrete Frame Design Preferences - TCVN 5574-2012
+  Concrete Frame Design Preferences - TCVN 5574-2018
+  Concrete Frame Design Preferences - TS 500-2000
+  Concrete Frame Design Preferences - TS 500-2000(R2018)
+  Concrete Joint Design Summary - ACI 318-19
+  Concrete Joint Envelope - ACI 318-19
+  Concrete Shell Overwrites - Eurocode 2-2004
   Concrete Shell Preferences - Eurocode 2-2004
+  Concrete Shell Summary - Eurocode 2-2004
+  Concrete Slab Design - Flexural Stress Check - Long Term
+  Concrete Slab Design - Flexural Stress Check - Normal
+  Concrete Slab Design - Flexural Stress Check - Transfer
+  Concrete Slab Design - Flexure and Shear Data
+  Concrete Slab Design - Punching Shear Data
+  Concrete Slab Design Load Combination Data
+  Concrete Slab Design Overwrites - Finite Element Based
+  Concrete Slab Design Overwrites - Punching Shear - General
+  Concrete Slab Design Overwrites - Punching Shear - Openings
+  Concrete Slab Design Overwrites - Punching Shear - Perimeter
+  Concrete Slab Design Overwrites - Strip Based
+  Concrete Slab Design Preferences - ACI 318-08
+  Concrete Slab Design Preferences - ACI 318-11
+  Concrete Slab Design Preferences - ACI 318-14
   Concrete Slab Design Preferences - ACI 318-19
+  Concrete Slab Design Preferences - ACI 318-25
+  Concrete Slab Design Preferences - AS 3600-09
+  Concrete Slab Design Preferences - AS 3600-2018
+  Concrete Slab Design Preferences - BS 8110-97
+  Concrete Slab Design Preferences - Chinese 2010
+  Concrete Slab Design Preferences - CSA A233-14
+  Concrete Slab Design Preferences - CSA A233-19
+  Concrete Slab Design Preferences - Eurocode 2-2004
+  Concrete Slab Design Preferences - Eurocode 2-2023
+  Concrete Slab Design Preferences - Hong Kong CP 2013
+  Concrete Slab Design Preferences - IS 456-2000
+  Concrete Slab Design Preferences - Italian NTC 2008
+  Concrete Slab Design Preferences - KDS 14 20 00:2022
+  Concrete Slab Design Preferences - NZS 3101-2006
+  Concrete Slab Design Preferences - Singapore CP 65-99
+  Concrete Slab Design Preferences - SP 63-13330-2012
+  Concrete Slab Design Preferences - TS 500-2000
+  Concrete Slab Design Summary - Flexure and Shear Data
+  Concrete Slab Design Summary - Span Definition Data
+  Database Excel Names
+  Database Field Names
+  Database Table Named Set Definitions
+  Database Table Names
   Deck Property Definitions
+  Design Forces - Beams
+  Design Forces - Braces
+  Design Forces - Columns
+  Design Forces - Piers
+  Design Forces - Spandrels
+  Design Optimization - Lateral Displacement Targets
+  Design Optimization - Time Period Targets
+  Diaphragm Accelerations
+  Diaphragm Center Of Mass Displacements
   Diaphragm Definitions
+  Diaphragm Forces
+  Diaphragm Max Over Avg Drifts
   Dimension Line Object Geometry
+  Element Deformations - Links
+  Element Deformations - Panel Zones
+  Element Forces - Area Shells
+  Element Forces - Beams
+  Element Forces - Beams - Enveloping Summary
+  Element Forces - Beams - Summary
+  Element Forces - Braces
+  Element Forces - Columns
+  Element Forces - Links
+  Element Forces - Panel Zones
+  Element Joint Forces - Frame
+  Element Joint Forces - Links
+  Element Joint Forces - Shells
+  Element Layer Strains - Area Shells
+  Element Layer Stresses - Area Shells
+  Element Nonlinear Energy By Group
+  Element Status - Links
+  Element Status - Panel Zones
+  Element Strains - Area Shells
+  Element Stresses - Area Shells
+  Envelope Steel Joist Design Summary - SJI 2010
+  Fiber Hinge Fiber States
+  Fiber Hinge States
+  Floor Bays
+  Floor Energy Virtual Work
+  Floor Object Connectivity
+  Floor Object Curved Edge Data
+  Floor Vibration - Walking Excitations
+  Floor Vibration Excitation Sets
+  Frame Assignments - Additional Mass
+  Frame Assignments - Advanced Nonprismatic Section Parameters
+  Frame Assignments - Column Splice Overwrites
+  Frame Assignments - Corebrace BRB Details
+  Frame Assignments - End Length Offsets
+  Frame Assignments - Floor Cracking
+  Frame Assignments - Frame Auto Mesh Options
+  Frame Assignments - Frame Floor Meshing Option
+  Frame Assignments - Hinge - ASCE 41-13 - Concrete Beam
+  Frame Assignments - Hinge - ASCE 41-13 - Concrete Column
+  Frame Assignments - Hinge - ASCE 41-13 - Steel Beam
+  Frame Assignments - Hinge - ASCE 41-13 - Steel Brace
+  Frame Assignments - Hinge - ASCE 41-13 - Steel Column
+  Frame Assignments - Hinge - ASCE 41-17 - Conc CouplingBm - Flex
+  Frame Assignments - Hinge - ASCE 41-17 - Conc CouplingBm - Shear
+  Frame Assignments - Hinge - ASCE 41-17 - Conc Shear Wall - Flex
+  Frame Assignments - Hinge - ASCE 41-17 - Conc Shear Wall - Shear
+  Frame Assignments - Hinge - ASCE 41-17 - Concrete Beam
+  Frame Assignments - Hinge - ASCE 41-17 - Concrete Column
+  Frame Assignments - Hinge - ASCE 41-17 - Steel Beam
+  Frame Assignments - Hinge - ASCE 41-17 - Steel Brace
+  Frame Assignments - Hinge - ASCE 41-17 - Steel Column
+  Frame Assignments - Hinge - ASCE 41-23 - Conc CouplingBm - Flex
+  Frame Assignments - Hinge - ASCE 41-23 - Conc CouplingBm - Shear
+  Frame Assignments - Hinge - ASCE 41-23 - Conc Shear Wall - Flex
+  Frame Assignments - Hinge - ASCE 41-23 - Conc Shear Wall - Shear
+  Frame Assignments - Hinge - ASCE 41-23 - Concrete Beam
+  Frame Assignments - Hinge - ASCE 41-23 - Concrete Column
+  Frame Assignments - Hinge - ASCE 41-23 - Steel Beam
+  Frame Assignments - Hinge - ASCE 41-23 - Steel Brace
+  Frame Assignments - Hinge - ASCE 41-23 - Steel Column
+  Frame Assignments - Hinge - BRB
+  Frame Assignments - Hinge - Distribution Type
+  Frame Assignments - Hinge - Overwrites
+  Frame Assignments - Hinge - Summary
+  Frame Assignments - Hinge - User
+  Frame Assignments - Insertion Point
+  Frame Assignments - Line Springs
+  Frame Assignments - Local Axes
+  Frame Assignments - Material Overwrites
+  Frame Assignments - Moment Frame Beam Connection Type
+  Frame Assignments - Output Stations
+  Frame Assignments - Pier Labels
+  Frame Assignments - Property Modifiers
+  Frame Assignments - Rebar Ratio For Creep Analysis
+  Frame Assignments - Releases and Partial Fixity
+  Frame Assignments - Section Properties
+  Frame Assignments - SidePlate Data
+  Frame Assignments - Spandrel Labels
+  Frame Assignments - Summary
+  Frame Assignments - Tension and Compression Limits
+  Frame Element Cracked Section Modifiers
+  Frame Loads Assignments - Distributed
+  Frame Loads Assignments - Open Structure Wind Parameters
+  Frame Loads Assignments - Point
+  Frame Loads Assignments - Temperature
+  Frame Original Revit Unique Ids
+  Frame Overturning Moments in Dual Systems
+  Frame Property Modifier Definitions
+  Frame Release Definitions
   Frame Section Property Definitions - Auto Select List
+  Frame Section Property Definitions - Buckling Restrained Brace
+  Frame Section Property Definitions - Cold Formed C
+  Frame Section Property Definitions - Cold Formed Hat
+  Frame Section Property Definitions - Cold Formed Z
+  Frame Section Property Definitions - Conc Encasement Rectangle
   Frame Section Property Definitions - Concrete Beam Reinforcing
+  Frame Section Property Definitions - Concrete Box
+  Frame Section Property Definitions - Concrete Circle
   Frame Section Property Definitions - Concrete Column Reinforcing
+  Frame Section Property Definitions - Concrete Cross
+  Frame Section Property Definitions - Concrete Encasement Circle
+  Frame Section Property Definitions - Concrete L
+  Frame Section Property Definitions - Concrete Pipe
+  Frame Section Property Definitions - Concrete Precast I
   Frame Section Property Definitions - Concrete Rectangular
+  Frame Section Property Definitions - Concrete Tee
+  Frame Section Property Definitions - Concrete Trapezoid
+  Frame Section Property Definitions - CoreBrace BRB
+  Frame Section Property Definitions - Filled Steel Pipe
+  Frame Section Property Definitions - Filled Steel Tube
+  Frame Section Property Definitions - General
+  Frame Section Property Definitions - Nonprismatic
+  Frame Section Property Definitions - Section Designer
+  Frame Section Property Definitions - Steel Angle
+  Frame Section Property Definitions - Steel BU I Cover Plate
+  Frame Section Property Definitions - Steel Castellated
+  Frame Section Property Definitions - Steel Cellular
+  Frame Section Property Definitions - Steel Channel
+  Frame Section Property Definitions - Steel Double Angle
+  Frame Section Property Definitions - Steel Double Channel
   Frame Section Property Definitions - Steel I/Wide Flange
+  Frame Section Property Definitions - Steel Joist
+  Frame Section Property Definitions - Steel Pipe
+  Frame Section Property Definitions - Steel Plate
+  Frame Section Property Definitions - Steel Rod
+  Frame Section Property Definitions - Steel Tee
+  Frame Section Property Definitions - Steel Tube
   Frame Section Property Definitions - Summary
+  Frame Shear Ratios In Dual Systems And Modifiers
+  Functions - Power Spectral Density - From File
   Functions - Power Spectral Density - User Defined
+  Functions - Response Spectrum - Argentina INPRES-CIRSOC 103
+  Functions - Response Spectrum - AS1170-2007
+  Functions - Response Spectrum - AS1170-2024
+  Functions - Response Spectrum - ASCE7-02
+  Functions - Response Spectrum - ASCE7-05
+  Functions - Response Spectrum - ASCE7-10
+  Functions - Response Spectrum - ASCE7-16
+  Functions - Response Spectrum - ASCE7-22
+  Functions - Response Spectrum - Chile Norma NCh2369-2003
+  Functions - Response Spectrum - Chile Norma NCh433 DS61
+  Functions - Response Spectrum - Chinese GB50011-2010
+  Functions - Response Spectrum - Columbia NSR-10
+  Functions - Response Spectrum - Costa Rica Seismic Code 2010
+  Functions - Response Spectrum - Dominican Republic R-001
+  Functions - Response Spectrum - Ecuador NEC-11 Capitulo 2
+  Functions - Response Spectrum - Ecuador Norma NEC-SE-DS 2015
+  Functions - Response Spectrum - Eurocode8
+  Functions - Response Spectrum - Eurocode8-2004
+  Functions - Response Spectrum - From File
+  Functions - Response Spectrum - Guatemala AGIES NSE 2-10
+  Functions - Response Spectrum - IS1893 2002
+  Functions - Response Spectrum - IS1893 2016
+  Functions - Response Spectrum - Italian 3274
+  Functions - Response Spectrum - Italian NTC2008
+  Functions - Response Spectrum - Italian NTC2018
+  Functions - Response Spectrum - KDS 41 17 00-2019
+  Functions - Response Spectrum - KDS 41 17 00-2024
+  Functions - Response Spectrum - Korean KBC 2009
+  Functions - Response Spectrum - Korean KBC 2016
+  Functions - Response Spectrum - Mexico CFE-2008
+  Functions - Response Spectrum - Mexico CFE-93
+  Functions - Response Spectrum - Mexico NTC-2004
+  Functions - Response Spectrum - NBCC2005
+  Functions - Response Spectrum - NBCC2010
+  Functions - Response Spectrum - NBCC2015
+  Functions - Response Spectrum - NBCC2020
+  Functions - Response Spectrum - NBCC2025
+  Functions - Response Spectrum - NBCC95
+  Functions - Response Spectrum - NEHRP97
+  Functions - Response Spectrum - NZS1170-2004
+  Functions - Response Spectrum - NZS4203
+  Functions - Response Spectrum - Peru Norma E030
+  Functions - Response Spectrum - Peru NTE E030 2014
+  Functions - Response Spectrum - SI 413
+  Functions - Response Spectrum - SNIP KR 20-02:2018
+  Functions - Response Spectrum - SP 14 13330 2014
+  Functions - Response Spectrum - TCVN 9386 2012
+  Functions - Response Spectrum - TSC-2007
+  Functions - Response Spectrum - TSC-2018
+  Functions - Response Spectrum - UBC 97
   Functions - Response Spectrum - User Defined
+  Functions - Response Spectrum - Venezuela COVENIN 1756-2 2001
+  Functions - Steady State - From File
   Functions - Steady State - User Defined
+  Functions - Time History - Cosine
+  Functions - Time History - From File
+  Functions - Time History - Matched to Response Spectrum
+  Functions - Time History - Ramp
+  Functions - Time History - Sawtooth
+  Functions - Time History - Sine
+  Functions - Time History - Triangular
   Functions - Time History - User Defined
+  Functions - Time History - User Periodic
+  General Wall Hinge NL Shear State
+  Generalized Displacement Definitions
+  Generated Hinges - Axial P
+  Generated Hinges - Fiber PM2M3
+  Generated Hinges - Fiber PM3
+  Generated Hinges - Force Controlled - Axial P
+  Generated Hinges - Force Controlled - Interacting M2M3
+  Generated Hinges - Force Controlled - Interacting PM2
+  Generated Hinges - Force Controlled - Interacting PM2M3
+  Generated Hinges - Force Controlled - Interacting PM3
+  Generated Hinges - Force Controlled - Moment M2
+  Generated Hinges - Force Controlled - Moment M3
+  Generated Hinges - Force Controlled - Shear V2
+  Generated Hinges - Force Controlled - Shear V3
+  Generated Hinges - Force Controlled - Torsion T
+  Generated Hinges - Interacting M2M3
+  Generated Hinges - Interacting PM2
+  Generated Hinges - Interacting PM2M3
+  Generated Hinges - Interacting PM3
+  Generated Hinges - Moment M2
+  Generated Hinges - Moment M3
+  Generated Hinges - Parametric - Concrete PM2M3
+  Generated Hinges - Parametric - Steel PM2M3
+  Generated Hinges - Shear V2
+  Generated Hinges - Shear V3
+  Generated Hinges - Torsion T
+  Generated Panel Zone Properties
+  Generated Panel Zone Properties - Nonlinear Data
   Grid Definitions - General
   Grid Definitions - Grid Lines
+  Grid Definitions - Reference Planes
+  Grid Definitions - Reference Points
+  Group Assignments
   Group Definitions
+  Hinge Definitions - Axial P
+  Hinge Definitions - Fiber PM2M3
+  Hinge Definitions - Fiber PM3
+  Hinge Definitions - Force Controlled - Axial P
+  Hinge Definitions - Force Controlled - Interacting M2M3
+  Hinge Definitions - Force Controlled - Interacting PM2
+  Hinge Definitions - Force Controlled - Interacting PM2M3
+  Hinge Definitions - Force Controlled - Interacting PM3
+  Hinge Definitions - Force Controlled - Moment M2
+  Hinge Definitions - Force Controlled - Moment M3
+  Hinge Definitions - Force Controlled - Shear V2
+  Hinge Definitions - Force Controlled - Shear V3
+  Hinge Definitions - Force Controlled - Torsion T
+  Hinge Definitions - Interacting M2M3
+  Hinge Definitions - Interacting PM2
+  Hinge Definitions - Interacting PM2M3
+  Hinge Definitions - Interacting PM3
+  Hinge Definitions - Moment M2
+  Hinge Definitions - Moment M3
+  Hinge Definitions - Parametric - Concrete PM2M3
+  Hinge Definitions - Parametric - Steel PM2M3
+  Hinge Definitions - Shear V2
+  Hinge Definitions - Shear V3
+  Hinge Definitions - Torsion T
+  Hinge States
+  Integrated Wall Reactions
+  Iqbal - Test Output
+  Joint Accelerations - Absolute
+  Joint Accelerations - Generalized - Absolute
+  Joint Accelerations - Generalized - Relative
+  Joint Accelerations - Relative
+  Joint Assignments - Additional Mass
+  Joint Assignments - Diaphragms
+  Joint Assignments - Floor Meshing Option
+  Joint Assignments - Panel Zone
+  Joint Assignments - Restraints
+  Joint Assignments - Springs
+  Joint Assignments - Summary
+  Joint Design Reactions
+  Joint Displacements
+  Joint Displacements - Absolute
+  Joint Displacements - Generalized
+  Joint Displacements - Generalized - Absolute
+  Joint Displacements (Including Internal Mesh Joints)
+  Joint Drifts
+  Joint Loads Assignments - Force
+  Joint Loads Assignments - Ground Displacement
+  Joint Loads Assignments - Temperature
+  Joint Reactions
+  Joint Velocities - Absolute
+  Joint Velocities - Generalized - Absolute
+  Joint Velocities - Generalized - Relative
+  Joint Velocities - Relative
+  Line Gauge Assignments - Local Axes
+  Line Gauge Assignments - Properties
+  Line Gauge Object Connectivity
+  Line Gauge Property Definitions
+  Line Strain Gauge - Rotation
+  Line Strain Gauge - Translation
+  Link Assignments - Link Properties
+  Link Assignments - Local Axes
+  Link Assignments - Summary
+  Link Object Connectivity
+  Link Property Definitions - Acceptance Criteria - Displacement
+  Link Property Definitions - Acceptance Criteria - Force
+  Link Property Definitions - Damper - Bilinear
+  Link Property Definitions - Damper - Exponential
+  Link Property Definitions - Damper - Friction Spring
+  Link Property Definitions - Damper - Sumitomo Viscoelastic
+  Link Property Definitions - Gap
+  Link Property Definitions - Hook
+  Link Property Definitions - Isolator - Friction
+  Link Property Definitions - Isolator - High Damping Rubber
+  Link Property Definitions - Isolator - Rubber
+  Link Property Definitions - Isolator - TC Friction
+  Link Property Definitions - Isolator - Triple Pendulum
   Link Property Definitions - Linear
+  Link Property Definitions - Multilinear - Elastic
+  Link Property Definitions - Multilinear - Plastic
+  Link Property Definitions - Plastic Wen
   Link Property Definitions - Summary
+  Load Case Definitions - Buckling
+  Load Case Definitions - Damping - Hysteretic
   Load Case Definitions - Damping - Modal
+  Load Case Definitions - Hyperstatic
   Load Case Definitions - Linear Static
+  Load Case Definitions - Nonlinear Staged Construction
+  Load Case Definitions - Nonlinear Static
+  Load Case Definitions - Power Spectral Density
+  Load Case Definitions - Response Spectrum
+  Load Case Definitions - Steady State
   Load Case Definitions - Summary
+  Load Case Definitions - Time History - Linear Direct Integration
   Load Case Definitions - Time History - Linear Modal
+  Load Case Definitions - Time History - Nonlin Direct Integration
+  Load Case Definitions - Time History - Nonlinear Modal
+  Load Combination Definitions
   Load Pattern Definitions
+  Load Pattern Definitions - Auto Notional Loads
+  Load Pattern Definitions - Auto Seismic - AS 1170 2007
+  Load Pattern Definitions - Auto Seismic - AS 1170 2024
+  Load Pattern Definitions - Auto Seismic - ASCE 7-02
+  Load Pattern Definitions - Auto Seismic - ASCE 7-05
+  Load Pattern Definitions - Auto Seismic - ASCE 7-10
+  Load Pattern Definitions - Auto Seismic - ASCE 7-16
+  Load Pattern Definitions - Auto Seismic - ASCE 7-22
+  Load Pattern Definitions - Auto Seismic - Chinese 2010
+  Load Pattern Definitions - Auto Seismic - Dominican Rep R-001
+  Load Pattern Definitions - Auto Seismic - Eurocode8 2004
+  Load Pattern Definitions - Auto Seismic - IS 1893 2002
+  Load Pattern Definitions - Auto Seismic - IS 1893 2016
+  Load Pattern Definitions - Auto Seismic - Italian NTC 2008
+  Load Pattern Definitions - Auto Seismic - Italian NTC 2018
+  Load Pattern Definitions - Auto Seismic - KBC 2009
+  Load Pattern Definitions - Auto Seismic - KBC 2016
+  Load Pattern Definitions - Auto Seismic - KDS 41 17 00:2019
+  Load Pattern Definitions - Auto Seismic - KDS 41 17 00:2024
+  Load Pattern Definitions - Auto Seismic - Loads to Diaphragms
+  Load Pattern Definitions - Auto Seismic - Loads to Stories
+  Load Pattern Definitions - Auto Seismic - NBCC 2005
+  Load Pattern Definitions - Auto Seismic - NBCC 2010
+  Load Pattern Definitions - Auto Seismic - NBCC 2015
+  Load Pattern Definitions - Auto Seismic - NBCC 2020
+  Load Pattern Definitions - Auto Seismic - NBCC 2025
+  Load Pattern Definitions - Auto Seismic - NBCC 95
+  Load Pattern Definitions - Auto Seismic - NEHRP 97
+  Load Pattern Definitions - Auto Seismic - NZS 1170 2004
+  Load Pattern Definitions - Auto Seismic - TCVN 9386 2012
+  Load Pattern Definitions - Auto Seismic - TSC 2007
+  Load Pattern Definitions - Auto Seismic - TSC 2018
+  Load Pattern Definitions - Auto Seismic - UBC 97
+  Load Pattern Definitions - Auto Seismic - User Coefficient
+  Load Pattern Definitions - Auto Seismic - User Loads
+  Load Pattern Definitions - Auto Wind - AS and NZS 1170 2 2002
+  Load Pattern Definitions - Auto Wind - AS and NZS 1170 2 2011
+  Load Pattern Definitions - Auto Wind - AS and NZS 1170 2 2021
+  Load Pattern Definitions - Auto Wind - ASCE 7-02
+  Load Pattern Definitions - Auto Wind - ASCE 7-05
+  Load Pattern Definitions - Auto Wind - ASCE 7-10
+  Load Pattern Definitions - Auto Wind - ASCE 7-16
+  Load Pattern Definitions - Auto Wind - ASCE 7-22
+  Load Pattern Definitions - Auto Wind - ASCE 7-88
+  Load Pattern Definitions - Auto Wind - ASCE 7-95
+  Load Pattern Definitions - Auto Wind - BS 6399-95
+  Load Pattern Definitions - Auto Wind - Chinese 2010
+  Load Pattern Definitions - Auto Wind - Eurocode1 2005
+  Load Pattern Definitions - Auto Wind - Indian IS 875 1987
+  Load Pattern Definitions - Auto Wind - Indian IS 875 2015
+  Load Pattern Definitions - Auto Wind - Italian NTC 2008
+  Load Pattern Definitions - Auto Wind - Italian NTC 2018
+  Load Pattern Definitions - Auto Wind - KBC 2016
+  Load Pattern Definitions - Auto Wind - Loads to Diaphragms
+  Load Pattern Definitions - Auto Wind - Loads to Stories
+  Load Pattern Definitions - Auto Wind - Mexican
+  Load Pattern Definitions - Auto Wind - NBCC 2005
+  Load Pattern Definitions - Auto Wind - NBCC 2010
+  Load Pattern Definitions - Auto Wind - NBCC 2015
+  Load Pattern Definitions - Auto Wind - NBCC 2020
+  Load Pattern Definitions - Auto Wind - NBCC 2025
+  Load Pattern Definitions - Auto Wind - NBCC 95
+  Load Pattern Definitions - Auto Wind - TCVN 2737 1995
+  Load Pattern Definitions - Auto Wind - TCVN 2737 2023
+  Load Pattern Definitions - Auto Wind - Turkish TS 498-97
+  Load Pattern Definitions - Auto Wind - User Loads
   Mass Source Definition
+  Mass Summary by Diaphragm
+  Mass Summary by Group
+  Mass Summary by Story
+  Material List by Object Type
+  Material List by Section Property
+  Material List by Story
   Material Properties - Acceptance Criteria
+  Material Properties - Aluminum Data
   Material Properties - Basic Mechanical Properties
+  Material Properties - Coldformed Data
   Material Properties - Concrete Data
   Material Properties - Damping Parameters
   Material Properties - General
+  Material Properties - Hysteresis Parameters - BRB Hardening
   Material Properties - Hysteresis Parameters - Concrete
+  Material Properties - Hysteresis Parameters - Degrading
+  Material Properties - Hysteresis Parameters - Pivot
+  Material Properties - Masonry Data
+  Material Properties - Other Data
   Material Properties - Rebar Data
   Material Properties - Steel Data
   Material Properties - Tendon Data
+  Material Properties - Time Dependence - ACI 209R-92
+  Material Properties - Time Dependence - AS 3600-2009
+  Material Properties - Time Dependence - AS 3600-2018
+  Material Properties - Time Dependence - CEB-FIP 2010
+  Material Properties - Time Dependence - CEB-FIP 90
+  Material Properties - Time Dependence - Eurocode 2-2004
+  Material Properties - Time Dependence - GL2000
+  Material Properties - Time Dependence - NZS 3101-2006
+  Material Properties - Time Dependence - User Creep
+  Material Properties - Time Dependence - User Shrinkage
+  Material Properties - Time Dependence - User Stiffness
+  Material Properties - User Stress-Strain Curves
   Miscellaneous Options
   Modal Case Definitions - Eigen
+  Modal Case Definitions - Ritz
+  Modal Direction Factors
+  Modal Load Participation Ratios
+  Modal Participating Mass Ratios
+  Modal Participation Factors
+  Modal Periods And Frequencies
+  Nodal Displacements Enveloping Summary
+  Nodal Displacements Summary
+  Null Area Bays
+  Null Area Object Connectivity
+  Null Line Bays
+  Null Line Object Connectivity
+  Objects and Elements - Areas
+  Objects and Elements - Frames
+  Objects and Elements - Joints
+  Objects and Elements - Links
   Options - Colors - Display
   Options - Colors - Output
+  P-Delta Option Definition
   Panel Zone Property Definitions
+  Panel Zone Property Definitions - User Nonlinear Data
+  Performance Check DC Ratios
+  Performance Check DC Ratios - Frame Hinges
+  Performance Check DC Ratios - Line Gauges
+  Performance Check DC Ratios - Links
+  Performance Check DC Ratios - Panel Zones
+  Performance Check DC Ratios - Pier Forces
+  Performance Check DC Ratios - Quad Gauges
+  Performance Check DC Ratios - Spandrel Forces
+  Performance Check DC Ratios - Wall Hinges
+  Performance Check Definitions
+  Pier Force Status
+  Pier Forces
   Pier Label Definitions
+  Pier Section Definitions - General Pier
+  Pier Section Properties
+  Plot Function - Acceptance Criteria DC Ratio
+  Plot Function - Base Force
+  Plot Function - Beam Force
+  Plot Function - Brace Force
+  Plot Function - Column Force
+  Plot Function - Energy
+  Plot Function - Input Load
+  Plot Function - Joint Acceleration
+  Plot Function - Joint Displacement
+  Plot Function - Joint Reaction
+  Plot Function - Joint Velocity
+  Plot Function - Link Deformation
+  Plot Function - Link Force
+  Plot Function - Nonlinear Energy by Group
+  Plot Function - Panel Zone Deformation
+  Plot Function - Panel Zone Force
+  Plot Function - Pier Force
+  Plot Function - Section Cut Force
+  Plot Function - Spandrel Force
+  Plot Function - Story Force
+  Plot Function - Wall Force/Stress/Strain
+  Point Bays
+  Point Object Connectivity
   Preferences - Graphics
   Preferences - Tolerance
   Program Control
   Project Information
+  Quad Gauge Assignments - Properties
+  Quad Gauge Object Connectivity
+  Quad Gauge Property Definitions
+  Quad Strain Gauge - Rotation
+  Quad Strain Gauge - Shear
   Reinforcing Bar Sizes
+  Response Spectrum Modal Info
+  Section Cut Definitions
+  Section Cut Forces - Analysis
+  Section Cut Forces - Design
+  Section Designer Shapes - Concrete Box
+  Section Designer Shapes - Concrete Circle
+  Section Designer Shapes - Concrete Circle with Rectangle Bar
+  Section Designer Shapes - Concrete Cross
+  Section Designer Shapes - Concrete Curved Wall
+  Section Designer Shapes - Concrete Flanged Wall
+  Section Designer Shapes - Concrete L
+  Section Designer Shapes - Concrete Pie
+  Section Designer Shapes - Concrete Pie Arc
+  Section Designer Shapes - Concrete Pipe
+  Section Designer Shapes - Concrete Polygon
+  Section Designer Shapes - Concrete Rectangle
+  Section Designer Shapes - Concrete Rectangle with Circle Bar
+  Section Designer Shapes - Concrete Straight Wall
+  Section Designer Shapes - Concrete Tee
+  Section Designer Shapes - Reference Circle
+  Section Designer Shapes - Reference Line
+  Section Designer Shapes - Reference Point
+  Section Designer Shapes - Reinforcing - Area Bar
+  Section Designer Shapes - Reinforcing - Circle Bar
+  Section Designer Shapes - Reinforcing - Circular Arc Bar
+  Section Designer Shapes - Reinforcing - Line Bar
+  Section Designer Shapes - Reinforcing - Single Bar
+  Section Designer Shapes - Reinforcing Along Shape Edges
+  Section Designer Shapes - Reinforcing At Shape Corners
+  Section Designer Shapes - Reinforcing Ties
+  Section Designer Shapes - Steel Angle
+  Section Designer Shapes - Steel Arc
+  Section Designer Shapes - Steel Channel
+  Section Designer Shapes - Steel I-Section
+  Section Designer Shapes - Steel Pipe
+  Section Designer Shapes - Steel Plate
+  Section Designer Shapes - Steel Rod
+  Section Designer Shapes - Steel Tee
+  Section Designer Shapes - Steel Tube
+  Shear Gravity Ratios
+  Shear Wall Design Load Combination Data
+  Shear Wall Design Preferences - ACI 318-08
+  Shear Wall Design Preferences - ACI 318-11
+  Shear Wall Design Preferences - ACI 318-14
   Shear Wall Design Preferences - ACI 318-19
+  Shear Wall Design Preferences - ACI 318-25
   Shear Wall Design Preferences - ACI 530-11 Masonry
   Shear Wall Design Preferences - AISC 360-22 Composite
+  Shear Wall Design Preferences - AS 3600-09
+  Shear Wall Design Preferences - AS 3600-2018
+  Shear Wall Design Preferences - BS 8110-97
+  Shear Wall Design Preferences - Chinese 2010
+  Shear Wall Design Preferences - CSA A233-14
+  Shear Wall Design Preferences - CSA A233-19
+  Shear Wall Design Preferences - CSA A233-24
+  Shear Wall Design Preferences - Eurocode 2-2004
+  Shear Wall Design Preferences - Hong Kong CP 2013
+  Shear Wall Design Preferences - IS 456-2000
+  Shear Wall Design Preferences - KBC 2009
+  Shear Wall Design Preferences - KBC 2016
+  Shear Wall Design Preferences - KDS 14 20 00:2022
+  Shear Wall Design Preferences - Mexican RCDF 2004
+  Shear Wall Design Preferences - Mexican RCDF 2017
+  Shear Wall Design Preferences - NZS 3101-2006
+  Shear Wall Design Preferences - Singapore CP 65-99
+  Shear Wall Design Preferences - SP 63-13330-2012
+  Shear Wall Design Preferences - TS 500-2000
+  Shear Wall Design Preferences - TS 500-2000(R2018)
+  Shear Wall Pier Design Overwrites - ACI 318-08
+  Shear Wall Pier Design Overwrites - ACI 318-11
+  Shear Wall Pier Design Overwrites - ACI 318-14
+  Shear Wall Pier Design Overwrites - ACI 318-19
+  Shear Wall Pier Design Overwrites - ACI 318-25
+  Shear Wall Pier Design Overwrites - ACI 530-11 Masonry
+  Shear Wall Pier Design Overwrites - AISC 360-22 Composite 
+  Shear Wall Pier Design Overwrites - AS 3600-09
+  Shear Wall Pier Design Overwrites - AS 3600-2018
+  Shear Wall Pier Design Overwrites - BS 8110-97
+  Shear Wall Pier Design Overwrites - Chinese 2010
+  Shear Wall Pier Design Overwrites - CSA A233-14
+  Shear Wall Pier Design Overwrites - CSA A233-19
+  Shear Wall Pier Design Overwrites - CSA A233-24
+  Shear Wall Pier Design Overwrites - Eurocode 2-2004
+  Shear Wall Pier Design Overwrites - Hong Kong CP 2013
+  Shear Wall Pier Design Overwrites - IS 456-2000
+  Shear Wall Pier Design Overwrites - KBC 2009
+  Shear Wall Pier Design Overwrites - KBC 2016
+  Shear Wall Pier Design Overwrites - KDS 14 20 00-2022
+  Shear Wall Pier Design Overwrites - Mexican RCDF-2004
+  Shear Wall Pier Design Overwrites - Mexican RCDF-2017
+  Shear Wall Pier Design Overwrites - NZS 3101-2006
+  Shear Wall Pier Design Overwrites - Singapore CP 65-99
+  Shear Wall Pier Design Overwrites - SP 63-13330-2012
+  Shear Wall Pier Design Overwrites - TS 500-2000
+  Shear Wall Pier Design Overwrites - TS 500-2000(R2018)
+  Shear Wall Pier Design Summary - ACI 318-19
+  Shear Wall Pier Design Summary - ACI 530-11 Masonry
+  Shear Wall Pier Design Summary - AISC 360-22 Composite
+  Shear Wall Spandrel Design Overwrites - ACI 318-08
+  Shear Wall Spandrel Design Overwrites - ACI 318-11
+  Shear Wall Spandrel Design Overwrites - ACI 318-14
+  Shear Wall Spandrel Design Overwrites - ACI 318-19
+  Shear Wall Spandrel Design Overwrites - ACI 318-25
+  Shear Wall Spandrel Design Overwrites - ACI 530-11 Masonry
+  Shear Wall Spandrel Design Overwrites - AS 3600-09
+  Shear Wall Spandrel Design Overwrites - AS 3600-2018
+  Shear Wall Spandrel Design Overwrites - BS 8110-97
+  Shear Wall Spandrel Design Overwrites - Chinese 2010
+  Shear Wall Spandrel Design Overwrites - CSA A233-14
+  Shear Wall Spandrel Design Overwrites - CSA A233-19
+  Shear Wall Spandrel Design Overwrites - CSA A233-24
+  Shear Wall Spandrel Design Overwrites - Eurocode 2-2004
+  Shear Wall Spandrel Design Overwrites - Hong Kong CP 2013
+  Shear Wall Spandrel Design Overwrites - IS 456-2000
+  Shear Wall Spandrel Design Overwrites - KBC 2009
+  Shear Wall Spandrel Design Overwrites - KBC 2016
+  Shear Wall Spandrel Design Overwrites - KDS 14 20 00-2022
+  Shear Wall Spandrel Design Overwrites - Mexican RCDF 2004
+  Shear Wall Spandrel Design Overwrites - Mexican RCDF 2017
+  Shear Wall Spandrel Design Overwrites - NZS 3101-2006
+  Shear Wall Spandrel Design Overwrites - Singapore CP 65-99
+  Shear Wall Spandrel Design Overwrites - SP 63-13330-2012
+  Shear Wall Spandrel Design Overwrites - TS 500-2000
+  Shear Wall Spandrel Design Overwrites - TS 500-2000(R2018)
+  Shear Wall Spandrel Design Summary - ACI 318-19
+  Shear Wall Spandrel Design Summary - ACI 530-11 Masonry
+  Shear Wall Spandrel Design Summary - AISC 360-22 Composite
+  Shell Element Cracked Section Modifiers
+  Shell Property Modifier Definitions
+  Shell Uniform Load Sets
+  Slab Panel Geometry
   Slab Property Definitions
+  Slab Property Definitions - Layers
+  Slab Rebar Object Geometry
+  Slab Rebar Property Assignments
+  Soil Pressures
+  Soil Pressures Enveloping Summary
+  Soil Pressures Summary
+  Spandrel Force Status
+  Spandrel Forces
   Spandrel Label Definitions
+  Spandrel Section Properties
+  Spring Property Definitions - Area Springs
+  Spring Property Definitions - Isolated Column Footings
+  Spring Property Definitions - Line Springs
+  Spring Property Definitions - Point Springs
+  Spring Property Definitions - Soil Profiles
+  Steel Beam Deflection Envelope - AISC 360-16
+  Steel Beam Envelope - AISC 360-16
+  Steel Brace Envelope - AISC 360-16
+  Steel Column Envelope - AISC 360-16
+  Steel Design - Decision Parameters - AISC 360-16
+  Steel Design Load Combination Data
+  Steel Frame Design Overwrites -  Italian NTC 2008
+  Steel Frame Design Overwrites -  Italian NTC 2018
+  Steel Frame Design Overwrites - AISC 360-05
+  Steel Frame Design Overwrites - AISC 360-10
+  Steel Frame Design Overwrites - AISC 360-16
+  Steel Frame Design Overwrites - AISC 360-22
+  Steel Frame Design Overwrites - AISC ASD 89
+  Steel Frame Design Overwrites - AISC LRFD 93
+  Steel Frame Design Overwrites - AS 4100-1998
+  Steel Frame Design Overwrites - AS 4100-2020
+  Steel Frame Design Overwrites - BS 5950-2000
+  Steel Frame Design Overwrites - Chinese 2010
+  Steel Frame Design Overwrites - Chinese 2018
+  Steel Frame Design Overwrites - CSA S16-14
+  Steel Frame Design Overwrites - CSA S16-19
+  Steel Frame Design Overwrites - CSA S16-24
+  Steel Frame Design Overwrites - EN 1993-1-1-2005
+  Steel Frame Design Overwrites - EN 1993-1-1-2022
+  Steel Frame Design Overwrites - IS 800-2007
+  Steel Frame Design Overwrites - KBC 2009
+  Steel Frame Design Overwrites - KBC 2016
+  Steel Frame Design Overwrites - KDS 14 31 00 : 2022
+  Steel Frame Design Overwrites - NZS 3404-1997
+  Steel Frame Design Overwrites - SP 16-13330-2017
+  Steel Frame Design Preferences - AISC 360-05
+  Steel Frame Design Preferences - AISC 360-10
   Steel Frame Design Preferences - AISC 360-16
+  Steel Frame Design Preferences - AISC 360-22
+  Steel Frame Design Preferences - AISC ASD 89
+  Steel Frame Design Preferences - AISC LRFD 93
+  Steel Frame Design Preferences - AS 4100-1998
+  Steel Frame Design Preferences - AS 4100-2020
+  Steel Frame Design Preferences - BS 5950-2000
+  Steel Frame Design Preferences - Chinese 2010
+  Steel Frame Design Preferences - Chinese 2018
+  Steel Frame Design Preferences - CSA S16-14
+  Steel Frame Design Preferences - CSA S16-19
+  Steel Frame Design Preferences - CSA S16-24
+  Steel Frame Design Preferences - EN 1993-1-1-2005
+  Steel Frame Design Preferences - EN 1993-1-1-2022
+  Steel Frame Design Preferences - IS 800-2007
+  Steel Frame Design Preferences - Italian NTC 2008
+  Steel Frame Design Preferences - Italian NTC 2018
+  Steel Frame Design Preferences - KBC 2009
+  Steel Frame Design Preferences - KBC 2016
+  Steel Frame Design Preferences - KDS 14 31 00 : 2022
+  Steel Frame Design Preferences - NZS 3404-1997
+  Steel Frame Design Preferences - SP 16-13330-2011
+  Steel Frame Design Preferences - SP 16-13330-2017
+  Steel Frame Design Summary - AISC 360-16
+  Steel Frame Lateral Bracing - Point
+  Steel Frame Lateral Bracing - Uniform
+  Steel Joist Design Overwrites - SJI-2010
+  Steel Joist Design Overwrites - SJI-2020
+  Steel Joist Design Preferences - SJI 100-2020
   Steel Joist Design Preferences - SJI-2010
+  Stiffness Gravity Ratios
+  Story Accelerations
   Story Definitions
+  Story Drifts
+  Story Forces
+  Story Max Over Avg Displacements
+  Story Max Over Avg Drifts
+  Story Stiffness
+  Strip Forces
+  Strip Forces - Enveloping Summary
+  Strip Forces Summary
+  Strip Object Connectivity
+  Tendon  - Total Elongation
+  Tendon Assignments - Properties
+  Tendon Discretized Points
+  Tendon Load Assignments - Jacking Stress
+  Tendon Load Assignments - Loss Options
+  Tendon Object Connectivity
   Tendon Section Properties
+  Total Energy Components
   Tower and Base Story Definitions
+  Tributary Area and LLRF
+  Uniform Load Steel Joist Design Summary - SJI 2010
+  Walking Vibration Definitions
+  Walking Vibration Results
+  Wall Bays
+  Wall Energy Virtual Work
+  Wall Object Connectivity
+  Wall Object Curve Data
+  Wall Pier Force Acceptance Criteria
+  Wall Property Definitions - Auto Select List
+  Wall Property Definitions - Layers
   Wall Property Definitions - Specified
+  Wall Spandrel Force Acceptance Criteria
 [fields] Analysis Options - Analysis Model for Nonlinear Hinges: ModelOpt, PropDampOpt, DampingFraction
+[fields] Area Assignments - Wall Hinge - Auto Fiber PM3: Story, Label, UniqueName, HingeProp, HingeType, SaveFibResp
+[fields] Area Assignments - Wall Hinge Reinforcement: Story, Label, UniqueName, ReinfOption, VertRebar, VertRebarMat, HorizRebar, HorizRebarMat, WallDesignType, RebarMatFlex, RebarMatShear, ClearCover, StartZoneSize, EndZoneSize, FlexBarSizeS, FlexNumBarsS, FlexBarSizeC, FlexBarSpacingC, FlexBarSizeE, FlexNumBarsE, FlexBarSizeT, FlexNumBarsT, CoverToCenterT, FlexBarSizeB, FlexNumBarsB, CoverToCenterB, ShearBarSizeS, ShearBarSpacingS, ShearRebarConfinedS, ShearBarSizeC, ShearBarSpacingC, ShearRebarConfinedC, ShearBarSizeE, ShearBarSpacingE, ShearRebarConfinedE, ShearBarSizeSpand, ShearBarSpacingSpand
+[fields] Area Assignments - Wall Hinges: Story, Label, UniqueName, AlignedWith, VertPM3, HorizPM3, S11PM3, S22PM3, ShearMat, RotAngle, SaveFibResp
+[fields] Buckling Factors: Case, Mode, ScaleFactor
+[fields] Fiber Hinge Fiber States: Story, FrameWall, UniqueName, OutputCase, CaseType, StepType, StepNumber, StepLabel, Hinge, GenHinge, HingeAlign, HingeDir, RelDist, AbsDist, FiberNum, FiberStress, FiberStrain, FiberState, FiberStatus, FiberMat, FiberArea, FiberCoord3, FiberCoord2
+[fields] Fiber Hinge States: Story, FrameWall, UniqueName, OutputCase, CaseType, StepType, StepNumber, StepLabel, Hinge, GenHinge, HingeAlign, HingeDir, RelDist, AbsDist, P, V2, V3, T, M2, M3, U1, U2, U3, R1, R2, R3, HingeState, HingeStatus
+[fields] Frame Assignments - Hinge - ASCE 41-13 - Concrete Beam: Story, Label, UniqueName, HgeDistrTyp, GenHinge, IsEC82005, DOF, VFrom, VCase, UserV, ReinfRatio, UserRatio, TransConf, DropsLoad, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml
+[fields] Frame Assignments - Hinge - ASCE 41-13 - Concrete Column: Story, Label, UniqueName, HgeDistrTyp, GenHinge, IsEC82005, DOF, FailureCond, PAndVFrom, PAndVCase, UserP, UserV2, UserV3, ReinfRatio, UserRatio, DropsLoad, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml
+[fields] Frame Assignments - Hinge - ASCE 41-13 - Steel Beam: Story, Label, UniqueName, HgeDistrTyp, GenHinge, IsEC82005, DOF, DropsLoad, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml
+[fields] Frame Assignments - Hinge - ASCE 41-13 - Steel Brace: Story, Label, UniqueName, HgeDistrTyp, GenHinge, IsEC82005, DropsLoad, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml
+[fields] Frame Assignments - Hinge - ASCE 41-13 - Steel Column: Story, Label, UniqueName, HgeDistrTyp, GenHinge, IsEC82005, DOF, PFrom, PCase, UserP, DropsLoad, FDropsLoad, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml
+[fields] Frame Assignments - Hinge - ASCE 41-17 - Conc CouplingBm - Flex: Story, Label, UniqueName, HgeDistrTyp, GenHinge, VFrom, VCase, UserV, VRatioOption, UserVRatio, TransConf, DiagReinf, DropsLoad, StrLimitRatio, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml
+[fields] Frame Assignments - Hinge - ASCE 41-17 - Conc CouplingBm - Shear: Story, Label, UniqueName, HgeDistrTyp, GenHinge, VFrom, VCase, UserV, VRatioOption, UserVRatio, TransConf, DropsLoad, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs
+[fields] Frame Assignments - Hinge - ASCE 41-17 - Conc Shear Wall - Flex: Story, Label, UniqueName, HgeDistrTyp, GenHinge, PVFrom, PVCase, UserP, UserV, PRatioOption, UserPRatio, VRatioOption, UserVRatio, DropsLoad, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs
+[fields] Frame Assignments - Hinge - ASCE 41-17 - Conc Shear Wall - Shear: Story, Label, UniqueName, HgeDistrTyp, GenHinge, PFrom, PCase, UserP, PRatioOption, UserPRatio, DropsLoad, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs
+[fields] Frame Assignments - Hinge - ASCE 41-17 - Concrete Beam: Story, Label, UniqueName, HgeDistrTyp, GenHinge, DOF, VFrom, VCase, UserV, ReinfRatio, UserRatio, TransConf, DropsLoad, StrLimitRatio, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml
+[fields] Frame Assignments - Hinge - ASCE 41-17 - Concrete Column: Story, Label, UniqueName, HgeDistrTyp, GenHinge, DOF, PFrom, PCaseGrav, PCaseGravLt, UserPGrav, UserPGravLt, ColBehavior, ReinfRatio, UserRatio, DropsLoad, ShearOpt, VyE2, VyE3, VyE2Ratio, VyE3Ratio, SpaceRatio, UserSRatio, StrLimitRatio, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml
+[fields] Frame Assignments - Hinge - ASCE 41-17 - Steel Beam: Story, Label, UniqueName, HgeDistrTyp, GenHinge, DOF, DropsLoad, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml
+[fields] Frame Assignments - Hinge - ASCE 41-17 - Steel Brace: Story, Label, UniqueName, HgeDistrTyp, GenHinge, DropsLoad, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml
+[fields] Frame Assignments - Hinge - ASCE 41-17 - Steel Column: Story, Label, UniqueName, HgeDistrTyp, GenHinge, DOF, PFrom, PCase, UserP, DropsLoad, FDropsLoad, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml
+[fields] Frame Assignments - Hinge - ASCE 41-23 - Conc CouplingBm - Flex: Story, Label, UniqueName, HgeDistrTyp, GenHinge, VFrom, VCase, UserV, TransConf, DiagReinf, DropsLoad, StrLimitRatio, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml
+[fields] Frame Assignments - Hinge - ASCE 41-23 - Conc CouplingBm - Shear: Story, Label, UniqueName, HgeDistrTyp, GenHinge, VFrom, VCase, UserV, TransConf, DropsLoad, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs
+[fields] Frame Assignments - Hinge - ASCE 41-23 - Conc Shear Wall - Flex: Story, Label, UniqueName, HgeDistrTyp, GenHinge, PVFrom, PCaseGrav, PCaseGravLt, UserPGrav, UserPGravLt, UserV/M, CZoneOption, UserCZone, ShDemandOption, UserShDemand, IsConform, OverlapHoop, ShRebarRatio, ShRebarSpace, DropsLoad, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs
+[fields] Frame Assignments - Hinge - ASCE 41-23 - Conc Shear Wall - Shear: Story, Label, UniqueName, HgeDistrTyp, GenHinge, PVFrom, PCaseGrav, PCaseGravLt, UserPGrav, UserPGravLt, UserV/M, ShRatioOption, UserShRatio, DropsLoad, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs
+[fields] Frame Assignments - Hinge - ASCE 41-23 - Concrete Beam: Story, Label, UniqueName, HgeDistrTyp, GenHinge, DOF, VFrom, VCase, UserV, ShearDemand, UserShDemand, ReinfRatio, UserRatio, SpaceRatio, UserSRatio, InadeqDev, InadeqEmbed, DropsLoad, StrLimitRatio, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml
+[fields] Frame Assignments - Hinge - ASCE 41-23 - Concrete Column: Story, Label, UniqueName, HgeDistrTyp, GenHinge, DOF, PFrom, PCaseGrav, PCaseGravLt, UserPGrav, UserPGravLt, ShearOpt, VMCyDE2, VMCyDE3, V2Ratio, V3Ratio, ReinfRatio, UserRatio, SpaceRatio, UserSRatio, InadeqDev, DropsLoad, StrLimitRatio, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml
+[fields] Frame Assignments - Hinge - ASCE 41-23 - Steel Beam: Story, Label, UniqueName, HgeDistrTyp, GenHinge, DOF, PFrom, PCase, UserP, IsMomentFr, DropsLoad, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml
+[fields] Frame Assignments - Hinge - ASCE 41-23 - Steel Brace: Story, Label, UniqueName, HgeDistrTyp, GenHinge, PFrom, PCase, UserP, DropsLoad, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml
+[fields] Frame Assignments - Hinge - ASCE 41-23 - Steel Column: Story, Label, UniqueName, HgeDistrTyp, GenHinge, DOF, PFrom, PCase, UserP, IsMomentFr, DropsLoad, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml
+[fields] Frame Assignments - Hinge - BRB: Story, Label, UniqueName, HgeDistrTyp, GenHinge, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs
+[fields] Frame Assignments - Hinge - Distribution Type: Story, Label, UniqueName, HgeDistrTyp, IsHgeLenRel, HgeLenRel, HgeLenAbs, IntgrType, SpaceType, MaxSpace, NumHgeSpace, HngAtEnds
+[fields] Frame Assignments - Hinge - Overwrites: Story, Label, UniqueName, AutoDivide, RelLength, UseHngLenOW, NoDropLoad, StiffRatio
+[fields] Frame Assignments - Hinge - Summary: Story, Label, UniqueName, HingeAssign, GenHinge, HgeDistrTyp, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs, Overwrites
+[fields] Frame Assignments - Hinge - User: Story, Label, UniqueName, HgeDistrTyp, AssignHinge, GenHinge, SaveFibResp, DistType, RelDist, AbsDist, ActualRD, ActualDist, LenOWType, LenOWRel, LenOWAbs
+[fields] Frame Section Property Definitions - Buckling Restrained Brace: Name, Material, Weight, t3, t2, AreaYC, StiffES, LengthYC, LengthES, UserInElast, FDType, Symmetric, InitStiff, FinalStiff, TensFy, TensFu0, CompFy, CompFu0, TensDu, TensDx, CompDu, CompDx, TensIO, TensLS, TensCP, CompIO, CompLS, CompCP, TensHF, TensMaxDef, TensAccDef, TensProDef, CompHF, CompMaxDef, CompAccDef, CompProDef, AMod, A2Mod, A3Mod, JMod, I2Mod, I3Mod, MMod, WMod, Color, GUID, Notes
+[fields] Functions - Response Spectrum - Argentina INPRES-CIRSOC 103: Name, Period, Value, Zone, SoilType, OccCat, R, DampRatio, GUID
+[fields] Functions - Response Spectrum - AS1170-2007: Name, Period, Value, SoilClass, kp, Z, Sp, u, DampRatio, GUID
+[fields] Functions - Response Spectrum - AS1170-2024: Name, Period, Value, SoilClass, kp, Z, Sp, u, DampRatio, GUID
+[fields] Functions - Response Spectrum - ASCE7-02: Name, Period, Value, Sds, Sd1, DampRatio, GUID
+[fields] Functions - Response Spectrum - ASCE7-05: Name, Period, Value, SsAndS1From, Latitude, Longitude, ZipCode, Ss, S1, TL, SiteClass, Fa, Fv, SDS, SD1, DampRatio, GUID
+[fields] Functions - Response Spectrum - ASCE7-10: Name, Period, Value, SsAndS1From, Latitude, Longitude, ZipCode, Ss, S1, TL, SiteClass, Fa, Fv, SDS, SD1, DampRatio, GUID
+[fields] Functions - Response Spectrum - ASCE7-16: Name, Period, Value, Ss, S1, TL, SiteClass, Fa, Fv, SDS, SD1, DampRatio, GUID
+[fields] Functions - Response Spectrum - ASCE7-22: Name, Period, Value, Direction, Type, SDS, SD1, SMS, SM1, TL, SiteClass, DampRatio, GUID
+[fields] Functions - Response Spectrum - Chile Norma NCh2369-2003: Name, Period, Value, R, DampParam, BuildCat, Zone, SoilType, DampRatio, GUID
+[fields] Functions - Response Spectrum - Chile Norma NCh433 DS61: Name, Period, Value, Zone, SoilType, OccCat, DampRatio, GUID
+[fields] Functions - Response Spectrum - Chinese GB50011-2010: Name, Period, Value, AlphaMax, SI, Tg, PTDF, DampRatio, GUID
+[fields] Functions - Response Spectrum - Columbia NSR-10: Name, Period, Value, Aa, Av, Ae, Ad, GroupOfUse, Fa, Fv, DampRatio, GUID
+[fields] Functions - Response Spectrum - Costa Rica Seismic Code 2010: Name, Period, Value, Zone, SoilType, Occupancy, DuctOver, OverFactor, DampRatio, GUID
+[fields] Functions - Response Spectrum - Dominican Republic R-001: Name, Period, Value, Ss, S1, Fa, Fv, NearField, Class, R, DampRatio, GUID
+[fields] Functions - Response Spectrum - Ecuador NEC-11 Capitulo 2: Name, Period, Value, Z, Eta, Fa, Fd, SoilType, Fs, I, R, DampRatio, GUID
+[fields] Functions - Response Spectrum - Ecuador Norma NEC-SE-DS 2015: Name, Period, Value, Z, Eta, Fa, Fd, SoilType, Fs, I, R, DampRatio, GUID
+[fields] Functions - Response Spectrum - Eurocode8: Name, Period, Value, Ag, SoilClass, n, DampRatio, GUID
+[fields] Functions - Response Spectrum - Eurocode8-2004: Name, Period, Value, Country, Direction, Ag, SpecType, MSpecType, GroundType, SGroundType, S, AvgOverAg, Tb, Tc, Td, Beta, q, DampRatio, GUID
+[fields] Functions - Response Spectrum - From File: Name, Period, Value, Filename, HeaderSkip, ValueType, DampRatio, GUID
+[fields] Functions - Response Spectrum - Guatemala AGIES NSE 2-10: Name, Period, Value, IO, Scr, S1r, Fs, Dh, TS, Fa, Fv, R, DampRatio, GUID
+[fields] Functions - Response Spectrum - IS1893 2002: Name, Period, Value, Z, SoilType, DampRatio, GUID
+[fields] Functions - Response Spectrum - IS1893 2016: Name, Period, Value, Zone, I, SoilType, R, DampRatio, GUID
+[fields] Functions - Response Spectrum - Italian 3274: Name, Period, Value, PGA, SoilType, StructFact, LevDirStr, DampRatio, GUID
+[fields] Functions - Response Spectrum - Italian NTC2008: Name, Period, Value, Source, Latitude, Longitude, IslandName, LimitState, UsageClass, NominalLife, PGA, F0, TcStar, SpecType, SoilType, Topography, hOverH, Tb, Tc, Td, Xi, q, DampRatio, GUID
+[fields] Functions - Response Spectrum - Italian NTC2018: Name, Period, Value, Source, Latitude, Longitude, IslandName, LimitState, UsageClass, NominalLife, PGA, F0, TcStar, SpecType, SoilType, Topography, hOverH, Tb, Tc, Td, Xi, q, DampRatio, GUID
+[fields] Functions - Response Spectrum - KDS 41 17 00-2019: Name, Period, Value, Zone, S, S-Wave, TL, SiteClass, Fa, Fv, SDS, SD1, DampRatio, GUID
+[fields] Functions - Response Spectrum - KDS 41 17 00-2024: Name, Period, Value, Zone, S, S-Wave, TL, SiteClass, Fa, Fv, SDS, SD1, DampRatio, GUID
+[fields] Functions - Response Spectrum - Korean KBC 2009: Name, Period, Value, Ss, S1, SiteClass, Fa, Fv, SDS, SD1, DampRatio, GUID
+[fields] Functions - Response Spectrum - Korean KBC 2016: Name, Period, Value, Ss, S1, Depth, SiteClass, Fa, Fv, SDS, SD1, DampRatio, GUID
+[fields] Functions - Response Spectrum - Mexico CFE-2008: Name, Period, Value, Z, Class, S, Q, I, DampRatio, GUID
+[fields] Functions - Response Spectrum - Mexico CFE-93: Name, Period, Value, Z, Class, S, Q, I, DampRatio, GUID
+[fields] Functions - Response Spectrum - Mexico NTC-2004: Name, Period, Value, Zone, Group, Behavior, Correction, DampRatio, GUID
+[fields] Functions - Response Spectrum - NBCC2005: Name, Period, Value, PGA, Sa02, Sa05, Sa1, Sa2, SiteClass, Fa, Fv, DampRatio, GUID
+[fields] Functions - Response Spectrum - NBCC2010: Name, Period, Value, PGA, Sa02, Sa05, Sa1, Sa2, SiteClass, Fa, Fv, DampRatio, GUID
+[fields] Functions - Response Spectrum - NBCC2015: Name, Period, Value, PGA, Sa02, Sa05, Sa1, Sa2, Sa5, Sa10, SiteClass, F02, F05, F1, F2, F5, F10, DampRatio, GUID
+[fields] Functions - Response Spectrum - NBCC2020: Name, Period, Value, Sa02, Sa05, Sa1, Sa2, Sa5, Sa10, DampRatio, GUID
+[fields] Functions - Response Spectrum - NBCC2025: Name, Period, Value, Sa02, Sa05, Sa1, Sa2, Sa5, Sa10, DampRatio, GUID
+[fields] Functions - Response Spectrum - NBCC95: Name, Period, Value, V, Za, Zv, DampRatio, GUID
+[fields] Functions - Response Spectrum - NEHRP97: Name, Period, Value, Sds, Sd1, DampRatio, GUID
+[fields] Functions - Response Spectrum - NZS1170-2004: Name, Period, Value, SoilClass, Z, R, D, ConsTSite, SitePeriod, DampRatio, GUID
+[fields] Functions - Response Spectrum - NZS4203: Name, Period, Value, SF, SoilCat, DampRatio, GUID
+[fields] Functions - Response Spectrum - Peru Norma E030: Name, Period, Value, Zone, OccCat, SoilType, Config, R, DampRatio, GUID
+[fields] Functions - Response Spectrum - Peru NTE E030 2014: Name, Period, Value, Zone, OccCat, SoilType, Ia, Ip, R0, DampRatio, GUID
+[fields] Functions - Response Spectrum - SI 413: Name, Period, Value, Z, SoilType, I, K, DampRatio, GUID
+[fields] Functions - Response Spectrum - SNIP KR 20-02:2018: Name, Period, Value, Direction, AgOverg, AgvOverg, k, SoilType, Tc, Beta, q, DampRatio, GUID
+[fields] Functions - Response Spectrum - SP 14 13330 2014: Name, Period, Value, Direction, Seismicity, SoilCat, K0, K1, Kpsi, NonlinSoil, Asoil, DampRatio, GUID
+[fields] Functions - Response Spectrum - TCVN 9386 2012: Name, Period, Value, Direction, Ag, GroundType, S, AvgOverAg, Tb, Tc, Td, Beta, q, DampRatio, GUID
+[fields] Functions - Response Spectrum - TSC-2007: Name, Period, Value, Zone, Ao, I, SiteClass, R, DampRatio, GUID
+[fields] Functions - Response Spectrum - TSC-2018: Name, Period, Value, Ss, S1, TL, R, D, I, SiteClass, Fs, F1, Direction, SDS, SD1, DampRatio, GUID
+[fields] Functions - Response Spectrum - UBC 97: Name, Period, Value, Ca, Cv, DampRatio, GUID
 [fields] Functions - Response Spectrum - User Defined: Name, Period, Value, DampRatio, GUID
+[fields] Functions - Response Spectrum - Venezuela COVENIN 1756-2 2001: Name, Period, Value, Zone, SpecForm, CorrFactor, Class, R, DampRatio, GUID
+[fields] Functions - Time History - Cosine: Name, Time, Value, Period, StepsPerCyc, NumCycles, Amplitude, GUID
+[fields] Functions - Time History - From File: Name, Time, Value, Filename, HeaderSkip, PrefixSkip, NumPoints, ValueType, EqualInt, FormatType, CharPerItem, GUID
+[fields] Functions - Time History - Matched to Response Spectrum: Name, Time, Value, SpecMatchMethod, TgtRS, TgtRSUnits, RefTH, RefTHUnits, FreqRangeOpt, f1, f2, nRecursions, RecurFactor, GUID
+[fields] Functions - Time History - Ramp: Name, Time, Value, RampTime, Amplitude, MaxTime, GUID
+[fields] Functions - Time History - Sawtooth: Name, Time, Value, Period, RampTime, NumCycles, Amplitude, GUID
+[fields] Functions - Time History - Sine: Name, Time, Value, Period, StepsPerCyc, NumCycles, Amplitude, GUID
+[fields] Functions - Time History - Triangular: Name, Time, Value, Period, NumCycles, Amplitude, GUID
 [fields] Functions - Time History - User Defined: Name, Time, Value, GUID
+[fields] Functions - Time History - User Periodic: Name, Time, Value, NumCycles, GUID
+[fields] General Wall Hinge NL Shear State: Story, FrameWall, UniqueName, OutputCase, CaseType, StepType, StepNumber, StepLabel, ShearProp, S12, E12, State, Status
+[fields] Generated Hinges - Axial P: Name, AssignHinge, IsSymmetric, AddBC, AddCD, FDType, Point, Force, Displ, UseYldForce, UseYldDispl, FDPosForSF, FDPosDispSF, FDNegForSF, FDNegDispSF, SSPosForSF, SSPosDispSF, SSNegForSF, SSNegDispSF, BeyondE, LengthType, SSAbsLen, SSRelLen, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml, GUID
+[fields] Generated Hinges - Fiber PM2M3: Name, AssignHinge, FiberOpt, LengthType, SSAbsLen, SSRelLen, FiberNum, Area, Coord3, Coord2, Material, SSCurve, GUID
+[fields] Generated Hinges - Fiber PM3: Name, AssignHinge, FiberNum, Area, Coord2, Material, SSCurve, GUID
+[fields] Generated Hinges - Force Controlled - Axial P: Name, AssignHinge, IsSymmetric, MaxType, RatioPos, RatioNeg, ForcePos, ForceNeg, DropLoad, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, GUID
+[fields] Generated Hinges - Force Controlled - Interacting M2M3: Name, AssignHinge, CapFactor, DropLoad, IO, LS, CP, IntSurfType, AxialForce, SymType, M2SF, M3SF, Point, M2OverSF, M3OverSF, GUID
+[fields] Generated Hinges - Force Controlled - Interacting PM2: Name, AssignHinge, CapFactor, DropLoad, IO, LS, CP, IntSurfType, AxLoadDisp, IsSymmetric, NumPoints, PSF, M2SF, POvSFFirst, M2OvSFFirst, POvSFLast, M2OvSFLast, Curve, Point, POverSF, M2OverSF, GUID
+[fields] Generated Hinges - Force Controlled - Interacting PM2M3: Name, AssignHinge, CapFactor, DropLoad, IO, LS, CP, IntSurfType, AxLoadDisp, SymType, NumCurves, NumPoints, PSF, M2SF, M3SF, POvSFFirst, M2OvSFFirst, M3OvSFFirst, POvSFLast, M2OvSFLast, M3OvSFLast, Curve, Point, POverSF, M2OverSF, M3OverSF, GUID
+[fields] Generated Hinges - Force Controlled - Interacting PM3: Name, AssignHinge, CapFactor, DropLoad, IO, LS, CP, IntSurfType, AxLoadDisp, IsSymmetric, NumPoints, PSF, M3SF, POvSFFirst, M3OvSFFirst, POvSFLast, M3OvSFLast, Curve, Point, POverSF, M3OverSF, GUID
+[fields] Generated Hinges - Force Controlled - Moment M2: Name, AssignHinge, IsSymmetric, MaxType, RatioPos, RatioNeg, ForcePos, ForceNeg, DropLoad, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, GUID
+[fields] Generated Hinges - Force Controlled - Moment M3: Name, AssignHinge, IsSymmetric, MaxType, RatioPos, RatioNeg, ForcePos, ForceNeg, DropLoad, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, GUID
+[fields] Generated Hinges - Force Controlled - Shear V2: Name, AssignHinge, IsSymmetric, MaxType, RatioPos, RatioNeg, ForcePos, ForceNeg, DropLoad, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, GUID
+[fields] Generated Hinges - Force Controlled - Shear V3: Name, AssignHinge, IsSymmetric, MaxType, RatioPos, RatioNeg, ForcePos, ForceNeg, DropLoad, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, GUID
+[fields] Generated Hinges - Force Controlled - Torsion T: Name, AssignHinge, IsSymmetric, ForcePos, ForceNeg, DropLoad, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, GUID
+[fields] Generated Hinges - Interacting M2M3: Name, AssignHinge, FDType, MRSymType, AddBC, AddCD, NumAngles, MRAngle, MRCurveNum, CurveAngle, MRPoint, Moment, Rotation, IO, LS, CP, BeyondE, SFType, UserSFRot, UserSFCur, LengthType, SSAbsLen, SSRelLen, IntSurfType, AxialForce, SymType, M2SF, M3SF, Point, M2OverSF, M3OverSF, GUID
+[fields] Generated Hinges - Interacting PM2: Name, AssignHinge, FDType, IsMRSym, AddBC, AddCD, NumForces, NumAngles, MRForce, MRAngle, MRCurveNum, CurveForce, CurveAngle, MRPoint, Moment, Rotation, IO, LS, CP, BeyondE, SFType, UserSFRot, UserSFCur, LengthType, SSAbsLen, SSRelLen, IntSurfType, AxLoadDisp, IsSymmetric, NumPoints, PSF, M2SF, POvSFFirst, M2OvSFFirst, POvSFLast, M2OvSFLast, Curve, Point, POverSF, M2OverSF, GUID
+[fields] Generated Hinges - Interacting PM2M3: Name, AssignHinge, FDType, MRSymType, AddBC, AddCD, NumForces, NumAngles, MRForce, MRAngle, MRCurveNum, CurveForce, CurveAngle, MRPoint, Moment, Rotation, IO, LS, CP, BeyondE, SFType, UserSFRot, UserSFCur, LengthType, SSAbsLen, SSRelLen, IntSurfType, AxLoadDisp, SymType, NumCurves, NumPoints, PSF, M2SF, M3SF, POvSFFirst, M2OvSFFirst, M3OvSFFirst, POvSFLast, M2OvSFLast, M3OvSFLast, Curve, Point, POverSF, M2OverSF, M3OverSF, GUID
+[fields] Generated Hinges - Interacting PM3: Name, AssignHinge, FDType, IsMRSym, AddBC, AddCD, NumForces, NumAngles, MRForce, MRAngle, MRCurveNum, CurveForce, CurveAngle, MRPoint, Moment, Rotation, IO, LS, CP, BeyondE, SFType, UserSFRot, UserSFCur, LengthType, SSAbsLen, SSRelLen, IntSurfType, AxLoadDisp, IsSymmetric, NumPoints, PSF, M3SF, POvSFFirst, M3OvSFFirst, POvSFLast, M3OvSFLast, Curve, Point, POverSF, M3OverSF, GUID
+[fields] Generated Hinges - Moment M2: Name, AssignHinge, IsSymmetric, AddBC, AddCD, FDType, Point, Force, Displ, UseYldForce, UseYldDispl, FDPosForSF, FDPosDispSF, FDNegForSF, FDNegDispSF, SSPosDispSF, SSNegDispSF, BeyondE, LengthType, SSAbsLen, SSRelLen, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml, GUID
+[fields] Generated Hinges - Moment M3: Name, AssignHinge, IsSymmetric, AddBC, AddCD, FDType, Point, Force, Displ, UseYldForce, UseYldDispl, FDPosForSF, FDPosDispSF, FDNegForSF, FDNegDispSF, SSPosDispSF, SSNegDispSF, BeyondE, LengthType, SSAbsLen, SSRelLen, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml, GUID
+[fields] Generated Hinges - Parametric - Concrete PM2M3: Name, AssignHinge, FDType, LengthType, SSAbsLen, SSRelLen, UseYldForce, FSFTens, FSFComp, FSFBend2, FSFBend3, MRDSFTens, MRDSFComp, MRDSFBend2, MRDSFBend3, MCDSFTens, MCDSFComp, MCDSFBend2, MCDSFBend3, AlphaT2, AlphaC2, AlphaT3, AlphaC3, Beta, Gamma, ShapeType, IsStrLoss, FUOverB, FDOverBAx, FDOverBBend, AxFBal, DUTens, DUComp, DUBend2, DUBend3, DCBend2, DCBend3, DETens, DEComp, DEBend2, DEBend3, DOverCBend, DegOption, DegBEnergy, Deg1Bend2, Deg1Bend3, DegU1Energy, Deg2Bend2, Deg2Bend3, DegC2Energy, Deg3Bend2, Deg3Bend3, DegD3Energy, DegEEnergy, DefOption, PU, PL, VU, VL, IO, LS, CP, IOAtPUVU, LSAtPUVU, CPAtPUVU, IOAtPUVL, LSAtPUVL, CPAtPUVL, IOAtPLVU, LSAtPLVU, CPAtPLVU, IOAtPLVL, LSAtPLVL, CPAtPLVL, CapRatio, GUID
+[fields] Generated Hinges - Parametric - Steel PM2M3: Name, AssignHinge, FDType, LengthType, SSAbsLen, SSRelLen, UseYldForce, FSFTens, FSFComp, FSFBend2, FSFBend3, UseYldDef, MRDSFTens, MRDSFComp, MRDSFBend2, MRDSFBend3, MCDSFTens, MCDSFComp, MCDSFBend2, MCDSFBend3, AlphaT2, AlphaC2, AlphaT3, AlphaC3, Beta, Gamma, ShapeType, StrLossType, PUOverSF, PLOverSF, FUOverB, FDOverBAxPU, FDOvBBendPU, FDOverBAxPL, FDOvBBendPL, DUTens, DUComp, DUBend2, DUBend3, DCBend2PU, DCBend3PU, DCBend2PL, DCBend3PL, DETens, DEComp, DEBend2, DEBend3, DOvCBendPU, DOvCBendPL, DegOption, DegBEnergy, Deg1Bend2, Deg1Bend3, DegU1Energy, Deg2Bend2, Deg2Bend3, DegC2Energy, Deg3Bend2, Deg3Bend3, DegD3Energy, DegEEnergy, DefOption, PU, PL, IO, LS, CP, IOAtPU, LSAtPU, CPAtPU, IOAtPL, LSAtPL, CPAtPL, CapRatio, GUID
+[fields] Generated Hinges - Shear V2: Name, AssignHinge, IsSymmetric, AddBC, AddCD, FDType, Point, Force, Displ, UseYldForce, UseYldDispl, FDPosForSF, FDPosDispSF, FDNegForSF, FDNegDispSF, SSPosForSF, SSPosDispSF, SSNegForSF, SSNegDispSF, BeyondE, LengthType, SSAbsLen, SSRelLen, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml, GUID
+[fields] Generated Hinges - Shear V3: Name, AssignHinge, IsSymmetric, AddBC, AddCD, FDType, Point, Force, Displ, UseYldForce, UseYldDispl, FDPosForSF, FDPosDispSF, FDNegForSF, FDNegDispSF, SSPosForSF, SSPosDispSF, SSNegForSF, SSNegDispSF, BeyondE, LengthType, SSAbsLen, SSRelLen, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml, GUID
+[fields] Generated Hinges - Torsion T: Name, AssignHinge, IsSymmetric, AddBC, AddCD, FDType, Point, Force, Displ, FDPosForSF, FDPosDispSF, SSPosDispSF, BeyondE, LengthType, SSAbsLen, SSRelLen, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml, GUID
+[fields] Hinge Definitions - Axial P: Name, IsSymmetric, AddBC, AddCD, FDType, Point, Force, Displ, UseYldForce, UseYldDispl, FDPosForSF, FDPosDispSF, FDNegForSF, FDNegDispSF, SSPosForSF, SSPosDispSF, SSNegForSF, SSNegDispSF, BeyondE, LengthType, SSAbsLen, SSRelLen, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml, GUID
+[fields] Hinge Definitions - Fiber PM2M3: Name, FiberOpt, LengthType, SSAbsLen, SSRelLen, FiberNum, Area, Coord3, Coord2, Material, SSCurve, GUID
+[fields] Hinge Definitions - Fiber PM3: Name, FiberNum, Area, Coord2, Material, SSCurve, GUID
+[fields] Hinge Definitions - Force Controlled - Axial P: Name, IsSymmetric, MaxType, RatioPos, RatioNeg, ForcePos, ForceNeg, DropLoad, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, GUID
+[fields] Hinge Definitions - Force Controlled - Interacting M2M3: Name, CapFactor, DropLoad, IO, LS, CP, IntSurfType, AxialForce, SymType, M2SF, M3SF, Point, M2OverSF, M3OverSF, GUID
+[fields] Hinge Definitions - Force Controlled - Interacting PM2: Name, CapFactor, DropLoad, IO, LS, CP, IntSurfType, AxLoadDisp, IsSymmetric, NumPoints, PSF, M2SF, POvSFFirst, M2OvSFFirst, POvSFLast, M2OvSFLast, Curve, Point, POverSF, M2OverSF, GUID
+[fields] Hinge Definitions - Force Controlled - Interacting PM2M3: Name, CapFactor, DropLoad, IO, LS, CP, IntSurfType, AxLoadDisp, SymType, NumCurves, NumPoints, PSF, M2SF, M3SF, POvSFFirst, M2OvSFFirst, M3OvSFFirst, POvSFLast, M2OvSFLast, M3OvSFLast, Curve, Point, POverSF, M2OverSF, M3OverSF, GUID
+[fields] Hinge Definitions - Force Controlled - Interacting PM3: Name, CapFactor, DropLoad, IO, LS, CP, IntSurfType, AxLoadDisp, IsSymmetric, NumPoints, PSF, M3SF, POvSFFirst, M3OvSFFirst, POvSFLast, M3OvSFLast, Curve, Point, POverSF, M3OverSF, GUID
+[fields] Hinge Definitions - Force Controlled - Moment M2: Name, IsSymmetric, MaxType, RatioPos, RatioNeg, ForcePos, ForceNeg, DropLoad, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, GUID
+[fields] Hinge Definitions - Force Controlled - Moment M3: Name, IsSymmetric, MaxType, RatioPos, RatioNeg, ForcePos, ForceNeg, DropLoad, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, GUID
+[fields] Hinge Definitions - Force Controlled - Shear V2: Name, IsSymmetric, MaxType, RatioPos, RatioNeg, ForcePos, ForceNeg, DropLoad, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, GUID
+[fields] Hinge Definitions - Force Controlled - Shear V3: Name, IsSymmetric, MaxType, RatioPos, RatioNeg, ForcePos, ForceNeg, DropLoad, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, GUID
+[fields] Hinge Definitions - Force Controlled - Torsion T: Name, IsSymmetric, ForcePos, ForceNeg, DropLoad, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, GUID
+[fields] Hinge Definitions - Interacting M2M3: Name, FDType, MRSymType, AddBC, AddCD, NumAngles, MRAngle, MRCurveNum, CurveAngle, MRPoint, Moment, Rotation, IO, LS, CP, BeyondE, SFType, UserSFRot, UserSFCur, LengthType, SSAbsLen, SSRelLen, IntSurfType, AxialForce, SymType, M2SF, M3SF, Point, M2OverSF, M3OverSF, GUID
+[fields] Hinge Definitions - Interacting PM2: Name, FDType, IsMRSym, AddBC, AddCD, NumForces, NumAngles, MRForce, MRAngle, MRCurveNum, CurveForce, CurveAngle, MRPoint, Moment, Rotation, IO, LS, CP, BeyondE, SFType, UserSFRot, UserSFCur, LengthType, SSAbsLen, SSRelLen, IntSurfType, AxLoadDisp, IsSymmetric, NumPoints, PSF, M2SF, POvSFFirst, M2OvSFFirst, POvSFLast, M2OvSFLast, Curve, Point, POverSF, M2OverSF, GUID
+[fields] Hinge Definitions - Interacting PM2M3: Name, FDType, MRSymType, AddBC, AddCD, NumForces, NumAngles, MRForce, MRAngle, MRCurveNum, CurveForce, CurveAngle, MRPoint, Moment, Rotation, IO, LS, CP, BeyondE, SFType, UserSFRot, UserSFCur, LengthType, SSAbsLen, SSRelLen, IntSurfType, AxLoadDisp, SymType, NumCurves, NumPoints, PSF, M2SF, M3SF, POvSFFirst, M2OvSFFirst, M3OvSFFirst, POvSFLast, M2OvSFLast, M3OvSFLast, Curve, Point, POverSF, M2OverSF, M3OverSF, GUID
+[fields] Hinge Definitions - Interacting PM3: Name, FDType, IsMRSym, AddBC, AddCD, NumForces, NumAngles, MRForce, MRAngle, MRCurveNum, CurveForce, CurveAngle, MRPoint, Moment, Rotation, IO, LS, CP, BeyondE, SFType, UserSFRot, UserSFCur, LengthType, SSAbsLen, SSRelLen, IntSurfType, AxLoadDisp, IsSymmetric, NumPoints, PSF, M3SF, POvSFFirst, M3OvSFFirst, POvSFLast, M3OvSFLast, Curve, Point, POverSF, M3OverSF, GUID
+[fields] Hinge Definitions - Moment M2: Name, IsSymmetric, AddBC, AddCD, FDType, Point, Force, Displ, UseYldForce, UseYldDispl, FDPosForSF, FDPosDispSF, FDNegForSF, FDNegDispSF, SSPosDispSF, SSNegDispSF, BeyondE, LengthType, SSAbsLen, SSRelLen, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml, GUID
+[fields] Hinge Definitions - Moment M3: Name, IsSymmetric, AddBC, AddCD, FDType, Point, Force, Displ, UseYldForce, UseYldDispl, FDPosForSF, FDPosDispSF, FDNegForSF, FDNegDispSF, SSPosDispSF, SSNegDispSF, BeyondE, LengthType, SSAbsLen, SSRelLen, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml, GUID
+[fields] Hinge Definitions - Parametric - Concrete PM2M3: Name, FDType, LengthType, SSAbsLen, SSRelLen, UseYldForce, FSFTens, FSFComp, FSFBend2, FSFBend3, MRDSFTens, MRDSFComp, MRDSFBend2, MRDSFBend3, MCDSFTens, MCDSFComp, MCDSFBend2, MCDSFBend3, AlphaT2, AlphaC2, AlphaT3, AlphaC3, Beta, Gamma, ShapeType, IsStrLoss, FUOverB, FDOverBAx, FDOverBBend, AxFBal, DUTens, DUComp, DUBend2, DUBend3, DCBend2, DCBend3, DETens, DEComp, DEBend2, DEBend3, DOverCBend, DegOption, DegBEnergy, Deg1Bend2, Deg1Bend3, DegU1Energy, Deg2Bend2, Deg2Bend3, DegC2Energy, Deg3Bend2, Deg3Bend3, DegD3Energy, DegEEnergy, DefOption, PU, PL, VU, VL, IO, LS, CP, IOAtPUVU, LSAtPUVU, CPAtPUVU, IOAtPUVL, LSAtPUVL, CPAtPUVL, IOAtPLVU, LSAtPLVU, CPAtPLVU, IOAtPLVL, LSAtPLVL, CPAtPLVL, CapRatio, GUID
+[fields] Hinge Definitions - Parametric - Steel PM2M3: Name, FDType, LengthType, SSAbsLen, SSRelLen, UseYldForce, FSFTens, FSFComp, FSFBend2, FSFBend3, UseYldDef, MRDSFTens, MRDSFComp, MRDSFBend2, MRDSFBend3, MCDSFTens, MCDSFComp, MCDSFBend2, MCDSFBend3, AlphaT2, AlphaC2, AlphaT3, AlphaC3, Beta, Gamma, ShapeType, StrLossType, PUOverSF, PLOverSF, FUOverB, FDOverBAxPU, FDOvBBendPU, FDOverBAxPL, FDOvBBendPL, DUTens, DUComp, DUBend2, DUBend3, DCBend2PU, DCBend3PU, DCBend2PL, DCBend3PL, DETens, DEComp, DEBend2, DEBend3, DOvCBendPU, DOvCBendPL, DegOption, DegBEnergy, Deg1Bend2, Deg1Bend3, DegU1Energy, Deg2Bend2, Deg2Bend3, DegC2Energy, Deg3Bend2, Deg3Bend3, DegD3Energy, DegEEnergy, DefOption, PU, PL, IO, LS, CP, IOAtPU, LSAtPU, CPAtPU, IOAtPL, LSAtPL, CPAtPL, CapRatio, GUID
+[fields] Hinge Definitions - Shear V2: Name, IsSymmetric, AddBC, AddCD, FDType, Point, Force, Displ, UseYldForce, UseYldDispl, FDPosForSF, FDPosDispSF, FDNegForSF, FDNegDispSF, SSPosForSF, SSPosDispSF, SSNegForSF, SSNegDispSF, BeyondE, LengthType, SSAbsLen, SSRelLen, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml, GUID
+[fields] Hinge Definitions - Shear V3: Name, IsSymmetric, AddBC, AddCD, FDType, Point, Force, Displ, UseYldForce, UseYldDispl, FDPosForSF, FDPosDispSF, FDNegForSF, FDNegDispSF, SSPosForSF, SSPosDispSF, SSNegForSF, SSNegDispSF, BeyondE, LengthType, SSAbsLen, SSRelLen, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml, GUID
+[fields] Hinge Definitions - Torsion T: Name, IsSymmetric, AddBC, AddCD, FDType, Point, Force, Displ, FDPosForSF, FDPosDispSF, SSPosDispSF, BeyondE, LengthType, SSAbsLen, SSRelLen, IOPos, LSPos, CPPos, IONeg, LSNeg, CPNeg, HysType, PivotAlpha1, PivotAlpha2, PivotBeta1, PivotBeta2, PivotEta, ConcreteFact, BRBSym, BRBTensHF, BRBTensMPD, BRBTensAPD, BRBTensPro, BRBCompHF, BRBCompMPD, BRBCompAPD, BRBCompPro, DegSym, DegTensf0, DegTensf1, DegTensf2, DegTensx1, DegTensx2, DegTensADWF, DegCompf0, DegCompf1, DegCompf2, DegCompx1, DegCompx2, DegCompADWF, DegStiff, DegLargeSml, GUID
+[fields] Hinge States: Story, FrameWall, UniqueName, OutputCase, CaseType, StepType, StepNumber, StepLabel, Hinge, GenHinge, HingeAlign, HingeDir, RelDist, AbsDist, P, V2, V3, T, M2, M3, U1Plastic, U2Plastic, U3Plastic, R1Plastic, R2Plastic, R3Plastic, HingeState, HingeStatus
+[fields] Load Case Definitions - Buckling: Name, MassSource, StiffType, NonlinCase, LoadType, LoadName, LoadSF, TransAccSF, RotAccSF, NumModes, EigenTol, DesignType, UserDesType, GUID, Notes
+[fields] Load Case Definitions - Nonlinear Staged Construction: Name, MassSource, InitialCond, NonlinCase, Stage, StageName, Duration, Output, Comments, Operation, ObjectType, ObjectName, AgeAtAdd, ItemType, ItemName, LoadSF, TransAccSF, RotAccSF, GeoNonlin, ResultsType, MinInstant, MinTimeDep, SolScheme, MaxTotal, MaxNull, EventTol, MaxEvents, MaxCSIters, MaxNRIters, IterTol, LineSearch, MaxSearches, SearchTol, SearchFact, StopAnalysis, MinEvStepSz, MaxNullEvStp, UseCorrStep, MatTimeDep, CrackedOpt, CrackAge, optConvChkType, DisplTol, MaxIter, DesignType, UserDesType, GUID, Notes
+[fields] Load Case Definitions - Response Spectrum: Name, MassSource, LoadName, Function, TransAccSF, RotAccSF, CoordSys, Angle, ModalCase, ModalCombo, RigidResp, f1, f2, RigidCombo, td, DirCombo, AbsSF, EccenRatio, OverStory, OverDiaph, OverEccen, DesignType, UserDesType, GUID, Notes
+[fields] Load Case Definitions - Time History - Linear Direct Integration: Name, MassSource, StiffType, NonlinCase, LoadType, LoadName, Function, LoadSF, TransAccSF, RotAccSF, TimeFactor, ArrivalTime, Angle, NumSteps, StepSize, ProBy, MassCoeff, StiffCoeff, ProTimeVal1, ProDamping1, ProTimeVal2, ProDamping2, Mode4Ratio, ModalCase, IntType, Gamma, Beta, Theta, Alpha, Alpham, DesignType, UserDesType, GUID, Notes
 [fields] Load Case Definitions - Time History - Linear Modal: Name, MassSource, LoadType, LoadName, Function, LoadSF, TransAccSF, RotAccSF, TimeFactor, ArrivalTime, Angle, ModalCase, MotionType, NumSteps, StepSize, DesignType, UserDesType, GUID, Notes
+[fields] Load Case Definitions - Time History - Nonlin Direct Integration: Name, MassSource, InitialCond, NonlinCase, LoadType, LoadName, Function, LoadSF, TransAccSF, RotAccSF, TimeFactor, ArrivalTime, Angle, GeoNonlin, NumSteps, StepSize, ProBy, MassCoeff, StiffCoeff, ProTimeVal1, ProDamping1, ProTimeVal2, ProDamping2, Mode4Ratio, ModalCase, IntType, Gamma, Beta, Theta, Alpha, Alpham, SolScheme, MaxSize, MinSize, EventTol, MaxEvents, MaxCSIters, MaxNRIters, IterTol, LineSearch, MaxSearches, SearchTol, SearchFact, StopAnalysis, MinEvStepSz, MaxNullEvStp, UseCorrStep, DesignType, UserDesType, GUID, Notes
+[fields] Load Case Definitions - Time History - Nonlinear Modal: Name, MassSource, InitialCond, NonlinCase, LoadType, LoadName, Function, LoadSF, TransAccSF, RotAccSF, TimeFactor, ArrivalTime, Angle, ModalCase, MotionType, NumSteps, StepSize, StatPeriod, MaxSubstep, MinSubstep, ForceTol, EnergyTol, MaxIter, MinIter, ConvFactor, DesignType, UserDesType, GUID, Notes
+[fields] Performance Check DC Ratios - Frame Hinges: Story, Frame, Hinge, GenHinge, RelDist, AbsDist, PerfCheck, DemandSet, DCRatioIO, DCRatioLS, DCRatioCP
+[fields] Performance Check DC Ratios - Wall Hinges: Story, Wall, NLType, Hinge, GenHinge, ShearProp, PerfCheck, DemandSet, DCRatioIO, DCRatioLS, DCRatioCP
+[fields] Response Spectrum Modal Info: SpecCase, ModalCase, Mode, Period, DampRatio, U1Acc, U2Acc, U3Acc, U1Amp, U2Amp, U3Amp

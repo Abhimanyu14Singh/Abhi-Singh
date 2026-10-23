@@ -1,22 +1,10 @@
 SkyFrame speed run: fetching the latest SkyFrame ...
-SkyFrame speed run: installing OpenSeesPy and PARDISO for py -3.11 ...
-  OpenSeesPy does not import under py -3.11:
-    
-    During handling of the above exception, another exception occurred:
-    
-    Traceback (most recent call last):
-      File "<string>", line 1, in <module>
-      File "C:\Users\abhimanyu.singh\AppData\Roaming\Python\Python311\site-packages\openseespy\opensees\__init__.py", line 22, in <module>
-        raise RuntimeError('Failed to import openseespy on Windows.')
-    RuntimeError: Failed to import openseespy on Windows.
-SkyFrame speed run: installing OpenSeesPy and PARDISO for C:\Python314\python.exe ...
-  OpenSeesPy does not import under C:\Python314\python.exe:
-    
-    Traceback (most recent call last):
-      File "<string>", line 1, in <module>
-        import openseespy.opensees as o; o.wipe(); print('ok')
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-      File "C:\Users\abhimanyu.singh\AppData\Roaming\Python\Python314\site-packages\openseespy\opensees\__init__.py", line 25, in <module>
-        raise RuntimeError(f'Failed to import openseespy on Windows: {e}')
-    RuntimeError: Failed to import openseespy on Windows: Failed to import openseespy on Windows: DLL load failed while importing opensees: The specified module could not be found.
-SkyFrame speed run skipped: OpenSeesPy imports under none of the Pythons found
+SkyFrame speed run: installing OpenSeesPy and PARDISO for C:\Users\abhimanyu.singh\AppData\Local\SkyFramePython312\tools\python.exe ...
+  SkyFrame linear run: 7.90 s (SW, SDL, EQX, MODES)
+  SkyFrame nonlinear run: 13.44 s (PDALL)
+  wrote C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\SP3\SP3.skyframe-speed.json
+  model size: large model: ~80640 equations — the analysis will be slow (seconds per factorization)
+  model size: large model: ~80640 equations — the analysis will be slow (seconds per factorization)
+  WARNING unknown system type Mumps
+  model size: large model: ~80640 equations — the analysis will be slow (seconds per factorization)
+  model size: large model: ~80640 equations — the analysis will be slow (seconds per factorization)

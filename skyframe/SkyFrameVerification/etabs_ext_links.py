@@ -11,9 +11,14 @@ that could do the job, so the next run can be fixed from the log.
     K1  PropLink.SetHook + LinkObj.AddByCoord
     K2  Results.AreaForceShell at the centre joint (PointObj.GetElm for its analysis point)
     K3  GroupDef.SetGroup, AreaObj/PointObj.SetGroupAssign, the "Section Cut Definitions" database
-        table, Results.SectionCutAnalysis (else the "Section Cut Forces - Analysis" table)
+        table (else SapModel.SectCut's Set/Add...Group method), Results.SectionCutAnalysis (else the
+        "Section Cut Forces - Analysis" table)
     K4  PropMaterial.SetMaterial / SetOSteel_1 / SetSSCurve (elastic-perfectly-plastic steel),
-        PropArea.SetShellLayer_1 (a layered wall section, S22 nonlinear, S11 and S12 linear)
+        PropArea.SetShellLayer_1 (a layered wall section, S22 nonlinear, S11 and S12 linear);
+        read-backs: AreaObj.GetProperty per area, PointObj.GetConnectivity of the control and loaded
+        joints, StaticNonlinear.SetSolControlParameters / SetResultsSaved, and after the run the
+        linear push against the elastic hand sway, the case status, base shear and control
+        displacement at every step, and ETABS's .LOG lines when the push shows no response
 """
 
 from __future__ import annotations
@@ -30,8 +35,98 @@ def build(sm, case: dict, R, point, names: dict) -> None:
     for name, lw in (case.get("layeredWalls") or {}).items():
         sec = next(a for a in case["areaSections"] if a["name"] == name)
         R.say(f"  layered wall section {name}: {_layered(sm, R, case, sec, lw)}")
+        _check_wall_assignments(sm, R, case, name)
+    for po in case.get("pushover", []) if case.get("layeredWalls") else []:
+        _check_push(sm, R, case, po)
+        R.say(f"  pushover {po['name']} solution control: {_solution_control(sm, R, po)}")
     for sc in case.get("sectionCuts", []):
         R.say(f"  section cut {sc['name']}: {_section_cut(sm, R, sc)}")
+
+
+# ── K4 read-backs: which section the areas carry, what the push acts on ─────
+def _check_wall_assignments(sm, R, case: dict, sec: str) -> None:
+    """Every area object of the definition must carry the layered section: read back each one's
+    property and reassign any that does not (AreaObj.GetProperty / SetProperty)."""
+    areas = sm.AreaObj.GetNameList(0, [])
+    R.ok(areas, "list areas")
+    have = {}
+    for an in areas[1]:
+        g = sm.AreaObj.GetProperty(an, "")
+        R.ok(g, f"property of area {an}")
+        have.setdefault(str(g[0]), []).append(an)
+    R.say(f"    area objects by section (read back): {{{', '.join(f'{k}: {len(v)}' for k, v in have.items())}}}")
+    wrong = [an for k, v in have.items() if k != sec for an in v]
+    for an in wrong:
+        R.ok(sm.AreaObj.SetProperty(an, sec, 0), f"assign {sec} to area {an}")
+    if wrong:
+        R.say(f"    reassigned {len(wrong)} area objects to {sec}")
+    want = sum(a.get("mesh", [1, 1])[0] * a.get("mesh", [1, 1])[1] for a in case["areas"])
+    if len(areas[1]) != want:
+        raise R.Stop(f"layered wall: {len(areas[1])} area objects, the definition has {want}")
+
+
+def _connected(sm, R, pn: str) -> str:
+    """What a joint connects to (PointObj.GetConnectivity: object type 2 frame, 3 link?, 5 area)."""
+    if not hasattr(sm.PointObj, "GetConnectivity"):
+        return f"(no GetConnectivity; PointObj offers {R._methods(sm.PointObj)[:300]})"
+    g = sm.PointObj.GetConnectivity(pn, 0, [], [], [])
+    if g[-1] != 0:
+        return f"(GetConnectivity returned {g[-1]})"
+    return f"{g[0]} objects: " + ", ".join(f"type {t} {n}" for t, n in zip(g[1], g[2]))
+
+
+def _check_push(sm, R, case: dict, po: dict) -> None:
+    """The control joint and every joint the push pattern loads must be wall joints."""
+    pts = sm.PointObj.GetNameList(0, [])
+    R.ok(pts, "list points")
+    at = {p: _coords(sm, R, p) for p in pts[1]}
+    find = lambda xyz: next((p for p, c in at.items() if math.dist(c, xyz) < TOL), None)
+    ctrl = find(po["control"])
+    R.say(f"    control joint {ctrl} at {po['control']}: {_connected(sm, R, ctrl) if ctrl else 'NOT FOUND'}")
+    loaded = [ld for ld in case.get("pointLoads", []) if ld["pattern"] == po["pattern"]]
+    bad, read = [], []
+    for ld in loaded:
+        pn = find(ld["at"])
+        con = _connected(sm, R, pn) if pn else "NOT FOUND"
+        if pn is None or con.startswith("0 objects"):
+            bad.append(f"{ld['at']}: {con}")
+        if hasattr(sm.PointObj, "GetLoadForce") and pn:
+            try:
+                # [n, PointName, LoadPat, LCStep, CSys, F1, F2, F3, M1, M2, M3, ret]
+                g = sm.PointObj.GetLoadForce(pn, 0, [], [], [], [], [], [], [], [], [], 0)
+                if g[-1] == 0:
+                    fx = sum(g[5][k] for k in range(g[0]) if str(g[2][k]) == po["pattern"])
+                    read.append(f"{pn} {fx:g}" + ("" if abs(fx - ld["f"][0]) < 1e-9 else f" (set {ld['f'][0]:g})"))
+            except Exception as exc:
+                read.append(f"{pn}: {exc}")
+    R.say(f"    push pattern {po['pattern']}: {len(loaded)} loaded joints"
+          + (f"; NOT ON THE WALL: {'; '.join(bad)}" if bad else ", all connected to the wall")
+          + (f"; FX read back: {', '.join(read)}" if read else ""))
+    if ctrl is None or bad:
+        raise R.Stop(f"pushover {po['name']}: control joint {ctrl}, load problems {bad}")
+
+
+def _solution_control(sm, R, po: dict) -> str:
+    """A layered-shell pushover that yields with a flat plateau: more steps and null steps than the
+    defaults, Newton iteration without event-to-event stepping, and many saved states."""
+    sn, nm, out, tried = sm.LoadCases.StaticNonlinear, po["name"], [], []
+    if hasattr(sn, "SetSolControlParameters"):
+        # MaxTotalSteps, MaxFailedSubSteps, MaxIterCS, MaxIterNR, TolConvD, UseEventStepping, TolEventD,
+        # MaxLineSearchPerIter, TolLineSearch, LineSearchStepFact
+        if R._try("SetSolControlParameters", tried, lambda: sn.SetSolControlParameters(
+                nm, 1000, 200, 10, 40, 1e-4, False, 0.01, 20, 0.1, 1.618)):
+            out.append("1000 steps, 200 failed substeps, 40 Newton iterations, no event stepping")
+    if hasattr(sn, "SetResultsSaved"):
+        if R._try("SetResultsSaved", tried, lambda: sn.SetResultsSaved(nm, True, int(po["steps"]),
+                                                                       2 * int(po["steps"]), True)):
+            out.append(f"multiple states saved ({po['steps']} to {2 * int(po['steps'])})")
+    if hasattr(sn, "GetSolControlParameters"):
+        try:
+            g = sn.GetSolControlParameters(nm, 0, 0, 0, 0, 0.0, False, 0.0, 0, 0.0, 0.0)
+            out.append(f"read back {list(g[:-1])}")
+        except Exception as exc:
+            tried.append(f"GetSolControlParameters: {exc}")
+    return "; ".join(out + tried) or f"StaticNonlinear offers: {R._methods(sn)}"
 
 
 def _hook(sm, R, lk: dict) -> str:
@@ -108,7 +203,7 @@ def _epp_steel(sm, R, mat: dict, fy: float, name: str) -> str:
         strain = [-2.0, -ey, 0.0, ey, 2.0]
         stress = [-fy, -fy, 0.0, fy, fy]
         for ids in ([-2, -1, 0, 1, 2], [0, 0, 0, 0, 0]):
-            if R._try(f"SetSSCurve ids {ids}", tried, lambda: pm.SetSSCurve(name, 5, ids, strain, stress, "", 0.0)):
+            if R._try(f"SetSSCurve ids {ids}", tried, lambda: pm.SetSSCurve(name, 5, ids, strain, stress, 0.0)):
                 return f"steel, user stress-strain {list(zip(strain, stress))} (SetOSteel_1 + SetSSCurve)"
     # parametric simple (SSType 1): plateau to a hardening strain of 2, Fu barely above Fy
     if R._try("SetOSteel_1 (parametric)", tried, lambda: pm.SetOSteel_1(name, fy, 1.0001 * fy, fy, 1.0001 * fy, 1, 1,
@@ -155,7 +250,13 @@ def _layered(sm, R, case: dict, sec: dict, lw: dict) -> str:
             n, th, s22 = g[0], list(g[3]), list(g[9])
             if n != 1 or abs(th[0] - t) > 1e-9 or int(s22[0]) != 1:
                 raise R.Stop(f"layered shell {name}: reads back {n} layers, thickness {th}, S22 type {s22}")
-            back = f"; read back: 1 layer, t {th[0]}, S11/S22/S12 types {g[8][0]}/{g[9][0]}/{g[10][0]}"
+            back = (f"; read back: 1 layer, t {th[0]}, type {g[4][0]}, {g[5][0]} integration points, material "
+                    f"{g[6][0]}, S11/S22/S12 types {g[8][0]}/{g[9][0]}/{g[10][0]}")
+    try:                                         # the wall property's own shell type after layering
+        w = pa.GetWall(name, 0, 0, "", 0.0, 0, "", "")
+        back += f"; GetWall: wall type {w[0]}, shell type {w[1]} (6 = layered), material {w[2]}, t {w[3]}"
+    except Exception as exc:
+        back += f"; GetWall: {exc}"
     return f"material {epp}: {how_mat}; one shell layer t {t}, S22 nonlinear, S11 and S12 linear{back}"
 
 
@@ -199,10 +300,57 @@ def _section_cut(sm, R, sc: dict) -> str:
             R.ok(sm.AreaObj.SetGroupAssign(an, grp, False, 0), f"group {grp}: area {an}")
     if not on_line or not above:
         raise R.Stop(f"section cut {sc['name']}: {len(on_line)} joints on z = {z}, {len(above)} areas above it")
-    key = R.find_table(sm, "section cut", "definition")
-    if not key:
-        raise R.Stop(f"section cut: no 'Section Cut Definitions' table and no API (SapModel offers: "
-                     f"{R._methods(sm)}); tables: {', '.join(R.table_keys(sm))[:1500]}")
+    where = f"group {grp} ({len(above)} areas above z = {z}, {len(on_line)} joints on it)"
+    api = getattr(sm, "SectCut", None)
+    R.say(f"    SapModel.SectCut offers: {R._methods(api)}" if api is not None else "    SapModel has no SectCut")
+    keys = R.table_keys(sm)
+    cut_tables = [k for k in keys if "section cut" in k.lower()]
+    R.say(f"    section-cut tables: {cut_tables} {_fields(sm, cut_tables)}")
+    key = next((k for k in cut_tables if k.lower() == "section cut definitions"), "") \
+        or R.find_table(sm, "section cut", "definition")
+    tried = []
+    if key:
+        try:
+            return f"{where}, {_cut_by_table(sm, R, sc, grp, key)}"
+        except R.Stop as exc:
+            tried.append(str(exc))
+    else:
+        tried.append("no 'Section Cut Definitions' table")
+    if api is not None:
+        got = _cut_by_api(sm, R, api, sc, grp, tried)
+        if got:
+            return f"{where}, {got}"
+    raise R.Stop(f"section cut {sc['name']}: " + " | ".join(tried)
+                 + f" | SectCut offers: {R._methods(api) if api is not None else '-'} | tables with 'cut': "
+                 + ", ".join(k for k in keys if "cut" in k.lower()))
+
+
+def _cut_by_api(sm, R, api, sc: dict, grp: str, tried: list) -> str:
+    """SapModel.SectCut: its group-based setter, whatever ETABS 23 calls it, tried with the argument
+    lists such a call takes (name, group[, result type 0 analysis][, location x y z, rotations])."""
+    x, y, z = (float(v) for v in sc["at"])
+    nm = sc["name"]
+    cands = [m for m in dir(api) if not m.startswith("_") and "group" in m.lower()
+             and m.lower().startswith(("set", "add"))]
+    arglists = [(nm, grp), (nm, grp, 0), (nm, grp, 0, x, y, z), (nm, grp, 0, x, y, z, 0.0, 0.0, 0.0),
+                (nm, grp, True, x, y, z, 0.0, 0.0, 0.0)]
+    for m in cands:
+        for args in arglists:
+            if R._try(f"SectCut.{m}{len(args)}", tried, lambda: getattr(api, m)(*args)):
+                listed = ""
+                if hasattr(api, "GetNameList"):
+                    try:
+                        g = api.GetNameList(0, [])
+                        listed = f"; SectCut.GetNameList: {list(g[1])}"
+                    except Exception as exc:
+                        listed = f"; GetNameList: {exc}"
+                return f"SectCut.{m}{args}{listed}"
+    if not cands:
+        tried.append("SectCut has no Set/Add...Group method")
+    return ""
+
+
+def _cut_by_table(sm, R, sc: dict, grp: str, key: str) -> str:
     got = sm.DatabaseTables.GetTableForEditingArray(key, "", 0, [], 0, [])
     R.ok(got, f"open table {key}")
     fields = [str(f) for f in got[1]]
@@ -233,10 +381,15 @@ def _section_cut(sm, R, sc: dict) -> str:
     try:
         R._edit_table(sm, key, [row])
     except Exception as exc:
-        raise R.Stop(f"section cut {sc['name']}: table {key} refused the row {row}: {exc} | fields: "
-                     f"{_fields(sm, [key])}")
-    return (f"group {grp} ({len(above)} areas above z = {z}, {len(on_line)} joints on it), table {key}: "
-            + ", ".join(f"{k} = {v}" for k, v in row.items()))
+        raise R.Stop(f"table {key} refused the row {row}: {exc} | fields: {_fields(sm, [key])}")
+    back = sm.DatabaseTables.GetTableForEditingArray(key, "", 0, [], 0, [])
+    R.ok(back, f"read back table {key}")
+    nf = len(back[1])
+    rows = [list(back[3][k * nf:(k + 1) * nf]) for k in range(back[2])]
+    mine = [r for r in rows if str(r[0]).lower() == sc["name"].lower()]
+    if not mine:
+        raise R.Stop(f"table {key}: no row {sc['name']} after the edit; rows {rows}")
+    return f"table {key}: " + ", ".join(f"{f} = {v}" for f, v in zip(back[1], mine[0]))
 
 
 # ── results ─────────────────────────────────────────────────────────────────
@@ -246,6 +399,97 @@ def results(sm, case: dict, R, names: dict, res: dict) -> None:
         vals[key] = _shell_point(sm, R, case, key, sp)
     for sc in case.get("sectionCuts", []):
         vals.update(_cut_forces(sm, R, sc))
+    for po in case.get("pushover", []) if case.get("layeredWalls") else []:
+        _linear_push(sm, R, case, po)
+        _pushover_curve(sm, R, po, res)
+
+
+def _linear_push(sm, R, case: dict, po: dict) -> None:
+    """The push pattern as a linear case: the elastic layered wall's top sway against the hand value
+    PH^3/3EI + PH/(5/6 G A) (one steel layer of thickness t; a near-zero or huge sway shows that
+    the wall itself, not the nonlinear solution, is wrong)."""
+    try:
+        lw = next(iter(case["layeredWalls"].values()))
+        mat = case["materials"][0]
+        E, nu, t = mat["E"], mat["nu"], lw["steel_t"]
+        xs = [c[0] for a in case["areas"] for c in a["corners"]]
+        zs = [c[2] for a in case["areas"] for c in a["corners"]]
+        b, H = max(xs) - min(xs), max(zs) - min(zs)
+        P = sum(ld["f"][0] for ld in case["pointLoads"] if ld["pattern"] == po["pattern"])
+        hand = P * H**3 / (3 * E * t * b**3 / 12) + P * H / (5 / 6 * E / (2 * (1 + nu)) * t * b)
+        _select(sm, R, po["pattern"])
+        pts = sm.PointObj.GetNameList(0, [])
+        ctrl = next((p for p in pts[1] if math.dist(_coords(sm, R, p), po["control"]) < TOL), None)
+        jd = sm.Results.JointDispl(ctrl, 0, 0, [], [], [], [], [], [], [], [], [], [], [])
+        R.ok(jd, f"{po['pattern']} displacement at {ctrl}")
+        br = sm.Results.BaseReact(0, [], [], [], [], [], [], [], [], [], 0, 0, 0)
+        R.ok(br, f"{po['pattern']} base reactions")
+        R.say(f"  linear {po['pattern']} ({P:g} kip): top UX {jd[6][0]:.6g} ft (elastic wall by hand {hand:.6g}), "
+              f"base FX {br[4][0]:.6g}")
+    except Exception as exc:
+        R.say(f"  linear {po['pattern']} check not read: {exc}")
+
+
+def _pushover_curve(sm, R, po: dict, res: dict) -> None:
+    """Log the pushover as ETABS solved it: the case status, the base shear and the control joint's
+    displacement at every saved step, and ETABS's analysis log for the case.  Stored in
+    res["pushoverCurve"]; nothing here changes the exported results."""
+    nm = po["name"]
+    try:
+        st = sm.Analyze.GetCaseStatus(0, [], [])
+        status = {1: "not run", 2: "could not start", 3: "not finished", 4: "finished"}
+        R.say(f"  case {nm} status: " + ", ".join(f"{n} {status.get(s, s)}" for n, s in zip(st[1], st[2])
+                                                    if n == nm))
+    except Exception as exc:
+        R.say(f"  case status not read: {exc}")
+    curve = {"step": [], "FX": [], "U1": []}
+    try:
+        R.ok(sm.Results.Setup.SetOptionNLStatic(2), "nonlinear static results: step by step")
+        _select(sm, R, nm)
+        br = sm.Results.BaseReact(0, [], [], [], [], [], [], [], [], [], 0, 0, 0)
+        R.ok(br, f"base reactions {nm} by step")
+        curve["step"] = [float(br[3][k]) for k in range(br[0])]
+        curve["FX"] = [float(br[4][k]) for k in range(br[0])]
+        pts = sm.PointObj.GetNameList(0, [])
+        ctrl = next((p for p in pts[1] if math.dist(_coords(sm, R, p), po["control"]) < TOL), None)
+        if ctrl:
+            jd = sm.Results.JointDispl(ctrl, 0, 0, [], [], [], [], [], [], [], [], [], [], [])
+            R.ok(jd, f"control joint {ctrl} displacement by step")
+            curve["U1"] = [float(jd[6][k]) for k in range(jd[0])]
+    except Exception as exc:
+        R.say(f"  pushover {nm}: step-by-step results not read: {exc}")
+    finally:
+        try:
+            R.ok(sm.Results.Setup.SetOptionNLStatic(3), "nonlinear static results: last step")
+        except Exception:
+            pass
+    res["pushoverCurve"] = {nm: curve}
+    n = len(curve["FX"])
+    R.say(f"  pushover {nm}: {n} saved steps; step, U1, base FX: "
+          + "; ".join(f"{curve['step'][k]:g} {curve['U1'][k] if k < len(curve['U1']) else float('nan'):.4g} "
+                      f"{curve['FX'][k]:.5g}" for k in range(n)))
+    peak = max((abs(v) for v in curve["FX"]), default=0.0)
+    if n <= 1 or peak < 1e-3:
+        R.say(f"  pushover {nm}: NO RESPONSE ({n} steps, peak |FX| {peak:.3g}): ETABS's analysis log follows")
+        _analysis_log(sm, R, nm)
+
+
+def _analysis_log(sm, R, nm: str) -> None:
+    """The lines of ETABS's <model>.LOG about the case, its warnings and its errors."""
+    from pathlib import Path
+    try:
+        path = Path(str(sm.GetModelFilename(True)))
+        log = next((p for p in (path.with_suffix(".LOG"), path.with_suffix(".log")) if p.exists()), None)
+        if log is None:
+            R.say(f"    no analysis log next to {path}")
+            return
+        lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+        words = (nm.lower(), "warn", "error", "unstable", "converge", "null", "fail", "terminat", "step")
+        hits = [ln.strip() for ln in lines if ln.strip() and any(w in ln.lower() for w in words)]
+        for ln in hits[-60:]:
+            R.say(f"    LOG {ln}")
+    except Exception as exc:
+        R.say(f"    analysis log not read: {exc}")
 
 
 def _select(sm, R, cname: str) -> None:

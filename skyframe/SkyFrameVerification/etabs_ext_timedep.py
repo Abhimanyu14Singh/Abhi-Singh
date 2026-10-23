@@ -28,12 +28,25 @@ def _norm(s) -> str:
 
 
 def _import_types(sm) -> dict:
-    """{table key: ImportType} (0 not importable, 1 not interactively, 2 unlocked model, 3 always)."""
-    try:
-        t = sm.DatabaseTables.GetAvailableTables(0, [], [], [])
-        return {str(k): int(v) for k, v in zip(t[1], t[3])}
-    except Exception:
-        return {}
+    """{table key: ImportType} (0 not importable, 1 not interactively, 2 unlocked model, 3 always) for
+    EVERY table: GetAllTables (GetAvailableTables lists only tables that already hold rows)."""
+    out = {}
+    dt = sm.DatabaseTables
+    for call in (lambda: dt.GetAllTables(0, [], [], [], []), lambda: dt.GetAvailableTables(0, [], [], [])):
+        try:
+            t = call()
+            for k, v in zip(t[1], t[3]):
+                out.setdefault(str(k), int(v))
+        except Exception:
+            pass
+    return out
+
+
+def all_keys(sm, R) -> list:
+    """Every table key ETABS knows: the runner's full list, plus any the import-type listing adds."""
+    keys = list(R.table_keys(sm))
+    keys += [k for k in _import_types(sm) if k not in keys]
+    return keys
 
 
 def _fields(sm, key: str):
@@ -61,11 +74,27 @@ def describe(sm, R, keys, types=None) -> list:
 
 
 def _open(sm, key: str):
-    got = sm.DatabaseTables.GetTableForEditingArray(key, "", 0, [], 0, [])
-    code = got[-1] if isinstance(got, (list, tuple)) else got
-    if code != 0:
-        return None, f"GetTableForEditingArray({key!r}) returned {code}"
-    return (got[0], [str(f) for f in got[1]], int(got[2]), [str(v) for v in got[3]]), ""
+    """(version, fields, rows, data) for editing.  An empty table may refuse to open for editing (or
+    open without fields): then the importable fields from GetAllFieldsInTable start an empty table."""
+    err = ""
+    try:
+        got = sm.DatabaseTables.GetTableForEditingArray(key, "", 0, [], 0, [])
+        code = got[-1] if isinstance(got, (list, tuple)) else got
+        if code == 0 and len(got[1]):
+            return (got[0], [str(f) for f in got[1]], int(got[2]), [str(v) for v in got[3]]), ""
+        err = f"GetTableForEditingArray({key!r}) returned {code} with {len(got[1]) if code == 0 else 0} fields"
+    except Exception as exc:
+        err = f"GetTableForEditingArray({key!r}): {exc}"
+    try:
+        f = sm.DatabaseTables.GetAllFieldsInTable(key, 0, 0, [], [], [], [], [])
+        if f[-1] == 0 and len(f[2]):
+            imp = [bool(x) for x in f[6]] if len(f) > 7 else [True] * len(f[2])
+            fields = [str(k) for k, i in zip(f[2], imp) if i] or [str(k) for k in f[2]]
+            return (f[0], fields, 0, []), ""
+        err += f"; GetAllFieldsInTable returned {f[-1]}"
+    except Exception as exc:
+        err += f"; GetAllFieldsInTable: {exc}"
+    return None, err
 
 
 def _write(sm, key: str, version, fields, n, data) -> str:
@@ -188,19 +217,190 @@ LAW_NAMES = {"ACI 209R-92": ("ACI 209R-92", "ACI209R-92", "ACI 209R-1992", "ACI 
 
 
 def set_time_dependent(sm, R, td: dict) -> str:
-    """ACI 209R-92 creep / shrinkage on the material: an API call where one exists (none known in
-    ETABS 23), else the material time-dependent tables."""
+    """ACI 209R-92 creep / shrinkage on the material: the PropMaterial.TimeDep object's setters
+    (ETABS 23 has the object; its methods and argument names are read from the type library at run
+    time), else the material time-dependent tables; R.Stop with both diagnostics when neither takes."""
+    try:
+        return set_time_dependent_api(sm, R, td)
+    except R.Stop as exc:
+        api_err = str(exc)
+    R.say(f"  PropMaterial.TimeDep did not take the properties ({api_err[:300]}); trying tables")
+    try:
+        return set_time_dependent_tables(sm, R, td)
+    except R.Stop as exc:
+        raise R.Stop(f"time-dependent material: API: {api_err} ||| tables: {exc}")
+
+
+# ── PropMaterial.TimeDep: signatures from the comtypes type library ─────────
+_OTHER_LAWS = ("ceb", "fip", "gl2000", "euro", "ec2", "as3600", "jtg", "user", "relax", "tendon", "2010")
+
+
+def com_params(obj, method: str):
+    """[(name, flags, kind)] of a comtypes method, from its interface's _methods_ (flags: 1 in,
+    2 out, 3 in/out = ByRef; kind float / int / bool / str / list).  None when it cannot be read."""
+    for cls in type(obj).__mro__:
+        for spec in cls.__dict__.get("_methods_", ()) or ():
+            try:
+                name = spec.name if hasattr(spec, "name") else spec[1]
+                if name != method:
+                    continue
+                argtypes = spec.argtypes if hasattr(spec, "argtypes") else spec[2]
+                pflags = spec.paramflags if hasattr(spec, "paramflags") else spec[3]
+            except Exception:
+                continue
+            out = []
+            for at, pf in zip(argtypes, pflags):
+                tn = getattr(at, "__name__", str(at))
+                if tn.startswith("LP_") and hasattr(at, "_type_"):      # ByRef: POINTER(base)
+                    tn = getattr(at._type_, "__name__", str(at._type_))
+                tn = tn.lower()
+                kind = ("list" if "array" in tn else "bool" if "bool" in tn
+                        else "float" if "double" in tn or "float" in tn
+                        else "str" if "bstr" in tn or "char" in tn else "int")
+                out.append((str(pf[1]) if len(pf) > 1 else "", int(pf[0]), kind))
+            return out
+    return None
+
+
+def _placeholder(kind):
+    return {"float": 0.0, "int": 0, "bool": False, "str": "", "list": []}[kind]
+
+
+def _td_api_value(pname: str, kind: str, td: dict):
+    """The value for a TimeDep argument named ``pname`` of type ``kind``; None keeps ETABS's own value
+    (enums such as cement type, curing and creep method are not guessed)."""
+    f = _norm(pname)
+    vs = float(td["vs"])
+    if kind == "str" and ("name" in f or "material" in f):
+        return td["material"]
+    if kind == "bool":
+        if "creep" in f:
+            return bool(td["creep"])
+        if "shrink" in f:
+            return bool(td["shrinkage"])
+        if any(w in f for w in ("age", "aging", "strength", "stiff", "modulus")):
+            return bool(td["aging"])
+        return None
+    if kind == "float":
+        if "humid" in f or f in ("rh", "relhum"):
+            return float(td["rh"])
+        if "notional" in f or f in ("h", "h0"):
+            return 2.0 * vs
+        if "vs" in f or "vol" in f or "surf" in f:
+            return vs
+        if ("shrink" in f and any(w in f for w in ("start", "age", "time"))) or "drying" in f or f in ("ts", "tsh0"):
+            return float(td["shrinkStart"])
+    return None
+
+
+def _call(obj, method, args):
+    r = getattr(obj, method)(*args)
+    code = r[-1] if isinstance(r, (list, tuple)) else r
+    return code, (list(r[:-1]) if isinstance(r, (list, tuple)) else [])
+
+
+def _get_args(sig, material):
+    return [material if i == 0 else _placeholder(k) for i, (_, fl, k) in enumerate(sig) if fl & 1]
+
+
+def set_time_dependent_api(sm, R, td: dict) -> str:
+    """Every ACI 209 setter of PropMaterial.TimeDep (and the law-neutral option setters: consider
+    creep / shrinkage / age), arguments matched by name; read back with the matching Get."""
+    tdo = getattr(sm.PropMaterial, "TimeDep", None)
+    if tdo is None:
+        raise R.Stop(f"PropMaterial has no TimeDep (offers {R._methods(sm.PropMaterial)})")
+    methods = [n for n in dir(tdo) if not n.startswith("_") and n[:3] in ("Set", "Get")]
+    sigs = {m: com_params(tdo, m) for m in methods}
+    R.say(f"  PropMaterial.TimeDep methods: {', '.join(methods) or '(none)'}")
+    for m in methods:
+        sg = sigs[m]
+        R.say(f"    {m}(" + (", ".join(f"{n}:{k}{'&' if fl & 2 else ''}" for n, fl, k in sg) if sg is not None
+                             else "signature not readable") + ")")
+    low = {m: m.lower() for m in methods}
+    aci = [m for m in methods if m.startswith("Set") and ("209" in low[m] or "aci" in low[m])]
+    generic = [m for m in methods if m.startswith("Set") and m not in aci
+               and not any(w in low[m] for w in _OTHER_LAWS)
+               and any(w in low[m] for w in ("option", "consider", "creep", "shrink", "age", "timedep"))]
+    tried, done, readback = [], [], []
+    nm = td["material"]
+    for m in aci + generic:
+        sg, get = sigs[m], "Get" + m[3:]
+        gsig = sigs.get(get) if get in methods else None
+        current = {}
+        if gsig is not None:
+            try:
+                code, vals = _call(tdo, get, _get_args(gsig, nm))
+                if code == 0:
+                    current = dict(zip([n for n, fl, _ in gsig[1:] if fl & 2], vals))
+            except Exception as exc:
+                tried.append(f"{get}: {exc}")
+        if sg is not None:
+            args, kept, ours = [], [], 0
+            for i, (pn, fl, kind) in enumerate(sg):
+                if not fl & 1:
+                    continue
+                v = nm if (i == 0 and kind == "str") else _td_api_value(pn, kind, td)
+                if v is None:
+                    v = current.get(pn, _placeholder(kind))
+                    kept.append(f"{pn}={v!r}")
+                elif i:
+                    ours += 1
+                args.append(v)
+            if m in generic and not ours:
+                continue                                # nothing of ours in it (e.g. a type enum)
+            try:
+                code, _ = _call(tdo, m, args)
+            except Exception as exc:
+                code = f"{type(exc).__name__}: {exc}"
+            if code != 0:
+                tried.append(f"{m}{tuple(args)} returned {code}")
+                continue
+            done.append((m, f"{m}{tuple(args)}" + (f" [ETABS values kept: {', '.join(kept)}]" if kept else "")))
+        else:                                           # signature unreadable: a few argument orders
+            rh, vs, ts = float(td["rh"]), float(td["vs"]), float(td["shrinkStart"])
+            flags = (bool(td["creep"]), bool(td["shrinkage"]), bool(td["aging"]))
+            for args in ((nm, rh, vs, ts), (nm, ts, rh, vs), (nm, rh, vs), (nm,) + flags):
+                if R._try(f"{m}{args}", tried, lambda a=args: getattr(tdo, m)(*a)):
+                    done.append((m, f"{m}{args} (signature not readable: guessed order)"))
+                    break
+            else:
+                continue
+        if gsig is None:
+            continue
+        try:                                            # read back; what we set must come back
+            code, vals = _call(tdo, get, _get_args(gsig, nm))
+            byref = [(n, k) for n, fl, k in gsig[1:] if fl & 2]
+            readback.append(f"{get}: " + ", ".join(f"{n}={v}" for (n, _), v in zip(byref, vals)) + f" (code {code})")
+            for (n, k), v in zip(byref, vals):
+                want = _td_api_value(n, k, td)
+                if want is not None and not isinstance(want, str) and abs(float(v) - float(want)) > 1e-9:
+                    raise R.Stop(f"PropMaterial.TimeDep.{get} reads back {n} = {v}, set {want}")
+        except R.Stop:
+            raise
+        except Exception as exc:
+            readback.append(f"{get}: {exc}")
+    if not any(m in aci for m, _ in done):
+        raise R.Stop("PropMaterial.TimeDep: no ACI 209 setter took the properties. Set: "
+                     + ("; ".join(d for _, d in done) or "nothing") + ". Tried: " + " | ".join(tried[-8:])
+                     + " || methods: " + "; ".join(
+                         f"{m}({', '.join(n for n, _, _ in sigs[m]) if sigs[m] is not None else '?'})" for m in methods))
+    for _, d in done:
+        R.say(f"  TimeDep set: {d}")
+    for rb in readback:
+        R.say(f"  TimeDep read back: {rb}")
+    return f"{td['law']} through PropMaterial.TimeDep ({', '.join(m for m, _ in done)})"
+
+
+def set_time_dependent_tables(sm, R, td: dict) -> str:
     tried = []
     api = _api_names(sm.PropMaterial, "time", "creep", "shrink")
-    R.say(f"  PropMaterial time-dependent methods: {api or 'none'}")
     types = _import_types(sm)
-    keys = [k for k in (types or {k: 0 for k in R.table_keys(sm)})
+    keys = [k for k in all_keys(sm, R)
             if "material" in k.lower() and any(w in k.lower() for w in ("time", "creep", "shrink"))]
     if not keys:
-        raise R.Stop("time-dependent material: ETABS 23's API has no setter (PropMaterial offers "
-                     f"{api or 'no time/creep/shrink methods'}) and no material table mentions time, creep or "
-                     "shrinkage; material tables offered: "
-                     + "; ".join(k for k in (types or R.table_keys(sm)) if "material" in k.lower()))
+        raise R.Stop("no material table mentions time, creep or shrinkage (PropMaterial offers "
+                     f"{api or 'no time/creep/shrink members'}); material tables offered: "
+                     + "; ".join(k for k in all_keys(sm, R) if "material" in k.lower()))
     R.say(f"  time-dependent material tables: {keys}")
     described = describe(sm, R, keys, types)
     # a general table (no code name in its key) first, then the ACI 209 one
@@ -347,14 +547,16 @@ def assign_hinges(sm, case: dict, R, names: dict, po: dict) -> str:
            "PropFrame": _api_names(sm.PropFrame, "hinge")}
     R.say(f"  hinge API: {api}")
     types = _import_types(sm)
-    keys = [k for k in (types or {k: 0 for k in R.table_keys(sm)}) if "hinge" in k.lower()]
+    keys = [k for k in all_keys(sm, R) if "hinge" in k.lower()]
     R.say(f"  hinge tables ({len(keys)}):")
     described = describe(sm, R, keys, types)
     assign_keys = [k for k in keys if "assign" in k.lower() and "frame" in k.lower()
                    and "overwrite" not in k.lower()] or [k for k in keys if "assign" in k.lower()]
-    def_keys = [k for k in keys if k not in assign_keys and "frame" in k.lower()
+    def_keys = [k for k in keys if k not in assign_keys
                 and any(w in k.lower() for w in ("definition", "propert", "user", "moment", "deformation"))
-                and not any(w in k.lower() for w in ("overwrite", "generated", "result", "state", "summary"))]
+                and not any(w in k.lower() for w in ("overwrite", "generated", "result", "state", "summary",
+                                                     "analysis option", "wall", "link", "shell", "fiber"))]
+    def_keys = [k for k in def_keys if "frame" in k.lower()] or def_keys
     tried = []
 
     def fail(why: str):

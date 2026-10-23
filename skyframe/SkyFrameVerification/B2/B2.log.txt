@@ -16,6 +16,11 @@ Building the model ...
   mass source (PropMaterial.SetMassSource_1): elements False, joint masses True, patterns {}
   spectrum DESIGN: database table (Name, Period, Value, DampRatio, GUID)
   spectrum case RSX: CQC (ETABS default, read back), damping 0.05 (ETABS default, read back)
+  diagnose C_0_0_1 (column, angle 90.0, W14X90) | local axes [90.0, False, 0] | end offsets [False, 0.0, 0.0, 0.0, 0] | insertion [10, False, False, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], 'Local', 0] | releases [[False, False, False, False, False, False], [False, False, False, False, False, False], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 0] | modifiers [[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], 0] | section ['W14X90', '', 0] | points ['1', '2', 0]
+  diagnose C_25_0_1 (column, angle 0.0, W14X90) | local axes [0.0, False, 0] | end offsets [False, 0.0, 0.0, 0.0, 0] | insertion [10, False, False, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], 'Local', 0] | releases [[False, False, False, False, False, False], [False, False, False, False, False, False], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 0] | modifiers [[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], 0] | section ['W14X90', '', 0] | points ['9', '10', 0]
+  diagnose BX_0_0_1 (beam, angle 0.0, W24X76) | local axes [0.0, False, 0] | end offsets [False, 0.0, 0.0, 0.0, 0] | insertion [10, False, False, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], 'Local', 0] | releases [[False, False, False, False, False, False], [False, False, False, False, False, False], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 0] | modifiers [[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], 0] | section ['W24X76', '', 0] | points ['2', '10', 0]
+  diagnose material STEEL: [4176000.0, 0.3, 0.0, 1606153.846153846, 0]
+  diagnose shear deformation / options: [(True, True, True, True, True, True), 0]
 Running the analysis ...
   screenshot B2.etabs.png (ETABS 3-D view only)
 Reading results ...

@@ -1,0 +1,11 @@
+{
+ "program": "SkyFrame",
+ "version": "1.28.3",
+ "case": "SP2",
+ "python": "3.12.10",
+ "cores": 24,
+ "machine": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
+ "solver": "PARDISO (pypardiso) where SkyFrame uses it, OpenSees otherwise",
+ "linear_s": 5.5059104999527335,
+ "nonlinear_s": 11.064559899969026
+}
