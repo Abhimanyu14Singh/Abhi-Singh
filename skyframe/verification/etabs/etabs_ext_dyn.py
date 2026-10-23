@@ -199,7 +199,10 @@ def _zero_fields(fields: list) -> dict:
         n = _norm(f)
         if "coef" in n or "ratio" in n or (n.startswith("damp") and n[-1:].isdigit()):
             out[f] = 0.0
-    return out
+    # damping given directly (ProBy = Direct): only the mass and stiffness coefficients count, and ETABS
+    # leaves the period-based ratio fields (ProDamping1/2, Mode4Ratio) blank (H1's third run)
+    coefs = {f: v for f, v in out.items() if "coef" in _norm(f)}
+    return coefs or out
 
 
 def set_direct_nonlinear(sm, R, th: dict) -> str:
