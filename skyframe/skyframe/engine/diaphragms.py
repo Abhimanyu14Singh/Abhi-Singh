@@ -651,13 +651,16 @@ def _group_props(asm, g: dict) -> dict:
 def _unit_rz(eng, mtag: int, vec) -> float:
     asm = eng._elastic_domain()
     eng._seg_span_loads = {}
+    eng._arm_span_loads = {}
     eng._seg_fef = {}
     from skyframe.engine.opensees_engine import _REUSE
     ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
     _REUSE["loaded"] = True
     ops.load(mtag, *vec)
-    eng._setup_analysis(asm)
+    # factor-once, as the story CR solves do (_master_rz): a fresh factorisation for each of the three
+    # unit loads of every diaphragm made this the slowest part of a tall-tower run (SP5: 210 solves)
+    eng._setup_linear_reused(asm)
     if ops.analyze(1) != 0:                              # pragma: no cover
         raise RuntimeError("CR unit-load solve failed (diaphragm master)")
     return float(ops.nodeDisp(mtag)[5])

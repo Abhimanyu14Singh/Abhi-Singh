@@ -73,13 +73,14 @@ def SP4() -> dict:
     return c
 
 
-def wall_tower(cid: str, title: str, purpose: str, ns: int, h: float = 12.0) -> dict:
-    """A tower: 5 x 5 column grid at 30 ft (120 x 120 ft), a 30 x 30 ft concrete core of four 18 in shear
-    walls (x and y 45 to 75 ft) meshed 2.5 ft wide by h/4 high, perimeter and interior beams that stop at
-    the core, a rigid diaphragm at every floor.  Linear only."""
+def wall_tower(cid: str, title: str, purpose: str, ns: int, h: float = 12.0, Fk: float = 1.3) -> dict:
+    """A tower: 5 x 5 column grid at 30 ft (120 x 120 ft), a 40 x 40 ft concrete core of four 2 ft shear
+    walls (x and y 40 to 80 ft) meshed 40/16 = 2.5 ft wide by h/4 high, perimeter beams and beams that
+    stop at the core, a rigid diaphragm at every floor.  Lateral load Fk x level number (kips) per level,
+    about 2% of the weight in all.  Linear only."""
     from cases_walls import CONC_E, CONC_NU
-    W, t, grid = 0.150, 1.5, [0.0, 30.0, 60.0, 90.0, 120.0]
-    lo, hi, nw, nv = 45.0, 75.0, 12, 4                    # core walls: 12 x 4 elements per wall per story
+    W, t, grid = 0.150, 2.0, [0.0, 30.0, 60.0, 90.0, 120.0]
+    lo, hi, nw, nv = 40.0, 80.0, 16, 4                    # core walls: 16 x 4 elements per wall per story
     inside = lambda x, y: lo < x < hi and lo < y < hi
     cols = [(x, y) for x in grid for y in grid if not (lo <= x <= hi and lo <= y <= hi)]
     corners = [(lo, lo), (hi, lo), (hi, hi), (lo, hi)]
@@ -105,7 +106,7 @@ def wall_tower(cid: str, title: str, purpose: str, ns: int, h: float = 12.0) -> 
         for k, ((xa, ya), (xb, yb)) in enumerate(zip(corners, corners[1:] + corners[:1])):
             areas.append({"id": f"W{k + 1}_{s + 1}", "section": "WALL", "mesh": [nw, nv], "pier": f"P{k + 1}",
                           "corners": [[xa, ya, z0], [xb, yb, z0], [xb, yb, z1], [xa, ya, z1]]})
-        F = 10.0 * (s + 1) / len(cols)
+        F = Fk * (s + 1) / len(cols)
         loads += [{"pattern": "EQX", "at": [x, y, z1], "f": [F, 0, 0, 0, 0, 0]} for x, y in cols]
         dias.append({"name": f"D{s + 1}", "points": [[x, y, z1] for x, y in cols] + [[x, y, z1] for x, y in wall_nodes]})
     supports = [{"at": [x, y, 0.0], "restraint": [1] * 6} for x, y in cols + wall_nodes]
@@ -115,7 +116,7 @@ def wall_tower(cid: str, title: str, purpose: str, ns: int, h: float = 12.0) -> 
     bm = {"name": "BM", "material": "CONC", "A": 3.0, "I33": 1.5 * 8 / 12, "I22": 2 * 1.5**3 / 12, "J": 0.95,
           "As2": 0.0, "As3": 0.0, "depth": 2.0, "width": 1.5}
     Wt = W * (len(cols) * ns * h * 9.0 + ns * beam_len * 3.0 + ns * 4 * (hi - lo) * h * t)
-    V = sum(10.0 * (s + 1) for s in range(ns))
+    V = sum(Fk * (s + 1) for s in range(ns))
     sdl = [{"pattern": "SDL", "frame": f["id"], "w": 1.0} for f in frames if f["section"] == "BM"]
     return {
         "id": cid, "title": title, "purpose": purpose, "units": "kip-ft",
@@ -149,10 +150,10 @@ def SP5() -> dict:
     """A 70-story tower with a concrete shear-wall core, linear only."""
     return wall_tower(
         "SP5", "Speed benchmark: 70-story shear-wall tower",
-        ("A 70-story tower, 840 ft tall: a 30 x 30 ft core of four 18 in concrete shear walls meshed 2.5 x 3 ft "
-         "(13,440 wall shells), 24 columns of 3 ft and beams on a 120 x 120 ft plan, a rigid diaphragm at every "
-         "floor. Linear only: self-weight, superimposed load on the beams, lateral load (10 kips x level "
-         "number) and 12 modes, timed in both programs on the same PC, ETABS on its advanced solver with all "
+        ("A 70-story tower, 840 ft tall: a 40 x 40 ft core of four 2 ft concrete shear walls meshed 2.5 x 3 ft "
+         "(17,920 wall shells), 24 columns of 3 ft and beams on a 120 x 120 ft plan, a rigid diaphragm at every "
+         "floor. Linear only: self-weight, superimposed load on the beams, lateral load (1.3 kips x level "
+         "number, about 2% of the weight) and 12 modes, timed in both programs on the same PC, ETABS on its advanced solver with all "
          "cores."),
         ns=70)
 
