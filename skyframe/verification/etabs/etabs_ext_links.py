@@ -26,6 +26,11 @@ from __future__ import annotations
 import math
 
 TOL = 1e-6
+# Layered-shell component behaviour codes of PropArea.SetShellLayer_1 (S11Type, S22Type, S12Type):
+# 0 inactive, 1 linear, 2 nonlinear.  The first ETABS run used 0/1/0 meaning "linear, nonlinear,
+# linear" and ETABS read it as S11 and S12 INACTIVE, S22 linear: a wall of vertical fibres with no
+# horizontal or shear stiffness (1 kip pushed the top 5653 ft; the log: structure unstable).
+LAYER_INACTIVE, LAYER_LINEAR, LAYER_NONLINEAR = 0, 1, 2
 
 
 # ── build ───────────────────────────────────────────────────────────────────
@@ -93,7 +98,7 @@ def _check_push(sm, R, case: dict, po: dict) -> None:
         if hasattr(sm.PointObj, "GetLoadForce") and pn:
             try:
                 # [n, PointName, LoadPat, LCStep, CSys, F1, F2, F3, M1, M2, M3, ret]
-                g = sm.PointObj.GetLoadForce(pn, 0, [], [], [], [], [], [], [], [], [], 0)
+                g = sm.PointObj.GetLoadForce(pn, 0, [], [], [], [], [], [], [], [], [], [], 0)
                 if g[-1] == 0:
                     fx = sum(g[5][k] for k in range(g[0]) if str(g[2][k]) == po["pattern"])
                     read.append(f"{pn} {fx:g}" + ("" if abs(fx - ld["f"][0]) < 1e-9 else f" (set {ld['f'][0]:g})"))
@@ -226,8 +231,9 @@ def _layered(sm, R, case: dict, sec: dict, lw: dict) -> str:
         raise R.Stop(f"layered shell: PropArea has no SetShellLayer_1 | PropArea offers: {R._methods(pa)} | "
                      f"layer tables: {keys} {_fields(sm, keys)}")
     # Name, NumberLayers, LayerName, Dist, Thickness, MyType (1 shell), NumIntegrationPts, MatProp, MatAng,
-    # S11Type, S22Type, S12Type (0 linear, 1 nonlinear, 2 inactive)
-    args = (name, 1, ["STEEL"], [0.0], [t], [1], [2], [epp], [0.0], [0], [1], [0])
+    # S11Type, S22Type, S12Type: LAYER_INACTIVE / LINEAR / NONLINEAR (see the constants)
+    args = (name, 1, ["STEEL"], [0.0], [t], [1], [2], [epp], [0.0], [LAYER_LINEAR], [LAYER_NONLINEAR],
+            [LAYER_LINEAR])
     tried = []
     done = R._try("PropArea.SetShellLayer_1", tried, lambda: pa.SetShellLayer_1(*args))
     if not done:
@@ -248,7 +254,7 @@ def _layered(sm, R, case: dict, sec: dict, lw: dict) -> str:
         if g[-1] == 0:
             # [n, LayerName, Dist, Thickness, MyType, NumIntPts, MatProp, MatAng, S11, S22, S12, ret]
             n, th, s22 = g[0], list(g[3]), list(g[9])
-            if n != 1 or abs(th[0] - t) > 1e-9 or int(s22[0]) != 1:
+            if n != 1 or abs(th[0] - t) > 1e-9 or int(s22[0]) != LAYER_NONLINEAR:
                 raise R.Stop(f"layered shell {name}: reads back {n} layers, thickness {th}, S22 type {s22}")
             back = (f"; read back: 1 layer, t {th[0]}, type {g[4][0]}, {g[5][0]} integration points, material "
                     f"{g[6][0]}, S11/S22/S12 types {g[8][0]}/{g[9][0]}/{g[10][0]}")
@@ -424,8 +430,12 @@ def _linear_push(sm, R, case: dict, po: dict) -> None:
         R.ok(jd, f"{po['pattern']} displacement at {ctrl}")
         br = sm.Results.BaseReact(0, [], [], [], [], [], [], [], [], [], 0, 0, 0)
         R.ok(br, f"{po['pattern']} base reactions")
-        R.say(f"  linear {po['pattern']} ({P:g} kip): top UX {jd[6][0]:.6g} ft (elastic wall by hand {hand:.6g}), "
-              f"base FX {br[4][0]:.6g}")
+        ux = jd[6][0]
+        flag = "" if 0.5 < abs(ux) / hand < 2 else (
+            f"  WALL STIFFNESS WRONG ({abs(ux) / hand:.3g} x the hand sway): check the layer behaviour codes "
+            f"(S11/S22/S12 set {LAYER_LINEAR}/{LAYER_NONLINEAR}/{LAYER_LINEAR}, meant linear/nonlinear/linear)")
+        R.say(f"  linear {po['pattern']} ({P:g} kip): top UX {ux:.6g} ft (elastic wall by hand {hand:.6g}), "
+              f"base FX {br[4][0]:.6g}{flag}")
     except Exception as exc:
         R.say(f"  linear {po['pattern']} check not read: {exc}")
 
