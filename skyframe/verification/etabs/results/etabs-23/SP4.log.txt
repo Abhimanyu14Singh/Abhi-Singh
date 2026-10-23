@@ -1,0 +1,21 @@
+== SP4: Speed benchmark: large 10-story building
+Building the model ...
+  section COL: A 6.25, I22 3.255208333333333, I33 3.255208333333333, J 5.4931640625, As2 0.0, As3 0.0 (read back)
+  section BM: A 3.0, I22 0.5625, I33 1.0, J 0.95, As2 0.0, As3 0.0 (read back)
+  area section SLAB: slab, thickness 0.6666666666666666, shell type 1 (read back)
+  15000 area objects
+  mass source (PropMaterial.SetMassSource_1): elements True, joint masses False, patterns {}
+  ETABS solver: {'solver': 'advanced', 'process': 2, 'threads': 24, 'cores': 24}
+  ETABS linear run: best 416.39 s of 427.74, 423.68, 416.39 (SW, SDL, EQX, MODES)
+Running the analysis ...
+  screenshot SP4.etabs.png (ETABS 3-D view only)
+Reading results ...
+  ETABS analysed 60000 area elements for 15000 area objects  (it meshed the objects further: meshes differ from SkyFrame)
+check            hand        ETABS  difference
+SW-FZ         62184.4      62184.4  0.000%
+SDL-FZ           9375         9375  0.000%
+EQX-FX          -2200        -2200  0.000%
+EQX-UX              -     0.110548  compared with SkyFrame only
+T1                  -      1.55518  compared with SkyFrame only
+T2                  -      1.52437  compared with SkyFrame only
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\SP4\SP4.EDB; largest difference from the hand calculation 0.000%

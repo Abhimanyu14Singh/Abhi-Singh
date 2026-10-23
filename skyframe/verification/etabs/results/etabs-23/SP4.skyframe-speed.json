@@ -1,0 +1,35 @@
+{
+ "program": "SkyFrame",
+ "version": "1.28.3",
+ "case": "SP4",
+ "python": "3.12.10",
+ "cores": 24,
+ "machine": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
+ "solver": "PARDISO (pypardiso) where SkyFrame uses it, OpenSees otherwise",
+ "linear_solve_s": 2.8816934002097696,
+ "linear_solve_runs_s": [
+  3.1673881995957345,
+  2.8816934002097696,
+  2.9130904003977776
+ ],
+ "linear_s": 9.208742999937385,
+ "linear_runs_s": [
+  17.73038039985113,
+  9.208742999937385,
+  9.338291000109166
+ ],
+ "linear_with_results_s": 9.849431999959052,
+ "linear_with_results_runs_s": [
+  18.53495779982768,
+  9.849431999959052,
+  9.970045299967751
+ ],
+ "values": {
+  "SW-FZ": 62184.37500000173,
+  "SDL-FZ": 9375.00000000026,
+  "EQX-FX": -2200.0000000696596,
+  "EQX-UX": 0.11092015199964031,
+  "T1": 1.557854986681072,
+  "T2": 1.5269005075912516
+ }
+}

@@ -1,0 +1,9 @@
+SkyFrame speed run: fetching the latest SkyFrame ...
+SkyFrame speed run: installing OpenSeesPy and PARDISO for C:\Users\abhimanyu.singh\AppData\Local\SkyFramePython312\tools\python.exe ...
+  SkyFrame linear run: best 9.21 s of 17.73, 9.21, 9.34; with every result written out 9.85 s, of which inside the solvers 2.88 s (SW, SDL, EQX, MODES)
+  SkyFrame answers on this PC: SW-FZ 62184.4, SDL-FZ 9375, EQX-FX -2200, EQX-UX 0.11092, T1 1.55785, T2 1.5269
+  wrote C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\SP4\SP4.skyframe-speed.json
+  model size: large model: ~94860 equations — the analysis will be slow (seconds per factorization)
+  model size: large model: ~94860 equations — the analysis will be slow (seconds per factorization)
+  model size: large model: ~94860 equations — the analysis will be slow (seconds per factorization)
+  model size: large model: ~94860 equations — the analysis will be slow (seconds per factorization)
