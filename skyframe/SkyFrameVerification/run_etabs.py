@@ -1176,12 +1176,15 @@ def benchmark(sm, case: dict) -> dict:
     repeat = int(case["benchmark"].get("repeat", BENCH_REPEAT))
     out["repeat"] = repeat
     for part in ("linear", "nonlinear"):
-        runs, logs = [], []
+        if not case["benchmark"].get(part):
+            continue                            # linear-only benchmarks (SP4, SP5)
+        runs, logs, clock = [], [], []
         for _ in range(repeat):                 # best of several, as SkyFrame is timed: runs vary by a few %
             ok(sm.Analyze.SetRunCaseFlag("", False, True), "switch all cases off")
             for cname in case["benchmark"][part]:
                 ok(sm.Analyze.SetRunCaseFlag(cname, True, False), f"switch case {cname} on")
             t0 = time.perf_counter()
+            called = time.strftime("%H:%M:%S")       # against the stamps in ETABS's log: time before its engine
             code = sm.Analyze.RunAnalysis()
             if code != 0:
                 say(f"  ETABS refused the {part} run (code {code}); its analysis log ends:\n" + analysis_log_tail(sm))
@@ -1196,6 +1199,7 @@ def benchmark(sm, case: dict) -> dict:
                 t0 = time.perf_counter()
                 ok(sm.Analyze.RunAnalysis(), f"run the {part} part (retry)")
             runs.append(time.perf_counter() - t0)
+            clock.append([called, time.strftime("%H:%M:%S")])   # ... and after it, until RunAnalysis returned
             logs.append(analysis_log_text(sm))   # ETABS's own phase-by-phase log of this run
             try:
                 ok(sm.SetModelIsLocked(False), "unlock the model")
@@ -1204,6 +1208,7 @@ def benchmark(sm, case: dict) -> dict:
         out[f"{part}_s"] = min(runs)
         out[f"{part}_runs_s"] = runs
         out[f"{part}_logs"] = logs              # split into phases (solve vs the rest) from these
+        out[f"{part}_clock"] = clock            # [RunAnalysis called, returned] per run, local time
         say(f"  ETABS {part} run: best {min(runs):.2f} s of {', '.join(f'{t:.2f}' for t in runs)} "
             f"({', '.join(case['benchmark'][part])})")
     return out
@@ -1560,10 +1565,20 @@ def needs_run(out_root: Path, cid: str) -> bool:
     (descriptions and checks may change without a rerun)."""
     work = out_root / cid
     if not (work / f"{cid}.etabs.json").exists() or not (work / f"{cid}.case.json").exists():
+        try:
+            if json.loads(fetch(f"cases/{cid}.json")).get("runOnRequest"):
+                return False
+        except Exception:
+            pass
         return True
     try:
-        ran = json.loads((work / f"{cid}.case.json").read_text(encoding="utf-8"))
         now = json.loads(fetch(f"cases/{cid}.json"))
+    except Exception:
+        return True
+    if now.get("runOnRequest"):
+        return False                             # long benchmarks (SP4, SP5): run_speed.bat runs them by name
+    try:
+        ran = json.loads((work / f"{cid}.case.json").read_text(encoding="utf-8"))
     except Exception:
         return True
     if cid in RERUN_BEFORE:

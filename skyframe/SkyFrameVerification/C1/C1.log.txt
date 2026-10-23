@@ -33,7 +33,7 @@ Building the model ...
     CONC in [Material Properties - Coldformed Data]: GetTableForDisplayArray returned 1
     CONC in [Material Properties - Concrete Data]: {Material=CONC, Fc=576, LtWtConc=No, IsUserFr=No, SSCurveOpt=Mander, SSHysType=Concrete, SFc=0.002219, SCap=0.005, FinalSlope=-0.1, FAngle=0, DAngle=0}
     CONC in [Material Properties - Damping Parameters]: {Material=CONC, ModalRatio=0, VisMass=0, VisStiff=0}
-    CONC in [Material Properties - General]: {Material=CONC, Type=Concrete, SymType=Isotropic, Grade=f'c 4000 psi, Color=Blue, GUID=945b9c8a-f349-49e2-aef6-abcc2c6f5321, Notes=None}
+    CONC in [Material Properties - General]: {Material=CONC, Type=Concrete, SymType=Isotropic, Grade=f'c 4000 psi, Color=Blue, GUID=8a99c468-f95d-4ea5-ae82-ba96acd6a9e8, Notes=None}
     CONC in [Material Properties - Hysteresis Parameters - BRB Hardening]: GetTableForDisplayArray returned 1
     CONC in [Material Properties - Hysteresis Parameters - Concrete]: {Material=CONC, EnrgyDegFac=0}
     CONC in [Material Properties - Hysteresis Parameters - Degrading]: GetTableForDisplayArray returned 1
