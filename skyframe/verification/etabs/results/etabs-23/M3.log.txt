@@ -1,0 +1,18 @@
+== M3: Response spectrum, CQC
+Building the model ...
+  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+  diaphragm D1 already defined (rigid), used as is
+  diaphragm D1: 4 joints (read back)
+  diaphragm D2: 4 joints (read back)
+  diaphragm D3: 4 joints (read back)
+  mass source (PropMaterial.SetMassSource_1): elements False, joint masses True, patterns {}
+  spectrum FLAT: database table (Name, Period, Value, DampRatio, GUID)
+  spectrum case RSX: CQC (ETABS default, read back), damping 0.05 (ETABS default, read back)
+Running the analysis ...
+  screenshot M3.etabs.png (ETABS 3-D view only)
+Reading results ...
+check            hand        ETABS  difference
+RSX-FX        70.8757      70.8757  0.000%
+RSX-UX      0.0683763    0.0683763  0.000%
+RSX-V3        8.04878      8.04878  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\M3\M3.EDB; largest difference from the hand calculation 0.000%

@@ -1,0 +1,17 @@
+== L1S: Two-way slab as a shell on beams
+Building the model ...
+  section BM: A 0.1, I22 0.002, I33 0.03, J 0.0005, As2 0.0, As3 0.0 (read back)
+  area section SLAB: slab, thickness 0.5, shell type 1 (read back)
+  64 area objects
+Running the analysis ...
+  no screenshot: the 3-D view could not be captured
+Reading results ...
+  ETABS reversed 16 frames: BN1, BN2, BN3, BN4, BN5, BN6, BN7, BN8, BW1, BW2, BW3, BW4 ...
+  ETABS analysed 64 area elements for 64 area objects
+check            hand        ETABS  difference
+Q-FZ               40           40  0.000%
+Q-UZc               -   -0.0187851  compared with SkyFrame only
+Q-UZb               -  -0.00686843  compared with SkyFrame only
+Q-V                 -     0.634289  compared with SkyFrame only
+Q-M                 -      22.9332  compared with SkyFrame only
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\L1S\L1S.EDB; largest difference from the hand calculation 0.000%

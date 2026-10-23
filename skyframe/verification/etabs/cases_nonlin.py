@@ -260,25 +260,25 @@ G_FT2 = 9.80665 / 0.3048                 # ft/s2
 
 
 def N4() -> dict:
-    """Linear time history: a one-mass cantilever under a step ground acceleration, 2% damping."""
+    """Linear time history: a one-mass cantilever under a step ground acceleration, 5% damping."""
     E, L, I33 = STEEL_E, 12.0, 0.02
     k = 3 * E * I33 / L**3
     T = 0.5
     w = 2 * math.pi / T
     mass = k / w**2
-    zeta, a_g = 0.02, 0.2
+    zeta, a_g = 0.05, 0.2      # 5%: the ETABS default for a modal history
     a = a_g * G_FT2
     peak = a / w**2 * (1 + math.exp(-zeta * math.pi / math.sqrt(1 - zeta * zeta)))
     top = [0.0, 0.0, L]
     dt, n = 0.001, 1500
     return {
         "id": "N4", "title": "Linear time history",
-        "purpose": ("A single mass on a cantilever (T = 0.5 s, 2% damping) under a sudden, constant 0.2 g ground "
+        "purpose": ("A single mass on a cantilever (T = 0.5 s, 5% damping) under a sudden, constant 0.2 g ground "
                     "acceleration: the first peak is a/omega^2 (1 + e^(-pi zeta / sqrt(1 - zeta^2))), almost "
                     "twice the static sway."),
         "units": "kip-ft",
         "settings": dict(_COMMON, mass="one joint mass, X only", timeHistory="step of -0.2 g from t = 0, 1.5 s at "
-                         "0.001 s, 2% damping (ETABS modal; SkyFrame direct Newmark, Rayleigh)"),
+                         "0.001 s, 5% damping (ETABS modal; SkyFrame direct Newmark, Rayleigh)"),
         "materials": _mat(), "sections": [_col_section()],
         "stories": [{"name": "Story1", "height": L}],
         "frames": [{"id": "C1", "i": [0.0, 0.0, 0.0], "j": top, "section": "COL", "angle": 0.0}],

@@ -224,7 +224,43 @@ def build(sm, case: dict) -> dict:
     finally:
         case.pop("_etabs_names", None)
     clear_unasked_restraints(sm, case)
+    if case.get("diagnose"):
+        diagnose(sm, case, names)
     return names
+
+
+def diagnose(sm, case: dict, names: dict) -> None:
+    """Log what ETABS holds for a few frames of each kind: local axes, end offsets, insertion point,
+    releases, modifiers, section, and the material's E."""
+    seen = {}
+    for f in case["frames"]:
+        kind = ("column" if f["i"][:2] == f["j"][:2] else "beam", f.get("angle", 0.0), f["section"])
+        seen.setdefault(kind, f)
+    for (kind, ang, secn), f in seen.items():
+        nm = names[f["id"]]
+        out = [f"{f['id']} ({kind}, angle {ang}, {secn})"]
+        for label, call in (("local axes", lambda: sm.FrameObj.GetLocalAxes(nm, 0.0, False)),
+                            ("end offsets", lambda: sm.FrameObj.GetEndLengthOffset(nm, False, 0.0, 0.0, 0.0)),
+                            ("insertion", lambda: sm.FrameObj.GetInsertionPoint(nm, 0, False, False, [], [], "")),
+                            ("releases", lambda: sm.FrameObj.GetReleases(nm, [], [], [], [])),
+                            ("modifiers", lambda: sm.FrameObj.GetModifiers(nm, [])),
+                            ("section", lambda: sm.FrameObj.GetSection(nm, "", "")),
+                            ("points", lambda: sm.FrameObj.GetPoints(nm, "", ""))):
+            try:
+                r = call()
+                out.append(f"{label} {[list(x) if isinstance(x, (list, tuple)) else x for x in r]}")
+            except Exception as exc:
+                out.append(f"{label} ? {exc}")
+        say("  diagnose " + " | ".join(out))
+    for mt in case["materials"]:
+        try:
+            say(f"  diagnose material {mt['name']}: {list(sm.PropMaterial.GetMPIsotropic(mt['name'], 0.0, 0.0, 0.0))}")
+        except Exception as exc:
+            say(f"  diagnose material {mt['name']}: ? {exc}")
+    try:
+        say(f"  diagnose shear deformation / options: {list(sm.Analyze.GetActiveDOF([]))}")
+    except Exception:
+        pass
 
 
 def load_ext(case: dict):
@@ -325,17 +361,20 @@ def set_spectrum(sm, fn: dict) -> str:
 
 
 def table_keys(sm) -> list:
-    """Every database table this model offers (needs a model open)."""
+    """Every database table ETABS knows (needs a model open).  GetAvailableTables lists only tables
+    that already hold rows (a fresh model: linear static and eigen cases), so the full list from
+    GetAllTables comes first: a table for a case type not yet in the model is found and filled."""
     dt = sm.DatabaseTables
-    for call in (lambda: dt.GetAvailableTables(0, [], [], []), lambda: dt.GetAllTables(0, [], [], [], [])):
+    keys = []
+    for call in (lambda: dt.GetAllTables(0, [], [], [], []), lambda: dt.GetAvailableTables(0, [], [], [])):
         try:
             t = call()
-            keys = [str(k) for k in t[1]] if isinstance(t, (list, tuple)) and len(t) > 1 else []
-            if keys:
-                return keys
+            for k in (t[1] if isinstance(t, (list, tuple)) and len(t) > 1 else []):
+                if str(k) not in keys:
+                    keys.append(str(k))
         except Exception:
             pass
-    return []
+    return keys
 
 
 def find_table(sm, *words) -> str:
@@ -532,7 +571,17 @@ def set_th_case(sm, case: dict, th: dict) -> str:
         if not key:
             raise Stop("modal time-history case: the API cannot set its steps or damping and no load-case "
                        f"table was found; tables offered: {', '.join(table_keys(sm))[:1500]}")
+        damp = want.pop("constdamp|dampconst|constantdamping")
         how = edit_table_row(sm, key, nm, want)
+        dkey = (find_table(sm, "load case", "modal", "history", "damp") or find_table(sm, "load case", "linear modal", "damp")
+                or find_table(sm, "modal history", "damp"))
+        if dkey:
+            how += "; " + edit_table_row(sm, dkey, nm, {"constdamp|dampconst|constantdamping|damping|ratio": damp})
+        elif abs(damp - 0.05) < 1e-12:
+            how += "; damping 0.05 (the ETABS default; no damping table)"
+        else:
+            raise Stop(f"modal time-history damping {damp}: no damping table; tables with 'damp': "
+                       f"{[k for k in table_keys(sm) if 'amp' in k]}")
     return f"modal linear, {th['steps']} steps of {th['dt']} s, damping {th['damping']} ({how})"
 
 
@@ -922,7 +971,7 @@ def results(sm, case: dict, names: dict) -> dict:
             parts[key]["base"] = dict(zip(("FX", "FY", "FZ", "MX", "MY", "MZ"), (br[c][i] for c in range(4, 10))))
 
         wanted = names
-        if len(names) > 200:                      # big models: only the frames the checks read
+        if len(names) > 200 and not case.get("exportAllFrames"):   # big models: only the frames checked
             used = {c.get("frame") for c in case["checks"]}
             wanted = {f: n for f, n in names.items() if f in used}
         for fid, fname in wanted.items():
@@ -986,8 +1035,11 @@ def modal_results(sm, case: dict) -> dict:
     ok(mp, "modal periods")
     mr = sm.Results.ModalParticipatingMassRatios(0, [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [])
     ok(mr, "modal mass ratios")
-    return {"periods": list(mp[4][:mp[0]]),
-            "ratios": [{"UX": mr[5][k], "UY": mr[6][k], "UZ": mr[7][k], "RZ": mr[13][k]} for k in range(mr[0])]}
+    # ETABS lists the modes of every modal case whatever is selected: keep this case's rows
+    pk = [k for k in range(mp[0]) if str(mp[1][k]).lower() == mc.lower()] or list(range(mp[0]))
+    rk = [k for k in range(mr[0]) if str(mr[1][k]).lower() == mc.lower()] or list(range(mr[0]))
+    return {"periods": [mp[4][k] for k in pk],
+            "ratios": [{"UX": mr[5][k], "UY": mr[6][k], "UZ": mr[7][k], "RZ": mr[13][k]} for k in rk]}
 
 
 def pick(res: dict, chk: dict):
@@ -1375,10 +1427,11 @@ def push(repo: Path, summaries: list, out_root: Path) -> None:
 
 
 _TEXT_ONLY = ("title", "purpose", "settings", "checks", "notes")
-RUNNER = 2
+RUNNER = 3
 # cases whose ETABS model this script built wrongly before the given runner version, so they rerun:
 # 2 = releases on members ETABS draws from the definition's j end went on the wrong end
-RERUN_BEFORE = {"L1": 2, "L1S": 2, "L2": 2}
+# 3 = H3's Ritz results were read across every modal case at once; K4's steel curve call had a wrong argument
+RERUN_BEFORE = {"L1": 2, "L1S": 2, "L2": 2, "H3": 3, "K4": 3}
 
 
 def needs_run(out_root: Path, cid: str) -> bool:

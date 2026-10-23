@@ -1,7 +1,7 @@
 {
  "id": "N4",
  "title": "Linear time history",
- "purpose": "A single mass on a cantilever (T = 0.5 s, 2% damping) under a sudden, constant 0.2 g ground acceleration: the first peak is a/omega^2 (1 + e^(-pi zeta / sqrt(1 - zeta^2))), almost twice the static sway.",
+ "purpose": "A single mass on a cantilever (T = 0.5 s, 5% damping) under a sudden, constant 0.2 g ground acceleration: the first peak is a/omega^2 (1 + e^(-pi zeta / sqrt(1 - zeta^2))), almost twice the static sway.",
  "units": "kip-ft",
  "settings": {
   "frameAxes": "ETABS default (beam local 2 = +Z, column local 2 = +X)",
@@ -11,7 +11,7 @@
   "pDelta": "off",
   "rigidZones": "none",
   "endOffsets": "off (ETABS automatic end length offsets disabled, forces reported joint to joint)",
-  "timeHistory": "step of -0.2 g from t = 0, 1.5 s at 0.001 s, 2% damping (ETABS modal; SkyFrame direct Newmark, Rayleigh)"
+  "timeHistory": "step of -0.2 g from t = 0, 1.5 s at 0.001 s, 5% damping (ETABS modal; SkyFrame direct Newmark, Rayleigh)"
  },
  "materials": [
   {
@@ -123,7 +123,7 @@
    "dir": "X",
    "function": "STEP",
    "scale": 32.17404855643044,
-   "damping": 0.02,
+   "damping": 0.05,
    "dt": 0.001,
    "steps": 1500
   }
@@ -151,7 +151,7 @@
     12.0
    ],
    "comp": "UX",
-   "hand": 0.07901578322616958,
+   "hand": 0.0755675425417191,
    "formula": "a/w^2 (1 + exp(-pi z / sqrt(1 - z^2)))",
    "how": "abs",
    "tol": [

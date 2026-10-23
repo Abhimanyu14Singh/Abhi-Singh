@@ -6,8 +6,8 @@ Building the model ...
   4800 area objects
   mass source (PropMaterial.SetMassSource_1): elements True, joint masses False, patterns {}
   ETABS solver: {'solver': 'advanced', 'process': 2, 'threads': 24, 'cores': 24}
-  ETABS linear run: 85.59 s (SW, SDL, EQX, MODES)
-  ETABS nonlinear run: 84.74 s (PDALL)
+  ETABS linear run: 91.00 s (SW, SDL, EQX, MODES)
+  ETABS nonlinear run: 86.66 s (PDALL)
 Running the analysis ...
   screenshot SP1.etabs.png (ETABS 3-D view only)
 Reading results ...

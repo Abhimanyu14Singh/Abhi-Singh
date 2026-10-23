@@ -1,0 +1,16 @@
+== K2: Plate bending moments
+Building the model ...
+  area section PLT: slab, thickness 0.5, shell type 1 (read back)
+  512 area objects
+Running the analysis ...
+  screenshot K2.etabs.png (ETABS 3-D view only)
+Reading results ...
+  K2-M11: M11 at joint 281 = 5.21308 (mean of 4 element values: 5.21308, 5.21308, 5.21308, 5.21308)
+  K2-M22: M22 at joint 281 = 2.37237 (mean of 4 element values: 2.37237, 2.37237, 2.37237, 2.37237)
+  ETABS analysed 512 area elements for 512 area objects
+check            hand        ETABS  difference
+Q-UZ        -0.020135   -0.0201035  0.157%
+Q-M11         5.20617      5.21308  0.133%
+Q-M22         2.37314      2.37237  0.032%
+Q-FZ            102.4        102.4  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\K2\K2.EDB; largest difference from the hand calculation 0.157%

@@ -191,6 +191,7 @@ def B2() -> dict:
             _b("RSX-FX", "Spectrum base shear", "RSX", "FX", None, "programs compared"),
             _j("RSX-UX", "Spectrum roof displacement", "RSX", [0.0, 0.0, n * h], "UX", None, "programs compared"),
         ],
+        "exportAllFrames": True, "diagnose": True,       # ETABS was 12% softer: every member's forces and settings
         "notes": f"Total seismic weight {W:g} kip.",
     }
 

@@ -1,0 +1,22 @@
+== D3: Two towers on a podium
+Building the model ...
+  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+  diaphragm PODIUM: 18 joints (read back)
+  diaphragm TA1: 9 joints (read back)
+  diaphragm TA2: 9 joints (read back)
+  diaphragm TA3: 9 joints (read back)
+  diaphragm TB1: 9 joints (read back)
+  diaphragm TB2: 9 joints (read back)
+  diaphragm TB3: 9 joints (read back)
+Running the analysis ...
+  screenshot D3.etabs.png (ETABS 3-D view only)
+Reading results ...
+check            hand        ETABS  difference
+PA-UP      0.00561243   0.00561243  0.000%
+PA-UA       0.0228538    0.0228538  0.000%
+PA-UA1      0.0113596    0.0113596  0.000%
+PA-UB      0.00561243   0.00561243  0.000%
+PA-VB               0  2.27374e-15  0.000%
+PA-VA         3.33333      3.33333  0.000%
+PA-FX             -30          -30  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\D3\D3.EDB; largest difference from the hand calculation 0.000%

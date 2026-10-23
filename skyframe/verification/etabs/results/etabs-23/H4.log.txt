@@ -1,0 +1,21 @@
+== H4: Spectrum: two directions, SRSS and ABS
+Building the model ...
+  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+  mass source (PropMaterial.SetMassSource_1): elements False, joint masses True, patterns {}
+  spectrum FLAT: database table (Name, Period, Value, DampRatio, GUID)
+  spectrum case RS2: loads ['U1', 'U2'] x [32.174049, 19.304429] (read back), CQC (ETABS default, read back), damping 0.05 (ETABS default, read back), directions SRSS (ETABS default, read back)
+  spectrum case RS2ABS: loads ['U1', 'U2'] x [32.174049, 19.304429] (read back), CQC (ETABS default, read back), damping 0.05 (ETABS default, read back), directions ABS sf 1.0 (set, read back: table Load Case Definitions - Response Spectrum: DirCombo = Absolute; table Load Case Definitions - Response Spectrum: AbsSF = 1.0)
+Running the analysis ...
+  screenshot H4.etabs.png (ETABS 3-D view only)
+Reading results ...
+check            hand        ETABS  difference
+T1           0.737923     0.737923  0.000%
+T2           0.368961     0.368961  0.000%
+RS2-UX      0.0732942    0.0732942  0.000%
+RS2-UY       0.112551     0.112551  0.000%
+RS2-FX        5.62609      5.62609  0.000%
+RS2-FY        4.96592      4.96592  0.000%
+ABS-UX       0.103294     0.103294  0.000%
+ABS-UY       0.159165     0.159165  0.000%
+ABS-FX        7.45764      7.45764  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\H4\H4.EDB; largest difference from the hand calculation 0.000%

@@ -108,7 +108,7 @@ def _epp_steel(sm, R, mat: dict, fy: float, name: str) -> str:
         strain = [-2.0, -ey, 0.0, ey, 2.0]
         stress = [-fy, -fy, 0.0, fy, fy]
         for ids in ([-2, -1, 0, 1, 2], [0, 0, 0, 0, 0]):
-            if R._try(f"SetSSCurve ids {ids}", tried, lambda: pm.SetSSCurve(name, 5, ids, strain, stress, "", 0.0)):
+            if R._try(f"SetSSCurve ids {ids}", tried, lambda: pm.SetSSCurve(name, 5, ids, strain, stress, 0.0)):
                 return f"steel, user stress-strain {list(zip(strain, stress))} (SetOSteel_1 + SetSSCurve)"
     # parametric simple (SSType 1): plateau to a hardening strain of 2, Fu barely above Fy
     if R._try("SetOSteel_1 (parametric)", tried, lambda: pm.SetOSteel_1(name, fy, 1.0001 * fy, fy, 1.0001 * fy, 1, 1,
