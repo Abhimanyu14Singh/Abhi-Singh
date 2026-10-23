@@ -6,5 +6,18 @@ Building the model ...
   12000 area objects
   mass source (PropMaterial.SetMassSource_1): elements True, joint masses False, patterns {}
   ETABS solver: {'solver': 'advanced', 'process': 2, 'threads': 24, 'cores': 24}
-  ETABS linear run: best 221.59 s of 225.50, 221.59, 222.92 (SW, SDL, EQX, MODES)
-STOPPED on SP2: ETABS refused: run the nonlinear part (return code 1)
+  ETABS linear run: best 214.78 s of 225.24, 219.28, 214.78 (SW, SDL, EQX, MODES)
+  ETABS nonlinear run: best 210.61 s of 210.61, 212.62, 214.92 (PDALL)
+Running the analysis ...
+  screenshot SP2.etabs.png (ETABS 3-D view only)
+Reading results ...
+  ETABS analysed 12000 area elements for 12000 area objects
+check            hand        ETABS  difference
+SW-FZ         12547.5      12547.5  0.000%
+SDL-FZ           1875         1875  0.000%
+EQX-FX          -1100        -1100  0.000%
+EQX-UX              -     0.314431  compared with SkyFrame only
+PDALL-UX            -     0.323608  compared with SkyFrame only
+T1                  -      1.67537  compared with SkyFrame only
+T2                  -      1.64011  compared with SkyFrame only
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\SP2\SP2.EDB; largest difference from the hand calculation 0.000%

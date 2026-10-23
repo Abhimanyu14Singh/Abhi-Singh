@@ -3,7 +3,7 @@
  "version": "23.2.0",
  "units": "kip-ft",
  "case": "C2",
- "runner": 4,
+ "runner": 6,
  "cases": {
   "STG": {
    "joints": [
@@ -14,7 +14,7 @@
       0.0
      ],
      "name": "1",
-     "step": "Single Value",
+     "step": null,
      "u": [
       0.0,
       0.0,
@@ -31,7 +31,7 @@
       12.0
      ],
      "name": "2",
-     "step": "Single Value",
+     "step": null,
      "u": [
       0.0,
       0.0,
@@ -54,7 +54,7 @@
     "C1": [
      {
       "station": 0.0,
-      "step": "Single Value",
+      "step": "",
       "P": 0.0,
       "V2": 0.0,
       "V3": 0.0,
@@ -64,7 +64,7 @@
      },
      {
       "station": 6.0,
-      "step": "Single Value",
+      "step": "",
       "P": 0.0,
       "V2": 0.0,
       "V3": 0.0,
@@ -74,7 +74,7 @@
      },
      {
       "station": 12.0,
-      "step": "Single Value",
+      "step": "",
       "P": 0.0,
       "V2": 0.0,
       "V3": 0.0,

@@ -1,14 +1,63 @@
 == C2: Free shrinkage
 Building the model ...
-STOPPED on C2: COMError: (-2147467261, 'Invalid pointer', ('Object reference not set to an instance of an object.', 'ETABS', None, 0, None))
-Traceback (most recent call last):
-  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 1623, in main
-    summaries.append(run_case(sm, case, out_root, version))
-                     ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 1444, in run_case
-    names = build(sm, case)
-  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 95, in build
-    ok(sm.File.NewGridOnly(len(h), h[1] if len(h) > 1 else h[0], h[0], 2, 2, 20.0, 20.0), "new grid-only model")
-       ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-_ctypes.COMError: (-2147467261, 'Invalid pointer', ('Object reference not set to an instance of an object.', 'ETABS', None, 0, None))
-
+  section CCOL: A 1.0, I22 0.08333333333333333, I33 0.08333333333333333, J 0.1406, As2 0.0, As3 0.0 (read back)
+  material CONC: concrete, E 518400.0, nu 0.2 (read back)
+  time-dependent material tables: ['Material Properties - Time Dependence - ACI 209R-92', 'Material Properties - Time Dependence - AS 3600-2009', 'Material Properties - Time Dependence - AS 3600-2018', 'Material Properties - Time Dependence - CEB-FIP 2010', 'Material Properties - Time Dependence - CEB-FIP 90', 'Material Properties - Time Dependence - Eurocode 2-2004', 'Material Properties - Time Dependence - GL2000', 'Material Properties - Time Dependence - NZS 3101-2006', 'Material Properties - Time Dependence - User Creep', 'Material Properties - Time Dependence - User Shrinkage', 'Material Properties - Time Dependence - User Stiffness']
+    [Material Properties - Time Dependence - ACI 209R-92] import type 2; fields (* importable): Material*, RelHumid*, ShrinkStart*, A*, Beta*, CuringType*, Slump*, FineAgg*, AirContent*, CementCont*
+    [Material List by Object Type] import type 0; fields (* importable): ObjectType, Material, Weight, NumPieces, NumStuds
+    [Material List by Section Property] import type 0; fields (* importable): Section, ObjectType, NumPieces, Length, Weight, NumStuds
+    [Material List by Story] import type 0; fields (* importable): Story, ObjectType, Material, Weight, FloorArea, UnitWeight, NumPieces, NumStuds
+    [Material Properties - Acceptance Criteria] import type 2; fields (* importable): Material*, IOTens*, LSTens*, CPTens*, IOComp*, LSComp*, CPComp*
+    [Material Properties - Aluminum Data] import type 2; fields (* importable): Material*, AlumType*, Alloy*, Fcy*, Fty*, Ftu*, Fsu*, SSHysType*
+    [Material Properties - Basic Mechanical Properties] import type 2; fields (* importable): Material*, DensityType*, UnitWeight*, UnitMass*, E1*, E2*, E3*, G12*, G13*, G23*, U12*, U13*, U23*, A1*, A2*, A3*
+    [Material Properties - Coldformed Data] import type 2; fields (* importable): Material*, Fy*, Fu*, SSHysType*
+    [Material Properties - Concrete Data] import type 2; fields (* importable): Material*, Fc*, LtWtConc*, LtWtFact*, IsUserFr*, UserFr*, SSCurveOpt*, SSHysType*, SFc*, SCap*, FinalSlope*, FAngle*, DAngle*, TimeType*, TimeE*, EFact*, TimeCreep*, CreepFact*, TimeShrink*, ShrinkFact*, CreepType*, CreepTerms*
+    [Material Properties - Damping Parameters] import type 2; fields (* importable): Material*, ModalRatio*, VisMass*, VisStiff*
+    [Material Properties - General] import type 2; fields (* importable): Material*, Type*, SymType*, Grade*, Color*, GUID*, Notes*
+    [Material Properties - Hysteresis Parameters - BRB Hardening] import type 2; fields (* importable): Material*, IsSymmetric*, TensHardFac*, TensMaxPDef*, TensAccPDef*, TensProAcc*, CompHardFac*, CompMaxPDef*, CompAccPDef*, CompProAcc*
+    [Material Properties - Hysteresis Parameters - Concrete] import type 2; fields (* importable): Material*, EnrgyDegFac*
+    [Material Properties - Hysteresis Parameters - Degrading] import type 2; fields (* importable): Material*, IsSymmetric*, Tensf0*, Tensf1*, Tensf2*, Tensx1*, Tensx2*, TensADWtFac*, Compf0*, Compf1*, Compf2*, Compx1*, Compx2*, CompADWtFac*, StiffWtFac*, LrgSmlWtFac*
+    [Material Properties - Hysteresis Parameters - Pivot] import type 2; fields (* importable): Material*, Alpha1*, Alpha2*, Beta1*, Beta2*, Eta*
+    [Material Properties - Masonry Data] import type 2; fields (* importable): Material*, Fm*, SSCurveOpt*, SSHysType*, SFm*, SCap*, FinalSlope*, FAngle*, DAngle*
+    [Material Properties - Other Data] import type 2; fields (* importable): Material*, SSHysType*, FAngle*, DAngle*
+    [Material Properties - Rebar Data] import type 2; fields (* importable): Material*, Fy*, Fu*, Fye*, Fue*, SSCurveOpt*, SSHysType*, SHard*, SCap*, FinalSlope*
+    [Material Properties - Steel Data] import type 2; fields (* importable): Material*, Fy*, Fu*, Fye*, Fue*, SSCurveOpt*, SSHysType*, SHard*, SMax*, SRup*, FinalSlope*
+    [Material Properties - Tendon Data] import type 2; fields (* importable): Material*, Fy*, Fu*, SSCurveOpt*, SSHysType*, FinalSlope*
+    [Material Properties - User Stress-Strain Curves] import type 2; fields (* importable): Material*, Point*, Strain*, Stress*, PointID*
+    CONC in [Material List by Object Type]: GetTableForDisplayArray returned 1
+    CONC in [Material List by Section Property]: (no row)
+    CONC in [Material List by Story]: GetTableForDisplayArray returned 1
+    CONC in [Material Properties - Acceptance Criteria]: {Material=CONC, IOTens=0.01, LSTens=0.02, CPTens=0.05, IOComp=-0.003, LSComp=-0.006, CPComp=-0.015}
+    CONC in [Material Properties - Aluminum Data]: GetTableForDisplayArray returned 1
+    CONC in [Material Properties - Basic Mechanical Properties]: {Material=CONC, DensityType=Weight, UnitWeight=0, UnitMass=0, E1=518400, G12=216299.79, U12=0.2, A1=0}
+    CONC in [Material Properties - Coldformed Data]: GetTableForDisplayArray returned 1
+    CONC in [Material Properties - Concrete Data]: {Material=CONC, Fc=576, LtWtConc=No, IsUserFr=No, SSCurveOpt=Mander, SSHysType=Concrete, SFc=0.002219, SCap=0.005, FinalSlope=-0.1, FAngle=0, DAngle=0}
+    CONC in [Material Properties - Damping Parameters]: {Material=CONC, ModalRatio=0, VisMass=0, VisStiff=0}
+    CONC in [Material Properties - General]: {Material=CONC, Type=Concrete, SymType=Isotropic, Grade=f'c 4000 psi, Color=Blue, GUID=7505005e-3b9e-4776-b2b3-6c4d91fa3f00, Notes=None}
+    CONC in [Material Properties - Hysteresis Parameters - BRB Hardening]: GetTableForDisplayArray returned 1
+    CONC in [Material Properties - Hysteresis Parameters - Concrete]: {Material=CONC, EnrgyDegFac=0}
+    CONC in [Material Properties - Hysteresis Parameters - Degrading]: GetTableForDisplayArray returned 1
+    CONC in [Material Properties - Hysteresis Parameters - Pivot]: GetTableForDisplayArray returned 1
+    CONC in [Material Properties - Masonry Data]: GetTableForDisplayArray returned 1
+    CONC in [Material Properties - Other Data]: GetTableForDisplayArray returned 1
+    CONC in [Material Properties - Rebar Data]: (no row)
+    CONC in [Material Properties - Steel Data]: (no row)
+    CONC in [Material Properties - Tendon Data]: (no row)
+    CONC in [Material Properties - User Stress-Strain Curves]: GetTableForDisplayArray returned 1
+  time-dependence switch Material Properties - Concrete Data: {Material=CONC, TimeType=ACI 209R-92, TimeE=Yes, TimeCreep=No, CreepFact=No, TimeShrink=Yes, ShrinkFact=Yes, CreepType=ACI 209R-92, CreepTerms=No} (no import messages) -> read back {Material=CONC, Fc=576, LtWtConc=No, IsUserFr=No, SSCurveOpt=Mander, SSHysType=Concrete, SFc=0.002219, SCap=0.005, FinalSlope=-0.1, FAngle=0, DAngle=0, TimeType=ACI 209R-92, TimeE=Yes, EFact=1, TimeCreep=No, TimeShrink=Yes, ShrinkFact=1}
+  Material Properties - Time Dependence - ACI 209R-92 before writing: {Material=CONC, RelHumid=50, ShrinkStart=0, A=2.3, Beta=0.92, CuringType=Moist, Slump=0.225, FineAgg=50, AirContent=6, CementCont=700}
+  time-dependent (read back) Material Properties - Time Dependence - ACI 209R-92: {Material=CONC, RelHumid=70, ShrinkStart=7, A=4, Beta=0.85, CuringType=Moist, Slump=0.225, FineAgg=50, AirContent=6, CementCont=700}
+  time-dependent material CONC: ACI 209R-92 through the tables
+    staged table [Load Case Definitions - Nonlinear Staged Construction]: fields Name, MassSource, InitialCond, NonlinCase, Stage, StageName, Duration, Output, Comments, Operation, ObjectType, ObjectName, AgeAtAdd, ItemType, ItemName, LoadSF, TransAccSF, RotAccSF, GeoNonlin, ResultsType, MinInstant, MinTimeDep, SolScheme, MaxTotal, MaxNull, EventTol, MaxEvents, MaxCSIters, MaxNRIters, IterTol, LineSearch, MaxSearches, SearchTol, SearchFact, StopAnalysis, MinEvStepSz, MaxNullEvStp, UseCorrStep, MatTimeDep, CrackedOpt, CrackAge, optConvChkType, DisplTol, MaxIter, DesignType, UserDesType, GUID, Notes; STG: {Name=STG, MassSource=Previous, InitialCond=Nonlinear Case, NonlinCase=None, Stage=1, StageName=None, Duration=1000, Output=Yes, Operation=Add Structure, ObjectType=Group, ObjectName=TDALL, AgeAtAdd=7, GeoNonlin=None, ResultsType=End Final Stage, SolScheme=Iterative Events, MaxTotal=200, MaxNull=50, EventTol=0.01, MaxEvents=24, MaxCSIters=10, MaxNRIters=40, IterTol=0.0001, MatTimeDep=Yes, DesignType=Program Determined, GUID=eea7d6e7-a0d4-4640-848f-d0c80ab40806, Notes=None}
+    staged switches in [Load Case Definitions - Nonlinear Staged Construction]: {Name=STG, Stage=No, MinTimeDep=Yes, MatTimeDep=Yes, CrackAge=No} -> {Name=STG, MassSource=Previous, InitialCond=Nonlinear Case, NonlinCase=None, Stage=None, StageName=None, Duration=None, Output=None, GeoNonlin=None, ResultsType=End Final Stage, SolScheme=Iterative Events, MaxTotal=200, MaxNull=50, EventTol=0.01, MaxEvents=24, MaxCSIters=10, MaxNRIters=40, IterTol=0.0001, MatTimeDep=Yes, DesignType=Program Determined, GUID=eea7d6e7-a0d4-4640-848f-d0c80ab40806, Not
+  staged case STG: one stage of 1000 days: add at age 7 days; time-dependent on (SetMaterialNonlinearity(name, True); read back [True, 0])
+Running the analysis ...
+  screenshot C2.etabs.png (ETABS 3-D view only)
+Reading results ...
+  STG: SetOptionModalHist(2) -> 0; SetOptionDirectHist(2) -> 0; 2 joint rows, steps ['None']
+  STG_ENV not read: ETABS refused: joint displacements STG_ENV (return code 1)
+check            hand        ETABS  difference
+STG-UZ    -0.00521904            0  100.000%
+STG-P               0            0  0.000%
+C2-eps     0.00043492           -0  100.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\C2\C2.EDB; largest difference from the hand calculation 100.000%
