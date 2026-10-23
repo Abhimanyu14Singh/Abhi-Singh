@@ -573,10 +573,16 @@ def set_th_case(sm, case: dict, th: dict) -> str:
                        f"table was found; tables offered: {', '.join(table_keys(sm))[:1500]}")
         damp = want.pop("constdamp|dampconst|constantdamping")
         how = edit_table_row(sm, key, nm, want)
-        dkey = (find_table(sm, "load case", "modal", "history", "damp") or find_table(sm, "load case", "linear modal", "damp")
+        # modal damping has its own table ("Load Case Definitions - Damping - Modal")
+        dkey = (find_table(sm, "load case", "damping", "modal") or find_table(sm, "load case", "modal", "history", "damp")
                 or find_table(sm, "modal history", "damp"))
         if dkey:
-            how += "; " + edit_table_row(sm, dkey, nm, {"constdamp|dampconst|constantdamping|damping|ratio": damp})
+            try:
+                how += "; " + edit_table_row(sm, dkey, nm, {"constdamp|dampconst|constantdamping|constant|damping|ratio": damp})
+            except Stop as exc:
+                if abs(damp - 0.05) >= 1e-12:
+                    raise
+                how += f"; damping 0.05 (the ETABS default; {exc})"
         elif abs(damp - 0.05) < 1e-12:
             how += "; damping 0.05 (the ETABS default; no damping table)"
         else:
@@ -930,8 +936,19 @@ def _split(rows: list, step_of) -> dict:
     return out
 
 
+def _peaks(rows: list) -> list:
+    """Time-history rows (every step of every joint) -> one row per joint holding, per component, the
+    value of largest magnitude, step "Max"."""
+    best = {}
+    for r in rows:
+        b = best.setdefault(r["name"], {"xyz": r["xyz"], "name": r["name"], "step": "Max", "u": [0.0] * 6})
+        b["u"] = [v if abs(v) > abs(w) else w for v, w in zip(r["u"], b["u"])]
+    return list(best.values())
+
+
 def results(sm, case: dict, names: dict) -> dict:
     out = {}
+    th_names = {t["name"] for t in case.get("thCases", [])}
     coords = {}
     r = sm.PointObj.GetNameList(0, [])
     ok(r, "list points")
@@ -940,8 +957,10 @@ def results(sm, case: dict, names: dict) -> dict:
         ok(c, f"coordinates of point {pn}")
         coords[pn] = [c[0], c[1], c[2]]
     ok(sm.Results.Setup.SetOptionNLStatic(3), "nonlinear static results: last step")
-    for opt, val in (("SetOptionModalHist", 1), ("SetOptionDirectHist", 1), ("SetOptionMultiStepStatic", 3)):
-        try:                                     # time-history envelopes; staged construction: last stage
+    # time histories step by step (2): the peaks are taken here, since asking ETABS for envelopes (1)
+    # returned only the last step in N4; staged construction: last stage (3)
+    for opt, val in (("SetOptionModalHist", 2), ("SetOptionDirectHist", 2), ("SetOptionMultiStepStatic", 3)):
+        try:
             getattr(sm.Results.Setup, opt)(val)
         except Exception:
             pass
@@ -961,6 +980,8 @@ def results(sm, case: dict, names: dict) -> dict:
         rows = [{"xyz": coords[obj[k]], "name": obj[k], "step": step[k],
                  "u": [u[0][k], u[1][k], u[2][k], u[3][k], u[4][k], u[5][k]]}
                 for k in range(n) if obj[k] in coords]          # diaphragm centre points have no object
+        if cname in th_names:
+            rows = _peaks(rows)
         for key, rr in _split(rows, lambda x: x["step"]).items():
             parts[key]["joints"] = rr
 
@@ -1459,11 +1480,12 @@ def push(repo: Path, summaries: list, out_root: Path) -> None:
 
 
 _TEXT_ONLY = ("title", "purpose", "settings", "checks", "notes")
-RUNNER = 3
+RUNNER = 4
 # cases whose ETABS model this script built wrongly before the given runner version, so they rerun:
 # 2 = releases on members ETABS draws from the definition's j end went on the wrong end
 # 3 = H3's Ritz results were read across every modal case at once; K4's steel curve call had a wrong argument
-RERUN_BEFORE = {"L1": 2, "L1S": 2, "L2": 2, "H3": 3, "K4": 3}
+# 4 = N4's time history was read at its last step instead of its peak
+RERUN_BEFORE = {"L1": 2, "L1S": 2, "L2": 2, "H3": 3, "K4": 3, "N4": 4}
 
 
 def needs_run(out_root: Path, cid: str) -> bool:

@@ -52,7 +52,7 @@ def found() -> dict:
 
 _TEXT_ONLY = ("title", "purpose", "settings", "checks", "notes")
 # results made by run_etabs.py before this runner version are wrong for the case (see run_etabs.RERUN_BEFORE)
-RERUN_BEFORE = {"L1": 2, "L1S": 2, "L2": 2, "H3": 3, "K4": 3}
+RERUN_BEFORE = {"L1": 2, "L1S": 2, "L2": 2, "H3": 3, "K4": 3, "N4": 4}
 
 
 def model_part(case: dict) -> dict:

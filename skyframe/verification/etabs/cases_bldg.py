@@ -23,10 +23,13 @@ def _rect(name, mat, b, h, **extra):
                  "J": J, "As2": 0.0, "As3": 0.0, "depth": h, "width": b}, **extra)
 
 
-def _aisc(name, A, Ix, Iy, J, d, bf):
-    """AISC table values (in) to a general section in ft."""
+def _aisc(name, A, Ix, Iy, J, d, bf, tw, tf):
+    """AISC table values (in) to a general section in ft, with the I-shape shear areas ETABS uses:
+    web d tw for shear along local 2 and (5/3) bf tf for local 3.  ETABS applies these to a section
+    named like an AISC shape even when it is defined as a general section with zero shear areas (B2's
+    first run), so they are stated here and used by both programs."""
     return {"name": name, "material": "STEEL", "A": A / 144, "I33": Ix / 20736, "I22": Iy / 20736,
-            "J": J / 20736, "As2": 0.0, "As3": 0.0, "depth": d / 12, "width": bf / 12}
+            "J": J / 20736, "As2": d * tw / 144, "As3": 5.0 / 3.0 * bf * tf / 144, "depth": d / 12, "width": bf / 12}
 
 
 def _grid(a, b, n):
@@ -135,7 +138,8 @@ def B2() -> dict:
     """A 10-story steel moment frame with AISC sections, response spectrum and ELF."""
     n, h, V, Wfl = 10, 13.0, 300.0, 900.0
     xs, ys = [25.0 * k for k in range(5)], [25.0 * k for k in range(4)]
-    secs = [_aisc("W14X90", 26.5, 999.0, 362.0, 4.06, 14.0, 14.5), _aisc("W24X76", 22.4, 2100.0, 82.5, 2.68, 23.9, 8.99)]
+    secs = [_aisc("W14X90", 26.5, 999.0, 362.0, 4.06, 14.0, 14.5, 0.44, 0.71),
+            _aisc("W24X76", 22.4, 2100.0, 82.5, 2.68, 23.9, 8.99, 0.44, 0.68)]
     frames, dias, supports, tops = [], [], [], {}
     for s in range(n):
         z0, z1 = s * h, (s + 1) * h
@@ -166,7 +170,7 @@ def B2() -> dict:
                     "W24x76 beams, ten 13 ft stories, rigid floors. An equivalent-lateral-force pattern and a "
                     "design-shaped spectrum combined by CQC; mass from joint masses."),
         "units": "kip-ft",
-        "settings": dict(_COMMON, sections="AISC W14x90 and W24x76 as general sections (table A, I, J)",
+        "settings": dict(_COMMON, sections="AISC W14x90 and W24x76 as general sections (table A, I, J; shear areas d tw and 5/3 bf tf)",
                          mass="900 kip per floor as joint masses", diaphragm="rigid, each floor",
                          spectrum="0.4 g to a 1.0 g plateau (0.2-0.6 s), then 0.6/T g; CQC, 5%"),
         "materials": [{"name": "STEEL", "E": STEEL_E, "nu": STEEL_NU, "unitWeight": 0.0}],
@@ -191,7 +195,6 @@ def B2() -> dict:
             _b("RSX-FX", "Spectrum base shear", "RSX", "FX", None, "programs compared"),
             _j("RSX-UX", "Spectrum roof displacement", "RSX", [0.0, 0.0, n * h], "UX", None, "programs compared"),
         ],
-        "exportAllFrames": True, "diagnose": True,       # ETABS was 12% softer: every member's forces and settings
         "notes": f"Total seismic weight {W:g} kip.",
     }
 

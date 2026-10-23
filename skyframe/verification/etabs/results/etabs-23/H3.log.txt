@@ -1,0 +1,19 @@
+== H3: Ritz vectors
+Building the model ...
+  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+  mass source (PropMaterial.SetMassSource_1): elements False, joint masses True, patterns {}
+  Ritz case RITZ1 (1 vectors from ['UX']): API (LoadCases.ModalRitz), 1 vectors (read back), loads ['Accel'] ['UX'] (read back)
+  Ritz case RITZ2 (2 vectors from ['UX']): API (LoadCases.ModalRitz), 2 vectors (read back), loads ['Accel'] ['UX'] (read back)
+Running the analysis ...
+  screenshot H3.etabs.png (ETABS 3-D view only)
+Reading results ...
+  RITZ1: periods [0.2974661466848954], UX ratios [0.9615384615384619]
+  RITZ2: periods [0.2984959988039317, 0.11401532603725398], UX ratios [0.9472135954999575, 0.052786404500042135]
+check            hand        ETABS  difference
+T1           0.298496     0.298496  0.000%
+R1-T1        0.297466     0.297466  0.000%
+R1-UX        0.961538     0.961538  0.000%
+R2-T1        0.298496     0.298496  0.000%
+R2-T2        0.114015     0.114015  0.000%
+R2-UX1       0.947214     0.947214  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\H3\H3.EDB; largest difference from the hand calculation 0.000%

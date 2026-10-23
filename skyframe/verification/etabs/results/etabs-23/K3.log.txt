@@ -1,0 +1,20 @@
+== K3: Section cut through a wall
+Building the model ...
+  area section WALL: wall, thickness 1.0, shell type 1 (read back)
+  32 area objects; pier labels ['P1']
+    SapModel.SectCut offers: AddQuad, AddRef, Delete, GetCutInfo, GetIDsOfNames, GetLocalAxesAdvancedAnalysis, GetLocalAxesAnalysis, GetLocalAxesAngleDesign, GetNameList, GetQuad, GetResultLocation, GetResultsSide, GetTypeInfo, GetTypeInfoCount, Invoke, QueryInterface, Release, SetByGroup, SetByQuad, SetLocalAxesAdvancedAnalysis, SetLocalAxesAnalysis, SetLocalAxesAngleDesign, SetResultLocation, SetResultsSide, from_param, value
+    section-cut tables: ['Plot Function - Section Cut Force', 'Section Cut Definitions', 'Section Cut Forces - Analysis', 'Section Cut Forces - Design'] [Plot Function - Section Cut Force: PlotFunc, SCut, ComponentA, ComponentD, LineType, LineWidth, LineColor, ScaleFactor] [Section Cut Definitions: Name, DefinedBy, Group, ResultType, ResultLoc, LocX, LocY, LocZ, RotAboutZ, RotAboutY, RotAboutX, AxisAngle, ElementSide, NumQuads, QuadNum, PointNum, QuadX, QuadY, QuadZ, GUID] [Section Cut Forces - Analysis: SectionCut, OutputCase, CaseType, StepType, StepNumber, StepLabel, F1, F2, F3, M1, M2, M3, X, Y, Z] [Section Cut Forces - Design: SectionCut, OutputCase, CaseType, StepType, StepNumber, StepLabel, P, V2, V3, T, M2, M3, X, Y, Z]
+    table Section Cut Definitions fields: Name, DefinedBy, Group, ResultType, ResultLoc, LocX, LocY, LocZ, RotAboutZ, RotAboutY, RotAboutX, AxisAngle, ElementSide, NumQuads, QuadNum, PointNum, QuadX, QuadY, QuadZ, GUID
+  section cut CUT9: group G_CUT9 (4 areas above z = 9.0, 5 joints on it), table Section Cut Definitions: Name = CUT9, DefinedBy = Group, Group = G_CUT9, ResultType = Analysis, ResultLoc = Default, LocX = , LocY = , LocZ = , RotAboutZ = 0, RotAboutY = 0, RotAboutX = 0, AxisAngle = , ElementSide = , NumQuads = , QuadNum = , PointNum = , QuadX = , QuadY = , QuadZ = , GUID = 968aff71-c2aa-4b19-a82f-41ef7eab27a0
+Running the analysis ...
+  screenshot K3.etabs.png (ETABS 3-D view only)
+Reading results ...
+  section cut CUT9 H: F1 -60, F2 0, F3 120, M1 0, M2 -720, M3 0
+  ETABS analysed 32 area elements for 32 area objects
+check            hand        ETABS  difference
+H-V                60           60  0.000%
+H-P               120          120  0.000%
+H-M               720          720  0.000%
+H-FX              -60          -60  0.000%
+H-MY            -1980        -1980  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\K3\K3.EDB; largest difference from the hand calculation 0.000%
