@@ -1,0 +1,92 @@
+== SP5: Speed benchmark: 70-story shear-wall tower
+Building the model ...
+  section COL: A 9.0, I22 6.75, I33 6.75, J 11.390625, As2 0.0, As3 0.0 (read back)
+  section BM: A 3.0, I22 0.5625, I33 1.0, J 0.95, As2 0.0, As3 0.0 (read back)
+  area section WALL: wall, thickness 2.0, shell type 1 (read back)
+  17920 area objects; pier labels ['P1', 'P2', 'P3', 'P4']
+  diaphragm D1 already defined (rigid), used as is
+  diaphragm D1: 88 joints (read back)
+  diaphragm D2: 88 joints (read back)
+  diaphragm D3: 88 joints (read back)
+  diaphragm D4: 88 joints (read back)
+  diaphragm D5: 88 joints (read back)
+  diaphragm D6: 88 joints (read back)
+  diaphragm D7: 88 joints (read back)
+  diaphragm D8: 88 joints (read back)
+  diaphragm D9: 88 joints (read back)
+  diaphragm D10: 88 joints (read back)
+  diaphragm D11: 88 joints (read back)
+  diaphragm D12: 88 joints (read back)
+  diaphragm D13: 88 joints (read back)
+  diaphragm D14: 88 joints (read back)
+  diaphragm D15: 88 joints (read back)
+  diaphragm D16: 88 joints (read back)
+  diaphragm D17: 88 joints (read back)
+  diaphragm D18: 88 joints (read back)
+  diaphragm D19: 88 joints (read back)
+  diaphragm D20: 88 joints (read back)
+  diaphragm D21: 88 joints (read back)
+  diaphragm D22: 88 joints (read back)
+  diaphragm D23: 88 joints (read back)
+  diaphragm D24: 88 joints (read back)
+  diaphragm D25: 88 joints (read back)
+  diaphragm D26: 88 joints (read back)
+  diaphragm D27: 88 joints (read back)
+  diaphragm D28: 88 joints (read back)
+  diaphragm D29: 88 joints (read back)
+  diaphragm D30: 88 joints (read back)
+  diaphragm D31: 88 joints (read back)
+  diaphragm D32: 88 joints (read back)
+  diaphragm D33: 88 joints (read back)
+  diaphragm D34: 88 joints (read back)
+  diaphragm D35: 88 joints (read back)
+  diaphragm D36: 88 joints (read back)
+  diaphragm D37: 88 joints (read back)
+  diaphragm D38: 88 joints (read back)
+  diaphragm D39: 88 joints (read back)
+  diaphragm D40: 88 joints (read back)
+  diaphragm D41: 88 joints (read back)
+  diaphragm D42: 88 joints (read back)
+  diaphragm D43: 88 joints (read back)
+  diaphragm D44: 88 joints (read back)
+  diaphragm D45: 88 joints (read back)
+  diaphragm D46: 88 joints (read back)
+  diaphragm D47: 88 joints (read back)
+  diaphragm D48: 88 joints (read back)
+  diaphragm D49: 88 joints (read back)
+  diaphragm D50: 88 joints (read back)
+  diaphragm D51: 88 joints (read back)
+  diaphragm D52: 88 joints (read back)
+  diaphragm D53: 88 joints (read back)
+  diaphragm D54: 88 joints (read back)
+  diaphragm D55: 88 joints (read back)
+  diaphragm D56: 88 joints (read back)
+  diaphragm D57: 88 joints (read back)
+  diaphragm D58: 88 joints (read back)
+  diaphragm D59: 88 joints (read back)
+  diaphragm D60: 88 joints (read back)
+  diaphragm D61: 88 joints (read back)
+  diaphragm D62: 88 joints (read back)
+  diaphragm D63: 88 joints (read back)
+  diaphragm D64: 88 joints (read back)
+  diaphragm D65: 88 joints (read back)
+  diaphragm D66: 88 joints (read back)
+  diaphragm D67: 88 joints (read back)
+  diaphragm D68: 88 joints (read back)
+  diaphragm D69: 88 joints (read back)
+  diaphragm D70: 88 joints (read back)
+  mass source (PropMaterial.SetMassSource_1): elements True, joint masses False, patterns {}
+  ETABS solver: {'solver': 'advanced', 'process': 2, 'threads': 24, 'cores': 24}
+  ETABS linear run: best 46.77 s of 47.83, 47.18, 46.77 (SW, SDL, EQX, MODES)
+Running the analysis ...
+  screenshot SP5.etabs.png (ETABS 3-D view only)
+Reading results ...
+  ETABS analysed 17920 area elements for 17920 area objects
+check            hand        ETABS  difference
+SW-FZ          101556       101556  0.000%
+SDL-FZ          75600        75600  0.000%
+EQX-FX        -3230.5      -3230.5  0.000%
+EQX-UX              -      3.25551  compared with SkyFrame only
+T1                  -      7.59355  compared with SkyFrame only
+T2                  -      7.59355  compared with SkyFrame only
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\SP5\SP5.EDB; largest difference from the hand calculation 0.000%

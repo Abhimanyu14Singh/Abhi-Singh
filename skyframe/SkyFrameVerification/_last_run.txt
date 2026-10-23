@@ -1,70 +1,139 @@
-run finished 2026-10-23 18:10:55; runner 7, commit b4f7c741126ec74ce42f0b691a68b6cb58bf5199
-Cases: N6, C1; SkyFrame timing only: none; saving under C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification
+run finished 2026-10-23 19:25:58; runner 7, commit 65f9ae22a09a25f6bc22dc5f62cc67403b63e0b5
+Cases: SP4, SP5; SkyFrame timing only: none; saving under C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification
 ETABS 23.2.0 started
 API probe written: C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\_api_probe.txt
-== N6: Pushover, plastic hinges
+== SP4: Speed benchmark: large 10-story building
 Building the model ...
-  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
-  section BM: A 1.0, I22 0.002, I33 0.03, J 0.0005, As2 0.0, As3 0.0 (read back)
-STOPPED on N6: frame hinges: no way found to assign them through the API (table Frame Assignments - Hinges: ETABS refused: open table Frame Assignments - Hinges (return code -96)) | FrameObj hinge methods: ['GetHingeAssigns', 'GetHingeAssigns_1', '_cFrameObj__com_GetHingeAssigns', '_cFrameObj__com_GetHingeAssigns_1'] | hinge tables: ['Analysis Options - Analysis Model for Nonlinear Hinges', 'Area Assignments - Wall Hinge - Auto Fiber PM3', 'Area Assignments - Wall Hinge Reinforcement', 'Area Assignments - Wall Hinges', 'Fiber Hinge Fiber States', 'Fiber Hinge States', 'Frame Assignments - Hinge - ASCE 41-13 - Concrete Beam', 'Frame Assignments - Hinge - ASCE 41-13 - Concrete Column', 'Frame Assignments - Hinge - ASCE 41-13 - Steel Beam', 'Frame Assignments - Hinge - ASCE 41-13 - Steel Brace', 'Frame Assignments - Hinge - ASCE 41-13 - Steel Column', 'Frame Assignments - Hinge - ASCE 41-17 - Conc CouplingBm - Flex', 'Frame Assignments - Hinge - ASCE 41-17 - Conc CouplingBm - Shear', 'Frame Assignments - Hinge - ASCE 41-17 - Conc Shear Wall - Flex', 'Frame Assignments - Hinge - ASCE 41-17 - Conc Shear Wall - Shear', 'Frame Assignments - Hinge - ASCE 41-17 - Concrete Beam', 'Frame Assignments - Hinge - ASCE 41-17 - Concrete Column', 'Frame Assignments - Hinge - ASCE 41-17 - Steel Beam', 'Frame Assignments - Hinge - ASCE 41-17 - Steel Brace', 'Frame Assignments - Hinge - ASCE 41-17 - Steel Column', 'Frame Assignments - Hinge - ASCE 41-23 - Conc CouplingBm - Flex', 'Frame Assignments - Hinge - ASCE 41-23 - Conc CouplingBm - Shear', 'Frame Assignments - Hinge - ASCE 41-23 - Conc Shear Wall - Flex', 'Frame Assignments - Hinge - ASCE 41-23 - Conc Shear Wall - Shear', 'Frame Assignments - Hinge - ASCE 41-23 - Concrete Beam', 'Frame Assignments - Hinge - ASCE 41-23 - Concrete Column', 'Frame Assignments - Hinge - ASCE 41-23 - Steel Beam', 'Frame Assignments - Hinge - ASCE 41-23 - Steel Brace', 'Frame Assignments - Hinge - ASCE 41-23 - Steel Column', 'Frame Assignments - Hinge - BRB', 'Frame Assignments - Hinge - Distribution Type', 'Frame Assignments - Hinge - Overwrites', 'Frame Assignments - Hinge - Summary', 'Frame Assignments - Hinge - User', 'General Wall Hinge NL Shear State', 'Generated Hinges - Axial P', 'Generated Hinges - Fiber PM2M3', 'Generated Hinges - Fiber PM3', 'Generated Hinges - Force Controlled - Axial P', 'Generated Hinges - Force Controlled - Interacting M2M3', 'Generated Hinges - Force Controlled - Interacting PM2', 'Generated Hinges - Force Controlled - Interacting PM2M3', 'Generated Hinges - Force Controlled - Interacting PM3', 'Generated Hinges - Force Controlled - Moment M2', 'Generated Hinges - Force Controlled - Moment M3', 'Generated Hinges - Force Controlled - Shear V2', 'Generated Hinges - Force Controlled - Shear V3', 'Generated Hinges - Force Controlled - Torsion T', 'Generated Hinges - Interacting M2M3', 'Generated Hinges - Interacting PM2', 'Generated Hinges - Interacting PM2M3', 'Generated Hinges - Interacting PM3', 'Generated Hinges - Moment M2', 'Generated Hinges - Moment M3', 'Generated Hinges - Parametric - Concrete PM2M3', 'Generated Hinges - Parametric - Steel PM2M3', 'Generated Hinges - Shear V2', 'Generated Hinges - Shear V3', 'Generated Hinges - Torsion T', 'Hinge Definitions - Axial P', 'Hinge Definitions - Fiber PM2M3', 'Hinge Definitions - Fiber PM3', 'Hinge Definitions - Force Controlled - Axial P', 'Hinge Definitions - Force Controlled - Interacting M2M3', 'Hinge Definitions - Force Controlled - Interacting PM2', 'Hinge Definitions - Force Controlled - Interacting PM2M3', 'Hinge Definitions - Force Controlled - Interacting PM3', 'Hinge Definitions - Force Controlled - Moment M2', 'Hinge Definitions - Force Controlled - Moment M3', 'Hinge Definitions - Force Controlled - Shear V2', 'Hinge Definitions - Force Controlled - Shear V3', 'Hinge Definitions - Force Controlled - Torsion T', 'Hinge Definitions - Interacting M2M3', 'Hinge Definitions - Interacting PM2', 'Hinge Definitions - Interacting PM2M3', 'Hinge Definitions - Interacting PM3', 'Hinge Definitions - Moment M2', 'Hinge Definitions - Moment M3', 'Hinge Definitions - Parametric - Concrete PM2M3', 'Hinge Definitions - Parametric - Steel PM2M3', 'Hinge Definitions - Shear V2', 'Hinge Definitions - Shear V3', 'Hinge Definitions - Torsion T', 'Hinge States', 'Performance Check DC Ratios - Frame Hinges', 'Performance Check DC Ratios - Wall Hinges']; see _api_probe.txt for their fields
-== C1: Creep under sustained load
+  section COL: A 6.25, I22 3.255208333333333, I33 3.255208333333333, J 5.4931640625, As2 0.0, As3 0.0 (read back)
+  section BM: A 3.0, I22 0.5625, I33 1.0, J 0.95, As2 0.0, As3 0.0 (read back)
+  area section SLAB: slab, thickness 0.6666666666666666, shell type 1 (read back)
+  15000 area objects
+  mass source (PropMaterial.SetMassSource_1): elements True, joint masses False, patterns {}
+  ETABS solver: {'solver': 'advanced', 'process': 2, 'threads': 24, 'cores': 24}
+  ETABS linear run: best 416.39 s of 427.74, 423.68, 416.39 (SW, SDL, EQX, MODES)
+Running the analysis ...
+  screenshot SP4.etabs.png (ETABS 3-D view only)
+Reading results ...
+  ETABS analysed 60000 area elements for 15000 area objects  (it meshed the objects further: meshes differ from SkyFrame)
+check            hand        ETABS  difference
+SW-FZ         62184.4      62184.4  0.000%
+SDL-FZ           9375         9375  0.000%
+EQX-FX          -2200        -2200  0.000%
+EQX-UX              -     0.110548  compared with SkyFrame only
+T1                  -      1.55518  compared with SkyFrame only
+T2                  -      1.52437  compared with SkyFrame only
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\SP4\SP4.EDB; largest difference from the hand calculation 0.000%
+== SP5: Speed benchmark: 70-story shear-wall tower
 Building the model ...
-  section CCOL: A 1.0, I22 0.08333333333333333, I33 0.08333333333333333, J 0.1406, As2 0.0, As3 0.0 (read back)
-  material CONC: concrete, E 518400.0, nu 0.2 (read back)
-  time-dependent material tables: ['Material Properties - Time Dependence - ACI 209R-92', 'Material Properties - Time Dependence - AS 3600-2009', 'Material Properties - Time Dependence - AS 3600-2018', 'Material Properties - Time Dependence - CEB-FIP 2010', 'Material Properties - Time Dependence - CEB-FIP 90', 'Material Properties - Time Dependence - Eurocode 2-2004', 'Material Properties - Time Dependence - GL2000', 'Material Properties - Time Dependence - NZS 3101-2006', 'Material Properties - Time Dependence - User Creep', 'Material Properties - Time Dependence - User Shrinkage', 'Material Properties - Time Dependence - User Stiffness']
-    [Material Properties - Time Dependence - ACI 209R-92] import type 2; fields (* importable): Material*, RelHumid*, ShrinkStart*, A*, Beta*, CuringType*, Slump*, FineAgg*, AirContent*, CementCont*
-    [Material List by Object Type] import type 0; fields (* importable): ObjectType, Material, Weight, NumPieces, NumStuds
-    [Material List by Section Property] import type 0; fields (* importable): Section, ObjectType, NumPieces, Length, Weight, NumStuds
-    [Material List by Story] import type 0; fields (* importable): Story, ObjectType, Material, Weight, FloorArea, UnitWeight, NumPieces, NumStuds
-    [Material Properties - Acceptance Criteria] import type 2; fields (* importable): Material*, IOTens*, LSTens*, CPTens*, IOComp*, LSComp*, CPComp*
-    [Material Properties - Aluminum Data] import type 2; fields (* importable): Material*, AlumType*, Alloy*, Fcy*, Fty*, Ftu*, Fsu*, SSHysType*
-    [Material Properties - Basic Mechanical Properties] import type 2; fields (* importable): Material*, DensityType*, UnitWeight*, UnitMass*, E1*, E2*, E3*, G12*, G13*, G23*, U12*, U13*, U23*, A1*, A2*, A3*
-    [Material Properties - Coldformed Data] import type 2; fields (* importable): Material*, Fy*, Fu*, SSHysType*
-    [Material Properties - Concrete Data] import type 2; fields (* importable): Material*, Fc*, LtWtConc*, LtWtFact*, IsUserFr*, UserFr*, SSCurveOpt*, SSHysType*, SFc*, SCap*, FinalSlope*, FAngle*, DAngle*, TimeType*, TimeE*, EFact*, TimeCreep*, CreepFact*, TimeShrink*, ShrinkFact*, CreepType*, CreepTerms*
-    [Material Properties - Damping Parameters] import type 2; fields (* importable): Material*, ModalRatio*, VisMass*, VisStiff*
-    [Material Properties - General] import type 2; fields (* importable): Material*, Type*, SymType*, Grade*, Color*, GUID*, Notes*
-    [Material Properties - Hysteresis Parameters - BRB Hardening] import type 2; fields (* importable): Material*, IsSymmetric*, TensHardFac*, TensMaxPDef*, TensAccPDef*, TensProAcc*, CompHardFac*, CompMaxPDef*, CompAccPDef*, CompProAcc*
-    [Material Properties - Hysteresis Parameters - Concrete] import type 2; fields (* importable): Material*, EnrgyDegFac*
-    [Material Properties - Hysteresis Parameters - Degrading] import type 2; fields (* importable): Material*, IsSymmetric*, Tensf0*, Tensf1*, Tensf2*, Tensx1*, Tensx2*, TensADWtFac*, Compf0*, Compf1*, Compf2*, Compx1*, Compx2*, CompADWtFac*, StiffWtFac*, LrgSmlWtFac*
-    [Material Properties - Hysteresis Parameters - Pivot] import type 2; fields (* importable): Material*, Alpha1*, Alpha2*, Beta1*, Beta2*, Eta*
-    [Material Properties - Masonry Data] import type 2; fields (* importable): Material*, Fm*, SSCurveOpt*, SSHysType*, SFm*, SCap*, FinalSlope*, FAngle*, DAngle*
-    [Material Properties - Other Data] import type 2; fields (* importable): Material*, SSHysType*, FAngle*, DAngle*
-    [Material Properties - Rebar Data] import type 2; fields (* importable): Material*, Fy*, Fu*, Fye*, Fue*, SSCurveOpt*, SSHysType*, SHard*, SCap*, FinalSlope*
-    [Material Properties - Steel Data] import type 2; fields (* importable): Material*, Fy*, Fu*, Fye*, Fue*, SSCurveOpt*, SSHysType*, SHard*, SMax*, SRup*, FinalSlope*
-    [Material Properties - Tendon Data] import type 2; fields (* importable): Material*, Fy*, Fu*, SSCurveOpt*, SSHysType*, FinalSlope*
-    [Material Properties - User Stress-Strain Curves] import type 2; fields (* importable): Material*, Point*, Strain*, Stress*, PointID*
-    CONC in [Material List by Object Type]: GetTableForDisplayArray returned 1
-    CONC in [Material List by Section Property]: (no row)
-    CONC in [Material List by Story]: GetTableForDisplayArray returned 1
-    CONC in [Material Properties - Acceptance Criteria]: {Material=CONC, IOTens=0.01, LSTens=0.02, CPTens=0.05, IOComp=-0.003, LSComp=-0.006, CPComp=-0.015}
-    CONC in [Material Properties - Aluminum Data]: GetTableForDisplayArray returned 1
-    CONC in [Material Properties - Basic Mechanical Properties]: {Material=CONC, DensityType=Weight, UnitWeight=0, UnitMass=0, E1=518400, G12=216299.79, U12=0.2, A1=0}
-    CONC in [Material Properties - Coldformed Data]: GetTableForDisplayArray returned 1
-    CONC in [Material Properties - Concrete Data]: {Material=CONC, Fc=576, LtWtConc=No, IsUserFr=No, SSCurveOpt=Mander, SSHysType=Concrete, SFc=0.002219, SCap=0.005, FinalSlope=-0.1, FAngle=0, DAngle=0}
-    CONC in [Material Properties - Damping Parameters]: {Material=CONC, ModalRatio=0, VisMass=0, VisStiff=0}
-    CONC in [Material Properties - General]: {Material=CONC, Type=Concrete, SymType=Isotropic, Grade=f'c 4000 psi, Color=Blue, GUID=8a99c468-f95d-4ea5-ae82-ba96acd6a9e8, Notes=None}
-    CONC in [Material Properties - Hysteresis Parameters - BRB Hardening]: GetTableForDisplayArray returned 1
-    CONC in [Material Properties - Hysteresis Parameters - Concrete]: {Material=CONC, EnrgyDegFac=0}
-    CONC in [Material Properties - Hysteresis Parameters - Degrading]: GetTableForDisplayArray returned 1
-    CONC in [Material Properties - Hysteresis Parameters - Pivot]: GetTableForDisplayArray returned 1
-    CONC in [Material Properties - Masonry Data]: GetTableForDisplayArray returned 1
-    CONC in [Material Properties - Other Data]: GetTableForDisplayArray returned 1
-    CONC in [Material Properties - Rebar Data]: (no row)
-    CONC in [Material Properties - Steel Data]: (no row)
-    CONC in [Material Properties - Tendon Data]: (no row)
-    CONC in [Material Properties - User Stress-Strain Curves]: GetTableForDisplayArray returned 1
-  time-dependence switch Material Properties - Concrete Data: {Material=CONC, TimeType=ACI 209R-92, TimeE=True, TimeCreep=True, CreepFact=True, TimeShrink=False, ShrinkFact=False, CreepType=ACI 209R-92, CreepTerms=True} (no import messages) -> read back {Material=CONC, Fc=576, LtWtConc=No, IsUserFr=No, SSCurveOpt=Mander, SSHysType=Concrete, SFc=0.002219, SCap=0.005, FinalSlope=-0.1, FAngle=0, DAngle=0}
-  Material Properties - Time Dependence - ACI 209R-92 before writing: (no row)
-  tables did not take the properties; PropMaterial.TimeDep type info: QueryInterface(riid, ppvObj); AddRef(); Release(); GetTypeInfoCount(pctinfo); GetTypeInfo(itinfo, lcid, pptinfo); GetIDsOfNames(riid, rgszNames, cNames, lcid, rgdispid); Invoke(dispidMember, riid, lcid, wFlags, pdispparams, pvarResult, pexcepinfo, puArgErr)
-  PropMaterial.TimeDep dir: AddRef, GetIDsOfNames, GetTypeInfo, GetTypeInfoCount, Invoke, QueryInterface, Release, from_param, value
-    GetIDsOfNames(signature not readable)
-      GetIDsOfNames: doc Map string names to integer ids. | spec IDispatch: _ComMemberSpec(restype=<class 'ctypes.HRESULT'>, name='GetIDsOfNames', argtypes=[<class 'ctypes.LP_GUID'>, <class 'ctypes.LP_c_wchar_p'>, <class 'ctypes.c_ulong'>, <class 'ctypes.c_ulong'>, <class 'ctypes.LP_c_long'>], paramflags=None, idlflags=(), doc=None)
-    GetTypeInfo(index:int, lcid:int, None:int&)
-      GetTypeInfo: doc Return type information. Index 0 specifies typeinfo for IDispatch | spec IDispatch: _ComMemberSpec(restype=<class 'ctypes.HRESULT'>, name='GetTypeInfo', argtypes=(<class 'ctypes.c_ulong'>, <class 'ctypes.c_ulong'>, <class 'ctypes.LP_POINTER(IUnknown)'>), paramflags=((1, 'index'), (1, 'lcid', 0), (2, None)), idlflags=(), doc=None)
-    GetTypeInfoCount(None:int&)
-      GetTypeInfoCount: doc - | spec IDispatch: _ComMemberSpec(restype=<class 'ctypes.HRESULT'>, name='GetTypeInfoCount', argtypes=(<class 'ctypes.LP_c_ulong'>,), paramflags=((2, None),), idlflags=(), doc=None)
-STOPPED on C1: time-dependent material: tables: time-dependent material: the Material Properties - Time Dependence - ACI 209R-92 row for CONC is not in the model after writing. Tried: Material Properties - Time Dependence - ACI 209R-92: accepted {Material=CONC, RelHumid=70.0, ShrinkStart=7.0, A=4.0, Beta=0.85, CuringType=Moist, Slump=0.22965879265091863, FineAgg=50.0, AirContent=6.0, CementCont=0.025595409277156537} but it reads back (no row) (import log: empty) | Material Properties - Time Dependence - ACI 209R-92: accepted {Material=CONC, RelHumid=70.0, ShrinkStart=7.0, A=4.0, Beta=0.85, CuringType=Moist} but it reads back (no row) (import log: empty) | Material Properties - Time Dependence - ACI 209R-92: accepted {Material=CONC, RelHumid=70.0, ShrinkStart=7.0, A=4.0, Beta=0.85, CuringType=Moist Cured, Slump=0.22965879265091863, FineAgg=50.0, AirContent=6.0, CementCont=0.025595409277156537} but it reads back (no row) (import log: empty) | Material Properties - Time Dependence - ACI 209R-92: accepted {Material=CONC, RelHumid=70.0, ShrinkStart=7.0, A=4.0, Beta=0.85, CuringType=Moist Cured} but it reads back (no row) (import log: empty) | Material Properties - Time Dependence - ACI 209R-92: accepted {Material=CONC, RelHumid=70.0, ShrinkStart=7.0, A=4.0, Beta=0.85, CuringType=Moist Curing, Slump=0.22965879265091863, FineAgg=50.0, AirContent=6.0, CementCont=0.025595409277156537} but it reads back (no row) (import log: empty) | Material Properties - Time Dependence - ACI 209R-92: accepted {Material=CONC, RelHumid=70.0, ShrinkStart=7.0, A=4.0, Beta=0.85, CuringType=Moist Curing} but it reads back (no row) (import log: empty) || switches: switch Material Properties - Concrete Data: {Material=CONC, TimeType=ACI 209R-92, TimeE=True, TimeCreep=True, CreepFact=True, TimeShrink=False, ShrinkFact=False, CreepType=ACI 209R-92, CreepTerms=True} (no import messages) -> read back {Material=CONC, Fc=576, LtWtConc=No, IsUserFr=No, SSCurveOpt=Mander, SSHysType=Concrete, SFc=0.002219, SCap=0.005, FinalSlope=-0.1, FAngle=0, DAngle=0} || tables: [Material Properties - Time Dependence - ACI 209R-92] import type 2; fields (* importable): Material*, RelHumid*, ShrinkStart*, A*, Beta*, CuringType*, Slump*, FineAgg*, AirContent*, CementCont* || [Material List by Object Type] import type 0; fields (* importable): ObjectType, Material, Weight, NumPieces, NumStuds || [Material List by Section Property] import type 0; fields (* importable): Section, ObjectType, NumPieces, Length, Weight, NumStuds || [Material List by Story] import type 0; fields (* importable): Story, ObjectType, Material, Weight, FloorArea, UnitWeight, NumPieces, NumStuds || [Material Properties - Acceptance Criteria] import type 2; fields (* importable): Material*, IOTens*, LSTens*, CPTens*, IOComp*, LSComp*, CPComp* || [Material Properties - Aluminum Data] import type 2; fields (* importable): Material*, AlumType*, Alloy*, Fcy*, Fty*, Ftu*, Fsu*, SSHysType* || [Material Properties - Basic Mechanical Properties] import type 2; fields (* importable): Material*, DensityType*, UnitWeight*, UnitMass*, E1*, E2*, E3*, G12*, G13*, G23*, U12*, U13*, U23*, A1*, A2*, A3* || [Material Properties - Coldformed Data] import type 2; fields (* importable): Material*, Fy*, Fu*, SSHysType* || [Material Properties - Concrete Data] import type 2; fields (* importable): Material*, Fc*, LtWtConc*, LtWtFact*, IsUserFr*, UserFr*, SSCurveOpt*, SSHysType*, SFc*, SCap*, FinalSlope*, FAngle*, DAngle*, TimeType*, TimeE*, EFact*, TimeCreep*, CreepFact*, TimeShrink*, ShrinkFact*, CreepType*, CreepTerms* || [Material Properties - Damping Parameters] import type 2; fields (* importable): Material*, ModalRatio*, VisMass*, VisStiff* || [Material Properties - General] import type 2; fields (* importable): Material*, Type*, SymType*, Grade*, Color*, GUID*, Notes* || [Material Properties - Hysteresis Parameters - BRB Hardening] import type 2; fields (* importable): Material*, IsSymmetric*, TensHardFac*, TensMaxPDef*, TensAccPDef*, TensProAcc*, CompHardFac*, CompMaxPDef*, CompAccPDef*, CompProAcc* || [Material Properties - Hysteresis Parameters - Concrete] import type 2; fields (* importable): Material*, EnrgyDegFac* || [Material Properties - Hysteresis Parameters - Degrading] import type 2; fields (* importable): Material*, IsSymmetric*, Tensf0*, Tensf1*, Tensf2*, Tensx1*, Tensx2*, TensADWtFac*, Compf0*, Compf1*, Compf2*, Compx1*, Compx2*, CompADWtFac*, StiffWtFac*, LrgSmlWtFac* || [Material Properties - Hysteresis Parameters - Pivot] import type 2; fields (* importable): Material*, Alpha1*, Alpha2*, Beta1*, Beta2*, Eta* || [Material Properties - Masonry Data] import type 2; fields (* importable): Material*, Fm*, SSCurveOpt*, SSHysType*, SFm*, SCap*, FinalSlope*, FAngle*, DAngle* || [Material Properties - Other Data] import type 2; fields (* importable): Material*, SSHysType*, FAngle*, DAngle* || [Material Properties - Rebar Data] import type 2; fields (* importable): Material*, Fy*, Fu*, Fye*, Fue*, SSCurveOpt*, SSHysType*, SHard*, SCap*, FinalSlope* || [Material Properties - Steel Data] import type 2; fields (* importable): Material*, Fy*, Fu*, Fye*, Fue*, SSCurveOpt*, SSHysType*, SHard*, SMax*, SRup*, FinalSlope* || [Material Properties - Tendon Data] import type 2; fields (* importable): Material*, Fy*, Fu*, SSCurveOpt*, SSHysType*, FinalSlope* || [Material Properties - User Stress-Strain Curves] import type 2; fields (* importable): Material*, Point*, Strain*, Stress*, PointID* ||| API: PropMaterial.TimeDep: no ACI 209 setter took the properties. Set: nothing. Tried:  || methods: GetIDsOfNames(?); GetTypeInfo(index, lcid, None); GetTypeInfoCount(None) || read back:  || metadata: GetIDsOfNames: doc Map string names to integer ids. | spec IDispatch: _ComMemberSpec(restype=<class 'ctypes.HRESULT'>, name='GetIDsOfNames', argtypes=[<class 'ctypes.LP_GUID'>, <class 'ctypes.LP_c_wchar_p'>, <class 'ctypes.c_ulong'>, <class 'ctypes.c_ulong'>, <class 'ctypes.LP_c_long'>], paramflags=None, idlflags=(), doc=None) | GetTypeInfo: doc Return type information. Index 0 specifies typeinfo for IDispatch | spec IDispatch: _ComMemberSpec(restype=<class 'ctypes.HRESULT'>, name='GetTypeInfo', argtypes=(<class 'ctypes.c_ulong'>, <class 'ctypes.c_ulong'>, <class 'ctypes.LP_POINTER(IUnknown)'>), paramflags=((1, 'index'), (1, 'lcid', 0), (2, None)), idlflags=(), doc=None) | GetTypeInfoCount: doc - | spec IDispatch: _ComMemberSpec(restype=<class 'ctypes.HRESULT'>, name='GetTypeInfoCount', argtypes=(<class 'ctypes.LP_c_ulong'>,), paramflags=((2, None),), idlflags=(), doc=None) ||| TimeDep type info: QueryInterface(riid, ppvObj); AddRef(); Release(); GetTypeInfoCount(pctinfo); GetTypeInfo(itinfo, lcid, pptinfo); GetIDsOfNames(riid, rgszNames, cNames, lcid, rgdispid); Invoke(dispidMember, riid, lcid, wFlags, pdispparams, pvarResult, pexcepinfo, puArgErr)
+  section COL: A 9.0, I22 6.75, I33 6.75, J 11.390625, As2 0.0, As3 0.0 (read back)
+  section BM: A 3.0, I22 0.5625, I33 1.0, J 0.95, As2 0.0, As3 0.0 (read back)
+  area section WALL: wall, thickness 2.0, shell type 1 (read back)
+  17920 area objects; pier labels ['P1', 'P2', 'P3', 'P4']
+  diaphragm D1 already defined (rigid), used as is
+  diaphragm D1: 88 joints (read back)
+  diaphragm D2: 88 joints (read back)
+  diaphragm D3: 88 joints (read back)
+  diaphragm D4: 88 joints (read back)
+  diaphragm D5: 88 joints (read back)
+  diaphragm D6: 88 joints (read back)
+  diaphragm D7: 88 joints (read back)
+  diaphragm D8: 88 joints (read back)
+  diaphragm D9: 88 joints (read back)
+  diaphragm D10: 88 joints (read back)
+  diaphragm D11: 88 joints (read back)
+  diaphragm D12: 88 joints (read back)
+  diaphragm D13: 88 joints (read back)
+  diaphragm D14: 88 joints (read back)
+  diaphragm D15: 88 joints (read back)
+  diaphragm D16: 88 joints (read back)
+  diaphragm D17: 88 joints (read back)
+  diaphragm D18: 88 joints (read back)
+  diaphragm D19: 88 joints (read back)
+  diaphragm D20: 88 joints (read back)
+  diaphragm D21: 88 joints (read back)
+  diaphragm D22: 88 joints (read back)
+  diaphragm D23: 88 joints (read back)
+  diaphragm D24: 88 joints (read back)
+  diaphragm D25: 88 joints (read back)
+  diaphragm D26: 88 joints (read back)
+  diaphragm D27: 88 joints (read back)
+  diaphragm D28: 88 joints (read back)
+  diaphragm D29: 88 joints (read back)
+  diaphragm D30: 88 joints (read back)
+  diaphragm D31: 88 joints (read back)
+  diaphragm D32: 88 joints (read back)
+  diaphragm D33: 88 joints (read back)
+  diaphragm D34: 88 joints (read back)
+  diaphragm D35: 88 joints (read back)
+  diaphragm D36: 88 joints (read back)
+  diaphragm D37: 88 joints (read back)
+  diaphragm D38: 88 joints (read back)
+  diaphragm D39: 88 joints (read back)
+  diaphragm D40: 88 joints (read back)
+  diaphragm D41: 88 joints (read back)
+  diaphragm D42: 88 joints (read back)
+  diaphragm D43: 88 joints (read back)
+  diaphragm D44: 88 joints (read back)
+  diaphragm D45: 88 joints (read back)
+  diaphragm D46: 88 joints (read back)
+  diaphragm D47: 88 joints (read back)
+  diaphragm D48: 88 joints (read back)
+  diaphragm D49: 88 joints (read back)
+  diaphragm D50: 88 joints (read back)
+  diaphragm D51: 88 joints (read back)
+  diaphragm D52: 88 joints (read back)
+  diaphragm D53: 88 joints (read back)
+  diaphragm D54: 88 joints (read back)
+  diaphragm D55: 88 joints (read back)
+  diaphragm D56: 88 joints (read back)
+  diaphragm D57: 88 joints (read back)
+  diaphragm D58: 88 joints (read back)
+  diaphragm D59: 88 joints (read back)
+  diaphragm D60: 88 joints (read back)
+  diaphragm D61: 88 joints (read back)
+  diaphragm D62: 88 joints (read back)
+  diaphragm D63: 88 joints (read back)
+  diaphragm D64: 88 joints (read back)
+  diaphragm D65: 88 joints (read back)
+  diaphragm D66: 88 joints (read back)
+  diaphragm D67: 88 joints (read back)
+  diaphragm D68: 88 joints (read back)
+  diaphragm D69: 88 joints (read back)
+  diaphragm D70: 88 joints (read back)
+  mass source (PropMaterial.SetMassSource_1): elements True, joint masses False, patterns {}
+  ETABS solver: {'solver': 'advanced', 'process': 2, 'threads': 24, 'cores': 24}
+  ETABS linear run: best 46.77 s of 47.83, 47.18, 46.77 (SW, SDL, EQX, MODES)
+Running the analysis ...
+  screenshot SP5.etabs.png (ETABS 3-D view only)
+Reading results ...
+  ETABS analysed 17920 area elements for 17920 area objects
+check            hand        ETABS  difference
+SW-FZ          101556       101556  0.000%
+SDL-FZ          75600        75600  0.000%
+EQX-FX        -3230.5      -3230.5  0.000%
+EQX-UX              -      3.25551  compared with SkyFrame only
+T1                  -      7.59355  compared with SkyFrame only
+T2                  -      7.59355  compared with SkyFrame only
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\SP5\SP5.EDB; largest difference from the hand calculation 0.000%
+SkyFrame speed run: fetching the latest SkyFrame ...
+SkyFrame speed run: installing OpenSeesPy and PARDISO for C:\Users\abhimanyu.singh\AppData\Local\SkyFramePython312\tools\python.exe ...
+  SkyFrame linear run: best 9.21 s of 17.73, 9.21, 9.34; with every result written out 9.85 s, of which inside the solvers 2.88 s (SW, SDL, EQX, MODES)
+  SkyFrame answers on this PC: SW-FZ 62184.4, SDL-FZ 9375, EQX-FX -2200, EQX-UX 0.11092, T1 1.55785, T2 1.5269
+  wrote C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\SP4\SP4.skyframe-speed.json
+  model size: large model: ~94860 equations — the analysis will be slow (seconds per factorization)
+  model size: large model: ~94860 equations — the analysis will be slow (seconds per factorization)
+  model size: large model: ~94860 equations — the analysis will be slow (seconds per factorization)
+  model size: large model: ~94860 equations — the analysis will be slow (seconds per factorization)
+SkyFrame speed run: fetching the latest SkyFrame ...
+SkyFrame speed run: installing OpenSeesPy and PARDISO for C:\Users\abhimanyu.singh\AppData\Local\SkyFramePython312\tools\python.exe ...
+  SkyFrame linear run: best 93.46 s of 101.96, 101.32, 93.46; with every result written out 94.17 s, of which inside the solvers 74.26 s (SW, SDL, EQX, MODES)
+  SkyFrame answers on this PC: SW-FZ 101556, SDL-FZ 75600, EQX-FX -3230.5, EQX-UX 3.25522, T1 7.59836, T2 7.59836
+  wrote C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\SP5\SP5.skyframe-speed.json
+  model size: large model: ~99330 equations — the analysis will be slow (seconds per factorization)
+  model size: large model: ~99330 equations — the analysis will be slow (seconds per factorization)
+  model size: large model: ~99330 equations — the analysis will be slow (seconds per factorization)
+  model size: large model: ~99330 equations — the analysis will be slow (seconds per factorization)
 
-N6: stopped: frame hinges: no way found to assign them through the API (table Frame Assignments - Hinges: ETABS refused: open table Frame Assignments - Hinges (return code -96)) | FrameObj hinge methods: ['GetHingeAssigns', 'GetHingeAssigns_1', '_cFrameObj__com_GetHingeAssigns', '_cFrameObj__com_GetHingeAssigns_1'] | hinge tables: ['Analysis Options - Analysis Model for Nonlinear Hinges', 'Area Assignments - Wall Hinge - Auto Fiber PM3', 'Area Assignments - Wall Hinge Reinforcement', 'Area Assignments - Wall Hinges', 'Fiber Hinge Fiber States', 'Fiber Hinge States', 'Frame Assignments - Hinge - ASCE 41-13 - Concrete Beam', 'Frame Assignments - Hinge - ASCE 41-13 - Concrete Column', 'Frame Assignments - Hinge - ASCE 41-13 - Steel Beam', 'Frame Assignments - Hinge - ASCE 41-13 - Steel Brace', 'Frame Assignments - Hinge - ASCE 41-13 - Steel Column', 'Frame Assignments - Hinge - ASCE 41-17 - Conc CouplingBm - Flex', 'Frame Assignments - Hinge - ASCE 41-17 - Conc CouplingBm - Shear', 'Frame Assignments - Hinge - ASCE 41-17 - Conc Shear Wall - Flex', 'Frame Assignments - Hinge - ASCE 41-17 - Conc Shear Wall - Shear', 'Frame Assignments - Hinge - ASCE 41-17 - Concrete Beam', 'Frame Assignments - Hinge - ASCE 41-17 - Concrete Column', 'Frame Assignments - Hinge - ASCE 41-17 - Steel Beam', 'Frame Assignments - Hinge - ASCE 41-17 - Steel Brace', 'Frame Assignments - Hinge - ASCE 41-17 - Steel Column', 'Frame Assignments - Hinge - ASCE 41-23 - Conc CouplingBm - Flex', 'Frame Assignments - Hinge - ASCE 41-23 - Conc CouplingBm - Shear', 'Frame Assignments - Hinge - ASCE 41-23 - Conc Shear Wall - Flex', 'Frame Assignments - Hinge - ASCE 41-23 - Conc Shear Wall - Shear', 'Frame Assignments - Hinge - ASCE 41-23 - Concrete Beam', 'Frame Assignments - Hinge - ASCE 41-23 - Concrete Column', 'Frame Assignments - Hinge - ASCE 41-23 - Steel Beam', 'Frame Assignments - Hinge - ASCE 41-23 - Steel Brace', 'Frame Assignments - Hinge - ASCE 41-23 - Steel Column', 'Frame Assignments - Hinge - BRB', 'Frame Assignments - Hinge - Distribution Type', 'Frame Assignments - Hinge - Overwrites', 'Frame Assignments - Hinge - Summary', 'Frame Assignments - Hinge - User', 'General Wall Hinge NL Shear State', 'Generated Hinges - Axial P', 'Generated Hinges - Fiber PM2M3', 'Generated Hinges - Fiber PM3', 'Generated Hinges - Force Controlled - Axial P', 'Generated Hinges - Force Controlled - Interacting M2M3', 'Generated Hinges - Force Controlled - Interacting PM2', 'Generated Hinges - Force Controlled - Interacting PM2M3', 'Generated Hinges - Force Controlled - Interacting PM3', 'Generated Hinges - Force Controlled - Moment M2', 'Generated Hinges - Force Controlled - Moment M3', 'Generated Hinges - Force Controlled - Shear V2', 'Generated Hinges - Force Controlled - Shear V3', 'Generated Hinges - Force Controlled - Torsion T', 'Generated Hinges - Interacting M2M3', 'Generated Hinges - Interacting PM2', 'Generated Hinges - Interacting PM2M3', 'Generated Hinges - Interacting PM3', 'Generated Hinges - Moment M2', 'Generated Hinges - Moment M3', 'Generated Hinges - Parametric - Concrete PM2M3', 'Generated Hinges - Parametric - Steel PM2M3', 'Generated Hinges - Shear V2', 'Generated Hinges - Shear V3', 'Generated Hinges - Torsion T', 'Hinge Definitions - Axial P', 'Hinge Definitions - Fiber PM2M3', 'Hinge Definitions - Fiber PM3', 'Hinge Definitions - Force Controlled - Axial P', 'Hinge Definitions - Force Controlled - Interacting M2M3', 'Hinge Definitions - Force Controlled - Interacting PM2', 'Hinge Definitions - Force Controlled - Interacting PM2M3', 'Hinge Definitions - Force Controlled - Interacting PM3', 'Hinge Definitions - Force Controlled - Moment M2', 'Hinge Definitions - Force Controlled - Moment M3', 'Hinge Definitions - Force Controlled - Shear V2', 'Hinge Definitions - Force Controlled - Shear V3', 'Hinge Definitions - Force Controlled - Torsion T', 'Hinge Definitions - Interacting M2M3', 'Hinge Definitions - Interacting PM2', 'Hinge Definitions - Interacting PM2M3', 'Hinge Definitions - Interacting PM3', 'Hinge Definitions - Moment M2', 'Hinge Definitions - Moment M3', 'Hinge Definitions - Parametric - Concrete PM2M3', 'Hinge Definitions - Parametric - Steel PM2M3', 'Hinge Definitions - Shear V2', 'Hinge Definitions - Shear V3', 'Hinge Definitions - Torsion T', 'Hinge States', 'Performance Check DC Ratios - Frame Hinges', 'Performance Check DC Ratios - Wall Hinges']; see _api_probe.txt for their fields
-C1: stopped: time-dependent material: tables: time-dependent material: the Material Properties - Time Dependence - ACI 209R-92 row for CONC is not in the model after writing. Tried: Material Properties - Time Dependence - ACI 209R-92: accepted {Material=CONC, RelHumid=70.0, ShrinkStart=7.0, A=4.0, Beta=0.85, CuringType=Moist, Slump=0.22965879265091863, FineAgg=50.0, AirContent=6.0, CementCont=0.025595409277156537} but it reads back (no row) (import log: empty) | Material Properties - Time Dependence - ACI 209R-92: accepted {Material=CONC, RelHumid=70.0, ShrinkStart=7.0, A=4.0, Beta=0.85, CuringType=Moist} but it reads back (no row) (import log: empty) | Material Properties - Time Dependence - ACI 209R-92: accepted {Material=CONC, RelHumid=70.0, ShrinkStart=7.0, A=4.0, Beta=0.85, CuringType=Moist Cured, Slump=0.22965879265091863, FineAgg=50.0, AirContent=6.0, CementCont=0.025595409277156537} but it reads back (no row) (import log: empty) | Material Properties - Time Dependence - ACI 209R-92: accepted {Material=CONC, RelHumid=70.0, ShrinkStart=7.0, A=4.0, Beta=0.85, CuringType=Moist Cured} but it reads back (no row) (import log: empty) | Material Properties - Time Dependence - ACI 209R-92: accepted {Material=CONC, RelHumid=70.0, ShrinkStart=7.0, A=4.0, Beta=0.85, CuringType=Moist Curing, Slump=0.22965879265091863, FineAgg=50.0, AirContent=6.0, CementCont=0.025595409277156537} but it reads back (no row) (import log: empty) | Material Properties - Time Dependence - ACI 209R-92: accepted {Material=CONC, RelHumid=70.0, ShrinkStart=7.0, A=4.0, Beta=0.85, CuringType=Moist Curing} but it reads back (no row) (import log: empty) || switches: switch Material Properties - Concrete Data: {Material=CONC, TimeType=ACI 209R-92, TimeE=True, TimeCreep=True, CreepFact=True, TimeShrink=False, ShrinkFact=False, CreepType=ACI 209R-92, CreepTerms=True} (no import messages) -> read back {Material=CONC, Fc=576, LtWtConc=No, IsUserFr=No, SSCurveOpt=Mander, SSHysType=Concrete, SFc=0.002219, SCap=0.005, FinalSlope=-0.1, FAngle=0, DAngle=0} || tables: [Material Properties - Time Dependence - ACI 209R-92] import type 2; fields (* importable): Material*, RelHumid*, ShrinkStart*, A*, Beta*, CuringType*, Slump*, FineAgg*, AirContent*, CementCont* || [Material List by Object Type] import type 0; fields (* importable): ObjectType, Material, Weight, NumPieces, NumStuds || [Material List by Section Property] import type 0; fields (* importable): Section, ObjectType, NumPieces, Length, Weight, NumStuds || [Material List by Story] import type 0; fields (* importable): Story, ObjectType, Material, Weight, FloorArea, UnitWeight, NumPieces, NumStuds || [Material Properties - Acceptance Criteria] import type 2; fields (* importable): Material*, IOTens*, LSTens*, CPTens*, IOComp*, LSComp*, CPComp* || [Material Properties - Aluminum Data] import type 2; fields (* importable): Material*, AlumType*, Alloy*, Fcy*, Fty*, Ftu*, Fsu*, SSHysType* || [Material Properties - Basic Mechanical Properties] import type 2; fields (* importable): Material*, DensityType*, UnitWeight*, UnitMass*, E1*, E2*, E3*, G12*, G13*, G23*, U12*, U13*, U23*, A1*, A2*, A3* || [Material Properties - Coldformed Data] import type 2; fields (* importable): Material*, Fy*, Fu*, SSHysType* || [Material Properties - Concrete Data] import type 2; fields (* importable): Material*, Fc*, LtWtConc*, LtWtFact*, IsUserFr*, UserFr*, SSCurveOpt*, SSHysType*, SFc*, SCap*, FinalSlope*, FAngle*, DAngle*, TimeType*, TimeE*, EFact*, TimeCreep*, CreepFact*, TimeShrink*, ShrinkFact*, CreepType*, CreepTerms* || [Material Properties - Damping Parameters] import type 2; fields (* importable): Material*, ModalRatio*, VisMass*, VisStiff* || [Material Properties - General] import type 2; fields (* importable): Material*, Type*, SymType*, Grade*, Color*, GUID*, Notes* || [Material Properties - Hysteresis Parameters - BRB Hardening] import type 2; fields (* importable): Material*, IsSymmetric*, TensHardFac*, TensMaxPDef*, TensAccPDef*, TensProAcc*, CompHardFac*, CompMaxPDef*, CompAccPDef*, CompProAcc* || [Material Properties - Hysteresis Parameters - Concrete] import type 2; fields (* importable): Material*, EnrgyDegFac* || [Material Properties - Hysteresis Parameters - Degrading] import type 2; fields (* importable): Material*, IsSymmetric*, Tensf0*, Tensf1*, Tensf2*, Tensx1*, Tensx2*, TensADWtFac*, Compf0*, Compf1*, Compf2*, Compx1*, Compx2*, CompADWtFac*, StiffWtFac*, LrgSmlWtFac* || [Material Properties - Hysteresis Parameters - Pivot] import type 2; fields (* importable): Material*, Alpha1*, Alpha2*, Beta1*, Beta2*, Eta* || [Material Properties - Masonry Data] import type 2; fields (* importable): Material*, Fm*, SSCurveOpt*, SSHysType*, SFm*, SCap*, FinalSlope*, FAngle*, DAngle* || [Material Properties - Other Data] import type 2; fields (* importable): Material*, SSHysType*, FAngle*, DAngle* || [Material Properties - Rebar Data] import type 2; fields (* importable): Material*, Fy*, Fu*, Fye*, Fue*, SSCurveOpt*, SSHysType*, SHard*, SCap*, FinalSlope* || [Material Properties - Steel Data] import type 2; fields (* importable): Material*, Fy*, Fu*, Fye*, Fue*, SSCurveOpt*, SSHysType*, SHard*, SMax*, SRup*, FinalSlope* || [Material Properties - Tendon Data] import type 2; fields (* importable): Material*, Fy*, Fu*, SSCurveOpt*, SSHysType*, FinalSlope* || [Material Properties - User Stress-Strain Curves] import type 2; fields (* importable): Material*, Point*, Strain*, Stress*, PointID* ||| API: PropMaterial.TimeDep: no ACI 209 setter took the properties. Set: nothing. Tried:  || methods: GetIDsOfNames(?); GetTypeInfo(index, lcid, None); GetTypeInfoCount(None) || read back:  || metadata: GetIDsOfNames: doc Map string names to integer ids. | spec IDispatch: _ComMemberSpec(restype=<class 'ctypes.HRESULT'>, name='GetIDsOfNames', argtypes=[<class 'ctypes.LP_GUID'>, <class 'ctypes.LP_c_wchar_p'>, <class 'ctypes.c_ulong'>, <class 'ctypes.c_ulong'>, <class 'ctypes.LP_c_long'>], paramflags=None, idlflags=(), doc=None) | GetTypeInfo: doc Return type information. Index 0 specifies typeinfo for IDispatch | spec IDispatch: _ComMemberSpec(restype=<class 'ctypes.HRESULT'>, name='GetTypeInfo', argtypes=(<class 'ctypes.c_ulong'>, <class 'ctypes.c_ulong'>, <class 'ctypes.LP_POINTER(IUnknown)'>), paramflags=((1, 'index'), (1, 'lcid', 0), (2, None)), idlflags=(), doc=None) | GetTypeInfoCount: doc - | spec IDispatch: _ComMemberSpec(restype=<class 'ctypes.HRESULT'>, name='GetTypeInfoCount', argtypes=(<class 'ctypes.LP_c_ulong'>,), paramflags=((2, None),), idlflags=(), doc=None) ||| TimeDep type info: QueryInterface(riid, ppvObj); AddRef(); Release(); GetTypeInfoCount(pctinfo); GetTypeInfo(itinfo, lcid, pptinfo); GetIDsOfNames(riid, rgszNames, cNames, lcid, rgdispid); Invoke(dispidMember, riid, lcid, wFlags, pdispparams, pvarResult, pexcepinfo, puArgErr)
+SP4: done, largest difference from hand 0.000%
+SP5: done, largest difference from hand 0.000%
 ETABS closed
