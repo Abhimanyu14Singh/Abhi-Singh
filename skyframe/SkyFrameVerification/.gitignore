@@ -10,6 +10,7 @@
 !*.skyframe-speed.json
 !*.skyframe-speed.log.txt
 !_api_probe.txt
+!_last_run.txt
 !*.py
 !*.bat
 # real projects (R1): each model's text export, which SkyFrame imports

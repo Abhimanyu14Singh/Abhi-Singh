@@ -48,9 +48,13 @@ class Stop(Exception):
 _LOG: list = []               # what the current case printed, for its log file
 
 
+_RUN_LOG: list = []           # everything this run printed, saved to <out>/_last_run.txt at the end
+
+
 def say(msg: str) -> None:
     print(msg, flush=True)
     _LOG.append(msg)
+    _RUN_LOG.append(msg)
 
 
 def ok(ret, what: str) -> None:
@@ -1705,6 +1709,12 @@ def main(argv=None) -> int:
             say("ETABS closed")
         else:
             say("ETABS is left open so you can look at the model; close it when done.")
+        try:                        # the whole console, pushed with the results: a closed window hides nothing
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            (out_root / "_last_run.txt").write_text(f"run finished {stamp}; runner {RUNNER}, commit {_head() or '?'}\n"
+                                                    + "\n".join(_RUN_LOG) + "\n", encoding="utf-8")
+        except Exception:
+            pass
     return 0 if all(s["ok"] for s in summaries) else 1
 
 
