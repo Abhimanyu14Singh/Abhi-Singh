@@ -1128,6 +1128,31 @@ def benchmark(sm, case: dict) -> dict:
 BRANCH = "claude/etabs-opensees-ui-rebuild-kt2zwh"
 
 
+PY312_NUGET = "https://www.nuget.org/api/v2/package/python/3.12.10"
+
+
+def private_python312():
+    """A Python 3.12 of its own under %LOCALAPPDATA%\\SkyFramePython312 (NuGet zip, pip bootstrapped)."""
+    import subprocess
+    import zipfile
+    home = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "SkyFramePython312"
+    exe = home / "tools" / "python.exe"
+    if not exe.exists():
+        say("SkyFrame speed run: unpacking a private Python 3.12 (NuGet) ...")
+        try:
+            home.mkdir(parents=True, exist_ok=True)
+            pkg = home / "python312.nupkg"
+            with urllib.request.urlopen(PY312_NUGET, timeout=300) as r:
+                pkg.write_bytes(r.read())
+            zipfile.ZipFile(pkg).extractall(home)
+        except Exception as exc:
+            say(f"  could not get Python 3.12: {exc}")
+            return None
+    if subprocess.run([str(exe), "-m", "pip", "--version"], capture_output=True).returncode != 0:
+        subprocess.run([str(exe), "-m", "ensurepip", "--upgrade"], capture_output=True)
+    return [str(exe)] if exe.exists() else None
+
+
 def skyframe_speed(out_root: Path, case: dict) -> None:
     """Time SkyFrame on this machine on the same benchmark model: the latest SkyFrame code is taken
     from the GitHub clone (git archive, nothing in the clone changes) and run with Python 3.11/3.12."""
@@ -1152,7 +1177,14 @@ def skyframe_speed(out_root: Path, case: dict) -> None:
         return
     zipfile.ZipFile(z).extractall(src)
     py = None
-    for cand in (["py", "-3.11"], ["py", "-3.12"], ["py", "-3.10"], ["py", "-3.13"], [sys.executable]):
+    # OpenSeesPy's Windows module (openseespywin, every current wheel) links python312.dll: it loads
+    # under Python 3.12 only.  Without an installed 3.12, a private copy is unpacked from the NuGet
+    # "python" package into the user's profile (no installer, no admin, other Pythons untouched).
+    for cand in (["py", "-3.12"], "private 3.12"):
+        if cand == "private 3.12":
+            cand = private_python312()
+            if cand is None:
+                continue
         try:
             if subprocess.run(cand + ["-c", "import sys"], capture_output=True).returncode != 0:
                 continue
