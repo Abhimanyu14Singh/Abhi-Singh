@@ -20,4 +20,16 @@ Import Type and Options:  Interactive Database Editing
      Elements Deleted from DB:  Delete object from model
      Other Items Deleted from DB:  Delete item from model
      Elements with S
-STOPPED on H1: table Load Case Definitions - Time History - Nonlin Direct Integration: case NLTH reads back Mode4Ratio = '', set 0.0 (row {'Name': 'NLTH', 'InitialCond': 'Unstressed', 'NonlinCase': '', 'LoadType': 'Load', 'LoadName': 'F', 'Function': 'STEP', 'LoadSF': '1', 'TransAccSF': '', 'RotAccSF': '', 'TimeFactor': '1', 'ArrivalTime': '0', 'Angle': '0', 'GeoNonlin': 'None', 'NumSteps': '300', 'StepSize': '0.001', 'ProBy': 'Direct', 'MassCoeff': '0', 'StiffCoeff': '0', 'ProTimeVal1': '', 'ProDamping1': '', 'ProTimeVal2': '', 'ProDamping2': '', 'Mode4Ratio': '', 'ModalCase': '', 'IntType': 'Hilber-Hughes-Taylor', 'Gamma': '0.5', 'Beta': '0.25', 'Theta': '', 'Alpha': '0', 'Alpham': '', 'SolScheme': 'Iterative Events', 'MaxSize': '0', 'MinSize': '0', 'EventTol': '0.01', 'MaxEvents': '24', 'MaxCSIters': '10', 'MaxNRIters': '40', 'IterTol': '0.0001', 'LineSearch': 'No', 'MaxSearches': '', 'SearchTol': '', 'SearchFact': '', 'StopAnalysis': '', 'MinEvStepSz': '', 'MaxNullEvStp': '', 'UseCorrStep': '', 'DesignType': 'Program Determined', 'UserDesType': '', 'GUID': 'd1e44200-785a-4779-ba76-34cd841fad26', 'Notes': ''})
+    NLTH read back from Load Case Definitions - Time History - Nonlin Direct Integration: Name=NLTH, InitialCond=Unstressed, LoadType=Load, LoadName=F, Function=STEP, LoadSF=1, TimeFactor=1, ArrivalTime=0, Angle=0, GeoNonlin=None, NumSteps=300, StepSize=0.001, ProBy=Direct, MassCoeff=0, StiffCoeff=0, IntType=Hilber-Hughes-Taylor, Gamma=0.5, Beta=0.25, Alpha=0, SolScheme=Iterative Events, MaxSize=0, MinSize=0, EventTol=0.01, MaxEvents=24, MaxCSIters=10, MaxNRIters=40, IterTol=0.0001, LineSearch=No, DesignType=Program Determined
+  time history NLTH (direct, 300 x 0.001 s): table Load Case Definitions - Time History - Nonlin Direct Integration, damping fields ['MassCoeff', 'StiffCoeff'] = 0
+Running the analysis ...
+  screenshot H1.etabs.png (ETABS 3-D view only)
+Reading results ...
+  NLTH: SetOptionModalHist(2) -> 0; SetOptionDirectHist(2) -> 0; 903 joint rows, steps ['Time']
+  NLTH_ENV not read: ETABS refused: joint displacements NLTH_ENV (return code 1)
+  NLTH: peak axial force in link G1 (G1) 7.49939
+check            hand        ETABS  difference
+NLTH-UX     0.0517241    0.0517227  0.003%
+NLTH-G            7.5      7.49939  0.008%
+NLTH-V             15      14.9992  0.005%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\H1\H1.EDB; largest difference from the hand calculation 0.008%

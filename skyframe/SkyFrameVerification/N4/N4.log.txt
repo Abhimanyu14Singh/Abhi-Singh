@@ -7,7 +7,9 @@ Building the model ...
 Running the analysis ...
   screenshot N4.etabs.png (ETABS 3-D view only)
 Reading results ...
+  THX: SetOptionModalHist(2) -> 0; SetOptionDirectHist(2) -> 0; 3002 joint rows, steps ['Time']
+  THX_ENV: 4 rows, steps ['Max', 'Min']
 check            hand        ETABS  difference
 T1                0.5          0.5  0.000%
-THX-UX      0.0755675    0.0248938  67.058%
-Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\N4\N4.EDB; largest difference from the hand calculation 67.058%
+THX-UX      0.0755675    0.0755673  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\N4\N4.EDB; largest difference from the hand calculation 0.000%

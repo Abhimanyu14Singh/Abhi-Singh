@@ -1,36 +1,14 @@
 == C1: Creep under sustained load
 Building the model ...
-  section CCOL: A 1.0, I22 0.08333333333333333, I33 0.08333333333333333, J 0.1406, As2 0.0, As3 0.0 (read back)
-  material CONC: concrete, E 518400.0, nu 0.2 (read back)
-  PropMaterial.TimeDep dir: AddRef, GetIDsOfNames, GetTypeInfo, GetTypeInfoCount, Invoke, QueryInterface, Release, from_param, value
-    GetIDsOfNames(signature not readable)
-      GetIDsOfNames: doc Map string names to integer ids. | spec IDispatch: _ComMemberSpec(restype=<class 'ctypes.HRESULT'>, name='GetIDsOfNames', argtypes=[<class 'ctypes.LP_GUID'>, <class 'ctypes.LP_c_wchar_p'>, <class 'ctypes.c_ulong'>, <class 'ctypes.c_ulong'>, <class 'ctypes.LP_c_long'>], paramflags=None, idlflags=(), doc=None)
-    GetTypeInfo(index:int, lcid:int, None:int&)
-      GetTypeInfo: doc Return type information. Index 0 specifies typeinfo for IDispatch | spec IDispatch: _ComMemberSpec(restype=<class 'ctypes.HRESULT'>, name='GetTypeInfo', argtypes=(<class 'ctypes.c_ulong'>, <class 'ctypes.c_ulong'>, <class 'ctypes.LP_POINTER(IUnknown)'>), paramflags=((1, 'index'), (1, 'lcid', 0), (2, None)), idlflags=(), doc=None)
-    GetTypeInfoCount(None:int&)
-      GetTypeInfoCount: doc - | spec IDispatch: _ComMemberSpec(restype=<class 'ctypes.HRESULT'>, name='GetTypeInfoCount', argtypes=(<class 'ctypes.LP_c_ulong'>,), paramflags=((2, None),), idlflags=(), doc=None)
-  PropMaterial.TimeDep did not take the properties (PropMaterial.TimeDep: no ACI 209 setter took the properties. Set: nothing. Tried:  || methods: GetIDsOfNames(?); GetTypeInfo(index, lcid, None); GetTypeInfoCount(None) || read back:  || metadata: GetIDsOfNames: doc Map string names to integer ids. | spec IDispatch: _ComMemberSpec(restype=<class 'cty); trying tables
-  time-dependent material tables: ['Material Properties - Time Dependence - ACI 209R-92', 'Material Properties - Time Dependence - AS 3600-2009', 'Material Properties - Time Dependence - AS 3600-2018', 'Material Properties - Time Dependence - CEB-FIP 2010', 'Material Properties - Time Dependence - CEB-FIP 90', 'Material Properties - Time Dependence - Eurocode 2-2004', 'Material Properties - Time Dependence - GL2000', 'Material Properties - Time Dependence - NZS 3101-2006', 'Material Properties - Time Dependence - User Creep', 'Material Properties - Time Dependence - User Shrinkage', 'Material Properties - Time Dependence - User Stiffness']
-    [Material Properties - Time Dependence - ACI 209R-92] import type 2; fields (* importable): Material*, RelHumid*, ShrinkStart*, A*, Beta*, CuringType*, Slump*, FineAgg*, AirContent*, CementCont*
-    [Material Properties - Time Dependence - AS 3600-2009] import type 2; fields (* importable): Material*, CompFactA*, CompFactB*, CreepCoeff*, Environment*, DryShrink*
-    [Material Properties - Time Dependence - AS 3600-2018] import type 2; fields (* importable): Material*, CompFactA*, CompFactB*, CreepCoeff*, Environment*, DryShrink*
-    [Material Properties - Time Dependence - CEB-FIP 2010] import type 2; fields (* importable): Material*, RelHumid*, ShrinkStart*, CementType*, LtwtGrade*, LtwtDensity*
-    [Material Properties - Time Dependence - CEB-FIP 90] import type 2; fields (* importable): Material*, CementCoeff*, RelHumid*, BetaSC*, ShrinkStart*
-    [Material Properties - Time Dependence - Eurocode 2-2004] import type 2; fields (* importable): Material*, RelHumid*, ShrinkStart*, CementType*, LtwtGrade*, LtwtDensity*
-    [Material Properties - Time Dependence - GL2000] import type 2; fields (* importable): Material*, RelHumid*, ShrinkStart*, CementType*, StrDevParam*, Correction*
-    [Material Properties - Time Dependence - NZS 3101-2006] import type 2; fields (* importable): Material*, DeltaF*, CementType*, RelHumid*, CreepCoeff*, AggTypeFact*, DryShrink*
-    [Material Properties - Time Dependence - User Creep] import type 2; fields (* importable): Material*, A*, B*, Ho*, AgeAtLoad*, Days*, CreepCoeff*
-    [Material Properties - Time Dependence - User Shrinkage] import type 2; fields (* importable): Material*, A*, B*, Ho*, Age*, ShrinkStrn*
-    [Material Properties - Time Dependence - User Stiffness] import type 2; fields (* importable): Material*, Age*, Multiplier*
-  time-dependent (read back) Material Properties - Time Dependence - ACI 209R-92: (no row)
-  time-dependent material CONC: ACI 209R-92 through 1 table(s)
-  staged case STG: one stage of 1000 days: add at age 28 days, load G; time-dependent on (SetMaterialNonlinearity(name, True); read back [True, 0])
-Running the analysis ...
-  screenshot C1.etabs.png (ETABS 3-D view only)
-Reading results ...
-check            hand        ETABS  difference
-G-UZ      -0.00462963  -0.00462963  0.000%
-STG-UZ    -0.00980349  -0.00462963  52.776%
-STG-P            -200         -200  0.000%
-C1-phi        1.11755            0  100.000%
-Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\C1\C1.EDB; largest difference from the hand calculation 100.000%
+STOPPED on C1: COMError: (-2147467261, 'Invalid pointer', ('Object reference not set to an instance of an object.', 'ETABS', None, 0, None))
+Traceback (most recent call last):
+  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 1623, in main
+    summaries.append(run_case(sm, case, out_root, version))
+                     ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 1444, in run_case
+    names = build(sm, case)
+  File "C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\run_etabs.py", line 95, in build
+    ok(sm.File.NewGridOnly(len(h), h[1] if len(h) > 1 else h[0], h[0], 2, 2, 20.0, 20.0), "new grid-only model")
+       ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ctypes.COMError: (-2147467261, 'Invalid pointer', ('Object reference not set to an instance of an object.', 'ETABS', None, 0, None))
+

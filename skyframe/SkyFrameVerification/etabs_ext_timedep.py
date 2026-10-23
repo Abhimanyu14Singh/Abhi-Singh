@@ -121,6 +121,7 @@ def _write(sm, key: str, version, fields, n, data) -> str:
         else:
             r = dt.ApplyEditedTables(True, 0, 0, 0, 0, "")
             # out arguments: fatal errors, errors, warnings, info messages, import log
+            _LAST_LOG[0] = import_log(r[4]) if (r[2] or r[3]) else ""     # warnings / info on success
             err = "" if (r[-1] == 0 and not r[0] and not r[1]) else (
                 f"ApplyEditedTables returned {r[-1]}: {r[0]} fatal errors, {r[1]} errors, {r[2]} warnings: "
                 f"{import_log(r[4])}")
@@ -233,15 +234,20 @@ def set_time_dependent(sm, R, td: dict) -> str:
     """ACI 209R-92 creep / shrinkage on the material: the PropMaterial.TimeDep object's setters
     (ETABS 23 has the object; its methods and argument names are read from the type library at run
     time), else the material time-dependent tables; R.Stop with both diagnostics when neither takes."""
-    try:
-        return set_time_dependent_api(sm, R, td)
-    except R.Stop as exc:
-        api_err = str(exc)
-    R.say(f"  PropMaterial.TimeDep did not take the properties ({api_err[:300]}); trying tables")
+    # third run: TimeDep is IDispatch only (no methods in the binding), the tables exist: tables
+    # first; the API only as a fallback, with what the object's type info lists
     try:
         return set_time_dependent_tables(sm, R, td)
     except R.Stop as exc:
-        raise R.Stop(f"time-dependent material: API: {api_err} ||| tables: {exc}")
+        tab_err = str(exc)
+    tdo = getattr(sm.PropMaterial, "TimeDep", None)
+    ti = typeinfo_methods(tdo) if tdo is not None else ["(no TimeDep)"]
+    R.say(f"  tables did not take the properties; PropMaterial.TimeDep type info: {'; '.join(ti)[:1500]}")
+    try:
+        return set_time_dependent_api(sm, R, td)
+    except R.Stop as exc:
+        raise R.Stop(f"time-dependent material: tables: {tab_err} ||| API: {str(exc)[:1500]} ||| TimeDep type "
+                     f"info: {'; '.join(ti)[:1500]}")
 
 
 # ── PropMaterial.TimeDep: signatures from the comtypes type library ─────────
@@ -496,43 +502,162 @@ def _set_time_dependent_api(sm, R, td: dict, tdo) -> str:
 
 
 def set_time_dependent_tables(sm, R, td: dict) -> str:
-    tried = []
-    api = _api_names(sm.PropMaterial, "time", "creep", "shrink")
+    """The ETABS 23 tables (third run): "Material Properties - Time Dependence - ACI 209R-92" holds
+    Material, RelHumid, ShrinkStart, A, Beta, CuringType, Slump, FineAgg, AirContent, CementCont,
+    but a row written there was dropped ("(no row)") and the staged case showed no creep: the
+    material must first be switched to a time-dependence type somewhere else.  So:
+
+    1. every material table's fields, and the material's row in each, are logged; any field that
+       looks like a time-dependence switch (time / creep / shrink / aging) is set on the material's
+       row (type -> the code name; creep, shrinkage, aging -> Yes/No as the case asks);
+    2. the ACI 209 row is then changed in place when ETABS created it (its own Slump, FineAgg,
+       AirContent, CementCont defaults kept and logged), else appended;
+    3. the row must read back with RelHumid and ShrinkStart, or the run stops with everything seen.
+
+    A and Beta are the ACI 209 strength-development constants of moist-cured type I cement (4.0 and
+    0.85); with aging off they do not enter.  V/S has no field: ETABS takes it from the section (the
+    frame-section tables' notional-size fields are logged)."""
+    nm = td["material"]
     types = _import_types(sm)
-    keys = [k for k in all_keys(sm, R)
-            if "material" in k.lower() and any(w in k.lower() for w in ("time", "creep", "shrink"))]
-    if not keys:
-        raise R.Stop("no material table mentions time, creep or shrinkage (PropMaterial offers "
-                     f"{api or 'no time/creep/shrink members'}); material tables offered: "
-                     + "; ".join(k for k in all_keys(sm, R) if "material" in k.lower()))
-    R.say(f"  time-dependent material tables: {keys}")
-    described = describe(sm, R, keys, types)
-    # a general table (no code name in its key) first, then the ACI 209 one
-    keys.sort(key=lambda k: ("209" in k, k))
-    done = []
-    for key in keys:
-        if any(c in key for c in ("CEB", "GL2000", "2010", "Eurocode", "AS ", "JTG", "User")):
-            continue                                   # tables for other code models
-        ok_key = False
+    keys = all_keys(sm, R)
+    td_keys = [k for k in keys if "material" in k.lower() and any(w in k.lower() for w in ("time", "creep", "shrink"))]
+    aci_key = next((k for k in td_keys if "209" in k), "")
+    mat_keys = [k for k in keys if k.lower().startswith("material") and k not in td_keys]
+    R.say(f"  time-dependent material tables: {td_keys}")
+    described = describe(sm, R, ([aci_key] if aci_key else []) + mat_keys, types)
+    for k in mat_keys:
+        R.say(f"    {nm} in [{k}]: {_display(sm, k, nm)[:700]}")
+    _log_section_notional(sm, R, keys)
+    if not aci_key:
+        raise R.Stop("no ACI 209R-92 time-dependence table; material time tables: " + "; ".join(td_keys)
+                     + " || " + " || ".join(described))
+    tried, notes = [], []
+    # 1. switches
+    for k in mat_keys:
+        fk, imp = _fields(sm, k)
+        sw = [f for f, i in zip(fk, imp or [True] * len(fk)) if i and _is_switch(f)]
+        if not sw or not _display(sm, k, nm).startswith("{"):    # only a row the material already has
+            continue
+        ok_k = False
         for law in LAW_NAMES[td["law"]]:
             for yes, no in (("Yes", "No"), ("True", "False")):
-                err, wrote = upsert(sm, key, [td], lambda rows: [_td_rules(td, law, yes, no) for _ in rows],
+                rules = [(("=" + _norm(f),), _switch_value(f, td, law, yes, no)) for f in sw]
+                rules = [r for r in rules if r[1] is not None] + [(("material",), nm), (("=name",), nm)]
+                err, wrote = upsert(sm, k, [td], lambda rows, rr=rules: [rr for _ in rows],
                                     name_words=("material", "name"))
                 if not err:
-                    ok_key = True
+                    ok_k = True
+                    notes.append(f"switch {k}: {wrote} ({_LAST_LOG[0] or 'no import messages'}) -> read back "
+                                 f"{_display(sm, k, nm)[:500]}")
                     break
-                tried.append(f"{key} ({law}, {yes}/{no}): {err} [wrote {wrote}]")
-            if ok_key:
+                tried.append(f"switch {k} ({law}, {yes}/{no}): {err} [wrote {wrote}]")
+            if ok_k:
                 break
-        if ok_key:
-            done.append(f"{key}: {_row_of(sm, key, td['material'])}")
-    if not done:
-        raise R.Stop("time-dependent material properties: no table took them. Tried: " + " | ".join(tried[-6:])
-                     + " || tables: " + " || ".join(described)
-                     + f" || PropMaterial methods: {R._methods(sm.PropMaterial)}")
-    for d in done:
-        R.say(f"  time-dependent (read back) {d}")
-    return f"{td['law']} through {len(done)} table(s)"
+    if not notes:
+        notes.append("no material table has a time-dependence switch field (time / creep / shrink / aging)")
+    for n_ in notes:
+        R.say(f"  time-dependence {n_}")
+    # 2. the ACI 209 row
+    before = _row_of(sm, aci_key, nm)
+    R.say(f"  {aci_key} before writing: {before}")
+    exists = before != "(no row)" and not before.startswith("GetTable")
+    base = {"material": nm, "relhumid": float(td["rh"]), "shrinkstart": float(td["shrinkStart"]),
+            "a": 4.0, "beta": 0.85}
+    # ACI 209 standard conditions (every correction factor 1): slump 70 mm, fines 50%, air <= 6%,
+    # cement content ~ 410 kg/m3; only written when ETABS created no row with its own defaults
+    std_kipft = {"slump": 70.0 / 304.8, "fineagg": 50.0, "aircontent": 6.0,
+                 "cementcont": 410.0 * 2.20462e-3 / 35.3147}       # kip/ft3
+    variants = []
+    for cur in (td["curing"].capitalize(), td["curing"].capitalize() + " Cured", td["curing"].capitalize() + " Curing"):
+        if exists:
+            variants.append(dict(base, curingtype=cur))
+        else:
+            variants += [dict(base, curingtype=cur, **std_kipft), dict(base, curingtype=cur)]
+    written = None
+    for v in variants:
+        rules = [(("=" + k,), val) for k, val in v.items()]
+        err, wrote = upsert(sm, aci_key, [td], lambda rows, rr=rules: [rr for _ in rows], name_words=("material",))
+        if err:
+            tried.append(f"{aci_key}: {err} [wrote {wrote}]")
+            continue
+        back = _row_of(sm, aci_key, nm)
+        if back == "(no row)" or back.startswith("GetTable"):
+            tried.append(f"{aci_key}: accepted {wrote} but it reads back {back} (import log: "
+                         f"{_LAST_LOG[0] or 'empty'})")
+            continue
+        written = (wrote, back)
+        break
+    if written is None:
+        raise R.Stop(f"time-dependent material: the {aci_key} row for {nm} is not in the model after writing. "
+                     "Tried: " + " | ".join(tried[-6:]) + " || switches: " + " | ".join(notes)
+                     + " || tables: " + " || ".join(described))
+    got = {_norm(p.split("=", 1)[0]): p.split("=", 1)[1] for p in written[1].strip("{}").split(", ") if "=" in p}
+    for k_, want in (("relhumid", float(td["rh"])), ("shrinkstart", float(td["shrinkStart"]))):
+        try:
+            ok_v = abs(float(got.get(k_, "nan")) - want) < 1e-6
+        except ValueError:
+            ok_v = False
+        if not ok_v:
+            raise R.Stop(f"time-dependent material: {aci_key} reads back {k_} = {got.get(k_)!r}, set {want} "
+                         f"(row {written[1]})")
+    R.say(f"  time-dependent (read back) {aci_key}: {written[1]}")
+    return f"{td['law']} through the tables"
+
+
+_LAST_LOG = [""]
+
+
+def _is_switch(field: str) -> bool:
+    f = _norm(field)
+    if "temp" in f or f in ("material", "name", "guid", "notes", "color"):
+        return False
+    return (any(w in f for w in ("timedep", "timetype", "tdtype", "creep", "shrink", "aging", "time"))
+            or f.endswith("age") and not any(w in f for w in ("percent", "average", "usage", "image", "storage")))
+
+
+def _switch_value(field: str, td: dict, law: str, yes: str, no: str):
+    f = _norm(field)
+    yn = lambda b: yes if b else no
+    if any(w in f for w in ("type", "model", "code", "law")):
+        if "creep" in f and ("analysis" in f or "method" in f):
+            return "Full Integration"
+        return law
+    if "creep" in f:
+        return yn(td["creep"])
+    if "shrink" in f:
+        return yn(td["shrinkage"])
+    if "aging" in f or "age" in f:
+        return yn(td["aging"])
+    if "time" in f:
+        return yes
+    return None
+
+
+def _log_section_notional(sm, R, keys) -> None:
+    """Fields of the frame-section tables that look like notional size / time dependence."""
+    for k in keys:
+        if "frame section" not in k.lower() and "section propert" not in k.lower():
+            continue
+        fk, _ = _fields(sm, k)
+        hits = [f for f in fk if any(w in _norm(f) for w in ("notion", "timedep", "creep", "shrink", "vs"))]
+        if hits:
+            R.say(f"    section table [{k}] notional / time fields: {', '.join(hits)}")
+
+
+def typeinfo_methods(obj) -> list:
+    """Function names and parameter names from the object's ITypeInfo (IDispatch-only objects such as
+    ETABS 23's PropMaterial.TimeDep expose nothing else); [] when unavailable."""
+    out = []
+    try:
+        ti = obj.GetTypeInfo(0)
+        ta = ti.GetTypeAttr()
+        for i in range(ta.cFuncs):
+            fd = ti.GetFuncDesc(i)
+            names = ti.GetNames(fd.memid, fd.cParams + 1)
+            out.append(f"{names[0]}({', '.join(names[1:])})")
+    except Exception as exc:
+        out.append(f"(type info not read: {type(exc).__name__}: {exc})")
+    return out
 
 
 def set_td_staged(sm, case: dict, R, point, names: dict, st: dict) -> str:
@@ -588,6 +713,22 @@ def set_td_staged(sm, case: dict, R, point, names: dict, st: dict) -> str:
             raise R.Stop("staged case: time-dependent material properties could not be switched on: "
                          + "; ".join(t[-4:]) + f" | StaticNonlinearStaged offers: {R._methods(ss)}"
                          + (" | staged tables: " + " || ".join(describe(sm, R, [key])) if key else ""))
+    # the staged load-case tables: log their fields and this case's rows; switch any time-dependence
+    # field there on (creep / shrinkage / aging as the case asks)
+    td = case.get("timeDependent") or {}
+    for key in [k for k in all_keys(sm, R) if "staged" in k.lower()]:
+        fk, imp = _fields(sm, key)
+        shown = _display(sm, key, nm)
+        R.say(f"    staged table [{key}]: fields {', '.join(fk)}; {nm}: {shown[:500]}")
+        sw = [f for f, i in zip(fk, imp or [True] * len(fk)) if i and _is_switch(f)]
+        if sw and td and shown.startswith("{"):          # only edit a row the case already has
+            rules = [(("=" + _norm(f),), _switch_value(f, td, td["law"], "Yes", "No")) for f in sw]
+            rules = [r for r in rules if r[1] is not None] + [(("=name",), nm), (("=case",), nm),
+                                                               (("loadcase",), nm)]
+            err, wrote = upsert(sm, key, [nm], lambda rows, rr=rules: [rr for _ in rows],
+                                name_words=("name", "case"))
+            R.say(f"    staged switches in [{key}]: " + (f"refused: {err}" if err else
+                                                         f"{wrote} -> {_display(sm, key, nm)[:400]}"))
     back = ""
     if hasattr(ss, "GetMaterialNonlinearity"):
         for call in (lambda: ss.GetMaterialNonlinearity(nm, False),
@@ -765,7 +906,119 @@ def assign_hinges(sm, case: dict, R, names: dict, po: dict) -> str:
     if sum_key:
         R.say(f"  hinges (summary) {sum_key}: {_display(sm, sum_key, fname0)[:600]}")
     R.say(f"  hinges (API) {_frame_hinges_api(sm, fname0)}")
-    return f"{HINGE} (Mp {mp:g}) at both ends of {', '.join(po['hinges'])}"
+    sub = hinge_subdivision(sm, R, keys, sorted({t[0] for t in targets}))
+    return f"{HINGE} (Mp {mp:g}) at both ends of {', '.join(po['hinges'])}; {sub}"
+
+
+# Third run: base shear 69.41 against 4 Mp / h = 66.67.  ETABS's frame forces show why: each column
+# carries 208.35 k-ft at the joint and exactly 200.0 at station 0.24 ft, where ETABS split the member.
+# ETABS auto-subdivides a frame at its hinges (default relative length 0.02), so the plastic hinge sits
+# 0.02 L = 0.24 ft inside each end: V = 2 Mp / (L - 2 x 0.24) = 34.72 per column, base shear 69.44.
+# The overwrite below shrinks that hinge element to a relative length of 1e-4 (plateau 4 Mp / h
+# (1 - 2e-4) = 66.68), or turns the subdivision off.
+SUBDIVISION_VARIANTS = [("Yes", 1e-4), ("Yes", 2e-4), ("Yes", 1e-3), ("No", None)]
+
+
+def hinge_subdivision(sm, R, keys, fnames) -> str:
+    """Hinge overwrites on the hinged frames: auto-subdivision with a tiny relative length (or none)."""
+    key = _table_key(keys, "frame assignments", "hinge", "overwrite")
+    if not key:
+        return "no hinge overwrite table: hinges stay 0.02 L inside the ends (base shear about 4.2% high)"
+    R.say(f"    {key} before: " + "; ".join(_display(sm, key, f)[:300] for f in fnames))
+    tried = []
+    for auto, rel in SUBDIVISION_VARIANTS:
+        rules_of = lambda rows, a=auto, r=rel: [
+            [(("=uniquename",), fn), (("=autodivide",), a)] + ([(("=rellength",), r)] if r is not None else [])
+            for fn in rows]
+        err, wrote = upsert(sm, key, fnames, rules_of, name_words=("unique",))
+        if not err:
+            back = "; ".join(_row_of(sm, key, f)[:300] for f in fnames)
+            R.say(f"    hinge overwrites (read back) {key}: {back}")
+            return f"hinge subdivision AutoDivide {auto}" + (f", relative length {rel:g}" if rel is not None else "")
+        tried.append(f"AutoDivide {auto} RelLength {rel}: {err} [wrote {wrote[:300]}]")
+    raise R.Stop("hinge overwrites refused (the hinges would sit 0.02 L inside the ends, base shear 4.2% "
+                 "high): " + " | ".join(tried) + " || " + " || ".join(describe(sm, R, [key])))
+
+
+def pushover_control(sm, R, po: dict) -> str:
+    """Event-to-event stepping, many saved states (as the links extension does for K4), read back."""
+    sn, nm, out, tried = sm.LoadCases.StaticNonlinear, po["name"], [], []
+    if hasattr(sn, "SetSolControlParameters"):
+        # MaxTotalSteps, MaxFailedSubSteps, MaxIterCS, MaxIterNR, TolConvD, UseEventStepping, TolEventD,
+        # MaxLineSearchPerIter, TolLineSearch, LineSearchStepFact
+        if R._try("SetSolControlParameters", tried, lambda: sn.SetSolControlParameters(
+                nm, 1000, 200, 10, 40, 1e-4, True, 0.01, 20, 0.1, 1.618)):
+            out.append("event-to-event stepping, 1000 steps, tolerance 1e-4")
+    if hasattr(sn, "SetResultsSaved"):
+        if R._try("SetResultsSaved", tried, lambda: sn.SetResultsSaved(nm, True, int(po["steps"]),
+                                                                       2 * int(po["steps"]), True)):
+            out.append(f"multiple states saved ({po['steps']} to {2 * int(po['steps'])})")
+    if hasattr(sn, "GetSolControlParameters"):
+        try:
+            g = sn.GetSolControlParameters(nm, 0, 0, 0, 0, 0.0, False, 0.0, 0, 0.0, 0.0)
+            out.append(f"read back {list(g[:-1])}")
+        except Exception as exc:
+            tried.append(f"GetSolControlParameters: {exc}")
+    return "; ".join(out + tried) or f"StaticNonlinear offers: {R._methods(sn)}"
+
+
+def pushover_report(sm, R, case: dict, names: dict, po: dict, res: dict) -> None:
+    """Log the push as ETABS solved it: base shear and control displacement per saved step, the column
+    end moments at the last step and the hinge states.  Nothing here changes the exported results."""
+    nm = po["name"]
+
+    def select():
+        R.ok(sm.Results.Setup.DeselectAllCasesAndCombosForOutput(), "deselect output")
+        R.ok(sm.Results.Setup.SetCaseSelectedForOutput(nm), f"select {nm}")
+    curve = {"step": [], "FX": [], "U1": []}
+    try:
+        R.ok(sm.Results.Setup.SetOptionNLStatic(2), "nonlinear static results: step by step")
+        select()
+        br = sm.Results.BaseReact(0, [], [], [], [], [], [], [], [], [], 0, 0, 0)
+        R.ok(br, f"base reactions {nm} by step")
+        curve["step"] = [float(br[3][k]) for k in range(br[0])]
+        curve["FX"] = [float(br[4][k]) for k in range(br[0])]
+        pts = sm.PointObj.GetNameList(0, [])
+        for p in pts[1]:
+            c = sm.PointObj.GetCoordCartesian(p, 0, 0, 0, "Global")
+            if math.dist(c[:3], po["control"]) < 1e-6:
+                jd = sm.Results.JointDispl(p, 0, 0, [], [], [], [], [], [], [], [], [], [], [])
+                if jd[-1] == 0:
+                    curve["U1"] = [float(jd[6][k]) for k in range(jd[0])]
+                break
+    except Exception as exc:
+        R.say(f"  pushover {nm}: step-by-step results not read: {exc}")
+    finally:
+        try:
+            sm.Results.Setup.SetOptionNLStatic(3)
+        except Exception:
+            pass
+    res.setdefault("pushoverCurve", {})[nm] = curve
+    n = len(curve["FX"])
+    R.say(f"  pushover {nm}: {n} saved steps; step, U1, base FX: "
+          + "; ".join(f"{curve['step'][k]:g} {curve['U1'][k] if k < len(curve['U1']) else float('nan'):.4g} "
+                      f"{curve['FX'][k]:.5g}" for k in range(n)))
+    for fid in po.get("hinges", {}):
+        rows = (res["cases"].get(nm) or {}).get("frames", {}).get(fid) or []
+        if rows:
+            R.say(f"  {fid} at the last step, station / M3: "
+                  + ", ".join(f"{r['station']:.4g} {r['M3']:.5g}" for r in rows))
+    hk = [m for m in dir(sm.Results) if "inge" in m]
+    R.say(f"  Results hinge methods: {hk or 'none'}")
+    try:
+        dt = sm.DatabaseTables
+        for call in (lambda: dt.SetLoadCasesSelectedForDisplay([nm]), lambda: dt.SetLoadCasesSelectedForDisplay(1, [nm])):
+            try:
+                call()
+                break
+            except Exception:
+                continue
+        key = next((k for k in all_keys(sm, R) if k.lower() == "hinge states"), "")
+        if key:
+            for fid in po.get("hinges", {}):
+                R.say(f"  [{key}] {fid}: {_display(sm, key, names.get(fid, fid))[:1500]}")
+    except Exception as exc:
+        R.say(f"  hinge states not read: {exc}")
 
 
 # ── hooks ───────────────────────────────────────────────────────────────────
@@ -782,6 +1035,7 @@ def build(sm, case, R, point, names) -> None:
         R.say(f"  hinges: {assign_hinges(sm, case, R, names, po)}")
         bare = {k: v for k, v in po.items() if k != "hinges"}      # the stock case, hinges already in
         R.say(f"  pushover {po['name']}: {R.set_pushover(sm, case, bare, point)}")
+        R.say(f"  pushover {po['name']} solution control: {pushover_control(sm, R, po)}")
 
 
 def _uz(res: dict, cname: str, at):
@@ -794,7 +1048,9 @@ def _uz(res: dict, cname: str, at):
 
 
 def results(sm, case, R, names, res) -> None:
-    """The same named scalars as sf_ext_timedep.values."""
+    """The same named scalars as sf_ext_timedep.values; for C3 the pushover as ETABS solved it."""
+    for po in case.get("extPushover", []):
+        pushover_report(sm, R, case, names, po, res)
     keys = {c.get("key") for c in case["checks"] if c["quantity"] == "value"}
     st = case.get("tdStaged") or {}
     if not st:

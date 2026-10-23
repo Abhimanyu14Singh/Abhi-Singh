@@ -32,9 +32,11 @@ Import Type and Options:  Interactive Database Editing
 Running the analysis ...
   screenshot H2.etabs.png (ETABS 3-D view only)
 Reading results ...
+  FNA: SetOptionModalHist(2) -> 0; SetOptionDirectHist(2) -> 0; 1203 joint rows, steps ['Time']
+  FNA_ENV not read: ETABS refused: joint displacements FNA_ENV (return code 1)
   FNA: peak axial force in link D1 (D1) 0.690081
 check            hand        ETABS  difference
 T1                0.5          0.5  0.000%
-FNA-UX      0.0596292    0.0305466  48.772%
+FNA-UX      0.0596292    0.0596288  0.001%
 FNA-V        0.373785     0.373785  0.000%
-Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\H2\H2.EDB; largest difference from the hand calculation 48.772%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\H2\H2.EDB; largest difference from the hand calculation 0.001%
