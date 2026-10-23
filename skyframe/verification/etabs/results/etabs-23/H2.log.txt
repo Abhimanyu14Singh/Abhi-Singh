@@ -1,0 +1,42 @@
+== H2: FNA with a viscous damper
+Building the model ...
+  section COL: A 0.1, I22 0.005, I33 0.02, J 0.0005, As2 0.0, As3 0.0 (read back)
+  mass source (PropMaterial.SetMassSource_1): elements False, joint masses True, patterns {}
+  time-history function STEP: database table (Name, Time, Value, GUID)
+  damper D1: damper c 1.8462 kip-s/ft, series k 100000 k/ft (read back k 100000.0, c 1.8461973398659859, exponent 1.0, Ke 0.0), link D1
+    ETABS on table Load Case Definitions - Time History - Nonlinear Modal: ********** DATABASE IMPORT DEFINITION DATA **********
+
+ETABS Version 23.2.0 Interactive Database Import
+Import Type and Options:  Interactive Database Editing
+     Elements Deleted from DB:  Delete object from model
+     Other Items Deleted from DB:  Delete item from model
+     Elements with S
+    FNA read back from Load Case Definitions - Time History - Nonlinear Modal: Name=FNA, InitialCond=Unstressed, LoadType=Load, LoadName=F, Function=STEP, LoadSF=1, TimeFactor=1, ArrivalTime=0, Angle=0, ModalCase=MODES, MotionType=Transient, NumSteps=400, StepSize=0.001, StatPeriod=0, MaxSubstep=0, MinSubstep=0, ForceTol=1E-05, EnergyTol=1E-05, MaxIter=100, MinIter=2, ConvFactor=1, DesignType=Program Determined
+    damping table Link Property Definitions - Damper - Bilinear: fields Name, Direction, Fixed, TransKE, TransCE, TransK, TransC, TransCy, ForceLimit, FLDamper, FLDLength, FDLModulus, FDLArea, DJ, RotKE, RotCE, RotK, RotC, RotCy, MomentLimit, Mass, Weight, RotInert1, RotInert2, RotInert3, DefLength, DefArea, PDM2I, PDM2J, PDM3I, PDM3J, StiffLOpt, StiffDOpt, StiffDFact, GUID, Notes
+    damping table Link Property Definitions - Damper - Exponential: fields Name, Direction, Fixed, TransKE, TransCE, TransK, TransC, TransCExp, FLDamper, FLDLength, FDLModulus, FDLArea, DJ, RotKE, RotCE, RotK, RotC, RotCExp, Mass, Weight, RotInert1, RotInert2, RotInert3, DefLength, DefArea, PDM2I, PDM2J, PDM3I, PDM3J, StiffLOpt, StiffDOpt, StiffDFact, GUID, Notes
+    damping table Link Property Definitions - Damper - Friction Spring: fields Name, Direction, Fixed, TransKE, TransCE, TransK, TransK1, TransK2, TransU0, TransUs, DJ, RotKE, RotCE, RotK, RotK1, RotK2, RotU0, RotUs, ActiveDir, Mass, Weight, RotInert1, RotInert2, RotInert3, DefLength, DefArea, PDM2I, PDM2J, PDM3I, PDM3J, StiffLOpt, StiffDOpt, StiffDFact, GUID, Notes
+    damping table Link Property Definitions - Damper - Sumitomo Viscoelastic: fields Name, Direction, Fixed, TransKE, TransCE, Nonlinear, ProdModel, ShearArea, Thickness, Temp, ExcitFreq, RigidFluctCoeff, DampFluctCoeff, DJ, RotKE, RotCE, Mass, Weight, RotInert1, RotInert2, RotInert3, DefLength, DefArea, PDM2I, PDM2J, PDM3I, PDM3J, StiffLOpt, StiffDOpt, StiffDFact, GUID, Notes
+    damping table Link Property Definitions - Isolator - High Damping Rubber: fields Name, Direction, Fixed, TransKE, TransCE, Nonlinear, IsoArea, IsoEffHt, AddStiff, NumHysTerms, ContStrain1, ContStrgth1, ContStrain2, ContStrgth2, ContStrain3, ContStrgth3, DamResRatio, DamContStr, StiffIter, DJ, RotKE, RotCE, Mass, Weight, RotInert1, RotInert2, RotInert3, DefLength, DefArea, PDM2I, PDM2J, PDM3I, PDM3J, StiffLOpt, StiffDOpt, StiffDFact, GUID, Notes
+    damping table Load Case Definitions - Damping - Hysteretic: fields Name, DampType, FreqUnit, Frequency, MassCoeff, StiffCoeff
+    damping table Load Case Definitions - Damping - Modal: fields Name, ConsMaxFreq, MaxFreq, DampType, ConstDamp, IntBy, IntTimeVal, IntDamping, ProBy, MassCoeff, StiffCoeff, ProTimeVal1, ProDamping1, ProTimeVal2, ProDamping2, Mode4Ratio, OverMode, OverDamp
+    damping table Material Properties - Damping Parameters: fields Material, ModalRatio, VisMass, VisStiff
+    ETABS on table Load Case Definitions - Damping - Modal: ********** DATABASE IMPORT DEFINITION DATA **********
+
+ETABS Version 23.2.0 Interactive Database Import
+Import Type and Options:  Interactive Database Editing
+     Elements Deleted from DB:  Delete object from model
+     Other Items Deleted from DB:  Delete item from model
+     Elements with S
+    FNA read back from Load Case Definitions - Damping - Modal: Name=FNA, DampType=Constant, ConstDamp=0.02
+  time history FNA (fna, 400 x 0.001 s): table Load Case Definitions - Time History - Nonlinear Modal; constant modal damping 0.02 as ConstDamp in Load Case Definitions - Damping - Modal (row edited)
+Running the analysis ...
+  screenshot H2.etabs.png (ETABS 3-D view only)
+Reading results ...
+  FNA: SetOptionModalHist(2) -> 0; SetOptionDirectHist(2) -> 0; 1203 joint rows, steps ['Time']
+  FNA_ENV not read: ETABS refused: joint displacements FNA_ENV (return code 1)
+  FNA: peak axial force in link D1 (D1) 0.690081
+check            hand        ETABS  difference
+T1                0.5          0.5  0.000%
+FNA-UX      0.0596292    0.0596288  0.001%
+FNA-V        0.373785     0.373785  0.000%
+Saved C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\H2\H2.EDB; largest difference from the hand calculation 0.001%

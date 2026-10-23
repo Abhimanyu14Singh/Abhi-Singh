@@ -1178,7 +1178,19 @@ def benchmark(sm, case: dict) -> dict:
             for cname in case["benchmark"][part]:
                 ok(sm.Analyze.SetRunCaseFlag(cname, True, False), f"switch case {cname} on")
             t0 = time.perf_counter()
-            ok(sm.Analyze.RunAnalysis(), f"run the {part} part")
+            code = sm.Analyze.RunAnalysis()
+            if code != 0:
+                say(f"  ETABS refused the {part} run (code {code}); its analysis log ends:\n" + analysis_log_tail(sm))
+                try:
+                    sm.SetModelIsLocked(False)
+                    sm.File.Save(sm.GetModelFilename(True))
+                except Exception:
+                    pass
+                ok(sm.Analyze.SetRunCaseFlag("", False, True), "switch all cases off")
+                for cname in case["benchmark"][part]:
+                    ok(sm.Analyze.SetRunCaseFlag(cname, True, False), f"switch case {cname} on")
+                t0 = time.perf_counter()
+                ok(sm.Analyze.RunAnalysis(), f"run the {part} part (retry)")
             runs.append(time.perf_counter() - t0)
             try:
                 ok(sm.SetModelIsLocked(False), "unlock the model")
@@ -1558,6 +1570,25 @@ def needs_run(out_root: Path, cid: str) -> bool:
     return model(ran) != model(now)
 
 
+def etabs_gone(exc: Exception) -> bool:
+    """True when the error means the ETABS process is gone or no longer answers COM calls."""
+    text = f"{type(exc).__name__} {exc}".lower()
+    return any(w in text for w in ("invalid pointer", "rpc server", "not set to an instance", "disconnected",
+                                   "-2147467261", "-2147023174", "-2147417848"))
+
+
+def analysis_log_tail(sm, lines: int = 25) -> str:
+    """The end of ETABS's own analysis log (<model>.LOG next to the model), for a refused analysis."""
+    try:
+        name = sm.GetModelFilename(True)
+        log = Path(str(name)).with_suffix(".LOG")
+        if log.exists():
+            return "\n".join(log.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:])
+        return f"(no analysis log at {log})"
+    except Exception as exc:
+        return f"(analysis log not read: {exc})"
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("cases", nargs="*", help="case ids, e.g. F1 F2; or --all")
@@ -1600,15 +1631,21 @@ def main(argv=None) -> int:
             say("Nothing to run: every published case already has results here (use --force to rerun).")
             return 0
         todo = [json.loads(fetch(f"cases/{c}.json")) for c in dict.fromkeys(ids)]
+        # the large speed benchmarks last: if one takes ETABS down, every other model has already run
+        todo.sort(key=lambda c: bool(c.get("benchmark")))
     say(f"Cases: {', '.join(c['id'] for c in todo) or 'none'}; SkyFrame timing only: {', '.join(c['id'] for c in speed_only) or 'none'}; saving under {out_root}")
 
     import comtypes.client
-    helper = comtypes.client.CreateObject("ETABSv1.Helper")
-    import comtypes.gen.ETABSv1 as E
-    helper = helper.QueryInterface(E.cHelper)
-    etabs = helper.CreateObject(a.etabs)
-    ok(etabs.ApplicationStart(), "start ETABS")
-    sm = etabs.SapModel
+
+    def start_etabs():
+        helper = comtypes.client.CreateObject("ETABSv1.Helper")
+        import comtypes.gen.ETABSv1 as E
+        helper = helper.QueryInterface(E.cHelper)
+        app = helper.CreateObject(a.etabs)
+        ok(app.ApplicationStart(), "start ETABS")
+        return app, app.SapModel
+
+    etabs, sm = start_etabs()
     version = sm.GetVersion()[0]
     say(f"ETABS {version} started")
     try:
@@ -1620,7 +1657,20 @@ def main(argv=None) -> int:
         for case in todo:
             _LOG.clear()
             try:
-                summaries.append(run_case(sm, case, out_root, version))
+                try:
+                    summaries.append(run_case(sm, case, out_root, version))
+                except Exception as exc:
+                    if not etabs_gone(exc):
+                        raise
+                    # ETABS itself died (SP2's refused analysis took it down, and every later case failed
+                    # with "Invalid pointer"): start a fresh ETABS and give this case one more go
+                    say(f"ETABS stopped responding ({exc}); restarting it and retrying {case['id']}")
+                    try:
+                        etabs.ApplicationExit(False)
+                    except Exception:
+                        pass
+                    etabs, sm = start_etabs()
+                    summaries.append(run_case(sm, case, out_root, version))
             except Stop as exc:
                 say(f"STOPPED on {case['id']}: {exc}")
                 summaries.append({"id": case["id"], "ok": False, "error": str(exc)})
