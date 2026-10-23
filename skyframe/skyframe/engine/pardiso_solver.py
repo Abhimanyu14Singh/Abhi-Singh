@@ -1382,6 +1382,36 @@ def g_columns(eng, asm, dofs, masters):
     return out
 
 
+def master_rz(eng, asm, mtags) -> Optional[dict]:
+    """Centre-of-rigidity unit loads (unit Fx, Fy, Mz at each diaphragm
+    master) as ONE block PARDISO solve: ``{(master, dof): rz}`` with dof
+    1, 2 or 6, cached on the assembly; None = not handled (the caller
+    solves each load through the domain).  A 70-story tower has 210 such
+    loads, and one ``analyze`` each was most of its run."""
+    cache = getattr(asm, "_cr_rz", None)
+    if cache is None:
+        cache = {}
+    want = [(t, d) for t in dict.fromkeys(mtags) for d in (1, 2, 6)
+            if (t, d) not in cache]
+    if want:
+        S = _pure(eng, asm, "CR unit loads")
+        if S is None:
+            return None
+        try:
+            rows = np.array([6 * S.idx[t] + d - 1 for (t, d) in want],
+                            dtype=np.int64)
+            F = np.zeros((S.nphys, len(want)))
+            F[rows, np.arange(len(want))] = 1.0
+            U = S.solve_phys(F)
+        except Exception as exc:
+            disable(eng, asm, f"CR unit loads: {exc}")
+            return None
+        for j, (t, d) in enumerate(want):
+            cache[(t, d)] = float(U[6 * S.idx[t] + 5, j])
+        asm._cr_rz = cache
+    return cache
+
+
 def engine_solve(eng, space, f: np.ndarray) -> Optional[np.ndarray]:
     """``sparse_solve.EngineSolver`` hook: ``K^-1 f`` in the engine's
     physical Space (Lanczos / buckling operators) without the domain."""

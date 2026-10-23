@@ -6326,14 +6326,23 @@ class OpenSeesEngine:
         master_xy = {s: (asm.node_coords[t][0], asm.node_coords[t][1])
                      for s, t in asm.masters.items()}
         cm = _stc.story_cm(self, asm, self._story_cm())  # D3: analysis mass
+        # every story's three unit loads as one block PARDISO solve, else one
+        # domain solve each (_master_rz)
+        block = (_pds.master_rz(self, asm, list(asm.masters.values()))
+                 if _slv.pardiso_active(asm) else None)
+
+        def rz(story, dof, vec):
+            if block is not None:
+                return block[(asm.masters[story], dof)]
+            return self._master_rz(story, vec)
         props: Dict[str, Dict[str, float]] = {}
         for s in model.stories:
             if s.name not in master_xy:
                 continue
             mx, my = master_xy[s.name]
-            theta_x = self._master_rz(s.name, (1.0, 0.0, 0.0, 0.0, 0.0, 0.0))
-            theta_y = self._master_rz(s.name, (0.0, 1.0, 0.0, 0.0, 0.0, 0.0))
-            phi = self._master_rz(s.name, (0.0, 0.0, 0.0, 0.0, 0.0, 1.0))
+            theta_x = rz(s.name, 1, (1.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+            theta_y = rz(s.name, 2, (0.0, 1.0, 0.0, 0.0, 0.0, 0.0))
+            phi = rz(s.name, 6, (0.0, 0.0, 0.0, 0.0, 0.0, 1.0))
             cmx, cmy = cm.get(s.name, (mx, my))
             entry = {"cm_x": float(cmx), "cm_y": float(cmy)}
             if abs(phi) > 1e-30:

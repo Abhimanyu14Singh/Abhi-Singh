@@ -745,14 +745,25 @@ def results(eng, asm, sources: Dict[str, Dict[str, object]],
     props: Dict[str, Dict[str, dict]] = {}
     for (sn, d), g in asm.dia["groups"].items():
         props.setdefault(sn, {})[d] = _group_props(asm, g)
-    # centre of rigidity per rigid master (unit-load method, as v0.8)
+    # centre of rigidity per rigid master (unit-load method, as v0.8): one
+    # block PARDISO solve for every master (shared with the story CR), else
+    # one domain solve per unit load
+    from skyframe.engine import pardiso_solver as _pds
+    from skyframe.engine import solver_policy as _slv
+    mts = [g["master"] for g in asm.dia["groups"].values()
+           if g["master"] is not None]
+    block = (_pds.master_rz(eng, asm, mts)
+             if mts and _slv.pardiso_active(asm) else None)
+
+    def unit(mt, dof, vec):
+        return block[(mt, dof)] if block is not None else _unit_rz(eng, mt, vec)
     for (sn, d), g in asm.dia["groups"].items():
         mt = g["master"]
         if mt is None:
             continue
-        tx = _unit_rz(eng, mt, (1.0, 0.0, 0.0, 0.0, 0.0, 0.0))
-        ty = _unit_rz(eng, mt, (0.0, 1.0, 0.0, 0.0, 0.0, 0.0))
-        phi = _unit_rz(eng, mt, (0.0, 0.0, 0.0, 0.0, 0.0, 1.0))
+        tx = unit(mt, 1, (1.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+        ty = unit(mt, 2, (0.0, 1.0, 0.0, 0.0, 0.0, 0.0))
+        phi = unit(mt, 6, (0.0, 0.0, 0.0, 0.0, 0.0, 1.0))
         mx, my = asm.node_coords[mt][:2]
         e = props[sn][d]
         if abs(phi) > 1e-30:
