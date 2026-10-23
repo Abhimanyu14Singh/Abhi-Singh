@@ -1499,8 +1499,6 @@ def needs_run(out_root: Path, cid: str) -> bool:
         now = json.loads(fetch(f"cases/{cid}.json"))
     except Exception:
         return True
-    if now.get("benchmark") and not (work / f"{cid}.skyframe-speed.json").exists():
-        return True                              # the SkyFrame timing on this PC is still missing
     if cid in RERUN_BEFORE:
         try:
             had = json.loads((work / f"{cid}.etabs.json").read_text(encoding="utf-8")).get("runner", 1)
@@ -1531,6 +1529,7 @@ def main(argv=None) -> int:
         say("run_etabs.py updated")
         return 0
     out_root = Path(a.out)
+    speed_only: list = []
     if a.local:
         todo = [json.loads(Path(a.local).read_text())]
         _LOCAL_EXT.append(True)
@@ -1539,11 +1538,21 @@ def main(argv=None) -> int:
         if a.all:
             index = json.loads(fetch("cases/index.json"))
             ids += [c for c in index if a.force or needs_run(out_root, c)]
-        if not ids:
+            # benchmarks whose ETABS run stands but whose SkyFrame timing (with its answers) is missing:
+            # time SkyFrame only, from the definition stored with the ETABS run
+            for c in index:
+                work = out_root / c
+                sj = work / f"{c}.skyframe-speed.json"
+                if c in ids or not (work / f"{c}.etabs.json").exists() or not (work / f"{c}.case.json").exists():
+                    continue
+                stored = json.loads((work / f"{c}.case.json").read_text(encoding="utf-8"))
+                if stored.get("benchmark") and (not sj.exists() or "values" not in sj.read_text(encoding="utf-8")):
+                    speed_only.append(stored)
+        if not ids and not speed_only:
             say("Nothing to run: every published case already has results here (use --force to rerun).")
             return 0
         todo = [json.loads(fetch(f"cases/{c}.json")) for c in dict.fromkeys(ids)]
-    say(f"Cases: {', '.join(c['id'] for c in todo)}; saving under {out_root}")
+    say(f"Cases: {', '.join(c['id'] for c in todo) or 'none'}; SkyFrame timing only: {', '.join(c['id'] for c in speed_only) or 'none'}; saving under {out_root}")
 
     import comtypes.client
     helper = comtypes.client.CreateObject("ETABSv1.Helper")
@@ -1575,8 +1584,8 @@ def main(argv=None) -> int:
             finally:
                 (out_root / case["id"]).mkdir(parents=True, exist_ok=True)
                 (out_root / case["id"] / f"{case['id']}.log.txt").write_text("\n".join(_LOG) + "\n", encoding="utf-8")
-        for case in todo:
-            if case.get("benchmark") and any(x["id"] == case["id"] and x["ok"] for x in summaries):
+        for case in todo + speed_only:
+            if case.get("benchmark") and (case in speed_only or any(x["id"] == case["id"] and x["ok"] for x in summaries)):
                 _LOG.clear()
                 try:
                     skyframe_speed(out_root, case)

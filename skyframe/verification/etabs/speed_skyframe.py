@@ -55,6 +55,12 @@ def main(argv=None) -> int:
             best = dt if best is None else min(best, dt)
         out[f"{part}_s"] = best
         print(f"SkyFrame {part} run: {best:.2f} s ({', '.join(names)})", flush=True)
+    # the same model solved once more, untimed, for its answers: a fast run must also be a right one
+    import compare as CMP
+    res = S.run(case)
+    out["values"] = {chk["id"]: CMP.pick(res, chk) for chk in case["checks"]}
+    print("SkyFrame answers on this PC: " + ", ".join(f"{k} {v:.6g}" for k, v in out["values"].items()
+                                                     if v is not None), flush=True)
     Path(a.out).write_text(json.dumps(out, indent=1), encoding="utf-8")
     print(f"wrote {a.out}")
     return 0
