@@ -17,6 +17,7 @@ when nothing works the run stops with what was offered and what ETABS answered.
 from __future__ import annotations
 
 import math
+import re
 
 MAT_CONCRETE = 2                 # eMatType.Concrete
 HINGE = "EPP_M3"                 # the user hinge property C3 defines
@@ -97,6 +98,18 @@ def _open(sm, key: str):
     return None, err
 
 
+_LOG_HEADER = ("*****", "etabs version", "import type and options", "deleted from db", "same name in model",
+               "in the same location")
+
+
+def import_log(text, limit: int = 2500) -> str:
+    """ETABS's import log without its fixed header (database name, import options), so the errors
+    and warnings themselves fit in the message."""
+    lines = [ln.strip() for ln in str(text).replace("\r", "").split("\n")]
+    keep = [ln for ln in lines if ln and not any(h in ln.lower() for h in _LOG_HEADER)]
+    return " / ".join(keep)[:limit] or "(empty import log)"
+
+
 def _write(sm, key: str, version, fields, n, data) -> str:
     """Set and apply an edited table; '' when ETABS took it, else what it said."""
     dt = sm.DatabaseTables
@@ -110,7 +123,7 @@ def _write(sm, key: str, version, fields, n, data) -> str:
             # out arguments: fatal errors, errors, warnings, info messages, import log
             err = "" if (r[-1] == 0 and not r[0] and not r[1]) else (
                 f"ApplyEditedTables returned {r[-1]}: {r[0]} fatal errors, {r[1]} errors, {r[2]} warnings: "
-                f"{str(r[4])[:600]}")
+                f"{import_log(r[4])}")
     except Exception as exc:
         err = f"{type(exc).__name__}: {exc}"
     if err:
@@ -235,19 +248,38 @@ def set_time_dependent(sm, R, td: dict) -> str:
 _OTHER_LAWS = ("ceb", "fip", "gl2000", "euro", "ec2", "as3600", "jtg", "user", "relax", "tendon", "2010")
 
 
+def _specs(obj):
+    """(class name, spec) of every _methods_ / _disp_methods_ entry on the object's interface classes."""
+    out = []
+    for cls in type(obj).__mro__:
+        for attr in ("_methods_", "_disp_methods_"):
+            try:
+                for spec in cls.__dict__.get(attr, ()) or ():
+                    out.append((cls.__name__, spec))
+            except Exception:
+                pass
+    return out
+
+
+def _spec_name(spec):
+    try:
+        return str(spec.name if hasattr(spec, "name") else spec[1])
+    except Exception:
+        return ""
+
+
 def com_params(obj, method: str):
     """[(name, flags, kind)] of a comtypes method, from its interface's _methods_ (flags: 1 in,
-    2 out, 3 in/out = ByRef; kind float / int / bool / str / list).  None when it cannot be read."""
-    for cls in type(obj).__mro__:
-        for spec in cls.__dict__.get("_methods_", ()) or ():
-            try:
-                name = spec.name if hasattr(spec, "name") else spec[1]
-                if name != method:
-                    continue
-                argtypes = spec.argtypes if hasattr(spec, "argtypes") else spec[2]
-                pflags = spec.paramflags if hasattr(spec, "paramflags") else spec[3]
-            except Exception:
+    2 out, 3 in/out = ByRef; kind float / int / bool / str / list).  None whenever it cannot be read
+    (ETABS 23's binding gave argtypes None): never raises."""
+    try:
+        for _, spec in _specs(obj):
+            if _spec_name(spec) != method:
                 continue
+            argtypes = spec.argtypes if hasattr(spec, "argtypes") else spec[2]
+            pflags = spec.paramflags if hasattr(spec, "paramflags") else spec[3]
+            if not argtypes or not pflags or len(argtypes) != len(pflags):
+                return None
             out = []
             for at, pf in zip(argtypes, pflags):
                 tn = getattr(at, "__name__", str(at))
@@ -259,7 +291,29 @@ def com_params(obj, method: str):
                         else "str" if "bstr" in tn or "char" in tn else "int")
                 out.append((str(pf[1]) if len(pf) > 1 else "", int(pf[0]), kind))
             return out
+    except Exception:
+        return None
     return None
+
+
+def com_metadata(obj, methods) -> list:
+    """Whatever the binding knows about each method: its _methods_ / _disp_methods_ entry (repr) and
+    __doc__, so the log shows the real signatures even when com_params cannot read them."""
+    lines = []
+    specs = {}
+    for cls, spec in _specs(obj):
+        specs.setdefault(_spec_name(spec), []).append((cls, spec))
+    for m in methods:
+        try:
+            doc = " ".join(str(getattr(obj, m).__doc__ or "").split())[:300]
+        except Exception as exc:
+            doc = f"(no __doc__: {exc})"
+        try:
+            raw = "; ".join(f"{cls}: {spec!r}"[:600] for cls, spec in specs.get(m, [])) or "(no _methods_ entry)"
+        except Exception as exc:
+            raw = f"(repr failed: {exc})"
+        lines.append(f"{m}: doc {doc or '-'} | spec {raw}")
+    return lines
 
 
 def _placeholder(kind):
@@ -303,19 +357,58 @@ def _get_args(sig, material):
     return [material if i == 0 else _placeholder(k) for i, (_, fl, k) in enumerate(sig) if fl & 1]
 
 
+def _guesses(method: str, td: dict) -> list:
+    """Argument orders tried when the signature cannot be read: the material name first (CSI style),
+    then the ACI 209 numbers or the consider flags; ints 1 = type I cement / moist curing."""
+    nm, rh, vs, ts = td["material"], float(td["rh"]), float(td["vs"]), float(td["shrinkStart"])
+    cr, sh, ag = bool(td["creep"]), bool(td["shrinkage"]), bool(td["aging"])
+    low = method.lower()
+    if "209" in low or "aci" in low:
+        return [(nm, rh, vs, ts), (nm, 1, 1, rh, vs, ts), (nm, 1, 1, rh, vs, ts, 0.0), (nm, ts, rh, vs),
+                (nm, rh, vs), (nm, rh / 100.0, vs, ts), (nm, 1, 1, rh, vs, ts, 1.0, 1.0, 1.0, 1.0)]
+    return [(nm, ag, sh, cr), (nm, cr, sh, ag), (nm, ag, sh, cr, 0, 0), (nm, cr, sh, ag, 0, 0)]
+
+
+def _guess_get(tdo, get: str, nm: str) -> str:
+    """A Get with an unreadable signature: the name then 0..12 zero placeholders until one answers 0."""
+    for n in range(0, 13):
+        try:
+            r = getattr(tdo, get)(nm, *([0.0] * n))
+            code = r[-1] if isinstance(r, (list, tuple)) else r
+            if code == 0:
+                return f"{get} (guessed {n} placeholders): {list(r) if isinstance(r, (list, tuple)) else r}"
+        except Exception:
+            continue
+    return f"{get}: no placeholder count answered"
+
+
 def set_time_dependent_api(sm, R, td: dict) -> str:
+    """Never raises anything but R.Stop: an unexpected binding error becomes a diagnostic."""
+    tdo = getattr(sm.PropMaterial, "TimeDep", None)
+    try:
+        return _set_time_dependent_api(sm, R, td, tdo)
+    except R.Stop:
+        raise
+    except Exception as exc:
+        import traceback
+        raise R.Stop(f"PropMaterial.TimeDep: {type(exc).__name__}: {exc} ({traceback.format_exc()[-600:]}) || "
+                     f"dir: {R._methods(tdo)}")
+
+
+def _set_time_dependent_api(sm, R, td: dict, tdo) -> str:
     """Every ACI 209 setter of PropMaterial.TimeDep (and the law-neutral option setters: consider
     creep / shrinkage / age), arguments matched by name; read back with the matching Get."""
-    tdo = getattr(sm.PropMaterial, "TimeDep", None)
     if tdo is None:
         raise R.Stop(f"PropMaterial has no TimeDep (offers {R._methods(sm.PropMaterial)})")
+    R.say(f"  PropMaterial.TimeDep dir: {R._methods(tdo)}")
     methods = [n for n in dir(tdo) if not n.startswith("_") and n[:3] in ("Set", "Get")]
     sigs = {m: com_params(tdo, m) for m in methods}
-    R.say(f"  PropMaterial.TimeDep methods: {', '.join(methods) or '(none)'}")
-    for m in methods:
+    meta = com_metadata(tdo, methods)
+    for m, line in zip(methods, meta):
         sg = sigs[m]
         R.say(f"    {m}(" + (", ".join(f"{n}:{k}{'&' if fl & 2 else ''}" for n, fl, k in sg) if sg is not None
                              else "signature not readable") + ")")
+        R.say(f"      {line}")
     low = {m: m.lower() for m in methods}
     aci = [m for m in methods if m.startswith("Set") and ("209" in low[m] or "aci" in low[m])]
     generic = [m for m in methods if m.startswith("Set") and m not in aci
@@ -357,15 +450,25 @@ def set_time_dependent_api(sm, R, td: dict) -> str:
                 continue
             done.append((m, f"{m}{tuple(args)}" + (f" [ETABS values kept: {', '.join(kept)}]" if kept else "")))
         else:                                           # signature unreadable: a few argument orders
-            rh, vs, ts = float(td["rh"]), float(td["vs"]), float(td["shrinkStart"])
-            flags = (bool(td["creep"]), bool(td["shrinkage"]), bool(td["aging"]))
-            for args in ((nm, rh, vs, ts), (nm, ts, rh, vs), (nm, rh, vs), (nm,) + flags):
-                if R._try(f"{m}{args}", tried, lambda a=args: getattr(tdo, m)(*a)):
-                    done.append((m, f"{m}{args} (signature not readable: guessed order)"))
-                    break
+            for args in _guesses(m, td):
+                if not R._try(f"{m}{args}", tried, lambda a=args: getattr(tdo, m)(*a)):
+                    continue
+                if m in aci and get in methods:
+                    # COM coerces numbers silently: keep a guessed order only when the Get returns
+                    # RH, V/S and the drying start among its values
+                    back = _guess_get(tdo, get, nm)
+                    want = (float(td["rh"]), float(td["vs"]), float(td["shrinkStart"]))
+                    nums = [float(x) for x in re.findall(r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", back.split(":", 1)[-1])]
+                    if not all(any(abs(w - x) < 1e-9 for x in nums) for w in want):
+                        tried.append(f"{m}{args} accepted but {back} does not hold {want}")
+                        continue
+                done.append((m, f"{m}{args} (signature not readable: guessed order)"))
+                break
             else:
                 continue
         if gsig is None:
+            if get in methods:
+                readback.append(_guess_get(tdo, get, nm))
             continue
         try:                                            # read back; what we set must come back
             code, vals = _call(tdo, get, _get_args(gsig, nm))
@@ -383,7 +486,8 @@ def set_time_dependent_api(sm, R, td: dict) -> str:
         raise R.Stop("PropMaterial.TimeDep: no ACI 209 setter took the properties. Set: "
                      + ("; ".join(d for _, d in done) or "nothing") + ". Tried: " + " | ".join(tried[-8:])
                      + " || methods: " + "; ".join(
-                         f"{m}({', '.join(n for n, _, _ in sigs[m]) if sigs[m] is not None else '?'})" for m in methods))
+                         f"{m}({', '.join(n for n, _, _ in sigs[m]) if sigs[m] is not None else '?'})" for m in methods)
+                     + " || read back: " + " | ".join(readback) + " || metadata: " + " | ".join(meta)[:3000])
     for _, d in done:
         R.say(f"  TimeDep set: {d}")
     for rb in readback:
@@ -498,47 +602,96 @@ def set_td_staged(sm, case: dict, R, point, names: dict, st: dict) -> str:
 
 
 # ── C3: frame hinges through the tables ─────────────────────────────────────
-# elastic-perfectly-plastic backbone, moment / SF and plastic rotation / SF (SF rotation 1 rad)
+# ETABS 23.2 (second run's log): the user property is a row set in "Hinge Definitions - Moment M3"
+# (Name, IsSymmetric, AddBC, AddCD, FDType, Point, Force, Displ, UseYldForce, UseYldDispl,
+# FDPosForSF, FDPosDispSF, ..., BeyondE, LengthType, SSAbsLen, SSRelLen, IOPos.., HysType.., GUID:
+# the first row carries the property data and point A, the next rows only Name, Point, Force,
+# Displ), and the assignment goes in "Frame Assignments - Hinge - User" (UniqueName, AssignHinge,
+# SaveFibResp, DistType, RelDist, AbsDist, LenOWType, LenOWRel, LenOWAbs).  Force / Displ are
+# divided by the scale factors: SF force = Mp, SF displacement = 1 rad (not the yield values).
+# Elastic-perfectly-plastic: (Force/SF, plastic rotation) A (0, 0), B (1, 0), C (1, 0.5),
+# D (0.2, 0.55), E (0.2, 1.0); the push needs about 0.05 rad.
 EPP_POINTS = [("A", 0.0, 0.0), ("B", 1.0, 0.0), ("C", 1.0, 0.5), ("D", 0.2, 0.55), ("E", 0.2, 1.0)]
+FD_TYPES = ("Moment-Rotation", "Moment - Rotation")
+# (DistType, SaveFibResp, LenOWType) tried in turn; the first run wrote DistType 0.0 (a number)
+ASSIGN_VARIANTS = [("Relative", "No", ""), ("Relative Distance", "No", ""), ("Relative", "No", "None"),
+                   ("Relative", "", ""), ("Relative Distance", "No", "None"), ("Rel", "No", ""),
+                   ("Relative", "No", "Program Determined"), ("Absolute", "No", "")]
 
 
-def _hinge_common(mp: float):
-    """Rules for the property-level fields of the user hinge (any layout)."""
-    common = [
-        (("name",), HINGE), (("property",), HINGE, ("type",)), (("hinge",), HINGE, ("type", "length", "dof")),
-        (("dof",), "M3"), (("degree",), "M3"),
-        (("symm",), "Yes"), (("hyst",), "Isotropic"),
-        (("sf", "rot"), 1.0), (("scale", "rot"), 1.0), (("useyield",), "No"),
-        (("sf", "mom"), mp), (("scale", "mom"), mp), (("sf",), mp, ("rot",)),
-        (("control",), "Deformation Controlled"), (("ductil",), "Ductile"),
-        (("type",), "Moment - Rotation"),
-        (("=io",), 0.01), (("=ls",), 0.02), (("=cp",), 0.03),
-    ]
-    for letter, m, r in EPP_POINTS:                    # one-row layouts: MomentB, RotationB, ...
-        lo = letter.lower()
-        common += [(("mom", lo + "$"), m, ("sf", "scale")), (("m" + lo + "/sf",), m),
-                   (("rot", lo + "$"), r, ("sf", "scale"))]
-    return common
+def _table_key(keys, *words, avoid=()) -> str:
+    for k in keys:
+        lk = k.lower()
+        if all(w in lk for w in words) and not any(a in lk for a in avoid):
+            return k
+    return ""
 
 
-def _hinge_point_rows(mp: float):
-    """One row per backbone point, for tables with a Point field."""
-    common = _hinge_common(mp)
-    return [[(("point",), letter), (("mom", "/sf"), m), (("rot", "/sf"), r), (("m/sf",), m),
-             (("mom",), m, ("sf", "scale")), (("force",), m, ("sf", "scale")), (("rot",), r, ("sf", "scale"))]
-            + common for letter, m, r in EPP_POINTS]
+def _rows_for(fields, rows) -> tuple:
+    """Table data for ``rows`` ({normalised field: value}); fields a row does not name are blank."""
+    norm = [_norm(f) for f in fields]
+    data = []
+    for row in rows:
+        data += [str(row[n]) if n in row else "" for n in norm]
+    return data
 
 
-def _assign_rules(fname: str, label: str, story: str, rel: float, prop: str):
-    return [(("unique",), fname), (("label",), label), (("frame",), label, ("rel", "dist")),
-            (("story",), story), (("rel",), rel), (("dist",), rel), (("hinge",), prop, ("dist", "rel", "type")),
-            (("property",), prop), (("prop",), prop), (("type",), "User Defined", ("auto",)),
-            (("dof",), "M3")]
+def _write_rows(sm, key: str, rows: list) -> tuple:
+    """Append ``rows`` to table ``key`` (opened for editing, or started from its importable fields).
+    Returns (error or '', what was written)."""
+    opened, err = _open(sm, key)
+    if opened is None:
+        return err, ""
+    version, fields, n, data = opened
+    norm = {_norm(f) for f in fields}
+    missing = sorted({k for r in rows for k in r} - norm)
+    data = list(data) + _rows_for(fields, rows)
+    wrote = "; ".join("{" + ", ".join(f"{k}={v}" for k, v in r.items() if k in norm) + "}" for r in rows)
+    if missing:
+        wrote += f" (not in the table: {missing})"
+    return _write(sm, key, version, fields, n + len(rows), data), wrote
+
+
+def _display(sm, key: str, match: str = "") -> str:
+    """Rows of a table as ETABS displays it (also for read-only tables such as the hinge summary),
+    only those containing ``match``."""
+    try:
+        r = sm.DatabaseTables.GetTableForDisplayArray(key, [], "", 0, [], 0, [])
+        if r[-1] != 0:
+            return f"GetTableForDisplayArray returned {r[-1]}"
+        fields, n, data = [str(f) for f in r[2]], int(r[3]), [str(v) for v in r[4]]
+        nf = len(fields)
+        rows = [data[k * nf:(k + 1) * nf] for k in range(n)]
+        rows = [rw for rw in rows if not match or match in rw]
+        return "; ".join("{" + ", ".join(f"{f}={v}" for f, v in zip(fields, rw) if v != "") + "}"
+                         for rw in rows) or "(no row)"
+    except Exception as exc:
+        return f"GetTableForDisplayArray: {exc}"
+
+
+def _frame_hinges_api(sm, fname: str) -> str:
+    """FrameObj.GetHingeAssigns(_1) exists in ETABS 23 (no setter): read what it says, any signature."""
+    out = []
+    for m in ("GetHingeAssigns_1", "GetHingeAssigns"):
+        if not hasattr(sm.FrameObj, m):
+            continue
+        for args in ((fname, 0, [], [], [], [], []), (fname, 0, [], [], [], []), (fname, 0, [], [], []),
+                     (fname, 0, [], []), (fname, 0, [], [], [], [], [], []), (fname, 0, [], [], [], [], [], [], [])):
+            try:
+                r = getattr(sm.FrameObj, m)(*args)
+                if (r[-1] if isinstance(r, (list, tuple)) else r) == 0:
+                    out.append(f"{m}: {list(r)}"[:400])
+                    break
+            except Exception:
+                continue
+        else:
+            out.append(f"{m}: no argument list answered")
+    return "; ".join(out) or "no GetHingeAssigns"
 
 
 def assign_hinges(sm, case: dict, R, names: dict, po: dict) -> str:
-    """Define the user hinge property and assign it at both ends of every hinged frame, through the
-    hinge tables ETABS offers; R.Stop with what was found when nothing takes."""
+    """Define the user hinge property in "Hinge Definitions - Moment M3" and assign it at both ends of
+    every hinged frame in "Frame Assignments - Hinge - User"; R.Stop with what ETABS said otherwise."""
     mps = set(po["hinges"].values())
     if len(mps) != 1:
         raise R.Stop("C3 hinges: one Mp per case is supported")
@@ -548,74 +701,70 @@ def assign_hinges(sm, case: dict, R, names: dict, po: dict) -> str:
     R.say(f"  hinge API: {api}")
     types = _import_types(sm)
     keys = [k for k in all_keys(sm, R) if "hinge" in k.lower()]
-    R.say(f"  hinge tables ({len(keys)}):")
-    described = describe(sm, R, keys, types)
-    assign_keys = [k for k in keys if "assign" in k.lower() and "frame" in k.lower()
-                   and "overwrite" not in k.lower()] or [k for k in keys if "assign" in k.lower()]
-    def_keys = [k for k in keys if k not in assign_keys
-                and any(w in k.lower() for w in ("definition", "propert", "user", "moment", "deformation"))
-                and not any(w in k.lower() for w in ("overwrite", "generated", "result", "state", "summary",
-                                                     "analysis option", "wall", "link", "shell", "fiber"))]
-    def_keys = [k for k in def_keys if "frame" in k.lower()] or def_keys
+    R.say(f"  hinge tables ({len(keys)}): {'; '.join(f'{k} [{types.get(k, chr(63))}]' for k in keys)}")
+    def_key = (_table_key(keys, "hinge", "definition", "moment m3", avoid=("force controlled", "generated"))
+               or _table_key(keys, "hinge", "prop", "m3", avoid=("force controlled", "generated", "assign")))
+    asg_key = _table_key(keys, "frame assignments", "hinge", "user")
+    sum_key = _table_key(keys, "frame assignments", "hinge", "summary")
+    described = describe(sm, R, [k for k in (def_key, asg_key, sum_key) if k], types)
     tried = []
 
     def fail(why: str):
-        return R.Stop(f"frame hinges: {why}. Tried: " + " | ".join(tried[-8:]) + f" || API: {api} || hinge tables "
-                      "(import type: 0 not importable, 1 not interactively, 2 unlocked, 3 always): "
-                      + " || ".join(described))
+        return R.Stop(f"frame hinges: {why}. Tried: " + " | ".join(tried[-6:]) + f" || API: {api} || tables: "
+                      + " || ".join(described) + " || every hinge table: " + "; ".join(keys))
 
-    if not keys:
-        raise fail("ETABS offers no table with 'hinge' in its key")
-    if not assign_keys:
-        raise fail("no hinge assignment table")
-    # 1. the user hinge property: general row(s) first, then the backbone points
+    if not def_key:
+        raise fail("no hinge definition table for M3 (looked for 'Hinge Definitions - Moment M3')")
+    if not asg_key:
+        raise fail("no user hinge assignment table (looked for 'Frame Assignments - Hinge - User')")
+    # 1. the user hinge property
     defined = False
-    for key in sorted(def_keys, key=lambda k: ("point" in k.lower() or "backbone" in k.lower(), k)):
-        fk, _ = _fields(sm, key)
-        per_point = any("point" in _norm(f) for f in fk)
-        rows = _hinge_point_rows(mp) if per_point else [_hinge_common(mp)]
-        err, wrote = upsert(sm, key, rows, lambda rr: rr, name_words=("__none__",))   # new property: append
-        if err:
-            tried.append(f"define {key}: {err} [wrote {wrote[:300]}]")
-        else:
+    for fd in FD_TYPES:
+        first = {"name": HINGE, "issymmetric": "Yes", "addbc": "No", "addcd": "No", "fdtype": fd,
+                 "useyldforce": "No", "useylddispl": "No", "fdposforsf": mp, "fdposdispsf": 1.0,
+                 "fdnegforsf": mp, "fdnegdispsf": 1.0, "hystype": "Isotropic"}
+        rows = [dict(first if k == 0 else {"name": HINGE}, point=p, force=f, displ=d)
+                for k, (p, f, d) in enumerate(EPP_POINTS)]
+        err, wrote = _write_rows(sm, def_key, rows)
+        if not err:
             defined = True
-            R.say(f"  hinge property {HINGE} in {key}: {_row_of(sm, key, HINGE)[:600]}")
-    # 2. assignments at both ends of each hinged frame
-    rows = []
-    for fid in po["hinges"]:
-        fname = names.get(fid, fid)
-        label, story = fid, case["stories"][0]["name"]
-        try:
-            got = sm.FrameObj.GetLabelFromName(fname, "", "")
-            if got[-1] == 0:
-                label, story = str(got[0]), str(got[1])
-        except Exception:
-            pass
-        rows += [(fname, label, story, rel) for rel in (0.0, 1.0)]
-    props = [HINGE] if defined else []
-    props += ["Auto M3"] if not defined else []          # tried only to learn the field layout, never kept
-    assigned = None
-    for key in assign_keys:
-        for prop in props:
-            err, wrote = upsert(sm, key, rows, lambda rr, p=prop: [_assign_rules(*r, p) for r in rr],
-                                name_words=("__none__",))  # always append: one row per hinge
-            if err:
-                tried.append(f"assign {prop} in {key}: {err} [wrote {wrote[:300]}]")
-                continue
-            back = _row_of(sm, key, names.get(next(iter(po["hinges"])), ""))
-            if prop != HINGE:
-                tried.append(f"assign {prop} in {key} accepted ({back[:200]}) but no user property exists")
-                continue
-            assigned = f"{key}: {back[:600]}"
             break
-        if assigned:
-            break
+        tried.append(f"define in {def_key} (FDType {fd}): {err} [wrote {wrote[:500]}]")
     if not defined:
-        raise fail(f"the user hinge property {HINGE} (M3, elastic-perfectly-plastic, Mp {mp:g}) could not be "
-                   f"defined (definition tables found: {def_keys or 'none'})")
+        raise fail(f"the user hinge property {HINGE} (M3, elastic-perfectly-plastic, Mp {mp:g}) was refused")
+    R.say(f"  hinge property (read back) {def_key}: {_row_of(sm, def_key, HINGE)[:900]}")
+    # 2. assignments at both ends of each hinged frame (relative distance 0 and 1)
+    by_id = {f["id"]: f for f in case["frames"]}
+    targets = []
+    for fid in po["hinges"]:
+        f = by_id[fid]
+        L = math.dist(f["i"], f["j"])
+        targets += [(names.get(fid, fid), rel, rel * L) for rel in (0.0, 1.0)]
+    assigned = False
+    for dist_type, fib, low in ASSIGN_VARIANTS:
+        rows = []
+        for fname, rel, absd in targets:
+            row = {"uniquename": fname, "assignhinge": HINGE, "disttype": dist_type, "reldist": rel,
+                   "absdist": absd}
+            if fib:
+                row["savefibresp"] = fib
+            if low:
+                row["lenowtype"] = low
+            rows.append(row)
+        err, wrote = _write_rows(sm, asg_key, rows)
+        if not err:
+            assigned = True
+            R.say(f"  hinge assignment: DistType {dist_type!r}, SaveFibResp {fib!r}, LenOWType {low!r}")
+            break
+        tried.append(f"assign in {asg_key} (DistType {dist_type!r}, SaveFibResp {fib!r}, LenOWType {low!r}): "
+                     f"{err} [wrote {wrote[:400]}]")
     if not assigned:
-        raise fail(f"{HINGE} defined but not assigned (assignment tables: {assign_keys})")
-    R.say(f"  hinges (read back) {assigned}")
+        raise fail(f"{HINGE} defined but its assignment was refused")
+    fname0 = targets[0][0]
+    R.say(f"  hinges (read back) {asg_key}: {_row_of(sm, asg_key, fname0)[:600]}")
+    if sum_key:
+        R.say(f"  hinges (summary) {sum_key}: {_display(sm, sum_key, fname0)[:600]}")
+    R.say(f"  hinges (API) {_frame_hinges_api(sm, fname0)}")
     return f"{HINGE} (Mp {mp:g}) at both ends of {', '.join(po['hinges'])}"
 
 
