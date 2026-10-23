@@ -1,7 +1,7 @@
 SkyFrame speed run: fetching the latest SkyFrame ...
 SkyFrame speed run: installing OpenSeesPy and PARDISO for C:\Users\abhimanyu.singh\AppData\Local\SkyFramePython312\tools\python.exe ...
-  SkyFrame linear run: best 2.18 s of 5.27, 2.18, 2.21; with every result written out 2.31 s (SW, SDL, EQX, MODES)
-  SkyFrame nonlinear run: best 3.49 s of 3.57, 3.51, 3.49; with every result written out 3.52 s (PDALL)
+  SkyFrame linear run: best 2.18 s of 5.20, 2.18, 2.22; with every result written out 2.28 s, of which inside the solvers 0.95 s (SW, SDL, EQX, MODES)
+  SkyFrame nonlinear run: best 3.54 s of 3.54, 3.56, 3.56; with every result written out 3.58 s, of which inside the solvers 2.50 s (PDALL)
   SkyFrame answers on this PC: SW-FZ 5019, SDL-FZ 750, EQX-FX -400, EQX-UX 0.0417595, PDALL-UX 0.0422418, T1 0.649996, T2 0.639945
   wrote C:\Users\abhimanyu.singh\Documents\GitHub\Abhi-Singh\skyframe\SkyFrameVerification\SP1\SP1.skyframe-speed.json
   WARNING unknown system type Mumps
