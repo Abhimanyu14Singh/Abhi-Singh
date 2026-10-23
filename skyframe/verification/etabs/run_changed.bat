@@ -16,6 +16,9 @@ echo.
 echo Pushing the results to GitHub ...
 cd /d "%REPO%" || (echo Could not find %REPO% & pause & exit /b 1)
 git pull --no-edit
+rem ETABS's analysis files are kept out by skyframe/SkyFrameVerification/.gitignore (they are gigabytes)
+if not exist skyframe\SkyFrameVerification\.gitignore (echo The results filter .gitignore is missing: run fix_push.bat & pause & exit /b 1)
+git config http.postBuffer 524288000
 git add skyframe/SkyFrameVerification
 git commit -m "ETABS 23 verification results"
 git push
