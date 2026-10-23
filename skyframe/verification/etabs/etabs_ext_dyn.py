@@ -154,6 +154,54 @@ def _api_loads(obj, th: dict):
                         [1.0] * n, [0.0] * n, ["Global"] * n, [0.0] * n)
 
 
+def _damp_tables(sm, R) -> dict:
+    """Every table whose key contains "damp", with its fields (logged: ETABS 23 keeps case damping in
+    tables of its own, e.g. "Load Case Definitions - Damping - Modal")."""
+    out = {}
+    for k in R.table_keys(sm):
+        if "damp" in k.lower():
+            try:
+                out[k] = _read(sm, R, k)[1]
+            except Exception as exc:                  # informative only
+                out[k] = [f"(fields not read: {exc})"]
+            R.say(f"    damping table {k}: fields {', '.join(out[k])}")
+    return out
+
+
+def _set_case_row(sm, R, key: str, name: str, values: dict, required: tuple):
+    """Set ``values`` ({candidate fields "a|b": value}) on case ``name``'s rows of ``key`` (first field =
+    case name), adding a row when the case has none.  Returns ({candidates: field}, whether added)."""
+    version, fields, n, data = _read(sm, R, key)
+    low, nf = [_norm(f) for f in fields], len(fields)
+    cols = {c: _col(low, c) for c in values}
+    missing = [c for c in required if cols.get(c) is None]
+    if missing:
+        raise R.Stop(f"table {key}: no field like {missing} (fields: {', '.join(fields)})")
+    rows = [k for k in range(n) if str(data[k * nf]).lower() == name.lower()]
+    added = not rows
+    if added:
+        data += [name] + [""] * (nf - 1)
+        rows, n = [n], n + 1
+    for k in rows:
+        for c, i in cols.items():
+            if i is not None:
+                data[k * nf + i] = str(values[c])
+    R.ok(sm.DatabaseTables.SetTableForEditingArray(key, version, fields, n, data), f"edit table {key}")
+    _apply(sm, R, key)
+    return {c: fields[i] for c, i in cols.items() if i is not None}, added
+
+
+def _zero_fields(fields: list) -> dict:
+    """Damping fields to set to 0 for no viscous damping: proportional coefficients and damping ratios
+    (periods / frequencies and type fields are left alone).  Keys are the exact field names."""
+    out = {}
+    for f in fields:
+        n = _norm(f)
+        if "coef" in n or "ratio" in n or (n.startswith("damp") and n[-1:].isdigit()):
+            out[f] = 0.0
+    return out
+
+
 def set_direct_nonlinear(sm, R, th: dict) -> str:
     """Nonlinear direct-integration history, no viscous damping (mass and stiffness coefficients 0),
     Hilber-Hughes-Taylor alpha 0 (= Newmark average acceleration)."""
@@ -171,18 +219,33 @@ def set_direct_nonlinear(sm, R, th: dict) -> str:
             if abs(float(got[1])) > 1e-12 or abs(float(got[2])) > 1e-12:
                 raise R.Stop(f"{nm}: damping coefficients read back {list(got[:3])}, set 0")
         return "API (LoadCases.DirHistNonlinear)"
-    key = _table(sm, R, ("load case", "nonlinear", "direct"))
+    # ETABS 23: "Load Case Definitions - Time History - Nonlin Direct Integration" ("Nonlin", not "Nonlinear")
+    key = _table(sm, R, ("load case", "nonlin", "direct"))
     if not key:
         _no_table(sm, R, f"nonlinear direct-integration case {nm} (DirHistNonlinear offers: {R._methods(dh)})")
-    damp = {"masscoeff|masspropcoeff|massproportional|masscoefficient": 0.0,
-            "stiffcoeff|stiffpropcoeff|stiffnessproportional|stiffcoefficient|stiffnesscoeff": 0.0}
-    opt = {"hhtalpha|alpha": 0.0}
-    rows = _th_rows(th, dict(damp, **opt))
+    fields = _read(sm, R, key)[1]
+    R.say(f"    table {key}: fields {', '.join(fields)}")
+    damps = _damp_tables(sm, R)
+    zero = _zero_fields(fields)                    # damping in the case's own table, if it is there
+    rows = _th_rows(th, dict(zero, **{"hhtalpha|alpha": 0.0}))
     required = ("name", "loadtype", "loadname", "function|funcname|func|timefunction", "loadsf|scalefactor|sf",
-                *_STEP_COLS, *damp)
+                *_STEP_COLS)
     setf = _add_rows(sm, R, key, rows, required)
-    _verify(sm, R, key, nm, setf, dict(damp, **{_STEP_COLS[0]: th["steps"], _STEP_COLS[1]: th["dt"]}))
-    return f"table {key}"
+    _verify(sm, R, key, nm, setf, dict(zero, **{_STEP_COLS[0]: th["steps"], _STEP_COLS[1]: th["dt"]}))
+    if zero:
+        return f"table {key}, damping fields {list(zero)} = 0"
+    # else a damping table of its own: proportional (mass / stiffness) damping, not modal or hysteretic
+    dkey = next((k for words in (("proportional",), ("direct",), ("nonlin",))
+                 for k in damps if all(w in k.lower() for w in words)), "")
+    if not dkey:
+        raise R.Stop(f"{nm}: no damping fields in {key} ({', '.join(fields)}) and no proportional damping table; "
+                     f"damping tables: {damps}")
+    dzero = _zero_fields(damps[dkey])
+    if not dzero:
+        raise R.Stop(f"{nm}: table {dkey} has no coefficient or ratio field to zero (fields {damps[dkey]})")
+    dset, added = _set_case_row(sm, R, dkey, nm, dzero, tuple(dzero))
+    _verify(sm, R, dkey, nm, dset, dzero)
+    return f"table {key}; damping {list(dzero)} = 0 in {dkey} ({'row added' if added else 'row edited'})"
 
 
 def set_fna(sm, R, case: dict, th: dict) -> str:
@@ -202,17 +265,27 @@ def set_fna(sm, R, case: dict, th: dict) -> str:
             if abs(float(got[0]) - zeta) > 1e-12:
                 raise R.Stop(f"{nm}: damping reads back {got[0]}, set {zeta}")
         return "API (LoadCases.ModHistNonlinear)"
-    key = _table(sm, R, ("load case", "fna"), ("load case", "nonlinear", "modal", "history"))
+    # ETABS 23: "Load Case Definitions - Time History - Nonlinear Modal"; its damping is in
+    # "Load Case Definitions - Damping - Modal" (one row per case)
+    key = _table(sm, R, ("load case", "fna"), ("load case", "nonlin", "modal"))
     if not key:
         _no_table(sm, R, f"FNA case {nm} (ModHistNonlinear offers: {R._methods(mh)})")
-    extra = {"modalcase|modal": modal,
-             "constdamp|dampconst|constantdamping|dampconstant|constdampratio|constantdamp": zeta}
+    extra = {"modalcase|modal": modal}
     rows = _th_rows(th, extra)
     required = ("name", "loadtype", "loadname", "function|funcname|func|timefunction", "loadsf|scalefactor|sf",
                 *_STEP_COLS, *extra)
     setf = _add_rows(sm, R, key, rows, required)
     _verify(sm, R, key, nm, setf, dict(extra, **{_STEP_COLS[0]: th["steps"], _STEP_COLS[1]: th["dt"]}))
-    return f"table {key}"
+    damps = _damp_tables(sm, R)
+    dkey = next((k for k in damps if "modal" in k.lower() and "load case" in k.lower()), "")
+    if not dkey:
+        raise R.Stop(f"{nm}: no modal damping table; damping tables: {damps}")
+    cands = ("constdamp|dampconst|constantdamping|dampconstant|constdampratio|constantdamp|constantratio|"
+             "dampratio|constant|ratio")
+    dset, added = _set_case_row(sm, R, dkey, nm, {cands: zeta}, (cands,))
+    _verify(sm, R, dkey, nm, dset, {cands: zeta})
+    return (f"table {key}; constant modal damping {zeta} as {dset[cands]} in {dkey} "
+            f"({'row added' if added else 'row edited'})")
 
 
 # ── links ───────────────────────────────────────────────────────────────────
@@ -270,7 +343,7 @@ def set_ritz(sm, R, rc: dict) -> str:
             R.ok(got, f"read back {nm} loads")
             msg += f", loads {list(got[1])} {list(got[2])} (read back)"
         return msg
-    key = _table(sm, R, ("load case", "ritz"))
+    key = _table(sm, R, ("load case", "ritz"), ("ritz",))       # ETABS 23: "Modal Case Definitions - Ritz"
     if not key:
         _no_table(sm, R, f"Ritz case {nm} (ModalRitz offers: {R._methods(mr)})")
     tried = []
@@ -412,8 +485,8 @@ def _joint_at(sm, R, at) -> str:
 def results(sm, case: dict, R, names: dict, res: dict) -> None:
     vals = res.setdefault("values", {})
     for opt in ("SetOptionModalHist", "SetOptionDirectHist"):
-        try:                                         # time-history envelopes
-            getattr(sm.Results.Setup, opt)(1)
+        try:                       # step by step (envelopes gave only the last step in N4): peaks below
+            getattr(sm.Results.Setup, opt)(2)          # are max |value| over every row
         except Exception:
             pass
     links = case.get("links", []) + case.get("dampers", [])
