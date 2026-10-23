@@ -1484,8 +1484,8 @@ RUNNER = 4
 # cases whose ETABS model this script built wrongly before the given runner version, so they rerun:
 # 2 = releases on members ETABS draws from the definition's j end went on the wrong end
 # 3 = H3's Ritz results were read across every modal case at once; K4's steel curve call had a wrong argument
-# 4 = N4's time history was read at its last step instead of its peak
-RERUN_BEFORE = {"L1": 2, "L1S": 2, "L2": 2, "H3": 3, "K4": 3, "N4": 4}
+# 4 = N4's time history was read at its last step instead of its peak; K4's layered wall was unstable in ETABS
+RERUN_BEFORE = {"L1": 2, "L1S": 2, "L2": 2, "H3": 3, "K4": 4, "N4": 4}
 
 
 def needs_run(out_root: Path, cid: str) -> bool:
