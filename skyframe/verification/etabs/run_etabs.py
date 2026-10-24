@@ -1633,6 +1633,8 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default=OUT_ROOT, help="folder for the ETABS models and results")
     ap.add_argument("--push", metavar="CLONE", help="git clone (branch etabs-results) to copy results into and push")
     ap.add_argument("--update", action="store_true", help="download the latest version of this script")
+    ap.add_argument("--skyframe-only", action="store_true",
+                    help="with case ids: time SkyFrame again on the stored speed benchmarks, ETABS is not opened")
     a = ap.parse_args(argv)
 
     if a.update:
@@ -1641,7 +1643,18 @@ def main(argv=None) -> int:
         return 0
     out_root = Path(a.out)
     speed_only: list = []
-    if a.local:
+    if a.skyframe_only:
+        # re-time SkyFrame (a newer SkyFrame) against the ETABS run already stored for each benchmark
+        todo = []
+        for c in a.cases:
+            cj = out_root / c / f"{c}.case.json"
+            if (out_root / c / f"{c}.etabs.json").exists() and cj.exists():
+                speed_only.append(json.loads(cj.read_text(encoding="utf-8")))
+            else:
+                say(f"{c}: no stored ETABS run here, skipped")
+        if not speed_only:
+            return 0
+    elif a.local:
         todo = [json.loads(Path(a.local).read_text())]
         _LOCAL_EXT.append(True)
     else:
@@ -1677,13 +1690,15 @@ def main(argv=None) -> int:
         ok(app.ApplicationStart(), "start ETABS")
         return app, app.SapModel
 
-    etabs, sm = start_etabs()
-    version = sm.GetVersion()[0]
-    say(f"ETABS {version} started")
-    try:
-        api_probe(sm, out_root)
-    except Exception as exc:
-        say(f"API probe failed: {exc}")
+    etabs = sm = None
+    if todo:                        # SkyFrame timing alone needs no ETABS
+        etabs, sm = start_etabs()
+        version = sm.GetVersion()[0]
+        say(f"ETABS {version} started")
+        try:
+            api_probe(sm, out_root)
+        except Exception as exc:
+            say(f"API probe failed: {exc}")
     summaries = []
     try:
         for case in todo:
@@ -1732,7 +1747,9 @@ def main(argv=None) -> int:
         for s in summaries:
             say(f"{s['id']}: " + (f"done, largest difference from hand {100 * s['worst']:.3f}%" if s["ok"]
                                   else f"stopped: {s['error']}"))
-        if a.close or len(todo) > 1:
+        if etabs is None:
+            pass
+        elif a.close or len(todo) > 1:
             etabs.ApplicationExit(False)
             say("ETABS closed")
         else:
